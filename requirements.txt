@@ -1,0 +1,12 @@
+"ffmpeg-python"
+"openai-whisper"
+whisper
+torch
+numpy
+pandas
+tqdm
+opencv-python
+ultralytics
+easyocr
+
+
