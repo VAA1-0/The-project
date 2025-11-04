@@ -8,5 +8,5 @@ tqdm
 opencv-python
 ultralytics
 easyocr
-
+transformers
 
