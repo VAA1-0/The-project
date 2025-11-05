@@ -1,12 +1,12 @@
-"ffmpeg-python"
-"openai-whisper"
-whisper
+ffmpeg-python
+openai-whisper
 torch
+transformers
+ultralytics
+easyocr
+opencv-python
 numpy
 pandas
 tqdm
-opencv-python
-ultralytics
-easyocr
-transformers
+
 
