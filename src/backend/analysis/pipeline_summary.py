@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from transformers import pipeline
-from src.backend.analysis.utils.logger import get_logger
+from src.backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

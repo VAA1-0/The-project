@@ -1,12 +1,31 @@
-ffmpeg-python
-openai-whisper
-torch
-transformers
-ultralytics
-easyocr
-opencv-python
-numpy
-pandas
-tqdm
+# Core Computer Vision
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+easyocr>=1.7.0
+
+# Audio Processing & Transcription
+openai-whisper>=20231117
+ffmpeg-python>=0.2.0
+
+# NLP & Text Processing
+transformers>=4.35.0
+
+# PyTorch Ecosystem
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Data Processing & Utilities
+pandas>=1.5.0
+numpy>=1.24.0
+Pillow>=9.0.0
 
 
+### Create environment with compatible Python version
+#conda create -n vaa1 python=3.10
+#conda activate vaa1
+# Install packages
+#pip install -r requirements.txt
+
+#✅ Verified Python Version: 3.10.19
+#✅ Verified Platform: Windows (Anaconda)
+#✅ All Dependencies Tested and Working

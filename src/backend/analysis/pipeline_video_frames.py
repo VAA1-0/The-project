@@ -27,7 +27,7 @@ class FrameAnalysisPipeline:
         self,
         video_path: str,
         output_dir: str = "outputs/frames",
-        yolo_model_path: str = "yolov8n.pt",
+        yolo_model_path: str = "models/yolov8n.pt",
         languages: list = ["en"]
     ):
         self.video_path = Path(video_path)
