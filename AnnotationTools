@@ -1,0 +1,9 @@
+## Annotation Tools Analysis
+
+- If you need full bounding boxes + tracking across video frames → go with CVAT.
+
+- If you want custom workflows, event annotation, or multi-modal data + video → go with Label Studio.
+
+- If you just need something quick/lightweight for smaller jobs → VIA or VIDAT.
+
+- If your annotation is more about timestamps or behaviours (not object boxes) → PythonVideoAnnotator.
