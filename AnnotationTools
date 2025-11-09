@@ -1,5 +1,10 @@
 ## Annotation Tools Analysis
 
+### Similar service providers
+- River​​side.com
+- Twitch Chat Collector Tool
+- TIB AV-Analytics
+
 - If you need full bounding boxes + tracking across video frames → go with CVAT.
 
 - If you want custom workflows, event annotation, or multi-modal data + video → go with Label Studio.
@@ -7,3 +12,11 @@
 - If you just need something quick/lightweight for smaller jobs → VIA or VIDAT.
 
 - If your annotation is more about timestamps or behaviours (not object boxes) → PythonVideoAnnotator.
+
+
+Tool	                Video support  	  Bounding-boxes / tracking	        Scale / team	    Ease of setup
+CVAT	                  ✅ strong	            ✅ yes (tracking)	            ✅ good      	Moderate
+Label Studio	          ✅ good	            ✅ yes (via config)	            ✅ good	        Moderate
+VIDAT	                  ✅ video focus	       TBD (basic)	                   Small–med	    Easier
+PythonVideoAnnotator	  ✅ video events	     limited bounding boxes	         Small scale	  Easier (Python GUI)
+VIA	                    ✅ basic	             bounding boxes/polygons	       Small scale	  Easy
