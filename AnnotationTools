@@ -20,3 +20,85 @@ Label Studio	          ✅ good	            ✅ yes (via config)	            ✅
 VIDAT	                  ✅ video focus	       TBD (basic)	                   Small–med	    Easier
 PythonVideoAnnotator	  ✅ video events	     limited bounding boxes	         Small scale	  Easier (Python GUI)
 VIA	                    ✅ basic	             bounding boxes/polygons	       Small scale	  Easy
+
+
+# Running CVAT (Installation)
+-> https://github.com/cvat-ai/cvat?tab=readme-ov-file
+-> https://docs.cvat.ai/docs/administration/basics/installation/ (for windows 10, complete till step  *Install Google Chrome*)
+
+Run this command in Linux terminal (avoids git clone failure)
+-> wget https://github.com/cvat-ai/cvat/archive/refs/tags/v2.49.0.zip -O cvat.zip
+-> sudo apt install unzip
+-> unzip cvat.zip
+-> mv cvat-2.49.0 cvat
+-> cd cvat
+
+Eithier follow option 1 or option 2
+
+<---->
+OPTION 1:
+-> CVAT_VERSION=v2.49.0 docker compose up -d
+<---->
+
+<---->
+OPTION 2:
+-> export CVAT_VERSION=v2.49.0
+
+-> docker pull cvat/server:${CVAT_VERSION}
+-> docker pull cvat/ui:${CVAT_VERSION}
+
+-> docker pull redis:7
+-> docker pull postgres:14
+
+-> docker compose up -d
+
+<---->
+
+Verify containers
+-> docker ps
+
+-> http://localhost:8080
+
+<----  ---->
+
+# Production flow for integrating CVAT + YOLOv8 + Python
+
+Video → CVAT (annotation / export) → YOLOv8 (train or predict)
+       ↑                                        ↓
+       └────── import auto-annotations (model prelabels) ──────┘
+
+This lets you:
+
+Train models from labeled video frames in CVAT.
+
+Run models to pre-annotate or assist labeling.
+
+Iterate automatically (active learning).
+
+
+<---- Example (Python SDK)
+
+from cvat_sdk import make_client
+from cvat_sdk.api_client.enums import ResourceType
+
+CVAT_URL = "http://localhost:8080"
+USERNAME = "admin"
+PASSWORD = "password"
+
+client = make_client(CVAT_URL, (USERNAME, PASSWORD))
+
+spec = {
+    "name": "traffic_video_task",
+    "labels": [{"name": "car"}, {"name": "person"}, {"name": "bike"}]
+}
+
+task = client.tasks.create_from_data(
+    spec,
+    resource_type=ResourceType.LOCAL,
+    resources=["/path/to/video.mp4"]
+)
+
+print("Created video task:", task.id)
+
+This uploads the video and starts frame extraction on the CVAT server. ---->
+
