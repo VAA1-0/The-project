@@ -102,3 +102,5 @@ print("Created video task:", task.id)
 
 This uploads the video and starts frame extraction on the CVAT server. ---->
 
+https://chatgpt.com/share/6912dc8b-aac8-8002-95ca-85f1c660090e
+
