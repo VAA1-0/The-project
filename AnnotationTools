@@ -61,6 +61,14 @@ Verify containers
 
 <----  ---->
 
+<---- Rerun the docker instruction
+
+-> start ur VM (in terminal ->wsl)
+-> cd ~/cvat
+-> docker compose up -d
+-> http://localhost:8080
+
+
 # Production flow for integrating CVAT + YOLOv8 + Python
 
 Video → CVAT (annotation / export) → YOLOv8 (train or predict)
