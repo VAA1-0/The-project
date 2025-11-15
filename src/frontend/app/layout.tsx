@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   description: "Prototype frontend for the VAA1 project",
 };
 
+// Root layout component wrapping the application
 export default function RootLayout({
   children,
 }: {

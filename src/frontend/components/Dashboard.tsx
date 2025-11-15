@@ -1,4 +1,6 @@
-"use client";
+"use client"; // ⚠️ This component uses client-side hooks, review it
+
+// Not the exact same as Figma, needs some refactoring later
 
 import { useRouter } from "next/navigation";
 import React, { useCallback, useState } from "react";
@@ -83,7 +85,9 @@ export const Dashboard: React.FC = () => {
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
               <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
             </svg>
-            <span className="text-sm text-slate-200">Light Mode</span>
+            <span className="text-sm text-slate-200">
+                Light Mode
+            </span>
           </div>
 
           <Button onClick={handleSignOut} variant="ghost" className="hidden sm:inline-flex">
@@ -124,6 +128,7 @@ export const Dashboard: React.FC = () => {
               >
                 Upload Video
               </Button>
+
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
@@ -159,9 +164,7 @@ export const Dashboard: React.FC = () => {
 
                     <div className="text-center">
                       <div className="text-white font-medium">Drop your video here or click to browse</div>
-                      <div className="text-sm text-slate-400">
-                        Supports MP4, MOV, AVI, WebM up to 500MB
-                      </div>
+                      <div className="text-sm text-slate-400">Supports MP4, MOV, AVI, WebM up to 500MB</div>
                     </div>
                   </div>
 
@@ -174,6 +177,7 @@ export const Dashboard: React.FC = () => {
                         className="sr-only"
                         multiple
                       />
+
                       <Button className="bg-blue-600">Choose File</Button>
                     </label>
 

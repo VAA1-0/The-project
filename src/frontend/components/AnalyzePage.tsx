@@ -1,4 +1,6 @@
-"use client";
+"use client"; // ⚠️ This component uses client-side hooks, review it
+
+//messy auto-generated code from Figma, needs refactoring later
 
 export function AnalyzePage() {
     return (

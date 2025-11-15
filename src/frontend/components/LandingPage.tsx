@@ -1,4 +1,4 @@
-"use client";
+"use client"; // ⚠️ This component uses client-side hooks, review it
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -54,6 +54,7 @@ export function LandingPage() {
 
   */
 
+  // Simulated Google sign-in function, navigates to dashboard
   const handleGoogleSignIn = () => {
     // Simulate Google authentication
     router.push("/dashboard");

@@ -1,6 +1,8 @@
 # Frontend Architecture Overview
 
-This document explains how the frontend of our application works, including Next.js folder structure, page component loading, navigation, and the purpose of key files such as `layout.tsx` and `page.tsx`.
+This document explains how the frontend of our application works, including Next.js folder structure, page component loading, navigation, and the purpose of key files such as `layout.tsx` and `page.tsx`. It also includes thoughts and issues about `useState` usage.
+
+ChatGPT was used with the generation of this document.
 
 ---
 
@@ -116,3 +118,58 @@ app/dashboard/stats.tsx     -> NOT a route, only a component
 - Use client components selectively to avoid unnecessary client bundle size.
 - Leverage TypeScript for props and state type safety.
 
+---
+
+## 7. 'useState' usage
+
+### 7.1 Server vs Client components
+- Next.js 13+ defaults to **server components** for `page.tsx` and `layout.tsx`
+- `useState` **only works in client components** ("use client"; at the top)
+- Overusing useState may force you to mark large parts of your UI as client components, which:
+  - Increases bundle size
+  - Moves logic from server to client unnecessarily
+  - Can impact **performance** and **SEO**, because server-rendered content is faster to load and indexed better.
+- ✅Simple components like stats cards or dashboard layout, that don't need interactivity, **should remain server components**
+  - Only interactive parts (like file upload, toggles) should be client components
+
+### 7.2 State management for shared data
+
+If multiple components need the same state...
+
+- Using `useState` locally in a component can lead to **prop drilling** or duplicated state
+- Better alternatives:
+  - **React context**: centralized state for the dashboard
+  - **Server-side state**: fetching current videos or analysis results via `getServerSideProps` or `fetch` in server component
+  - **Global state libraries**: e.g. Zustand or Redux if the app gets complex
+- ✅ Upload video files could be managed in a central store rather than each upload component using its own `useState`
+
+### 7.3 Persistence across navigation
+
+- `useState` is **ephimeral**: it resets whenever a component is unmounted
+- In a multi-page dashboard, if you navigate away and back:
+  - All `useState` data in the previous page is **lost**
+  - You might want to upload files, progress or results to **presist** which requires:
+    - Centralized state
+    - URL query params
+    - Server state / API calls
+
+### 7.4 Potential race conditions in async workflows
+
+- Video analysis and file uploads are async and possibly long-running.
+- Using `useState` to track progress directly in the UI can lead to:
+  - Out-of-sync UI if multiple uploads happen quickly
+  - Hard-to-manage state if multiple components update it
+- A better approach is:
+  - Server-managed state (API returns current upload/processing status)
+  - Subscriptions / polling / WebSockets for live updates
+
+### 7.5 ✅ Summary 
+- Don’t use useState in large, non-interactive parts of your app.
+- **Use client components** sparingly, only for:
+  - File upload interactions
+  - Toggle buttons / filters
+  - Dynamic charts that need immediate updates
+- **Consider central/global state** for:
+  - Uploads
+  - Video library
+  - Analysis progress
