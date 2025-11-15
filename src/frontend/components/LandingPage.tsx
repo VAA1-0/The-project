@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -39,6 +40,7 @@ interface LandingPageProps {
 }
 
 export function LandingPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(true);
@@ -50,11 +52,13 @@ export function LandingPage() {
     setTimeout(onAuthenticate, 1000);
   };
 
+  */
+
   const handleGoogleSignIn = () => {
     // Simulate Google authentication
-    setTimeout(onAuthenticate, 1000);
+    router.push("/dashboard");
   };
-  */
+  
 
   return (
     <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
@@ -137,7 +141,7 @@ export function LandingPage() {
 
               <CardContent className="space-y-4">
                 <Button
-                  // onClick={/handleGoogleSignIn}
+                  onClick={handleGoogleSignIn}
                   variant="outline"
                   className="w-full border-slate-600 text-white hover:bg-slate-700 hover:text-white dark:border-slate-600 dark:text-white dark:hover:bg-slate-700 dark:hover:text-white border-slate-300 text-slate-900 hover:bg-slate-100"
                 >

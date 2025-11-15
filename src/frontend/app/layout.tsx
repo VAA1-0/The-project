@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 import "../styles/globals.css";
-import Navbar from "../components/Navbar";
-import Sidebar from "../components/Sidebar";
-import { LandingPage } from "@/components/LandingPage";
 
 export const metadata: Metadata = {
   title: "VAA1 Platform",
@@ -16,13 +13,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="flex bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
-        <Sidebar />
-        <LandingPage />
-        <div className="flex flex-col flex-1 min-h-screen">
-          <Navbar />
-          <main className="p-6 flex-1">{children}</main>
-        </div>
+      <body className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+        {children}
       </body>
     </html>
   );
