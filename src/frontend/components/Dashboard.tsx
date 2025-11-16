@@ -103,7 +103,7 @@ export const Dashboard: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
             {stats.map((s) => (
               <Card key={s.id} className="bg-slate-800/50 border-slate-700 overflow-hidden">
-                <CardContent className="flex items-center gap-4">
+                <CardContent className="flex items-center gap-4 py-6">
                   <div className={`p-3 rounded-lg ${s.colorBg}`}>
                     <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
                       <circle cx="12" cy="12" r="8" fill="currentColor" />

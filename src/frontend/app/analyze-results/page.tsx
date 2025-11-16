@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "../../styles/globals.css";
-import { AnalyzePage } from "@/components/AnalyzePage";
+import AnalyzePage from "@/components/AnalyzePage";
 
 export const metadata: Metadata = {
   title: "VAA1 Platform - Analyze Results",
