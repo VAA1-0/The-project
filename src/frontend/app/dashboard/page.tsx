@@ -3,7 +3,7 @@ import "../../styles/globals.css";
 import { Dashboard } from "@/components/Dashboard";
 
 export const metadata: Metadata = {
-  title: "VAA1 Platform",
+  title: "VAA1 Platform - Dashboard",
   description: "Prototype frontend for the VAA1 project",
 };
 

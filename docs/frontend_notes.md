@@ -15,7 +15,7 @@ The frontend follows the standard **Next.js 13+ App Router** conventions. For ex
 ├─ page.tsx # Entry point for the main page
 ├─ dashboard/
 │ ├─ page.tsx # Dashboard page component
-│ └─ components/ # Optional subcomponents specific to dashboard
+│ └─ components/ # For example optional subcomponents specific to dashboard
 ├─ components/ # Shared UI components
 └─ styles/ # Global and module-specific CSS/SCSS
 ```
@@ -94,6 +94,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 ```
+In this case, the `children` is the actual page's content.
 
 ---
 

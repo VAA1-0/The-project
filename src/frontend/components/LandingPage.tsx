@@ -141,6 +141,8 @@ export function LandingPage() {
               </CardHeader>
 
               <CardContent className="space-y-4">
+
+                {/* Google Sign-In Button */}
                 <Button
                   onClick={handleGoogleSignIn}
                   variant="outline"
@@ -174,6 +176,7 @@ export function LandingPage() {
                   </span>
                 </div>
 
+                {/* Email/Password Form */}
                 <form /*onSubmit={handleSubmit}*/ className="space-y-4">
                   <Input
                     type="email"
