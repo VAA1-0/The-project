@@ -1,3 +1,5 @@
+GPT - https://chatgpt.com/share/691b0911-4a4c-8002-889d-8472d38d2b64 (Dissecting CVAT tool)
+
 Great — here’s the best practical architecture for running YOLO video detection + a full CVAT instance on the cloud.
 This setup is stable, scalable, and widely used in production workflows.
 
