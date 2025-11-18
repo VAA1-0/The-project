@@ -1,6 +1,6 @@
 # Frontend Architecture Overview
 
-This document explains how the frontend of our application works, including Next.js folder structure, page component loading, navigation, and the purpose of key files such as `layout.tsx` and `page.tsx`. It also includes thoughts and issues about `useState` usage.
+This document explains how the frontend of our application works, including Next.js folder structure, page component loading, navigation, and the purpose of key files such as `layout.tsx` and `page.tsx`. It also includes thoughts and issues about frontend.
 
 ChatGPT was used with the generation of this document.
 
@@ -174,3 +174,91 @@ If multiple components need the same state...
   - Uploads
   - Video library
   - Analysis progress
+
+---
+
+## 8. Videos in navigation
+
+The app will include a `video library` where users can upload and store videos, create folders and subfolders and rename both folders and videos. Deleting folders and videos should also be possible. Each video has unique analysis result and dedicated analysis page in the UI.
+
+### 8.1 Problems we want to avoid
+
+If the app uses video name as path or key:
+
+```bash
+analysis/gameplay1.mp4/objects.json
+```
+
+Then renaming the file breaks everything:
+- UI links no longer work
+- Analysis results become disconnected
+- Moving the video to another folder changes path
+- Existing results become impossible to find
+
+
+If analysis results depend on folder structure:
+
+```bash
+/analysis/Gameplay/MyClips/video-name.json
+```
+
+Then reorganizing folders breajs:
+- All routes
+- All analysis references
+- Cached results
+- Derived thumbnails etc.
+**Folder structure must not affect backend storage.**
+
+
+Using human-readable routes like:
+
+```bash
+/video/Gameplay/Apex-Legends
+```
+
+will break when:
+- The user renames the video
+- They mote it to another folder
+- They rename the folder
+
+### 8.2 Possible Solutions
+
+**Use Immutable IDs.**
+
+Every resource gets a **UUID**:
+- Each video → `video.id = "a4f9c14e-41c8..."`
+- Each folder → `folder.id = "e922cb94-..."`
+- Each analysis result → `analysis.id = "..."`
+
+These IDs:
+- Never change
+- Are not derived from names or paths
+- Allow completely safe renaming and moving
+
+**Names and folder structures become views instead of actual filesystem paths.**
+
+Independent of user naming:
+
+```bash
+/videos/{videoId}/source.mp4
+/videos/{videoId}/thumbnail.jpg
+/analysis/{videoId}/results.json
+/analysis/{videoId}/frames/
+
+/library/video/[id]
+/library/folder/[id]
+```
+
+The user can:
+- rename videos
+- rename folders
+- move videos into folders
+- nest folders
+- sort, filter, and search folders
+
+But internally:
+- the video ID never changes
+- analysis results always map to the correct ID
+- folders only update `folder_id` into the DB
+- file storage paths stay the same
+
