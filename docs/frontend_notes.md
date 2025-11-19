@@ -159,7 +159,7 @@ This allows the UI to render:
 
 The metadata and the actual file blob are stored separately, which avoids path-related issues.
 
-### 7.2 Uploading and deelting videos
+### 7.2 Uploading, deleting and renaming videos
 
 Users can upload single or multiple videos through "ChooseFile" button and Drag-and-drop area.
 
@@ -168,9 +168,7 @@ When files are selected:
 2. Metadata is stored in the **Library registry**
 3. The UI refreshes to display the uploaded video list
 
-**NOTE THIS**: Currently there are issues with saving the same video file since they are being identified by name. This will have to be changed.
-
-The delete operation removes the metadata entry from the **Library registry** and the accosiated blob from **IndexedDB**.
+The delete operation removes the metadata entry from the **Library registry** and the accosiated blob from **IndexedDB**. It can be done from the delete button. The renaming operation renames the metadata entry from the **Library registry** and the accosiated blob from **IndexedDB**. It can be done from the rename button.
 
 ---
 

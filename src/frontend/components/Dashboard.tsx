@@ -26,6 +26,9 @@ export const Dashboard: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState<string>("");
+
 
   useEffect(() => {
     // Load persisted library metadata from local-library
@@ -135,6 +138,20 @@ export const Dashboard: React.FC = () => {
       alert("Failed to delete video: " + String(err));
     }
   }
+
+  // Rename video: edit metadata in Library
+  const handleRenameVideo = async (id: string, newName: string) => {
+  try {
+    Library.updateVideo(id, { name: newName });
+    setLibraryVideos(Library.getAll().videos);
+    setRenameId(null);
+    setRenameValue("");
+  } catch (err) {
+    console.error(err);
+    alert("Failed to rename video: " + String(err));
+  }
+};
+
 
   // Simulated sign out function
   const handleSignOut = () => {
@@ -355,8 +372,58 @@ export const Dashboard: React.FC = () => {
                         </div>
 
                         <div className="flex gap-2">
+                          {renameId === vid.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleRenameVideo(vid.id, renameValue);
+                                }
+                                if (e.key === "Escape") {
+                                  setRenameId(null);
+                                  setRenameValue("");
+                                }
+                              }}
+                                className="h-8 w-40"
+                                autoFocus
+                              />
+
+                              <Button
+                                size="sm"
+                                className="h-8"
+                                onClick={() => handleRenameVideo(vid.id, renameValue)}
+                              >
+                                Save
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8"
+                                onClick={() => {
+                                  setRenameId(null);
+                                  setRenameValue("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              onClick={() => {
+                                setRenameId(vid.id);
+                                setRenameValue(vid.name); // prefill
+                              }}
+                            >
+                              Rename
+                            </Button>
+                          )}
+
                           <Button onClick={() => handleView(vid.id)} variant="ghost">
-                            View
+                            View analysis
                           </Button>
                           <Button onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
                             Delete
