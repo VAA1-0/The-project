@@ -4,6 +4,10 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { getVideoBlob } from "@/lib/blob-store";
+import { Library } from "@/lib/local-library";
+
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -25,6 +29,30 @@ import { GameRunLogo } from "./ProjectLogo";
 export default function AnalyzePage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
+
+  const { id } = useParams() as { id: string };
+
+const [videoUrl, setVideoUrl] = useState<string | null>(null);
+const [metadata, setMetadata] = useState<any>(null);
+
+React.useEffect(() => {
+  async function load() {
+    if (!id) return;
+
+    // 1. Load metadata from local library
+    const m = Library.getById(id);
+    setMetadata(m);
+
+    // 2. Load blob from IndexedDB
+    const blob = await getVideoBlob(id);
+    if (blob) {
+      setVideoUrl(URL.createObjectURL(blob));
+    }
+  }
+  load();
+}, [id]);
+
+  
 
   // Example transcript / timeline data — replace with real data when available
   const transcript = [
@@ -97,13 +125,22 @@ export default function AnalyzePage() {
               <CardContent className="p-0">
                 <div className="bg-slate-900 rounded-tl-lg rounded-tr-lg h-[420px] flex items-center justify-center">
                   {/* Placeholder video preview area — replace with <video> player and controls */}
-                  <div className="flex flex-col items-center text-center gap-4">
-                    <div className="w-28 h-28 bg-blue-600/20 rounded-full flex items-center justify-center">
-                      <svg className="w-10 h-10 text-blue-400" viewBox="0 0 24 24" fill="none"><path d="M5 3v18l15-9L5 3z" fill="currentColor"/></svg>
-                    </div>
-                    <div className="text-white font-semibold">Video Preview</div>
-                    <div className="text-sm text-slate-400">Use a video player here (e.g., <code>&lt;video&gt;</code> or react-player)</div>
-                  </div>
+                  {videoUrl ? (
+  <video
+    src={videoUrl}
+    controls
+    className="w-full h-full object-contain rounded-lg"
+  />
+) : (
+  <div className="flex flex-col items-center text-center gap-4">
+    <div className="w-28 h-28 bg-blue-600/20 rounded-full flex items-center justify-center">
+      <svg className="w-10 h-10 text-blue-400" viewBox="0 0 24 24" fill="none">
+        <path d="M5 3v18l15-9L5 3z" fill="currentColor" />
+      </svg>
+    </div>
+    <div className="text-white font-semibold">Loading video…</div>
+  </div>
+)}
                 </div>
 
                 {/* Basic playback controls + meta */}
@@ -178,9 +215,20 @@ export default function AnalyzePage() {
 
               <CardContent>
                 <div className="text-sm text-slate-300 space-y-1">
-                  <div><span className="text-slate-400">Filename:</span> product_demo.mp4</div>
-                  <div><span className="text-slate-400">Uploaded:</span> Oct 1, 2025</div>
-                  <div><span className="text-slate-400">Duration:</span> 2:45</div>
+<div className="text-sm text-slate-300 space-y-1">
+  <div>
+    <span className="text-slate-400">Filename:</span> {metadata?.name ?? "…"}
+  </div>
+
+  <div>
+    <span className="text-slate-400">Uploaded:</span> Unknown
+  </div>
+
+  <div>
+    <span className="text-slate-400">Duration:</span> 2:45
+  </div>
+</div>
+
                 </div>
               </CardContent>
             </Card>

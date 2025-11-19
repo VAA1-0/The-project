@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig = {
-  output: 'export', // this replaces the next export command
+  output: 'standalone', // changed to 'standalone' for deployment, previously 'export'
   reactStrictMode: true,
 };
 

@@ -116,7 +116,7 @@ export const Dashboard: React.FC = () => {
   
   // Navigate to analyze results page, later navigates to specific video analysis with file ID/name
   const handleView = async (id?: string) => {
-    router.push("/analyze-results");
+    router.push(`/analyze-results/${id}`);
   }
 
   // Delete a video: remove blob from IndexedDB and metadata from Library
@@ -425,6 +425,7 @@ export const Dashboard: React.FC = () => {
                           <Button onClick={() => handleView(vid.id)} variant="ghost">
                             View analysis
                           </Button>
+
                           <Button onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
                             Delete
                           </Button>

@@ -39,6 +39,10 @@ export const Library = {
     return load();
   },
 
+  getById(id: string) {
+  return this.getAll().videos.find(v => v.id === id);
+  },
+
   addVideo(video: VideoItem) {
     const state = load();
     state.videos.push(video);

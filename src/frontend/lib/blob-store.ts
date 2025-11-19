@@ -5,6 +5,7 @@ const DB_NAME = "video_store_db";
 const STORE_NAME = "videos";
 const DB_VERSION = 1;
 
+// Open (or create) the IndexedDB database
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -19,6 +20,7 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+// Save a video blob with a given ID
 export async function saveVideoBlob(id: string, blob: Blob) {
   const db = await openDB();
   return new Promise<void>((resolve, reject) => {
@@ -30,6 +32,7 @@ export async function saveVideoBlob(id: string, blob: Blob) {
   });
 }
 
+// Retrieve a video blob by ID
 export async function getVideoBlob(id: string): Promise<Blob | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -41,6 +44,7 @@ export async function getVideoBlob(id: string): Promise<Blob | null> {
   });
 }
 
+// Delete a video blob by ID
 export async function deleteVideoBlob(id: string) {
   const db = await openDB();
   return new Promise<void>((resolve, reject) => {
@@ -52,6 +56,7 @@ export async function deleteVideoBlob(id: string) {
   });
 }
 
+// List all stored video blob IDs
 export async function listBlobKeys(): Promise<string[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
