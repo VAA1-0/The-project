@@ -3,7 +3,7 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import { useRouter } from "next/navigation";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -15,21 +15,48 @@ import {
 } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { GameRunLogo } from "./ProjectLogo";
+import { Library } from "@/lib/local-library";
+import { saveVideoBlob, getVideoBlob, deleteVideoBlob, listBlobKeys } from "@/lib/blob-store";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
-  const [files, setFiles] = useState<FileList | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[] | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<"upload" | "library">("upload");
+  const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Load persisted library metadata from local-library
+    try {
+      setLibraryVideos(Library.getAll().videos);
+    } catch (e) {
+      setLibraryVideos([]);
+    }
+  }, []);
 
   // Callback when files are selected
   const onFilesSelected = useCallback((f: FileList | null) => {
-    setFiles(f);
+    setFiles(f ? Array.from(f) : null);
   }, []);
 
   // Handle file input change
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFilesSelected(e.target.files);
+    const selected = e.target.files;
+    if (!selected || selected.length === 0) return;
+
+    /*
+    const wrappedFiles = Array.from(selected).map((f) => ({
+      id: crypto.randomUUID(),
+      file: f,
+    }));
+    */
+
+    setFiles(prev => {
+      const arr = prev ? prev : [];
+      return [...arr, ...Array.from(selected)];
+    });
   };
 
   // Handle file drop
@@ -43,19 +70,70 @@ export const Dashboard: React.FC = () => {
     e.preventDefault();
   };
 
-  // Simulated upload function
+  /*
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    if (f) {
+      setPreviewUrl(URL.createObjectURL(f));
+    } else {
+      setPreviewUrl(null);
+    }
+}
+  */
+
+  // Upload handler (frontend-only): persist blob to IndexedDB and metadata to local Library
   const handleUpload = async () => {
-    if (!files || files.length === 0) return;
+    const selected = files || (file ? [file] as any : null);
+    if (!selected || selected.length === 0) return alert("Select a video first");
     setUploading(true);
-    await new Promise((res) => setTimeout(res, 900));
-    setUploading(false);
-    alert(`Uploaded ${files.length} file(s) — integrate your API here.`);
-    setFiles(null);
+    try {
+      const arr = Array.from(selected as any) as File[];
+      for (const f of arr) {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        // save blob to IndexedDB
+        await saveVideoBlob(id, f);
+        // register metadata in Library
+        Library.addVideo({ id, name: f.name, folderId: null, analysis: null });
+      }
+
+      // refresh local view
+      setLibraryVideos(Library.getAll().videos);
+      setFiles(null);
+      setFile(null);
+      setPreviewUrl(null);
+      alert("Upload successful (saved in browser storage)");
+    } catch (err) {
+      console.error(err);
+      alert("Upload failed: " + (((err as any)?.message) ?? String(err)));
+    } finally {
+      setUploading(false);
+    }
   };
   
   // Navigate to analyze results page, later navigates to specific video analysis with file ID/name
-  const handleView = () => {
+  const handleView = async (id?: string) => {
     router.push("/analyze-results");
+  }
+
+  // Delete a video: remove blob from IndexedDB and metadata from Library
+  const handleDeleteVideo = async (id: string) => {
+    if (!confirm("Delete this video? This cannot be undone.")) return;
+    try {
+      // remove blob (best-effort)
+      try {
+        await deleteVideoBlob(id);
+      } catch (e) {
+        console.warn("Failed to delete blob from IndexedDB", e);
+      }
+
+      // remove metadata
+      Library.deleteVideo(id);
+      setLibraryVideos(Library.getAll().videos);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete video: " + String(err));
+    }
   }
 
   // Simulated sign out function
@@ -73,6 +151,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+
       {/* Header */}
       <header className="max-w-8xl mx-auto px-6 py-5 flex items-center justify-between bg-slate-800/50 border-b border-slate-700">
         <div className="flex items-center gap-3">
@@ -99,6 +178,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
         <section className="w-full space-y-8">
+
           {/* Stats cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
             {stats.map((s) => (
@@ -142,6 +222,7 @@ export const Dashboard: React.FC = () => {
           {/* Conditional content */}
           {tab === "upload" && (
             <Card className="bg-slate-800/50 border-slate-700 w-full">
+
               <CardHeader>
                 <CardTitle>Upload New Video</CardTitle>
                 <CardDescription>
@@ -170,15 +251,23 @@ export const Dashboard: React.FC = () => {
 
                   <div className="flex flex-col sm:flex-row gap-3 mt-3">
                     <label className="cursor-pointer">
+
+                      {/* Hidden file input */}
                       <input
+                        id="videoUpload"
                         type="file"
-                        accept="video/*"
+                        accept="video/mp4, video/mov, video/avi, video/webm"
                         onChange={handleFileInputChange}
-                        className="sr-only"
+                        className="hidden"
                         multiple
                       />
 
-                      <Button className="bg-blue-600">Choose File</Button>
+                      <Button
+                        className="bg-blue-600"
+                        onClick={() => document.getElementById("videoUpload")?.click()}
+                      >
+                        Choose File
+                      </Button>
                     </label>
 
                     <Button
@@ -186,6 +275,7 @@ export const Dashboard: React.FC = () => {
                       onClick={handleUpload}
                       className="bg-white text-slate-900"
                     >
+                      {previewUrl && <video src={previewUrl} controls className="w-full mt-2 max-h-40" />}
                       {uploading
                         ? "Uploading..."
                         : files
@@ -193,7 +283,8 @@ export const Dashboard: React.FC = () => {
                         : "Upload"}
                     </Button>
                   </div>
-
+                  
+                  {/* Selected files list */}
                   {files && files.length > 0 && (
                     <>
                       <Separator className="my-4" />
@@ -214,6 +305,7 @@ export const Dashboard: React.FC = () => {
             </Card>
           )}
 
+          {/* Video Library */}
           {tab === "library" && (
             <Card className="bg-slate-800/50 border-slate-700 w-full">
               <CardHeader>
@@ -222,32 +314,58 @@ export const Dashboard: React.FC = () => {
               </CardHeader>
 
               <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Input placeholder="Search…" />
-                </div>
 
-                <div className="space-y-2">
-                  <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
-                    <div>
-                      <div className="font-medium">video_2025-10-01.mp4</div>
-                      <div className="text-xs text-slate-400">Analyzed • 91% confidence</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={handleView} variant="ghost">View</Button>
-                      <Button variant="ghost">Delete</Button>
-                    </div>
+                {/* Search bar */}
+                  <div className="flex items-center justify-between">
+                    <Input placeholder="Search…" />
                   </div>
-                  <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
-                    <div>
-                      <div className="font-medium">my_gameplay.mov</div>
-                      <div className="text-xs text-slate-400">Processing</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={handleView} variant="ghost">View</Button>
-                      <Button variant="ghost">Delete</Button>
-                    </div>
+
+                {/* Video list */}
+                  <div className="space-y-2">
+
+                    {/* Placeholder item */}
+                      <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">video_2025-10-01.mp4</div>
+                          <div className="text-xs text-slate-400">Analyzed • 91% confidence</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={() => handleView()} variant="ghost">View</Button>
+                          <Button variant="ghost">Delete</Button>
+                        </div>
+                      </div>
+
+                    {/* Real mapped videos */}
+                      {libraryVideos.length === 0 && (
+                        <div className="text-sm text-slate-400 p-3">
+                          No videos uploaded yet.
+                        </div>
+                      )}
+
+                      {libraryVideos.map((vid: any) => (
+                      <div
+                        key={vid.id}
+                        className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="font-medium">{vid.name}</div>
+                          <div className="text-xs text-slate-400">
+                            {vid.analysis ? "Analyzed" : "Uploaded"}
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button onClick={() => handleView(vid.id)} variant="ghost">
+                            View
+                          </Button>
+                          <Button onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                      ))}
+
                   </div>
-                </div>
               </CardContent>
             </Card>
           )}

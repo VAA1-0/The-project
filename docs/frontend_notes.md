@@ -121,9 +121,62 @@ app/dashboard/stats.tsx     -> NOT a route, only a component
 
 ---
 
-## 7. 'useState' usage
+## 7. Local Video Library
 
-### 7.1 Server vs Client components
+Local video library system was implemented in the frontend, using IndexedDB(temporary), local metadata storage and client-side API routes. The system allows users to upload, store, list and delete videos entirely inside browser without backend.
+
+- Simulates full video library system before backend integration
+- A **local video library** backed by IndexedDB
+- A **lightweight frontend-only API layer** for interactig with storage
+- Ability to **upload videos, delete videos, and list all saved videos**
+
+
+### 7.1 Architecture
+
+**IndexedDB (Binary storage)**
+- Stores raw video file blobs
+- Gives us persistent storage (survives refresh), efficient handling of large binary files and fast reads without blocking the main thread
+
+
+
+**Local Metadata Store (Library registry)**
+
+We maintain a lightweight "Library" object that stores metadata such as:
+
+```bash
+{
+  id: string;
+  name: string;
+  folderId: string | null;
+  analysis: any;
+}
+```
+This allows the UI to render:
+- video names
+- placeholder analysis status
+- folder structure
+- deletion & navigation paths
+
+The metadata and the actual file blob are stored separately, which avoids path-related issues.
+
+### 7.2 Uploading and deelting videos
+
+Users can upload single or multiple videos through "ChooseFile" button and Drag-and-drop area.
+
+When files are selected:
+1. The blobs are saved to **IndexedDB**.
+2. Metadata is stored in the **Library registry**
+3. The UI refreshes to display the uploaded video list
+
+**NOTE THIS**: Currently there are issues with saving the same video file since they are being identified by name. This will have to be changed.
+
+The delete operation removes the metadata entry from the **Library registry** and the accosiated blob from **IndexedDB**.
+
+---
+
+## 8. 'useState' usage
+
+### 8.1 Server vs Client components
 - Next.js 13+ defaults to **server components** for `page.tsx` and `layout.tsx`
 - `useState` **only works in client components** ("use client"; at the top)
 - Overusing useState may force you to mark large parts of your UI as client components, which:
@@ -133,7 +186,7 @@ app/dashboard/stats.tsx     -> NOT a route, only a component
 - ✅Simple components like stats cards or dashboard layout, that don't need interactivity, **should remain server components**
   - Only interactive parts (like file upload, toggles) should be client components
 
-### 7.2 State management for shared data
+### 8.2 State management for shared data
 
 If multiple components need the same state...
 
@@ -144,7 +197,7 @@ If multiple components need the same state...
   - **Global state libraries**: e.g. Zustand or Redux if the app gets complex
 - ✅ Upload video files could be managed in a central store rather than each upload component using its own `useState`
 
-### 7.3 Persistence across navigation
+### 8.3 Persistence across navigation
 
 - `useState` is **ephimeral**: it resets whenever a component is unmounted
 - In a multi-page dashboard, if you navigate away and back:
@@ -154,7 +207,7 @@ If multiple components need the same state...
     - URL query params
     - Server state / API calls
 
-### 7.4 Potential race conditions in async workflows
+### 8.4 Potential race conditions in async workflows
 
 - Video analysis and file uploads are async and possibly long-running.
 - Using `useState` to track progress directly in the UI can lead to:
@@ -164,7 +217,7 @@ If multiple components need the same state...
   - Server-managed state (API returns current upload/processing status)
   - Subscriptions / polling / WebSockets for live updates
 
-### 7.5 ✅ Summary 
+### 8.5 ✅ Summary 
 - Don’t use useState in large, non-interactive parts of your app.
 - **Use client components** sparingly, only for:
   - File upload interactions
@@ -177,11 +230,11 @@ If multiple components need the same state...
 
 ---
 
-## 8. Videos in navigation
+## 9. Videos in navigation
 
 The app will include a `video library` where users can upload and store videos, create folders and subfolders and rename both folders and videos. Deleting folders and videos should also be possible. Each video has unique analysis result and dedicated analysis page in the UI.
 
-### 8.1 Problems we want to avoid
+### 9.1 Problems we want to avoid
 
 If the app uses video name as path or key:
 
@@ -221,7 +274,7 @@ will break when:
 - They mote it to another folder
 - They rename the folder
 
-### 8.2 Possible Solutions
+### 9.2 Possible Solutions
 
 **Use Immutable IDs.**
 
