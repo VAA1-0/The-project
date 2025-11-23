@@ -3,8 +3,8 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
-import { useParams } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
+
 import { getVideoBlob } from "@/lib/blob-store";
 import { Library } from "@/lib/local-library";
 
@@ -18,6 +18,7 @@ import {
   CardDescription,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
+import {Toggle, toggleVariants} from "./ui/toggle";
 import { GameRunLogo } from "./ProjectLogo";
 
 // AnalyzePage — rewritten to use the shared UI components (Card, Button, Input)
@@ -28,31 +29,43 @@ import { GameRunLogo } from "./ProjectLogo";
 
 export default function AnalyzePage() {
   const router = useRouter();
-  const [search, setSearch] = useState("");
 
   const { id } = useParams() as { id: string };
 
-const [videoUrl, setVideoUrl] = useState<string | null>(null);
-const [metadata, setMetadata] = useState<any>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [metadata, setMetadata] = useState<any>(null);
+  const [search, setSearch] = useState("");
 
-React.useEffect(() => {
-  async function load() {
-    if (!id) return;
+  // Toggle states
+  const [showTranscript, setShowTranscript] = useState(true);
+  const [showSummary, setShowSummary] = useState(true);
+  const [showObjects, setShowObjects] = useState(true);
+  const [showQuantity, setShowQuantity] = useState(true);
+  const [showAnnotations, setShowAnnotations] = useState(true);
 
-    // 1. Load metadata from local library
-    const m = Library.getById(id);
-    setMetadata(m);
+  // Expand/collapse for each module
+  const [expandTranscript, setExpandTranscript] = useState(false);
+  const [expandSummary, setExpandSummary] = useState(false);
+  const [expandObjects, setExpandObjects] = useState(false);
+  const [expandQuantity, setExpandQuantity] = useState(false);
+  const [expandAnnotations, setExpandAnnotations] = useState(false);
 
-    // 2. Load blob from IndexedDB
-    const blob = await getVideoBlob(id);
-    if (blob) {
-      setVideoUrl(URL.createObjectURL(blob));
+  React.useEffect(() => {
+    async function load() {
+      if (!id) return;
+
+      // 1. Load metadata from local library
+      const m = Library.getById(id);
+      setMetadata(m);
+
+      // 2. Load blob from IndexedDB
+      const blob = await getVideoBlob(id);
+      if (blob) {
+        setVideoUrl(URL.createObjectURL(blob));
+      }
     }
-  }
-  load();
-}, [id]);
-
-  
+    load();
+  }, [id]);
 
   // Example transcript / timeline data — replace with real data when available
   const transcript = [
@@ -63,14 +76,40 @@ React.useEffect(() => {
     { t: "01:45", speaker: "Speaker 1", text: "Notice how the AI identifies not just what's in the video, but also the emotional tone." },
   ];
 
+  // Example insights data — replace with real insights when available
   const insights = [
     { id: "ins-1", title: "Top Moments", body: "Detected 12 highlights across the video" },
     { id: "ins-2", title: "Avg Confidence", body: "91% average model confidence across predictions" },
     { id: "ins-3", title: "People Present", body: "3 distinct speakers detected" },
   ];
 
+  // Placeholder objects
+  const detectedObjects = [
+    { name: "Person", count: "15x", time: "0:00", confidence: "98%", present: "100%" },
+    { name: "Laptop", count: "8x", time: "0:20", confidence: "95%", present: "72%" },
+  ];
+
+  // Placeholder quantity info
+  const quantityInfo = [
+    { label: "People Count Over Time", desc: "Placeholder data for crowd detection." }
+  ];
+
+  // Placeholder annotation
+  const annotations = [
+    { note: "Interesting moment at 01:20", time: "01:20" }
+  ];
+
+  // Placeholder summary
+  const summaryText =
+    "This is a placeholder summary. When backend is connected, this section will show auto-generated short summaries.";
+
   function handleBack() {
     router.push("/dashboard");
+  }
+
+  function handleSignOut() {
+    // Hook your sign-out logic here
+    router.push("/");
   }
 
   function handleExport() {
@@ -78,245 +117,245 @@ React.useEffect(() => {
     alert("Exporting analysis (stub)");
   }
 
-  function handleShare() {
-    // Hook share logic (copy link / open modal)
-    alert("Open share modal (stub)");
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       {/* Header */}
       <header className="w-full border-b border-slate-700 bg-slate-800/50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-7xl  px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={handleBack} className="inline-flex items-center gap-2 text-sm text-slate-200 hover:text-white">
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"/></svg>
-              Back
-            </button>
-
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3" onClick={handleBack}>
               <GameRunLogo size="sm" />
-              <div className="text-lg font-semibold">Analyze Results</div>
+            </div>
+          
+          {/*NOTE: Dividers could be a reusable component */}
+          <div className="flex-1 px-3.5 py-0.5 flex justify-start items-center gap-2.5">
+            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition" onClick={handleBack}>Dashboard</Button>
+            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
+            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Upload Video</Button>
+            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
+            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">What's New!</Button>
+            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
+            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Contact Us</Button>
+            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
+            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">About Us</Button>
             </div>
           </div>
 
-                  <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
-            </svg>
-            <span className="text-sm text-slate-200">
-                Light Mode
-            </span>
-          </div>
+          <div className="flex items-center gap-3 justify-end">
+            <Button
+              variant="ghost"
+              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
+                </svg>
+                <span className="text-sm text-slate-200">Light Mode</span>
+            </Button>
 
-            <Button variant="ghost" onClick={handleShare}>Share</Button>
-            <Button variant="ghost" onClick={handleExport}>Export</Button>
+            <Button
+              variant="ghost"
+              onClick={handleSignOut}
+              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
+            >
+              Sign Out
+            </Button>
+
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left column - Video preview + timeline (col-span 8) */}
-          <div className="lg:col-span-8 space-y-6">
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-0">
-                <div className="bg-slate-900 rounded-tl-lg rounded-tr-lg h-[420px] flex items-center justify-center">
-                  {/* Placeholder video preview area — replace with <video> player and controls */}
-                  {videoUrl ? (
-  <video
-    src={videoUrl}
-    controls
-    className="w-full h-full object-contain rounded-lg"
-  />
-) : (
-  <div className="flex flex-col items-center text-center gap-4">
-    <div className="w-28 h-28 bg-blue-600/20 rounded-full flex items-center justify-center">
-      <svg className="w-10 h-10 text-blue-400" viewBox="0 0 24 24" fill="none">
-        <path d="M5 3v18l15-9L5 3z" fill="currentColor" />
-      </svg>
-    </div>
-    <div className="text-white font-semibold">Loading video…</div>
-  </div>
-)}
-                </div>
-
-                {/* Basic playback controls + meta */}
-                <div className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="text-sm text-slate-400">Duration: 0:25 - 2:45</div>
-                    <div className="text-sm text-slate-400">Confidence: 96% • Present: 78%</div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline">Prev</Button>
-                    <Button size="sm" className="bg-blue-600">Play</Button>
-                    <Button size="sm" variant="outline">Next</Button>
-                  </div>
-                </div>
-
-                <Separator />
-                
-                {/* Timeline / highlights */}
-                <div className="p-4">
-                  <div className="text-sm text-slate-300 mb-3">Highlights</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 bg-slate-700/30 rounded-lg">
-                      <div className="text-sm text-slate-200 font-medium">Highlight: Product demo</div>
-                      <div className="text-xs text-slate-400">01:23 — Detected strong engagement</div>
-                    </div>
-                    <div className="p-3 bg-slate-700/30 rounded-lg">
-                      <div className="text-sm text-slate-200 font-medium">Highlight: Audience reaction</div>
-                      <div className="text-xs text-slate-400">02:01 — Peaks in attention</div>
-                    </div>
-                  </div>
-                </div>
-                
-              </CardContent>
-            </Card>
-
-            {/* Transcription / Timeline detailed list */}
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle>Transcript</CardTitle>
-                <CardDescription>Speech-to-text with speaker labels and timestamps</CardDescription>
-              </CardHeader>
-
-              <CardContent className="p-4">
-                <div className="space-y-3 max-h-[340px] overflow-y-auto">
-                  {transcript.map((row) => (
-                    <div key={row.t} className="p-3 bg-slate-700/30 rounded-md">
-                      <div className="flex items-start gap-3">
-                        <div className="w-12 flex-shrink-0">
-                          <div className="text-xs text-cyan-300 font-medium">{row.t}</div>
-                          <div className="text-xs text-slate-400">{row.speaker}</div>
-                        </div>
-                        <div className="flex-1 text-slate-300">{row.text}</div>
-                        <div className="ml-4 flex items-center gap-2">
-                          <Button size="sm" variant="ghost" onClick={() => alert(`Jump to ${row.t} (stub)`)}>Jump</Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+      {/* BODY LAYOUT */}
+      <div className="flex flex-1 overflow-hidden">
+        
+        {/* LEFT SIDEBAR */}
+        <aside className="w-64 border-r border-slate-700 bg-slate-800/40 p-6 flex flex-col gap-6 overflow-y-auto">
+          {/* User info placeholder */}
+          <div className="flex justify-start text-center gap-2">
+            <div className="w-16 h-16 rounded-lg bg-blue-700 flex items-center justify-center text-xl font-semibold">
+              JD
+            </div>
+            <div className="flex flex-col justify-center">
+              <div className="text-white font-medium">John Doe</div>
+              <div className="text-xs text-slate-400">john@example.com</div>
+            </div>
           </div>
 
-          {/* Right column - Insights, metrics, controls (col-span 4) */}
-          <aside className="lg:col-span-4 space-y-6">
-                        <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle>Metadata</CardTitle>
-                <CardDescription>Basic information about this video</CardDescription>
+          <Separator />
+
+          {/* TOGGLES */}
+          <div className="space-y-3">
+            <Toggle 
+              pressed={showTranscript} 
+              onPressedChange={setShowTranscript} 
+              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+              >
+                Speech-to-Text
+            </Toggle>
+
+            <Toggle
+              pressed={showSummary}
+              onPressedChange={setShowSummary}
+              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            >
+              Summary
+            </Toggle>
+
+            <Toggle
+              pressed={showObjects}
+              onPressedChange={setShowObjects}
+              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            >
+              Object Detection
+            </Toggle>
+
+            <Toggle
+              pressed={showQuantity}
+              onPressedChange={setShowQuantity}
+              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            >
+              Quantity Detection
+            </Toggle>
+
+            <Toggle
+              pressed={showAnnotations}
+              onPressedChange={setShowAnnotations}
+              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            >
+              Annotation
+            </Toggle>
+          </div>
+        </aside>
+
+        {/* MIDDLE SCROLLABLE AREA */}
+        <main className="flex-1 overflow-y-auto p-6 space-y-6 max-w-[900px] mx-auto">
+
+          {/* TRANSCRIPT */}
+          {showTranscript && (
+            <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
+              <CardHeader onClick={() => setExpandTranscript(!expandTranscript)} className="cursor-pointer">
+                <CardTitle>Speech-to-Text</CardTitle>
+                <CardDescription>Transcript generated from audio</CardDescription>
               </CardHeader>
-
-              <CardContent>
-                <div className="text-sm text-slate-300 space-y-1">
-<div className="text-sm text-slate-300 space-y-1">
-  <div>
-    <span className="text-slate-400">Filename:</span> {metadata?.name ?? "…"}
-  </div>
-
-  <div>
-    <span className="text-slate-400">Uploaded:</span> Unknown
-  </div>
-
-  <div>
-    <span className="text-slate-400">Duration:</span> 2:45
-  </div>
-</div>
-
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Object Detection Section */}
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Detected Objects</CardTitle>
-                  <div className="px-2 py-1 rounded-lg border border-slate-600 text-xs text-slate-300">
-                    8 Found
-                  </div>
-                </div>
-                <CardDescription>Click to jump to first appearance in video</CardDescription>
-              </CardHeader>
-
-              <CardContent className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                {/* Sample objects */}
-                {[
-                  { name: "Person", time: "0:00", count: "15x", confidence: "98%", present: "100%" },
-                  { name: "Laptop", time: "0:20", count: "8x", confidence: "95%", present: "72%" },
-                  { name: "Phone", time: "0:45", count: "5x", confidence: "92%", present: "50%" },
-                  { name: "Coffee Cup", time: "0:15", count: "4x", confidence: "88%", present: "42%" },
-                  { name: "Monitor", time: "0:25", count: "7x", confidence: "94%", present: "78%" },
-                ].map((obj) => (
-                  <Card key={obj.name} className="bg-slate-700/30 border-slate-600">
-                    <CardContent className="p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium text-white">{obj.name}</div>
-                        <div className="text-xs text-slate-300 border border-slate-600 px-2 py-0.5 rounded-lg">
-                          {obj.count}
-                        </div>
-                      </div>
-
-                      <div className="text-xs text-blue-400">First seen at {obj.time}</div>
-
-                      <div className="flex justify-between text-xs text-slate-400">
-                        <span>Confidence: {obj.confidence}</span>
-                        <span>Present: {obj.present}</span>
-                      </div>
-
-                      <div className="h-1 w-full bg-slate-700 rounded-full overflow-hidden">
-                        <div className="h-1 bg-blue-400" style={{ width: obj.present }} />
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle>Insights</CardTitle>
-                <CardDescription>Summarized recommendations from the analysis</CardDescription>
-              </CardHeader>
-
-              <CardContent>
-                <div className="space-y-3">
-                  {insights.map((ins) => (
-                    <div key={ins.id} className="p-3 bg-slate-700/30 rounded-md">
-                      <div className="text-sm text-slate-200 font-medium">{ins.title}</div>
-                      <div className="text-xs text-slate-400">{ins.body}</div>
+              {expandTranscript && (
+                <CardContent className="space-y-3 max-h-[350px] overflow-y-auto">
+                  {transcript.map((row) => (
+                    <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
+                      <div className="text-xs text-cyan-300">{row.t} • {row.speaker}</div>
+                      <div className="text-sm text-slate-200">{row.text}</div>
                     </div>
                   ))}
-                </div>
-              </CardContent>
+                </CardContent>
+              )}
             </Card>
+          )}
 
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle>Quick Controls</CardTitle>
-                <CardDescription>Tools for working with this analysis</CardDescription>
+          {/* SUMMARY */}
+          {showSummary && (
+            <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
+              <CardHeader onClick={() => setExpandSummary(!expandSummary)} className="cursor-pointer">
+                <CardTitle>Summary</CardTitle>
+                <CardDescription>Short breakdown of the video</CardDescription>
               </CardHeader>
-
-              <CardContent>
-                <div className="flex flex-col gap-3">
-                  <Input placeholder="Search transcript…" value={search} onChange={(e) => setSearch(e.target.value)} />
-
-                  <div className="flex gap-2">
-                    <Button onClick={() => alert("Add note (stub)")}>Add Note</Button>
-                    <Button variant="ghost" onClick={() => alert("Export clips (stub)")}>Export Clips</Button>
-                  </div>
-                </div>
-              </CardContent>
+              {expandSummary && (
+                <CardContent>
+                  <p className="text-slate-300">{summaryText}</p>
+                </CardContent>
+              )}
             </Card>
+          )}
 
-          </aside>
-        </div>
-      </main>
+          {/* OBJECTS */}
+          {showObjects && (
+            <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
+              <CardHeader onClick={() => setExpandObjects(!expandObjects)} className="cursor-pointer">
+                <CardTitle>Detected Objects</CardTitle>
+                <CardDescription>AI object detection results</CardDescription>
+              </CardHeader>
+              {expandObjects && (
+                <CardContent className="space-y-3">
+                  {detectedObjects.map((obj) => (
+                    <div key={obj.name} className="p-3 rounded-lg bg-slate-700/30">
+                      <div className="flex justify-between text-white">
+                        <span>{obj.name}</span>
+                        <span>{obj.count}</span>
+                      </div>
+                      <div className="text-xs text-slate-400">First seen at {obj.time}</div>
+                    </div>
+                  ))}
+                </CardContent>
+              )}
+            </Card>
+          )}
+
+          {/* QUANTITY DETECTION */}
+          {showQuantity && (
+            <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
+              <CardHeader onClick={() => setExpandQuantity(!expandQuantity)} className="cursor-pointer">
+                <CardTitle>Quantity Detection</CardTitle>
+                <CardDescription>Counts of people/objects</CardDescription>
+              </CardHeader>
+              {expandQuantity && (
+                <CardContent>
+                  {quantityInfo.map((q) => (
+                    <div key={q.label} className="p-3 bg-slate-700/30 rounded-lg">
+                      <div className="text-white font-medium">{q.label}</div>
+                      <div className="text-xs text-slate-400">{q.desc}</div>
+                    </div>
+                  ))}
+                </CardContent>
+              )}
+            </Card>
+          )}
+
+          {/* ANNOTATIONS */}
+          {showAnnotations && (
+            <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
+              <CardHeader onClick={() => setExpandAnnotations(!expandAnnotations)} className="cursor-pointer">
+                <CardTitle>Annotations</CardTitle>
+                <CardDescription>User notes</CardDescription>
+              </CardHeader>
+              {expandAnnotations && (
+                <CardContent className="space-y-3">
+                  {annotations.map((a, idx) => (
+                    <div key={idx} className="p-3 bg-slate-700/30 rounded-lg">
+                      <div className="text-sm text-slate-200">{a.note}</div>
+                      <div className="text-xs text-slate-400">{a.time}</div>
+                    </div>
+                  ))}
+                </CardContent>
+              )}
+            </Card>
+          )}
+
+        </main>
+
+        {/* FIXED RIGHT COLUMN — VIDEO PLAYER */}
+        <aside className="w-[580px] border-l border-slate-700 bg-slate-800/30 p-6 flex flex-col gap-6">
+          <Card className="bg-slate-900 border-slate-700">
+            <CardContent className="p-0">
+              <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
+                {videoUrl ? (
+                  <video src={videoUrl} controls className="w-full h-full object-contain rounded-lg" />
+                ) : (
+                  <div className="text-slate-400">Loading video...</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <CardTitle>Video Info</CardTitle>
+              <CardDescription>Basic metadata</CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm text-slate-300 space-y-1">
+              <div><span className="text-slate-400">Filename:</span> {metadata?.name ?? "…"}</div>
+              <div><span className="text-slate-400">Duration:</span> 2:45</div>
+            </CardContent>
+          </Card>
+        </aside>
+
+      </div>
     </div>
   );
 }
