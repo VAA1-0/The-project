@@ -69,6 +69,28 @@ export default function AnalyzePage() {
     fetchRawData();
   }, [id]);
 
+  //KIAVASH HERE : ANALYZE VIDEO EFFECT
+  React.useEffect(() => {
+    async function analyzeVideo() {
+      if (!id) return;
+      // Simulate video analysis process
+      console.log(`Analyzing video with ID: ${id}`);
+      // Add your analysis logic here
+    }
+    analyzeVideo();
+  }, [id]);
+
+  // KIAVASH HERE : ANALYZE VIDEO HANDLER
+  function handleAnalyzeVideo() {
+    alert("Starting analysis (stub)");
+  }
+
+  // KIAVASH HERE : EXPORT RAW DATA HANDLER
+  function handleExport() {
+    // Hook your export logic here
+    alert("Exporting analysis (stub)");
+  }
+
   
   
   // Load video and metadata on mount
@@ -133,16 +155,6 @@ export default function AnalyzePage() {
     // Hook your sign-out logic here
     router.push("/");
   }
-
-
-
-  // KIAVASH HERE : EXPORT RAW DATA HANDLER
-  function handleExport() {
-    // Hook your export logic here
-    alert("Exporting analysis (stub)");
-  }
-
-
 
   return (
     <div className=" flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
@@ -390,6 +402,16 @@ export default function AnalyzePage() {
                   <CardTitle>Raw Data</CardTitle>
                   <CardDescription>Video data from CSV file</CardDescription>
                 </div>
+
+
+                {/* Button to start analyzing video*/}
+                <Button
+                  variant="default"
+                  className="bg-green-600/40 hover:bg-green-600/60 transition"
+                  onClick={handleAnalyzeVideo}
+                >
+                  Analyze
+                </Button>
 
                 {/* Download CSV button */}
                 <Button
