@@ -1,0 +1,37 @@
+[2025-11-24 14:05:04] [INFO] [test:12] — Package installation successful!
+[2025-11-24 14:19:23] [INFO] [direct_test:31] — Testing pipeline creation...
+[2025-11-24 14:19:25] [INFO] [direct_test:43] — Starting analysis...
+[2025-11-24 14:19:25] [INFO] [pipeline:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-24 14:23:53] [INFO] [direct_test:31] — Testing pipeline creation...
+[2025-11-24 14:23:55] [INFO] [direct_test:43] — Starting analysis...
+[2025-11-24 14:23:55] [INFO] [pipeline:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-24 14:26:29] [INFO] [pipeline:71] — End of video reached.
+[2025-11-24 14:26:29] [INFO] [pipeline:173] — Saved results:
+ - outputs\frames\Helsinki_main_street_yolo_20251124_122629.csv
+ - outputs\frames\Helsinki_main_street_ocr_20251124_122629.csv
+ - outputs\frames\Helsinki_main_street_summary.json
+[2025-11-24 14:26:29] [INFO] [pipeline:121] — Frame analysis complete.
+[2025-11-24 14:26:29] [INFO] [direct_test:46] — Analysis complete: 9181 detections
+[2025-11-24 14:28:13] [INFO] [__main__:78] — Starting analysis for: Helsinki_short.mp4
+[2025-11-24 14:28:15] [INFO] [__main__:95] — Running analysis pipeline...
+[2025-11-24 14:28:15] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_short.mp4
+[2025-11-24 14:28:20] [INFO] [src.backend.analysis.pipeline_video_frames:71] — End of video reached.
+[2025-11-24 14:28:20] [INFO] [src.backend.analysis.pipeline_video_frames:173] — Saved results:
+ - outputs\frames\Helsinki_short_yolo_20251124_122820.csv
+ - outputs\frames\Helsinki_short_ocr_20251124_122820.csv
+ - outputs\frames\Helsinki_short_summary.json
+[2025-11-24 14:28:20] [INFO] [src.backend.analysis.pipeline_video_frames:121] — Frame analysis complete.
+[2025-11-24 14:28:20] [INFO] [__main__:98] — ✅ Analysis complete!
+[2025-11-24 14:28:20] [INFO] [__main__:99] — Annotated video: outputs\frames\Helsinki_short_annotated.mp4
+[2025-11-24 14:28:20] [INFO] [__main__:100] — YOLO detections: 372
+[2025-11-24 14:28:20] [INFO] [__main__:101] — OCR detections: 0
+[2025-11-24 14:29:38] [INFO] [simple_runner:13] — ✅ Imports successful!
+[2025-11-24 14:29:40] [INFO] [simple_runner:25] — Starting analysis...
+[2025-11-24 14:29:40] [INFO] [backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_short.mp4
+[2025-11-24 14:29:44] [INFO] [backend.analysis.pipeline_video_frames:71] — End of video reached.
+[2025-11-24 14:29:44] [INFO] [backend.analysis.pipeline_video_frames:173] — Saved results:
+ - outputs\frames\Helsinki_short_yolo_20251124_122944.csv
+ - outputs\frames\Helsinki_short_ocr_20251124_122944.csv
+ - outputs\frames\Helsinki_short_summary.json
+[2025-11-24 14:29:44] [INFO] [backend.analysis.pipeline_video_frames:121] — Frame analysis complete.
+[2025-11-24 14:29:44] [INFO] [simple_runner:28] — ✅ Analysis complete! Detections: 372
