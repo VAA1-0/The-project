@@ -1,0 +1,128 @@
+│   .gitignore
+│   demo_video_analysis.py
+│   LICENSE
+│   README.md
+│   requirements.txt
+│   yolov8n.pt
+│   
+├───.ci
+│   └───github
+│           ci.yml
+│
+├───.vscode
+│       settings.json
+│       
+├───build
+│       pyinstaller.spec
+│
+├───config
+│       constants.py
+│
+├───docs
+│       mentor_notes.md
+│       user_guide.md
+│       working_pipeline_flowchart.png
+│
+├───logs
+│       vaa1_2025-11-06.log
+│       vaa1_2025-11-09.log
+│       vaa1_2025-11-17.log
+│
+├───models
+│       yolov8n.pt
+│       yolov8_video.py
+│
+├───outputs
+│   ├───frames
+│   │       Helsinki_main_street_annotated.mp4
+│   │       Helsinki_main_street_ocr_20251106_122659.csv
+│   │       Helsinki_main_street_ocr_20251106_195911.csv
+│   │       Helsinki_main_street_ocr_20251109_104804.csv
+│   │       Helsinki_main_street_ocr_20251117_081546.csv
+│   │       Helsinki_main_street_summary.json
+│   │       Helsinki_main_street_yolo_20251106_122659.csv
+│   │       Helsinki_main_street_yolo_20251106_195911.csv
+│   │       Helsinki_main_street_yolo_20251109_104804.csv
+│   │       Helsinki_main_street_yolo_20251117_081546.csv
+│   │
+│   ├───summaries
+│   └───transcripts
+├───samples
+│       Grand_Theft_Auto_VI_Trailer_1.mp4
+│       Helsinki_main_street.mp4
+│
+├───scripts
+│       start_dev_server.py
+│
+├───src
+│   │   app_launcer.py
+│   │   __init__.py
+│   │
+│   ├───backend
+│   │   │   main.py
+│   │   │
+│   │   ├───analysis
+│   │   │   │   pipeline_audio_text.py
+│   │   │   │   pipeline_ingestion.py
+│   │   │   │   pipeline_manager.py
+│   │   │   │   pipeline_nlp.py
+│   │   │   │   pipeline_summary.py
+│   │   │   │   pipeline_video_frames.py
+│   │   │   │
+│   │   │   └───__pycache__
+│   │   │           pipeline_video_frames.cpython-310.pyc
+│   │   │           pipeline_video_frames.cpython-314.pyc
+│   │   │
+│   │   ├───api
+│   │   │       routs_video.py
+│   │   │
+│   │   ├───core
+│   │   │       pipeline_manager.py
+│   │   │
+│   │   ├───database
+│   │   │       database.py
+│   │   │       models.py
+│   │   │
+│   │   ├───services
+│   │   │       notification_service.py
+│   │   │
+│   │   └───utils
+│   │       │   logger.py
+│   │       │
+│   │       └───__pycache__
+│   │               logger.cpython-310.pyc
+│   │
+│   ├───frontend
+│   │   │   .gitignore
+│   │   │   eslint.config.mjs
+│   │   │   next.config.ts
+│   │   │   package-lock.json
+│   │   │   package.json
+│   │   │   postcss.config.mjs
+│   │   │   README.md
+│   │   │   tsconfig.json
+│   │   │
+│   │   ├───app
+│   │   │       favicon.ico
+│   │   │       globals.css
+│   │   │       layout.tsx
+│   │   │       page.tsx
+│   │   │
+│   │   └───public
+│   │           file.svg
+│   │           globe.svg
+│   │           next.svg
+│   │           vercel.svg
+│   │           window.svg
+│   │
+│   └───__pycache__
+│           __init__.cpython-310.pyc
+│           __init__.cpython-314.pyc
+│
+└───tests
+        quick_test.py
+        simple_test.py
+        spacyTest.py
+        test_critical_deps.py
+        test_no_unicode.py
+        __init__.py
