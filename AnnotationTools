@@ -21,6 +21,9 @@ VIDAT	                  ✅ video focus	       TBD (basic)	                   Sm
 PythonVideoAnnotator	  ✅ video events	     limited bounding boxes	         Small scale	  Easier (Python GUI)
 VIA	                    ✅ basic	             bounding boxes/polygons	       Small scale	  Easy
 
+#Learn CVAT
+https://www.youtube.com/playlist?list=PL0to7Ng4PuuYQT4eXlHb_oIlq_RPeuasN
+https://www.youtube.com/watch?v=yxX_0-zr-2U&list=PLfYPZalDvZDLvFhjuflhrxk_lLplXUqqB
 
 # Running CVAT (Installation)
 -> https://github.com/cvat-ai/cvat?tab=readme-ov-file
@@ -113,4 +116,218 @@ print("Created video task:", task.id)
 This uploads the video and starts frame extraction on the CVAT server. ---->
 
 https://chatgpt.com/share/6912dc8b-aac8-8002-95ca-85f1c660090e
+
+<---- ABOUT CVAT
+
+Annotation format provided by CVAT
+{
+  "type": "bbox | polygon | mask | polyline | points",
+  "label_id": 2,
+  "frame": 120,
+  "attributes": {},
+  "points": [...],
+  "z_order": 0
+}
+
+Annotation subtypes
+| Type             | Use-case              |
+| ---------------- | --------------------- |
+| **Bounding Box** | Object detection      |
+| **Polygon**      | Instance segmentation |
+| **Polyline**     | Lanes, contours       |
+| **Points**       | Keypoints, landmarks  |
+| **Cuboids (3D)** | 3D perception         |
+| **Masks**        | Semantic segmentation |
+| **Tracks**       | Video tracking        |
+
+Input video format
+Videos (MP4, MKV)
+
+CVAT does not store data inside DB; it stores paths, and media stays on:
+Local disk (./cvat/data/)
+Cloud buckets
+
+Integration of ML with CVAT
+
+Label → Auto-Segment → Propagate → Track → Manual Adjust
+Model predicts → convert to CVAT format → upload → correction by annotators
+
+Output Dataset format
+Supported formats:
+
+YOLO (v3/v5/v8)
+COCO (instances, keypoints)
+Pascal VOC
+TFRecord
+DeepFashion
+MOT
+LabelMe
+ImageNet
+OpenImages
+Market1501
+
+---->
+
+<---- IMPLEMENTING CVAT
+
+## Building CVAT using own frontend and backend using only CVAT as an annotation Engine
+
+| Component           | Built by You | Built by CVAT |
+| ------------------- | ------------ | ------------- |
+| User management     | ✔            | ✔             |
+| Upload portal       | ✔            |               |
+| Custom UI           | ✔            |               |
+| Media handling      | ✔            |               |
+| Annotation Canvas   | Optional     |               |
+| Annotation storage  | CVAT         | ✔             |
+| Task/job assignment | ✔            | ✔             |
+| Data export         | ✔ via API    | ✔             |
+
+
+High Level Architecture
+                   +----------------------+
+                   |     Your Frontend    |
+                   |  (React/Angular/etc) |
+                   +----------+-----------+
+                              |
+                              v
+                    (Your REST API / Backend)
+                    +---------------------+
+                    |  Django/FastAPI     |
+                    |  Node/Express       |
+                    +----------+----------+
+                              |
+         -------------------------------------------------
+         |                      |                        |
+         v                      v                        v
++----------------+   +-------------------+    +----------------------+
+|  CVAT Backend  |   |  Your Database    |    |   Cloud Storage      |
+|  (Django API)  |   |  (Users, metadata)|    |  (Images/Videos)     |
++----------------+   +-------------------+    +----------------------+
+
+
+## Use standard Docker compose ->docker compose -f docker-compose.yml up -d
+
+This gives:
+CVAT backend API
+Redis (job queue)
+PostgreSQL
+CVAT UI (you can choose to ignore UI)
+Nginx proxy
+
+CVAT Backend API: http://<cvat-url>/api/
+
+## To ignore/disable CVAT UI
+
+Remove / comment out in docker-compose.yml:
+cvat_ui:
+  ...
+
+or
+don't give users access to the CVAT UI URL
+
+## Backend Communication with CVAT API
+
+You authenticate with CVAT using:
+
+Basic Auth
+Token
+Client credentials
+
+-> POST /api/auth/login
+
+## Backend creates tasks
+Backend receives a request like:
+POST /mybackend/create-task
+
+Backend then calls CVAT:
+POST http://cvat/api/tasks
+Body:
+{
+  "name": "video_task_001",
+  "project_id": 12
+}
+
+## uploading video to CVAT
+Backend uploads the media directly:
+POST /api/tasks/{id}/data
+    data: { } 
+    file: [...images/videos]
+
+OR
+CVAT reads from cloud storage
+CVAT supports:
+
+AWS S3
+GCP Storage
+OCI bucket
+Azure Blob
+
+POST /api/tasks/{id}/data
+{
+  "remote_files": [
+    "s3://bucket/folder/xyz.mp4"
+  ]
+}
+
+## Assign jobs to annotators
+Backend manages annotators.
+Each annotator has a CVAT user account created by backend:
+POST /api/users
+{
+  "username": "annotator1",
+  "password": "123456"
+}
+
+Assign a job:
+PATCH /api/jobs/{id}
+{
+  "assignee": 2
+}
+
+## Annotator works in custom frontend
+Rebuild the Annotation UI
+
+If you want your UI, you must use:
+Frame fetch API:
+-> GET /api/jobs/{id}/data?frame=0
+
+Annotation read/write:
+-> GET /api/jobs/{id}/annotations
+-> PUT /api/jobs/{id}/annotations
+
+Display frames manually
+Draw bounding boxes/polygons using your own canvas
+Save annotations via PUT
+
+## Export the annotations for training
+-> GET /api/tasks/{id}/annotations?format=COCO
+
+Then deliver the file to the ML pipeline.
+
+## Extra Feature: Automatic labeling
+Backend can connect your ML models to CVAT through:
+
+CVAT serverless functions
+Custom detector API
+Triton inference server
+YOLO/Detectron2 endpoints
+
+POST /api/serverless/functions/detector/invoke
+{
+  "task_id": 92
+}
+
+CVAT writes annotations automatically → annotators fix them.
+
+## CVAT API endpoints to use
+| Purpose            | Endpoint                                  |
+| ------------------ | ----------------------------------------- |
+| Create task        | `/api/tasks`                              |
+| Upload data        | `/api/tasks/{id}/data`                    |
+| Create user        | `/api/users`                              |
+| Assign job         | `/api/jobs/{id}`                          |
+| Fetch frame        | `/api/jobs/{id}/data?frame=N`             |
+| Save annotations   | `/api/jobs/{id}/annotations`              |
+| Export annotations | `/api/tasks/{id}/annotations?format=COCO` |
 
