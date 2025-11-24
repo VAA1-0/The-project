@@ -6,7 +6,9 @@ import csv
 model = YOLO('yolov8n.pt')
 
 # Path to your input video file
-video_path = r"C:/Users/mahdi/OneDrive/Documents/Coding101/VAA1/YOLOv8/Helsinki_main_street.mp4"  # Replace with the path to your video file
+# video_path = r"C:/Users/mahdi/OneDrive/Documents/Coding101/VAA1/YOLOv8/Helsinki_main_street.mp4"  # Replace with the path to your video file
+
+video_path = r"C:/Users/Amaan/Vaa/The-project/samples/Helsinki_main_street.mp4"  # Replace with the path to your video file
 
 # Open the video file
 cap = cv2.VideoCapture(video_path)
