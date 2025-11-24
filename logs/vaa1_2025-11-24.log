@@ -35,3 +35,13 @@
  - outputs\frames\Helsinki_short_summary.json
 [2025-11-24 14:29:44] [INFO] [backend.analysis.pipeline_video_frames:121] — Frame analysis complete.
 [2025-11-24 14:29:44] [INFO] [simple_runner:28] — ✅ Analysis complete! Detections: 372
+[2025-11-24 14:39:11] [INFO] [simple_runner:13] — ✅ Imports successful!
+[2025-11-24 14:39:13] [INFO] [simple_runner:25] — Starting analysis...
+[2025-11-24 14:39:13] [INFO] [backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_short.mp4
+[2025-11-24 14:39:18] [INFO] [backend.analysis.pipeline_video_frames:71] — End of video reached.
+[2025-11-24 14:39:18] [INFO] [backend.analysis.pipeline_video_frames:173] — Saved results:
+ - outputs\frames\Helsinki_short_yolo_20251124_123918.csv
+ - outputs\frames\Helsinki_short_ocr_20251124_123918.csv
+ - outputs\frames\Helsinki_short_summary.json
+[2025-11-24 14:39:18] [INFO] [backend.analysis.pipeline_video_frames:121] — Frame analysis complete.
+[2025-11-24 14:39:18] [INFO] [simple_runner:28] — ✅ Analysis complete! Detections: 372
