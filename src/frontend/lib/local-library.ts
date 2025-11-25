@@ -6,7 +6,7 @@ export interface VideoItem {
   id: string;
   name: string;
   length: number; // in seconds
-  folderId: string | null;
+  tag: string | null;
   analysis: any; // placeholder now
 }
 
@@ -50,7 +50,13 @@ export const Library = {
     save(state);
   },
 
-  updateVideo(id: string, updates: Partial<VideoItem>) {
+  updateVideoName(id: string, updates: Partial<VideoItem>) {
+    const state = load();
+    state.videos = state.videos.map(v => v.id === id ? { ...v, ...updates } : v);
+    save(state);
+  },
+
+  updateVideoTag(id: string, updates: Partial<VideoItem>) {
     const state = load();
     state.videos = state.videos.map(v => v.id === id ? { ...v, ...updates } : v);
     save(state);

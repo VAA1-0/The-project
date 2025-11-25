@@ -3,7 +3,7 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { use, useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -26,9 +26,13 @@ export const Dashboard: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
+  
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
+  const [tagEditId, setTagEditId] = useState<string | null>(null);
+  const [tagEditValue, setTagEditValue] = useState<string>("");
 
+  const [searchString, setSearchString] = useState<string>("");
 
   useEffect(() => {
     // Load persisted library metadata from local-library
@@ -39,6 +43,24 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    // Filter library videos based on search string
+    const allVideos = Library.getAll().videos;
+    if (searchString.trim() === "") {
+      setLibraryVideos(allVideos);
+    } else {
+      const filtered = allVideos.filter(v => 
+        v.name.toLowerCase().includes(searchString.toLowerCase()) ||
+        (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase())));
+      setLibraryVideos(filtered);
+    }
+  }, [searchString]);
+
+  // Handle search input change
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchString(e.target.value);
+  };
+
   // Callback when files are selected
   const onFilesSelected = useCallback((f: FileList | null) => {
     setFiles(f ? Array.from(f) : null);
@@ -48,13 +70,6 @@ export const Dashboard: React.FC = () => {
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
     if (!selected || selected.length === 0) return;
-
-    /*
-    const wrappedFiles = Array.from(selected).map((f) => ({
-      id: crypto.randomUUID(),
-      file: f,
-    }));
-    */
 
     setFiles(prev => {
       const arr = prev ? prev : [];
@@ -96,18 +111,6 @@ export const Dashboard: React.FC = () => {
     });
   }
 
-  /*
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] ?? null;
-    setFile(f);
-    if (f) {
-      setPreviewUrl(URL.createObjectURL(f));
-    } else {
-      setPreviewUrl(null);
-    }
-}
-  */
-
   // Upload handler (frontend-only): persist blob to IndexedDB and metadata to local Library
   const handleUpload = async () => {
     const selected = files || (file ? [file] as any : null);
@@ -122,7 +125,7 @@ export const Dashboard: React.FC = () => {
         // save blob to IndexedDB
         await saveVideoBlob(id, f);
         // register metadata in Library
-        Library.addVideo({ id, name: f.name, length: length, folderId: null, analysis: null });
+        Library.addVideo({ id, name: f.name, length: length, tag: null, analysis: null });
       }
 
       // refresh local view
@@ -167,7 +170,7 @@ export const Dashboard: React.FC = () => {
   // Rename video: edit metadata in Library
   const handleRenameVideo = async (id: string, newName: string) => {
   try {
-    Library.updateVideo(id, { name: newName });
+    Library.updateVideoName(id, { name: newName });
     setLibraryVideos(Library.getAll().videos);
     setRenameId(null);
     setRenameValue("");
@@ -177,6 +180,16 @@ export const Dashboard: React.FC = () => {
   }
 };
 
+  // Update video tag: edit metadata in Library
+  const handleUpdateVideoTag = async (id: string, newTag: string) => {
+    try {
+      Library.updateVideoTag(id, { tag: newTag });
+      setLibraryVideos(Library.getAll().videos);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update video tag: " + String(err));
+    }
+  };
 
   // Simulated sign out function
   const handleSignOut = () => {
@@ -359,7 +372,7 @@ export const Dashboard: React.FC = () => {
 
                 {/* Search bar */}
                   <div className="flex items-center justify-between">
-                    <Input placeholder="Search…" />
+                    <Input placeholder="Search…" value={searchString} onChange={handleSearchChange} />
                   </div>
 
                 {/* Video list */}
@@ -397,6 +410,38 @@ export const Dashboard: React.FC = () => {
                         </div>
 
                         <div className="flex gap-2">
+                          {tagEditId === vid.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={tagEditValue}
+                                onChange={(e) => setTagEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleUpdateVideoTag(vid.id, tagEditValue);
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }
+                                if (e.key === "Escape") {
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }
+                              }}
+                                className="h-8 w-40"
+                                autoFocus
+                              />
+                          </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              onClick={() => {
+                                  setTagEditId(vid.id);
+                                  setTagEditValue(vid.tag ?? ""); // prefill (ensure string)
+                                }}
+                            >
+                              Edit Tag
+                            </Button>
+                          )}
+
                           {renameId === vid.id ? (
                             <div className="flex items-center gap-2">
                               <Input
