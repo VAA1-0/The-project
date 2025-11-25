@@ -170,7 +170,22 @@ export const Dashboard: React.FC = () => {
   // Rename video: edit metadata in Library
   const handleRenameVideo = async (id: string, newName: string) => {
   try {
-    Library.updateVideoName(id, { name: newName });
+    // Preserve the original file extension. If the original name had an extension,
+    // strip any extension from the newName and append the original extension.
+    const orig = Library.getById(id);
+    let finalName = newName;
+    if (orig && orig.name) {
+      const dot = orig.name.lastIndexOf('.');
+      const origExt = dot >= 0 ? orig.name.slice(dot) : '';
+      if (origExt) {
+        // remove extension from user input if present
+        const userDot = newName.lastIndexOf('.');
+        const base = userDot >= 0 ? newName.slice(0, userDot) : newName;
+        finalName = base + origExt;
+      }
+    }
+
+    Library.updateVideoName(id, { name: finalName });
     setLibraryVideos(Library.getAll().videos);
     setRenameId(null);
     setRenameValue("");
@@ -429,6 +444,31 @@ export const Dashboard: React.FC = () => {
                                 className="h-8 w-40"
                                 autoFocus
                               />
+
+                              <Button
+                                size="sm"
+                                className="h-8"
+                                onClick={() => {
+                                  handleUpdateVideoTag(vid.id, tagEditValue);
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }}
+                              >
+                                Save
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8"
+                                onClick={() => {
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              
                           </div>
                           ) : (
                             <Button
@@ -444,21 +484,26 @@ export const Dashboard: React.FC = () => {
 
                           {renameId === vid.id ? (
                             <div className="flex items-center gap-2">
-                              <Input
-                                value={renameValue}
-                                onChange={(e) => setRenameValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleRenameVideo(vid.id, renameValue);
-                                }
-                                if (e.key === "Escape") {
-                                  setRenameId(null);
-                                  setRenameValue("");
-                                }
-                              }}
-                                className="h-8 w-40"
-                                autoFocus
-                              />
+                              <div className="flex items-stretch rounded-md overflow-hidden border border-slate-700">
+                                <Input
+                                  value={renameValue}
+                                  onChange={(e) => setRenameValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleRenameVideo(vid.id, renameValue);
+                                  }
+                                  if (e.key === "Escape") {
+                                    setRenameId(null);
+                                    setRenameValue("");
+                                  }
+                                }}
+                                  className="h-8 w-40 rounded-none"
+                                  autoFocus
+                                />
+                                <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
+                                  {vid.name.match(/\.[^.]+$/) ? vid.name.match(/\.[^.]+$/)![0] : ""}
+                                </div>
+                              </div>
 
                               <Button
                                 size="sm"
@@ -485,7 +530,8 @@ export const Dashboard: React.FC = () => {
                               variant="ghost"
                               onClick={() => {
                                 setRenameId(vid.id);
-                                setRenameValue(vid.name); // prefill
+                                // prefill the input without the extension so user can't change format
+                                setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
                               }}
                             >
                               Rename

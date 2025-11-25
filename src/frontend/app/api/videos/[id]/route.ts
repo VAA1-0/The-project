@@ -10,7 +10,14 @@ export async function GET(_: Request, { params }: any) {
 export async function PATCH(req: Request, { params }: any) {
   const { id } = params;
   const updates = await req.json();
-  Library.updateVideo(id, updates);
+  Library.updateVideoName(id, updates);
+  return NextResponse.json({ success: true });
+}
+
+export async function PUT(req: Request, { params }: any) {
+  const { id } = params;
+  const updates = await req.json();
+  Library.updateVideoTag(id, updates);
   return NextResponse.json({ success: true });
 }
 
