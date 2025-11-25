@@ -393,18 +393,6 @@ export const Dashboard: React.FC = () => {
                 {/* Video list */}
                   <div className="space-y-2">
 
-                    {/* Placeholder item */}
-                      <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">video_2025-10-01.mp4</div>
-                          <div className="text-xs text-slate-400">Analyzed • 91% confidence</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button onClick={() => handleView()} variant="ghost">View</Button>
-                          <Button variant="ghost">Delete</Button>
-                        </div>
-                      </div>
-
                     {/* Real mapped videos */}
                       {libraryVideos.length === 0 && (
                         <div className="text-sm text-slate-400 p-3">
@@ -447,7 +435,7 @@ export const Dashboard: React.FC = () => {
 
                               <Button
                                 size="sm"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => {
                                   handleUpdateVideoTag(vid.id, tagEditValue);
                                   setTagEditId(null);
@@ -460,7 +448,7 @@ export const Dashboard: React.FC = () => {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => {
                                   setTagEditId(null);
                                   setTagEditValue("");
@@ -468,11 +456,12 @@ export const Dashboard: React.FC = () => {
                               >
                                 Cancel
                               </Button>
-                              
+
                           </div>
                           ) : (
                             <Button
                               variant="ghost"
+                              className="h-8 hover:bg-slate-700/40 transition"
                               onClick={() => {
                                   setTagEditId(vid.id);
                                   setTagEditValue(vid.tag ?? ""); // prefill (ensure string)
@@ -507,7 +496,7 @@ export const Dashboard: React.FC = () => {
 
                               <Button
                                 size="sm"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => handleRenameVideo(vid.id, renameValue)}
                               >
                                 Save
@@ -516,7 +505,7 @@ export const Dashboard: React.FC = () => {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => {
                                   setRenameId(null);
                                   setRenameValue("");
@@ -528,6 +517,7 @@ export const Dashboard: React.FC = () => {
                           ) : (
                             <Button
                               variant="ghost"
+                              className="h-8 hover:bg-slate-700/40 transition"
                               onClick={() => {
                                 setRenameId(vid.id);
                                 // prefill the input without the extension so user can't change format
@@ -538,11 +528,11 @@ export const Dashboard: React.FC = () => {
                             </Button>
                           )}
 
-                          <Button onClick={() => handleView(vid.id)} variant="ghost">
+                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleView(vid.id)} variant="ghost">
                             View analysis
                           </Button>
 
-                          <Button onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
+                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
                             Delete
                           </Button>
                         </div>
