@@ -3,7 +3,7 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { use, useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -26,9 +26,13 @@ export const Dashboard: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
+  
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
+  const [tagEditId, setTagEditId] = useState<string | null>(null);
+  const [tagEditValue, setTagEditValue] = useState<string>("");
 
+  const [searchString, setSearchString] = useState<string>("");
 
   useEffect(() => {
     // Load persisted library metadata from local-library
@@ -39,6 +43,24 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    // Filter library videos based on search string
+    const allVideos = Library.getAll().videos;
+    if (searchString.trim() === "") {
+      setLibraryVideos(allVideos);
+    } else {
+      const filtered = allVideos.filter(v => 
+        v.name.toLowerCase().includes(searchString.toLowerCase()) ||
+        (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase())));
+      setLibraryVideos(filtered);
+    }
+  }, [searchString]);
+
+  // Handle search input change
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchString(e.target.value);
+  };
+
   // Callback when files are selected
   const onFilesSelected = useCallback((f: FileList | null) => {
     setFiles(f ? Array.from(f) : null);
@@ -48,13 +70,6 @@ export const Dashboard: React.FC = () => {
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files;
     if (!selected || selected.length === 0) return;
-
-    /*
-    const wrappedFiles = Array.from(selected).map((f) => ({
-      id: crypto.randomUUID(),
-      file: f,
-    }));
-    */
 
     setFiles(prev => {
       const arr = prev ? prev : [];
@@ -73,17 +88,28 @@ export const Dashboard: React.FC = () => {
     e.preventDefault();
   };
 
-  /*
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] ?? null;
-    setFile(f);
-    if (f) {
-      setPreviewUrl(URL.createObjectURL(f));
-    } else {
-      setPreviewUrl(null);
-    }
-}
-  */
+  // Read duration (in seconds) from a video File using a temporary HTMLVideoElement
+  async function getVideoDuration(file: File): Promise<number> {
+    return new Promise((resolve) => {
+      try {
+        const url = URL.createObjectURL(file);
+        const v = document.createElement("video");
+        v.preload = "metadata";
+        v.src = url;
+        v.onloadedmetadata = () => {
+          URL.revokeObjectURL(url);
+          const d = v.duration;
+          resolve(Number.isFinite(d) ? Math.round(d) : 0);
+        };
+        v.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve(0);
+        };
+      } catch (e) {
+        resolve(0);
+      }
+    });
+  }
 
   // Upload handler (frontend-only): persist blob to IndexedDB and metadata to local Library
   const handleUpload = async () => {
@@ -94,10 +120,12 @@ export const Dashboard: React.FC = () => {
       const arr = Array.from(selected as any) as File[];
       for (const f of arr) {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        // compute actual duration (in seconds) from the file
+        const length = await getVideoDuration(f);
         // save blob to IndexedDB
         await saveVideoBlob(id, f);
         // register metadata in Library
-        Library.addVideo({ id, name: f.name, folderId: null, analysis: null });
+        Library.addVideo({ id, name: f.name, length: length, tag: null, analysis: null });
       }
 
       // refresh local view
@@ -142,7 +170,22 @@ export const Dashboard: React.FC = () => {
   // Rename video: edit metadata in Library
   const handleRenameVideo = async (id: string, newName: string) => {
   try {
-    Library.updateVideo(id, { name: newName });
+    // Preserve the original file extension. If the original name had an extension,
+    // strip any extension from the newName and append the original extension.
+    const orig = Library.getById(id);
+    let finalName = newName;
+    if (orig && orig.name) {
+      const dot = orig.name.lastIndexOf('.');
+      const origExt = dot >= 0 ? orig.name.slice(dot) : '';
+      if (origExt) {
+        // remove extension from user input if present
+        const userDot = newName.lastIndexOf('.');
+        const base = userDot >= 0 ? newName.slice(0, userDot) : newName;
+        finalName = base + origExt;
+      }
+    }
+
+    Library.updateVideoName(id, { name: finalName });
     setLibraryVideos(Library.getAll().videos);
     setRenameId(null);
     setRenameValue("");
@@ -152,6 +195,16 @@ export const Dashboard: React.FC = () => {
   }
 };
 
+  // Update video tag: edit metadata in Library
+  const handleUpdateVideoTag = async (id: string, newTag: string) => {
+    try {
+      Library.updateVideoTag(id, { tag: newTag });
+      setLibraryVideos(Library.getAll().videos);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update video tag: " + String(err));
+    }
+  };
 
   // Simulated sign out function
   const handleSignOut = () => {
@@ -334,23 +387,11 @@ export const Dashboard: React.FC = () => {
 
                 {/* Search bar */}
                   <div className="flex items-center justify-between">
-                    <Input placeholder="Search…" />
+                    <Input placeholder="Search…" value={searchString} onChange={handleSearchChange} />
                   </div>
 
                 {/* Video list */}
                   <div className="space-y-2">
-
-                    {/* Placeholder item */}
-                      <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
-                        <div>
-                          <div className="font-medium">video_2025-10-01.mp4</div>
-                          <div className="text-xs text-slate-400">Analyzed • 91% confidence</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button onClick={() => handleView()} variant="ghost">View</Button>
-                          <Button variant="ghost">Delete</Button>
-                        </div>
-                      </div>
 
                     {/* Real mapped videos */}
                       {libraryVideos.length === 0 && (
@@ -372,18 +413,20 @@ export const Dashboard: React.FC = () => {
                         </div>
 
                         <div className="flex gap-2">
-                          {renameId === vid.id ? (
+                          {tagEditId === vid.id ? (
                             <div className="flex items-center gap-2">
                               <Input
-                                value={renameValue}
-                                onChange={(e) => setRenameValue(e.target.value)}
+                                value={tagEditValue}
+                                onChange={(e) => setTagEditValue(e.target.value)}
                                 onKeyDown={(e) => {
                                 if (e.key === "Enter") {
-                                  handleRenameVideo(vid.id, renameValue);
+                                  handleUpdateVideoTag(vid.id, tagEditValue);
+                                  setTagEditId(null);
+                                  setTagEditValue("");
                                 }
                                 if (e.key === "Escape") {
-                                  setRenameId(null);
-                                  setRenameValue("");
+                                  setTagEditId(null);
+                                  setTagEditValue("");
                                 }
                               }}
                                 className="h-8 w-40"
@@ -392,7 +435,68 @@ export const Dashboard: React.FC = () => {
 
                               <Button
                                 size="sm"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
+                                onClick={() => {
+                                  handleUpdateVideoTag(vid.id, tagEditValue);
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }}
+                              >
+                                Save
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 hover:bg-slate-700/40 transition"
+                                onClick={() => {
+                                  setTagEditId(null);
+                                  setTagEditValue("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+
+                          </div>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              className="h-8 hover:bg-slate-700/40 transition"
+                              onClick={() => {
+                                  setTagEditId(vid.id);
+                                  setTagEditValue(vid.tag ?? ""); // prefill (ensure string)
+                                }}
+                            >
+                              Edit Tag
+                            </Button>
+                          )}
+
+                          {renameId === vid.id ? (
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-stretch rounded-md overflow-hidden border border-slate-700">
+                                <Input
+                                  value={renameValue}
+                                  onChange={(e) => setRenameValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleRenameVideo(vid.id, renameValue);
+                                  }
+                                  if (e.key === "Escape") {
+                                    setRenameId(null);
+                                    setRenameValue("");
+                                  }
+                                }}
+                                  className="h-8 w-40 rounded-none"
+                                  autoFocus
+                                />
+                                <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
+                                  {vid.name.match(/\.[^.]+$/) ? vid.name.match(/\.[^.]+$/)![0] : ""}
+                                </div>
+                              </div>
+
+                              <Button
+                                size="sm"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => handleRenameVideo(vid.id, renameValue)}
                               >
                                 Save
@@ -401,7 +505,7 @@ export const Dashboard: React.FC = () => {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-8"
+                                className="h-8 hover:bg-slate-700/40 transition"
                                 onClick={() => {
                                   setRenameId(null);
                                   setRenameValue("");
@@ -413,20 +517,22 @@ export const Dashboard: React.FC = () => {
                           ) : (
                             <Button
                               variant="ghost"
+                              className="h-8 hover:bg-slate-700/40 transition"
                               onClick={() => {
                                 setRenameId(vid.id);
-                                setRenameValue(vid.name); // prefill
+                                // prefill the input without the extension so user can't change format
+                                setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
                               }}
                             >
                               Rename
                             </Button>
                           )}
 
-                          <Button onClick={() => handleView(vid.id)} variant="ghost">
+                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleView(vid.id)} variant="ghost">
                             View analysis
                           </Button>
 
-                          <Button onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
+                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
                             Delete
                           </Button>
                         </div>

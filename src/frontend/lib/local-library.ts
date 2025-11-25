@@ -5,7 +5,8 @@ const LIB_KEY = "local_video_library";
 export interface VideoItem {
   id: string;
   name: string;
-  folderId: string | null;
+  length: number; // in seconds
+  tag: string | null;
   analysis: any; // placeholder now
 }
 
@@ -49,7 +50,13 @@ export const Library = {
     save(state);
   },
 
-  updateVideo(id: string, updates: Partial<VideoItem>) {
+  updateVideoName(id: string, updates: Partial<VideoItem>) {
+    const state = load();
+    state.videos = state.videos.map(v => v.id === id ? { ...v, ...updates } : v);
+    save(state);
+  },
+
+  updateVideoTag(id: string, updates: Partial<VideoItem>) {
     const state = load();
     state.videos = state.videos.map(v => v.id === id ? { ...v, ...updates } : v);
     save(state);

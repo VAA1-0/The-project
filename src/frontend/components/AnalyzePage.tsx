@@ -9,7 +9,6 @@ import { getVideoBlob } from "@/lib/blob-store";
 import { Library } from "@/lib/local-library";
 
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import {
   Card,
   CardContent,
@@ -21,12 +20,6 @@ import { Separator } from "./ui/separator";
 import {Toggle, toggleVariants} from "./ui/toggle";
 import { GameRunLogo } from "./ProjectLogo";
 
-// AnalyzePage — rewritten to use the shared UI components (Card, Button, Input)
-// Layout choices:
-// - Header at top (Back / Export / Share)
-// - Two-column content: left = video + timeline, right = insights + transcript
-// - Cards used for each major area for visual consistency with Dashboard
-
 export default function AnalyzePage() {
   const router = useRouter();
 
@@ -34,7 +27,18 @@ export default function AnalyzePage() {
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
-  const [search, setSearch] = useState("");
+
+  // Helper: format seconds into H:MM:SS or M:SS
+  function formatDuration(sec?: number | null) {
+    if (sec == null || isNaN(Number(sec))) return "…";
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    if (h > 0) return `${h}:${pad(m)}:${pad(ss)}`;
+    return `${m}:${pad(ss)}`;
+  }
 
   // Toggle states
   const [showTranscript, setShowTranscript] = useState(true);
@@ -50,6 +54,58 @@ export default function AnalyzePage() {
   const [expandQuantity, setExpandQuantity] = useState(false);
   const [expandAnnotations, setExpandAnnotations] = useState(false);
 
+
+
+  // KIAVASH HERE : RAW DATA EXPORT STATES
+  const [isLoading, setIsLoading] = useState(true);
+  const [rawCsv, setRawCsv] = useState<string | null>(null);
+
+  // KIAVASH HERE : LOAD RAW DATA EFFECT
+  React.useEffect(() => {
+    async function fetchRawData() {
+      if (!id) return;
+      setIsLoading(true);
+      try {
+        // Simulate fetching raw CSV data from backend or IndexedDB
+        // Replace this with actual data fetching logic
+        const simulatedCsv = `timestamp,object,confidence\n00:00,Person,0.98\n00:05,Laptop,0.95\n00:10,Person,0.97\n`;
+        // Simulate network delay
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        setRawCsv(simulatedCsv);
+      } catch (error) {
+        console.error("Error fetching raw CSV data:", error);
+        setRawCsv(null);
+      }
+      setIsLoading(false);
+    }
+    fetchRawData();
+  }, [id]);
+
+  //KIAVASH HERE : ANALYZE VIDEO EFFECT
+  React.useEffect(() => {
+    async function analyzeVideo() {
+      if (!id) return;
+      // Simulate video analysis process
+      console.log(`Analyzing video with ID: ${id}`);
+      // Add your analysis logic here
+    }
+    analyzeVideo();
+  }, [id]);
+
+  // KIAVASH HERE : ANALYZE VIDEO HANDLER
+  function handleAnalyzeVideo() {
+    alert("Starting analysis (stub)");
+  }
+
+  // KIAVASH HERE : EXPORT RAW DATA HANDLER
+  function handleExport() {
+    // Hook your export logic here
+    alert("Exporting analysis (stub)");
+  }
+
+  
+  
+  // Load video and metadata on mount
   React.useEffect(() => {
     async function load() {
       if (!id) return;
@@ -112,13 +168,8 @@ export default function AnalyzePage() {
     router.push("/");
   }
 
-  function handleExport() {
-    // Hook your export logic here
-    alert("Exporting analysis (stub)");
-  }
-
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+    <div className=" flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       {/* Header */}
       <header className="w-full border-b border-slate-700 bg-slate-800/50">
         <div className="max-w-7xl  px-6 py-4 flex items-center justify-between">
@@ -350,9 +401,68 @@ export default function AnalyzePage() {
             </CardHeader>
             <CardContent className="text-sm text-slate-300 space-y-1">
               <div><span className="text-slate-400">Filename:</span> {metadata?.name ?? "…"}</div>
-              <div><span className="text-slate-400">Duration:</span> 2:45</div>
+              <div><span className="text-slate-400">Duration:</span> {formatDuration(metadata?.length)}</div>
             </CardContent>
           </Card>
+
+
+          {/* KIAVASH HERE : RAW DATA EXPORT */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader>
+              <div className="flex items-center justify-between w-full">
+                <div>
+                  <CardTitle>Raw Data</CardTitle>
+                  <CardDescription>Video data from CSV file</CardDescription>
+                </div>
+
+
+                {/* Button to start analyzing video*/}
+                <Button
+                  variant="default"
+                  className="bg-green-600/40 hover:bg-green-600/60 transition"
+                  onClick={handleAnalyzeVideo}
+                >
+                  Analyze
+                </Button>
+
+                {/* Download CSV button */}
+                <Button
+                  variant="default"
+                  className="bg-blue-600/40 hover:bg-blue-600/60 transition"
+                  onClick={handleExport}
+                >
+                  Download
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="text-sm text-slate-300">
+
+              {/* Loading indicator */}
+              {isLoading && (
+                <div className="text-slate-400 italic py-4">
+                  Loading CSV data…
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!isLoading && !rawCsv && (
+                <div className="text-slate-400 py-4">
+                  No raw data available for this video yet.
+                </div>
+              )}
+
+              {/* Scrollable CSV viewer */}
+              {!isLoading && rawCsv && (
+                <div className="mt-2 max-h-[300px] overflow-auto rounded-lg bg-slate-900/40 p-3 border border-slate-700">
+                  <pre className="whitespace-pre text-xs font-mono text-slate-200">
+                    {rawCsv}
+                  </pre>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
         </aside>
 
       </div>
