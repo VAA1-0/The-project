@@ -24,24 +24,34 @@ logger = get_logger(__name__)
 
 class FrameAnalysisPipeline:
     def __init__(
-        self,
-        video_path: str,
-        output_dir: str = "outputs/frames",
-        yolo_model_path: str = "models/yolov8n.pt",
-        languages: list = ["en"]
-    ):
+    self,
+    video_path: str,
+    output_dir: str = "outputs/frames",
+    yolo_model_path: str = "models/yolov8n.pt",
+    languages: list = ["en"]
+):
         self.video_path = Path(video_path)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize models
+    # Create subdirectories for organized output
+        self.videos_dir = self.output_dir / "videos"
+        self.csv_dir = self.output_dir / "csv"
+        self.json_dir = self.output_dir / "json"
+    
+    # Ensure subdirectories exist
+        self.videos_dir.mkdir(exist_ok=True)
+        self.csv_dir.mkdir(exist_ok=True)
+        self.json_dir.mkdir(exist_ok=True)
+
+    # Initialize models
         self.yolo = YOLO(yolo_model_path)
         self.ocr = easyocr.Reader(languages)
 
         self.video_name = self.video_path.stem
-        self.output_video_path = self.output_dir / f"{self.video_name}_annotated.mp4"
-
-        # Containers for detection data
+        # Store output video in videos subdirectory
+        self.output_video_path = self.videos_dir / f"{self.video_name}_annotated.mp4"
+    # Containers for detection data
         self.yolo_results_list = []
         self.ocr_results_list = []
 
@@ -123,6 +133,10 @@ class FrameAnalysisPipeline:
             "yolo_results": self.yolo_results_list,
             "ocr_results": self.ocr_results_list,
             "annotated_video": str(self.output_video_path),
+            "yolo_csv": str(self.yolo_csv_path),
+            "ocr_csv": str(self.ocr_csv_path),
+            "summary_json": str(self.json_path),
+            "output_directory": str(self.output_dir)
         }
 
     def run_ocr(self, frame, timestamp: float):
@@ -145,16 +159,15 @@ class FrameAnalysisPipeline:
             cv2.putText(frame, text, (pts[0][0], pts[0][1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         return ocr_data
-
     def _save_results(self):
-        """Save YOLO and OCR results as CSV and JSON."""
+        """Save YOLO and OCR results as CSV and JSON in organized directories."""
         timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
         yolo_df = pd.DataFrame(self.yolo_results_list)
         ocr_df = pd.DataFrame(self.ocr_results_list)
-
-        yolo_csv = self.output_dir / f"{self.video_name}_yolo_{timestamp_str}.csv"
-        ocr_csv = self.output_dir / f"{self.video_name}_ocr_{timestamp_str}.csv"
+    # Save CSV files in csv subdirectory
+        yolo_csv = self.csv_dir / f"{self.video_name}_yolo_{timestamp_str}.csv"
+        ocr_csv = self.csv_dir / f"{self.video_name}_ocr_{timestamp_str}.csv"
 
         yolo_df.to_csv(yolo_csv, index=False)
         ocr_df.to_csv(ocr_csv, index=False)
@@ -165,9 +178,23 @@ class FrameAnalysisPipeline:
             "num_yolo_detections": len(yolo_df),
             "num_ocr_detections": len(ocr_df),
             "output_video": str(self.output_video_path),
+            "output_files": {
+                "yolo_csv": str(yolo_csv),
+                "ocr_csv": str(ocr_csv)
+            }
         }
 
-        json_path = self.output_dir / f"{self.video_name}_summary.json"
+        # Save JSON in json subdirectory
+        json_path = self.json_dir / f"{self.video_name}_summary.json"
         pd.Series(summary_json).to_json(json_path)
 
-        logger.info(f"Saved results:\n - {yolo_csv}\n - {ocr_csv}\n - {json_path}")
+        logger.info(f"Saved organized results:")
+        logger.info(f" - Video: {self.output_video_path}")
+        logger.info(f" - YOLO CSV: {yolo_csv}")
+        logger.info(f" - OCR CSV: {ocr_csv}")
+        logger.info(f" - Summary: {json_path}")
+        
+        # Store these for the return statement
+        self.yolo_csv_path = yolo_csv
+        self.ocr_csv_path = ocr_csv
+        self.json_path = json_path
