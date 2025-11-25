@@ -73,6 +73,29 @@ export const Dashboard: React.FC = () => {
     e.preventDefault();
   };
 
+  // Read duration (in seconds) from a video File using a temporary HTMLVideoElement
+  async function getVideoDuration(file: File): Promise<number> {
+    return new Promise((resolve) => {
+      try {
+        const url = URL.createObjectURL(file);
+        const v = document.createElement("video");
+        v.preload = "metadata";
+        v.src = url;
+        v.onloadedmetadata = () => {
+          URL.revokeObjectURL(url);
+          const d = v.duration;
+          resolve(Number.isFinite(d) ? Math.round(d) : 0);
+        };
+        v.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve(0);
+        };
+      } catch (e) {
+        resolve(0);
+      }
+    });
+  }
+
   /*
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
@@ -94,10 +117,12 @@ export const Dashboard: React.FC = () => {
       const arr = Array.from(selected as any) as File[];
       for (const f of arr) {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        // compute actual duration (in seconds) from the file
+        const length = await getVideoDuration(f);
         // save blob to IndexedDB
         await saveVideoBlob(id, f);
         // register metadata in Library
-        Library.addVideo({ id, name: f.name, folderId: null, analysis: null });
+        Library.addVideo({ id, name: f.name, length: length, folderId: null, analysis: null });
       }
 
       // refresh local view

@@ -28,6 +28,18 @@ export default function AnalyzePage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
 
+  // Helper: format seconds into H:MM:SS or M:SS
+  function formatDuration(sec?: number | null) {
+    if (sec == null || isNaN(Number(sec))) return "…";
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    if (h > 0) return `${h}:${pad(m)}:${pad(ss)}`;
+    return `${m}:${pad(ss)}`;
+  }
+
   // Toggle states
   const [showTranscript, setShowTranscript] = useState(true);
   const [showSummary, setShowSummary] = useState(true);
@@ -389,7 +401,7 @@ export default function AnalyzePage() {
             </CardHeader>
             <CardContent className="text-sm text-slate-300 space-y-1">
               <div><span className="text-slate-400">Filename:</span> {metadata?.name ?? "…"}</div>
-              <div><span className="text-slate-400">Duration:</span> 2:45</div>
+              <div><span className="text-slate-400">Duration:</span> {formatDuration(metadata?.length)}</div>
             </CardContent>
           </Card>
 

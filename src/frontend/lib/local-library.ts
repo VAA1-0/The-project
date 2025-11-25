@@ -5,6 +5,7 @@ const LIB_KEY = "local_video_library";
 export interface VideoItem {
   id: string;
   name: string;
+  length: number; // in seconds
   folderId: string | null;
   analysis: any; // placeholder now
 }
