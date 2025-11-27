@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import "../../../styles/globals.css";
+import "../../../../styles/globals.css";
 import AnalyzePage from "@/components/AnalyzePage";
 
 export const metadata: Metadata = {

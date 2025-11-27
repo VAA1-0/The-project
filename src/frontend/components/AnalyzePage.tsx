@@ -18,7 +18,6 @@ import {
 } from "./ui/card";
 import { Separator } from "./ui/separator";
 import {Toggle, toggleVariants} from "./ui/toggle";
-import { GameRunLogo } from "./ProjectLogo";
 
 export default function AnalyzePage() {
   const router = useRouter();
@@ -53,6 +52,15 @@ export default function AnalyzePage() {
   const [expandObjects, setExpandObjects] = useState(false);
   const [expandQuantity, setExpandQuantity] = useState(false);
   const [expandAnnotations, setExpandAnnotations] = useState(false);
+
+  // Compact toggle definitions to render via map (reduces repeated JSX)
+  const toggleItems = [
+    { key: "transcript", label: "Speech-to-Text", pressed: showTranscript, setPressed: setShowTranscript },
+    { key: "summary", label: "Summary", pressed: showSummary, setPressed: setShowSummary },
+    { key: "objects", label: "Object Detection", pressed: showObjects, setPressed: setShowObjects },
+    { key: "quantity", label: "Quantity Detection", pressed: showQuantity, setPressed: setShowQuantity },
+    { key: "annotations", label: "Annotation", pressed: showAnnotations, setPressed: setShowAnnotations },
+  ];
 
 
 
@@ -159,61 +167,8 @@ export default function AnalyzePage() {
   const summaryText =
     "This is a placeholder summary. When backend is connected, this section will show auto-generated short summaries.";
 
-  function handleBack() {
-    router.push("/dashboard");
-  }
-
-  function handleSignOut() {
-    // Hook your sign-out logic here
-    router.push("/");
-  }
-
   return (
     <div className=" flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-      {/* Header */}
-      <header className="w-full border-b border-slate-700 bg-slate-800/50">
-        <div className="max-w-7xl  px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3" onClick={handleBack}>
-              <GameRunLogo size="sm" />
-            </div>
-          
-          {/*NOTE: Dividers could be a reusable component */}
-          <div className="flex-1 px-3.5 py-0.5 flex justify-start items-center gap-2.5">
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition" onClick={handleBack}>Dashboard</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Upload Video</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">What's New!</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Contact Us</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">About Us</Button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 justify-end">
-            <Button
-              variant="ghost"
-              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
-                </svg>
-                <span className="text-sm text-slate-200">Light Mode</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={handleSignOut}
-              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
-            >
-              Sign Out
-            </Button>
-
-          </div>
-        </div>
-      </header>
 
       {/* BODY LAYOUT */}
       <div className="flex flex-1 overflow-hidden">
@@ -233,47 +188,19 @@ export default function AnalyzePage() {
 
           <Separator />
 
-          {/* TOGGLES */}
+          {/* TOGGLES (rendered from compact config) */}
           <div className="space-y-3">
-            <Toggle 
-              pressed={showTranscript} 
-              onPressedChange={setShowTranscript} 
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            {toggleItems.map((t) => (
+              <Toggle
+                key={t.key}
+                pressed={t.pressed}
+                // cast to any because Toggle's onPressedChange signature may be (v:boolean)=>void
+                onPressedChange={t.setPressed as any}
+                className="cursor-pointer w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
               >
-                Speech-to-Text
-            </Toggle>
-
-            <Toggle
-              pressed={showSummary}
-              onPressedChange={setShowSummary}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Summary
-            </Toggle>
-
-            <Toggle
-              pressed={showObjects}
-              onPressedChange={setShowObjects}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Object Detection
-            </Toggle>
-
-            <Toggle
-              pressed={showQuantity}
-              onPressedChange={setShowQuantity}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Quantity Detection
-            </Toggle>
-
-            <Toggle
-              pressed={showAnnotations}
-              onPressedChange={setShowAnnotations}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Annotation
-            </Toggle>
+                {t.label}
+              </Toggle>
+            ))}
           </div>
         </aside>
 

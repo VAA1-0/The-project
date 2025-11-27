@@ -14,8 +14,8 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
-import { GameRunLogo } from "./ProjectLogo";
 import { Library } from "@/lib/local-library";
+import VideoItem from "./VideoItem";
 import { saveVideoBlob, getVideoBlob, deleteVideoBlob, listBlobKeys } from "@/lib/blob-store";
 
 export const Dashboard: React.FC = () => {
@@ -27,10 +27,7 @@ export const Dashboard: React.FC = () => {
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
   
-  const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState<string>("");
-  const [tagEditId, setTagEditId] = useState<string | null>(null);
-  const [tagEditValue, setTagEditValue] = useState<string>("");
+  // Per-item edit UI is handled inside `VideoItem` now.
 
   const [searchString, setSearchString] = useState<string>("");
 
@@ -144,7 +141,11 @@ export const Dashboard: React.FC = () => {
   
   // Navigate to analyze results page, later navigates to specific video analysis with file ID/name
   const handleView = async (id?: string) => {
-    router.push(`/analyze-results/${id}`);
+    // Use an absolute path so navigation isn't resolved relative to the current route.
+    // Also encode the id to be safe for URLs and handle missing id gracefully.
+    const base = "/dashboard/analyze-results";
+    const target = id ? `${base}/${encodeURIComponent(id)}` : base;
+    await router.push(target);
   }
 
   // Delete a video: remove blob from IndexedDB and metadata from Library
@@ -187,8 +188,7 @@ export const Dashboard: React.FC = () => {
 
     Library.updateVideoName(id, { name: finalName });
     setLibraryVideos(Library.getAll().videos);
-    setRenameId(null);
-    setRenameValue("");
+    // per-item UI state is managed in VideoItem; no local clear needed here
   } catch (err) {
     console.error(err);
     alert("Failed to rename video: " + String(err));
@@ -206,11 +206,6 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  // Simulated sign out function
-  const handleSignOut = () => {
-    router.push("/");
-  };
-
   // Sample stats data
   const stats = [
     { id: "total", title: "Total Videos", value: 3, colorBg: "bg-blue-600/20" },
@@ -221,29 +216,6 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-
-      {/* Header */}
-      <header className="max-w-8xl mx-auto px-6 py-5 flex items-center justify-between bg-slate-800/50 border-b border-slate-700">
-        <div className="flex items-center gap-3">
-          <GameRunLogo size="md" />
-          <div className="text-xl font-semibold">Dashboard</div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
-            </svg>
-            <span className="text-sm text-slate-200">
-                Light Mode
-            </span>
-          </div>
-
-          <Button onClick={handleSignOut} variant="ghost" className="hidden sm:inline-flex">
-            Sign Out
-          </Button>
-        </div>
-      </header>
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
@@ -274,7 +246,7 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("upload")}
                 variant="ghost"
-                className={`px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""}`}
               >
                 Upload Video
               </Button>
@@ -282,7 +254,7 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
-                className={`px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""}`}
               >
                 Video Library
               </Button>
@@ -333,7 +305,7 @@ export const Dashboard: React.FC = () => {
                       />
 
                       <Button
-                        className="bg-blue-600"
+                        className="cursor-pointer bg-blue-600"
                         onClick={() => document.getElementById("videoUpload")?.click()}
                       >
                         Choose File
@@ -343,7 +315,7 @@ export const Dashboard: React.FC = () => {
                     <Button
                       disabled={!files || uploading}
                       onClick={handleUpload}
-                      className="bg-white text-slate-900"
+                      className="cursor-pointer bg-white text-slate-900"
                     >
                       {previewUrl && <video src={previewUrl} controls className="w-full mt-2 max-h-40" />}
                       {uploading
@@ -413,128 +385,13 @@ export const Dashboard: React.FC = () => {
                         </div>
 
                         <div className="flex gap-2">
-                          {tagEditId === vid.id ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                value={tagEditValue}
-                                onChange={(e) => setTagEditValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleUpdateVideoTag(vid.id, tagEditValue);
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }
-                                if (e.key === "Escape") {
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }
-                              }}
-                                className="h-8 w-40"
-                                autoFocus
-                              />
-
-                              <Button
-                                size="sm"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  handleUpdateVideoTag(vid.id, tagEditValue);
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }}
-                              >
-                                Save
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
-
-                          </div>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              className="h-8 hover:bg-slate-700/40 transition"
-                              onClick={() => {
-                                  setTagEditId(vid.id);
-                                  setTagEditValue(vid.tag ?? ""); // prefill (ensure string)
-                                }}
-                            >
-                              Edit Tag
-                            </Button>
-                          )}
-
-                          {renameId === vid.id ? (
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-stretch rounded-md overflow-hidden border border-slate-700">
-                                <Input
-                                  value={renameValue}
-                                  onChange={(e) => setRenameValue(e.target.value)}
-                                  onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    handleRenameVideo(vid.id, renameValue);
-                                  }
-                                  if (e.key === "Escape") {
-                                    setRenameId(null);
-                                    setRenameValue("");
-                                  }
-                                }}
-                                  className="h-8 w-40 rounded-none"
-                                  autoFocus
-                                />
-                                <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
-                                  {vid.name.match(/\.[^.]+$/) ? vid.name.match(/\.[^.]+$/)![0] : ""}
-                                </div>
-                              </div>
-
-                              <Button
-                                size="sm"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => handleRenameVideo(vid.id, renameValue)}
-                              >
-                                Save
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  setRenameId(null);
-                                  setRenameValue("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              className="h-8 hover:bg-slate-700/40 transition"
-                              onClick={() => {
-                                setRenameId(vid.id);
-                                // prefill the input without the extension so user can't change format
-                                setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
-                              }}
-                            >
-                              Rename
-                            </Button>
-                          )}
-
-                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleView(vid.id)} variant="ghost">
-                            View analysis
-                          </Button>
-
-                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
-                            Delete
-                          </Button>
+                          <VideoItem
+                            vid={vid}
+                            onView={handleView}
+                            onDelete={handleDeleteVideo}
+                            onRename={handleRenameVideo}
+                            onUpdateTag={handleUpdateVideoTag}
+                          />
                         </div>
                       </div>
                       ))}
