@@ -1,0 +1,7 @@
+[2025-11-09 20:15:36] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:16:09] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-09 20:21:17] [INFO] [src.backend.analysis.pipeline_video_frames:71] — End of video reached.
+[2025-11-09 20:39:14] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:39:16] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-09 20:47:47] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:47:49] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
