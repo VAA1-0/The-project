@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { Library } from "@/lib/local-library";
+import { getAll, addVideo } from "@/server/video-store";
 
 // GET all videos
 export async function GET() {
-  return NextResponse.json(Library.getAll().videos);
+  const all = await getAll();
+  return NextResponse.json(all);
 }
 
 // POST new video
 export async function POST(req: Request) {
   const body = await req.json();
-  Library.addVideo(body);
+  await addVideo(body);
   return NextResponse.json({ success: true });
 }

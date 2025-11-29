@@ -14,9 +14,9 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
-import { Library } from "@/lib/local-library";
+import { VideoService } from "@/lib/video-service";
 import VideoItem from "./VideoItem";
-import { saveVideoBlob, getVideoBlob, deleteVideoBlob, listBlobKeys } from "@/lib/blob-store";
+import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
@@ -32,25 +32,40 @@ export const Dashboard: React.FC = () => {
   const [searchString, setSearchString] = useState<string>("");
 
   useEffect(() => {
-    // Load persisted library metadata from local-library
-    try {
-      setLibraryVideos(Library.getAll().videos);
-    } catch (e) {
-      setLibraryVideos([]);
-    }
+    // Load persisted library metadata via VideoService
+    let mounted = true;
+    (async () => {
+      try {
+        const list = await VideoService.list();
+        if (mounted) setLibraryVideos(list);
+      } catch (e) {
+        if (mounted) setLibraryVideos([]);
+      }
+    })();
+    return () => { mounted = false };
   }, []);
 
   useEffect(() => {
-    // Filter library videos based on search string
-    const allVideos = Library.getAll().videos;
-    if (searchString.trim() === "") {
-      setLibraryVideos(allVideos);
-    } else {
-      const filtered = allVideos.filter(v => 
-        v.name.toLowerCase().includes(searchString.toLowerCase()) ||
-        (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase())));
-      setLibraryVideos(filtered);
-    }
+    // Filter library videos based on search string (query backend/local list each time)
+    let mounted = true;
+    (async () => {
+      try {
+        const all = await VideoService.list();
+        if (!mounted) return;
+        if (searchString.trim() === "") {
+          setLibraryVideos(all as any[]);
+          return;
+        }
+        const filtered = (all as any[]).filter((v: any) =>
+          v.name.toLowerCase().includes(searchString.toLowerCase()) ||
+          (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase()))
+        );
+        setLibraryVideos(filtered);
+      } catch (e) {
+        if (mounted) setLibraryVideos([]);
+      }
+    })();
+    return () => { mounted = false };
   }, [searchString]);
 
   // Handle search input change
@@ -116,17 +131,15 @@ export const Dashboard: React.FC = () => {
     try {
       const arr = Array.from(selected as any) as File[];
       for (const f of arr) {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
         // compute actual duration (in seconds) from the file
         const length = await getVideoDuration(f);
-        // save blob to IndexedDB
-        await saveVideoBlob(id, f);
-        // register metadata in Library
-        Library.addVideo({ id, name: f.name, length: length, tag: null, analysis: null });
+        // use VideoService to upload (saves blob + metadata)
+        await VideoService.upload(f, length);
       }
 
       // refresh local view
-      setLibraryVideos(Library.getAll().videos);
+      const list = await VideoService.list();
+      setLibraryVideos(list);
       setFiles(null);
       setFile(null);
       setPreviewUrl(null);
@@ -152,16 +165,22 @@ export const Dashboard: React.FC = () => {
   const handleDeleteVideo = async (id: string) => {
     if (!confirm("Delete this video? This cannot be undone.")) return;
     try {
-      // remove blob (best-effort)
+      // Optimistic: remove from UI immediately and keep a backup for rollback
+      const backup = libraryVideos.find(v => v.id === id);
+      setLibraryVideos(prev => prev.filter(v => v.id !== id));
+
       try {
-        await deleteVideoBlob(id);
-      } catch (e) {
-        console.warn("Failed to delete blob from IndexedDB", e);
+        await VideoService.delete(id);
+      } catch (err) {
+        // rollback on failure
+        console.error("Delete failed, restoring item", err);
+        if (backup) setLibraryVideos(prev => [backup, ...(prev || [])]);
+        alert("Failed to delete video: " + String(err));
+        return;
       }
 
-      // remove metadata
-      Library.deleteVideo(id);
-      setLibraryVideos(Library.getAll().videos);
+      // ensure local blob is removed
+      try { await deleteVideoBlob(id); } catch (e) { console.warn("Failed to delete local blob", e); }
     } catch (err) {
       console.error(err);
       alert("Failed to delete video: " + String(err));
@@ -173,7 +192,7 @@ export const Dashboard: React.FC = () => {
   try {
     // Preserve the original file extension. If the original name had an extension,
     // strip any extension from the newName and append the original extension.
-    const orig = Library.getById(id);
+    const orig = await VideoService.get(id);
     let finalName = newName;
     if (orig && orig.name) {
       const dot = orig.name.lastIndexOf('.');
@@ -186,8 +205,19 @@ export const Dashboard: React.FC = () => {
       }
     }
 
-    Library.updateVideoName(id, { name: finalName });
-    setLibraryVideos(Library.getAll().videos);
+    // Optimistic update
+    const prev = libraryVideos.find(v => v.id === id)?.name;
+    setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: finalName, status: "pending" } : v));
+    try {
+      await VideoService.rename(id, finalName);
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+    } catch (err) {
+      // rollback
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v));
+      console.error(err);
+      alert("Failed to rename video: " + String(err));
+      return;
+    }
     // per-item UI state is managed in VideoItem; no local clear needed here
   } catch (err) {
     console.error(err);
@@ -198,8 +228,16 @@ export const Dashboard: React.FC = () => {
   // Update video tag: edit metadata in Library
   const handleUpdateVideoTag = async (id: string, newTag: string) => {
     try {
-      Library.updateVideoTag(id, { tag: newTag });
-      setLibraryVideos(Library.getAll().videos);
+      const prev = libraryVideos.find(v => v.id === id)?.tag ?? null;
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: newTag, status: "pending" } : v));
+      try {
+        await VideoService.updateTag(id, newTag);
+        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+      } catch (err) {
+        // rollback
+        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: prev, status: "failed" } : v));
+        throw err;
+      }
     } catch (err) {
       console.error(err);
       alert("Failed to update video tag: " + String(err));
@@ -381,6 +419,15 @@ export const Dashboard: React.FC = () => {
                           <div className="font-medium">{vid.name}</div>
                           <div className="text-xs text-slate-400">
                             {vid.analysis ? "Analyzed" : "Uploaded"}
+                            {vid.status === "pending" && (
+                              <span className="ml-2 text-yellow-300">• Pending</span>
+                            )}
+                            {vid.status === "synced" && (
+                              <span className="ml-2 text-emerald-300">• Synced</span>
+                            )}
+                            {vid.status === "failed" && (
+                              <span className="ml-2 text-red-400">• Failed</span>
+                            )}
                           </div>
                         </div>
 
