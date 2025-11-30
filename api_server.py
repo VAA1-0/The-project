@@ -32,9 +32,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # React dev server
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",
+        "http://127.0.0.1:3000", 
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -376,13 +377,33 @@ async def health_check() -> dict:
         "timestamp": asyncio.get_event_loop().time()
     }
 
+
+frontend_build_dir = Path("src/frontend/out")
+if frontend_build_dir.exists():
+    app.mount("/static", StaticFiles(directory=frontend_build_dir / "static"), name="static")
+    
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        """Serve frontend for all routes not handled by API"""
+        frontend_paths = [
+            frontend_build_dir / full_path,
+            frontend_build_dir / f"{full_path}.html", 
+            frontend_build_dir / "index.html"
+        ]
+        
+        for path in frontend_paths:
+            if path.exists() and path.is_file():
+                return FileResponse(path)
+        
+        return FileResponse(frontend_build_dir / "index.html")
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Video Analysis API on http://localhost:8000")
     logger.info("API Documentation: http://localhost:8000/docs")
     uvicorn.run(
-        app, 
+        "api_server:app",
         host="0.0.0.0", 
         port=8000, 
-        reload=True  # Auto-reload during development
+        reload=False  # Disable reload in Docker
     )
