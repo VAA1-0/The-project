@@ -14,9 +14,9 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
-import { GameRunLogo } from "./ProjectLogo";
-import { Library } from "@/lib/local-library";
-import { saveVideoBlob, getVideoBlob, deleteVideoBlob, listBlobKeys } from "@/lib/blob-store";
+import { VideoService } from "@/lib/video-service";
+import VideoItem from "./VideoItem";
+import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
@@ -27,33 +27,45 @@ export const Dashboard: React.FC = () => {
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
   
-  const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState<string>("");
-  const [tagEditId, setTagEditId] = useState<string | null>(null);
-  const [tagEditValue, setTagEditValue] = useState<string>("");
+  // Per-item edit UI is handled inside `VideoItem` now.
 
   const [searchString, setSearchString] = useState<string>("");
 
   useEffect(() => {
-    // Load persisted library metadata from local-library
-    try {
-      setLibraryVideos(Library.getAll().videos);
-    } catch (e) {
-      setLibraryVideos([]);
-    }
+    // Load persisted library metadata via VideoService
+    let mounted = true;
+    (async () => {
+      try {
+        const list = await VideoService.list();
+        if (mounted) setLibraryVideos(list);
+      } catch (e) {
+        if (mounted) setLibraryVideos([]);
+      }
+    })();
+    return () => { mounted = false };
   }, []);
 
   useEffect(() => {
-    // Filter library videos based on search string
-    const allVideos = Library.getAll().videos;
-    if (searchString.trim() === "") {
-      setLibraryVideos(allVideos);
-    } else {
-      const filtered = allVideos.filter(v => 
-        v.name.toLowerCase().includes(searchString.toLowerCase()) ||
-        (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase())));
-      setLibraryVideos(filtered);
-    }
+    // Filter library videos based on search string (query backend/local list each time)
+    let mounted = true;
+    (async () => {
+      try {
+        const all = await VideoService.list();
+        if (!mounted) return;
+        if (searchString.trim() === "") {
+          setLibraryVideos(all as any[]);
+          return;
+        }
+        const filtered = (all as any[]).filter((v: any) =>
+          v.name.toLowerCase().includes(searchString.toLowerCase()) ||
+          (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase()))
+        );
+        setLibraryVideos(filtered);
+      } catch (e) {
+        if (mounted) setLibraryVideos([]);
+      }
+    })();
+    return () => { mounted = false };
   }, [searchString]);
 
   // Handle search input change
@@ -119,17 +131,15 @@ export const Dashboard: React.FC = () => {
     try {
       const arr = Array.from(selected as any) as File[];
       for (const f of arr) {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
         // compute actual duration (in seconds) from the file
         const length = await getVideoDuration(f);
-        // save blob to IndexedDB
-        await saveVideoBlob(id, f);
-        // register metadata in Library
-        Library.addVideo({ id, name: f.name, length: length, tag: null, analysis: null });
+        // use VideoService to upload (saves blob + metadata)
+        await VideoService.upload(f, length);
       }
 
       // refresh local view
-      setLibraryVideos(Library.getAll().videos);
+      const list = await VideoService.list();
+      setLibraryVideos(list);
       setFiles(null);
       setFile(null);
       setPreviewUrl(null);
@@ -144,23 +154,33 @@ export const Dashboard: React.FC = () => {
   
   // Navigate to analyze results page, later navigates to specific video analysis with file ID/name
   const handleView = async (id?: string) => {
-    router.push(`/analyze-results/${id}`);
+    // Use an absolute path so navigation isn't resolved relative to the current route.
+    // Also encode the id to be safe for URLs and handle missing id gracefully.
+    const base = "/dashboard/analyze-results";
+    const target = id ? `${base}/${encodeURIComponent(id)}` : base;
+    await router.push(target);
   }
 
   // Delete a video: remove blob from IndexedDB and metadata from Library
   const handleDeleteVideo = async (id: string) => {
     if (!confirm("Delete this video? This cannot be undone.")) return;
     try {
-      // remove blob (best-effort)
+      // Optimistic: remove from UI immediately and keep a backup for rollback
+      const backup = libraryVideos.find(v => v.id === id);
+      setLibraryVideos(prev => prev.filter(v => v.id !== id));
+
       try {
-        await deleteVideoBlob(id);
-      } catch (e) {
-        console.warn("Failed to delete blob from IndexedDB", e);
+        await VideoService.delete(id);
+      } catch (err) {
+        // rollback on failure
+        console.error("Delete failed, restoring item", err);
+        if (backup) setLibraryVideos(prev => [backup, ...(prev || [])]);
+        alert("Failed to delete video: " + String(err));
+        return;
       }
 
-      // remove metadata
-      Library.deleteVideo(id);
-      setLibraryVideos(Library.getAll().videos);
+      // ensure local blob is removed
+      try { await deleteVideoBlob(id); } catch (e) { console.warn("Failed to delete local blob", e); }
     } catch (err) {
       console.error(err);
       alert("Failed to delete video: " + String(err));
@@ -172,7 +192,7 @@ export const Dashboard: React.FC = () => {
   try {
     // Preserve the original file extension. If the original name had an extension,
     // strip any extension from the newName and append the original extension.
-    const orig = Library.getById(id);
+    const orig = await VideoService.get(id);
     let finalName = newName;
     if (orig && orig.name) {
       const dot = orig.name.lastIndexOf('.');
@@ -185,10 +205,20 @@ export const Dashboard: React.FC = () => {
       }
     }
 
-    Library.updateVideoName(id, { name: finalName });
-    setLibraryVideos(Library.getAll().videos);
-    setRenameId(null);
-    setRenameValue("");
+    // Optimistic update
+    const prev = libraryVideos.find(v => v.id === id)?.name;
+    setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: finalName, status: "pending" } : v));
+    try {
+      await VideoService.rename(id, finalName);
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+    } catch (err) {
+      // rollback
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v));
+      console.error(err);
+      alert("Failed to rename video: " + String(err));
+      return;
+    }
+    // per-item UI state is managed in VideoItem; no local clear needed here
   } catch (err) {
     console.error(err);
     alert("Failed to rename video: " + String(err));
@@ -198,17 +228,20 @@ export const Dashboard: React.FC = () => {
   // Update video tag: edit metadata in Library
   const handleUpdateVideoTag = async (id: string, newTag: string) => {
     try {
-      Library.updateVideoTag(id, { tag: newTag });
-      setLibraryVideos(Library.getAll().videos);
+      const prev = libraryVideos.find(v => v.id === id)?.tag ?? null;
+      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: newTag, status: "pending" } : v));
+      try {
+        await VideoService.updateTag(id, newTag);
+        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+      } catch (err) {
+        // rollback
+        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: prev, status: "failed" } : v));
+        throw err;
+      }
     } catch (err) {
       console.error(err);
       alert("Failed to update video tag: " + String(err));
     }
-  };
-
-  // Simulated sign out function
-  const handleSignOut = () => {
-    router.push("/");
   };
 
   // Sample stats data
@@ -221,29 +254,6 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-
-      {/* Header */}
-      <header className="max-w-8xl mx-auto px-6 py-5 flex items-center justify-between bg-slate-800/50 border-b border-slate-700">
-        <div className="flex items-center gap-3">
-          <GameRunLogo size="md" />
-          <div className="text-xl font-semibold">Dashboard</div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
-            </svg>
-            <span className="text-sm text-slate-200">
-                Light Mode
-            </span>
-          </div>
-
-          <Button onClick={handleSignOut} variant="ghost" className="hidden sm:inline-flex">
-            Sign Out
-          </Button>
-        </div>
-      </header>
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
@@ -274,7 +284,7 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("upload")}
                 variant="ghost"
-                className={`px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""}`}
               >
                 Upload Video
               </Button>
@@ -282,7 +292,7 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
-                className={`px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""}`}
               >
                 Video Library
               </Button>
@@ -333,7 +343,7 @@ export const Dashboard: React.FC = () => {
                       />
 
                       <Button
-                        className="bg-blue-600"
+                        className="cursor-pointer bg-blue-600"
                         onClick={() => document.getElementById("videoUpload")?.click()}
                       >
                         Choose File
@@ -343,7 +353,7 @@ export const Dashboard: React.FC = () => {
                     <Button
                       disabled={!files || uploading}
                       onClick={handleUpload}
-                      className="bg-white text-slate-900"
+                      className="cursor-pointer bg-white text-slate-900"
                     >
                       {previewUrl && <video src={previewUrl} controls className="w-full mt-2 max-h-40" />}
                       {uploading
@@ -409,132 +419,26 @@ export const Dashboard: React.FC = () => {
                           <div className="font-medium">{vid.name}</div>
                           <div className="text-xs text-slate-400">
                             {vid.analysis ? "Analyzed" : "Uploaded"}
+                            {vid.status === "pending" && (
+                              <span className="ml-2 text-yellow-300">• Pending</span>
+                            )}
+                            {vid.status === "synced" && (
+                              <span className="ml-2 text-emerald-300">• Synced</span>
+                            )}
+                            {vid.status === "failed" && (
+                              <span className="ml-2 text-red-400">• Failed</span>
+                            )}
                           </div>
                         </div>
 
                         <div className="flex gap-2">
-                          {tagEditId === vid.id ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                value={tagEditValue}
-                                onChange={(e) => setTagEditValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  handleUpdateVideoTag(vid.id, tagEditValue);
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }
-                                if (e.key === "Escape") {
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }
-                              }}
-                                className="h-8 w-40"
-                                autoFocus
-                              />
-
-                              <Button
-                                size="sm"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  handleUpdateVideoTag(vid.id, tagEditValue);
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }}
-                              >
-                                Save
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  setTagEditId(null);
-                                  setTagEditValue("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
-
-                          </div>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              className="h-8 hover:bg-slate-700/40 transition"
-                              onClick={() => {
-                                  setTagEditId(vid.id);
-                                  setTagEditValue(vid.tag ?? ""); // prefill (ensure string)
-                                }}
-                            >
-                              Edit Tag
-                            </Button>
-                          )}
-
-                          {renameId === vid.id ? (
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-stretch rounded-md overflow-hidden border border-slate-700">
-                                <Input
-                                  value={renameValue}
-                                  onChange={(e) => setRenameValue(e.target.value)}
-                                  onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    handleRenameVideo(vid.id, renameValue);
-                                  }
-                                  if (e.key === "Escape") {
-                                    setRenameId(null);
-                                    setRenameValue("");
-                                  }
-                                }}
-                                  className="h-8 w-40 rounded-none"
-                                  autoFocus
-                                />
-                                <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
-                                  {vid.name.match(/\.[^.]+$/) ? vid.name.match(/\.[^.]+$/)![0] : ""}
-                                </div>
-                              </div>
-
-                              <Button
-                                size="sm"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => handleRenameVideo(vid.id, renameValue)}
-                              >
-                                Save
-                              </Button>
-
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 hover:bg-slate-700/40 transition"
-                                onClick={() => {
-                                  setRenameId(null);
-                                  setRenameValue("");
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              className="h-8 hover:bg-slate-700/40 transition"
-                              onClick={() => {
-                                setRenameId(vid.id);
-                                // prefill the input without the extension so user can't change format
-                                setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
-                              }}
-                            >
-                              Rename
-                            </Button>
-                          )}
-
-                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleView(vid.id)} variant="ghost">
-                            View analysis
-                          </Button>
-
-                          <Button className="h-8 hover:bg-slate-700/40 transition" onClick={() => handleDeleteVideo(vid.id)} variant="ghost">
-                            Delete
-                          </Button>
+                          <VideoItem
+                            vid={vid}
+                            onView={handleView}
+                            onDelete={handleDeleteVideo}
+                            onRename={handleRenameVideo}
+                            onUpdateTag={handleUpdateVideoTag}
+                          />
                         </div>
                       </div>
                       ))}

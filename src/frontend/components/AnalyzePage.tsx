@@ -3,10 +3,9 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import React, { useState } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 
-import { getVideoBlob } from "@/lib/blob-store";
-import { Library } from "@/lib/local-library";
+import { VideoService } from "@/lib/video-service";
 
 import { Button } from "./ui/button";
 import {
@@ -17,16 +16,18 @@ import {
   CardDescription,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
-import {Toggle, toggleVariants} from "./ui/toggle";
-import { GameRunLogo } from "./ProjectLogo";
+import {Toggle} from "./ui/toggle";
 
 export default function AnalyzePage() {
-  const router = useRouter();
 
   const { id } = useParams() as { id: string };
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
+  const [analysisData, setAnalysisData] = useState<any>(null);
+  const [blobMissing, setBlobMissing] = useState<boolean>(false);
+  // track last created object URL so we can revoke it when it changes/unmounts
+  const lastObjectUrl = React.useRef<string | null>(null);
 
   // Helper: format seconds into H:MM:SS or M:SS
   function formatDuration(sec?: number | null) {
@@ -54,42 +55,74 @@ export default function AnalyzePage() {
   const [expandQuantity, setExpandQuantity] = useState(false);
   const [expandAnnotations, setExpandAnnotations] = useState(false);
 
+  // Compact toggle definitions to render via map (reduces repeated JSX)
+  const toggleItems = [
+    { key: "transcript", label: "Speech-to-Text", pressed: showTranscript, setPressed: setShowTranscript },
+    { key: "summary", label: "Summary", pressed: showSummary, setPressed: setShowSummary },
+    { key: "objects", label: "Object Detection", pressed: showObjects, setPressed: setShowObjects },
+    { key: "quantity", label: "Quantity Detection", pressed: showQuantity, setPressed: setShowQuantity },
+    { key: "annotations", label: "Annotation", pressed: showAnnotations, setPressed: setShowAnnotations },
+  ];
 
-
-  // KIAVASH HERE : RAW DATA EXPORT STATES
+  // Raw CSV data state
   const [isLoading, setIsLoading] = useState(true);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
 
-  // KIAVASH HERE : LOAD RAW DATA EFFECT
+
+
+  // KIAVASH HERE: Load metadata, blob and analysis on mount
   React.useEffect(() => {
-    async function fetchRawData() {
+    async function load() {
       if (!id) return;
       setIsLoading(true);
+
+      // 1. Load metadata from VideoService
       try {
-        // Simulate fetching raw CSV data from backend or IndexedDB
-        // Replace this with actual data fetching logic
-        const simulatedCsv = `timestamp,object,confidence\n00:00,Person,0.98\n00:05,Laptop,0.95\n00:10,Person,0.97\n`;
-        // Simulate network delay
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        setRawCsv(simulatedCsv);
-      } catch (error) {
-        console.error("Error fetching raw CSV data:", error);
+        const m = await VideoService.get(id) as any;
+        setMetadata(m);
+      } catch (err) {
+        console.error("Failed to load metadata", err);
+        setMetadata(null);
+      }
+
+      // 2. Load blob from VideoService
+      try {
+        const blob = await VideoService.getBlob(id) as any;
+        if (blob) {
+          // revoke previous URL if present
+          if (lastObjectUrl.current) {
+            try { URL.revokeObjectURL(lastObjectUrl.current); } catch {};
+            lastObjectUrl.current = null;
+          }
+          const url = URL.createObjectURL(blob);
+          lastObjectUrl.current = url;
+          setVideoUrl(url);
+          setBlobMissing(false);
+        } else {
+          // missing blob — show friendly message and don't try to use a URL
+          setBlobMissing(true);
+          setVideoUrl(null);
+        }
+      } catch (err) {
+        console.warn("Failed to load blob", err);
+        setBlobMissing(true);
+        setVideoUrl(null);
+      }
+
+      // 3. Load analysis from VideoService
+      try {
+        const analysis = await VideoService.getAnalysis(id) as any;
+        setAnalysisData(analysis);
+        setRawCsv((analysis as any)?.rawCsv ?? null);
+      } catch (err) {
+        console.warn("Failed to load analysis", err);
+        setAnalysisData(null);
         setRawCsv(null);
       }
+
       setIsLoading(false);
     }
-    fetchRawData();
-  }, [id]);
-
-  //KIAVASH HERE : ANALYZE VIDEO EFFECT
-  React.useEffect(() => {
-    async function analyzeVideo() {
-      if (!id) return;
-      // Simulate video analysis process
-      console.log(`Analyzing video with ID: ${id}`);
-      // Add your analysis logic here
-    }
-    analyzeVideo();
+    load();
   }, [id]);
 
   // KIAVASH HERE : ANALYZE VIDEO HANDLER
@@ -103,117 +136,26 @@ export default function AnalyzePage() {
     alert("Exporting analysis (stub)");
   }
 
-  
-  
-  // Load video and metadata on mount
+
+  // Use analysisData (fallback to empty arrays if not available)
+  const transcript = analysisData?.transcript ?? [];
+  const detectedObjects = analysisData?.detectedObjects ?? [];
+  const quantityInfo = analysisData?.quantityDetection ?? [];
+  const annotations = analysisData?.annotations ?? [];
+  const summaryText = analysisData?.summary ?? "…";
+
   React.useEffect(() => {
-    async function load() {
-      if (!id) return;
-
-      // 1. Load metadata from local library
-      const m = Library.getById(id);
-      setMetadata(m);
-
-      // 2. Load blob from IndexedDB
-      const blob = await getVideoBlob(id);
-      if (blob) {
-        setVideoUrl(URL.createObjectURL(blob));
+    return () => {
+      // cleanup object URL when component unmounts
+      if (lastObjectUrl.current) {
+        try { URL.revokeObjectURL(lastObjectUrl.current); } catch {};
+        lastObjectUrl.current = null;
       }
-    }
-    load();
-  }, [id]);
-
-  // Example transcript / timeline data — replace with real data when available
-  const transcript = [
-    { t: "00:00", speaker: "Speaker 1", text: "Welcome to GameRun's comprehensive video analysis platform." },
-    { t: "00:35", speaker: "Speaker 1", text: "Our advanced algorithms analyze every frame, detecting objects, emotions, and key moments." },
-    { t: "01:00", speaker: "Speaker 2", text: "The platform uses cutting-edge machine learning models to understand context." },
-    { t: "01:23", speaker: "Speaker 2", text: "Let's dive into the product demonstration." },
-    { t: "01:45", speaker: "Speaker 1", text: "Notice how the AI identifies not just what's in the video, but also the emotional tone." },
-  ];
-
-  // Example insights data — replace with real insights when available
-  const insights = [
-    { id: "ins-1", title: "Top Moments", body: "Detected 12 highlights across the video" },
-    { id: "ins-2", title: "Avg Confidence", body: "91% average model confidence across predictions" },
-    { id: "ins-3", title: "People Present", body: "3 distinct speakers detected" },
-  ];
-
-  // Placeholder objects
-  const detectedObjects = [
-    { name: "Person", count: "15x", time: "0:00", confidence: "98%", present: "100%" },
-    { name: "Laptop", count: "8x", time: "0:20", confidence: "95%", present: "72%" },
-  ];
-
-  // Placeholder quantity info
-  const quantityInfo = [
-    { label: "People Count Over Time", desc: "Placeholder data for crowd detection." }
-  ];
-
-  // Placeholder annotation
-  const annotations = [
-    { note: "Interesting moment at 01:20", time: "01:20" }
-  ];
-
-  // Placeholder summary
-  const summaryText =
-    "This is a placeholder summary. When backend is connected, this section will show auto-generated short summaries.";
-
-  function handleBack() {
-    router.push("/dashboard");
-  }
-
-  function handleSignOut() {
-    // Hook your sign-out logic here
-    router.push("/");
-  }
+    };
+  }, []);
 
   return (
     <div className=" flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-      {/* Header */}
-      <header className="w-full border-b border-slate-700 bg-slate-800/50">
-        <div className="max-w-7xl  px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3" onClick={handleBack}>
-              <GameRunLogo size="sm" />
-            </div>
-          
-          {/*NOTE: Dividers could be a reusable component */}
-          <div className="flex-1 px-3.5 py-0.5 flex justify-start items-center gap-2.5">
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition" onClick={handleBack}>Dashboard</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Upload Video</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">What's New!</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">Contact Us</Button>
-            <div className="w-0 h-6 origin-left rotate-180 outline outline-1 outline-offset-[-0.50px] outline-gray-600"></div>
-            <Button variant="ghost" className="cursor-pointer hover:bg-slate-700/40 transition">About Us</Button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 justify-end">
-            <Button
-              variant="ghost"
-              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 2L3 14h7l-1 8 10-12h-7l1-8z" fill="currentColor" />
-                </svg>
-                <span className="text-sm text-slate-200">Light Mode</span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={handleSignOut}
-              className="hidden sm:flex items-center gap-2 bg-neutral-800/30 px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-700/40 transition"
-            >
-              Sign Out
-            </Button>
-
-          </div>
-        </div>
-      </header>
 
       {/* BODY LAYOUT */}
       <div className="flex flex-1 overflow-hidden">
@@ -233,47 +175,19 @@ export default function AnalyzePage() {
 
           <Separator />
 
-          {/* TOGGLES */}
+          {/* TOGGLES (rendered from compact config) */}
           <div className="space-y-3">
-            <Toggle 
-              pressed={showTranscript} 
-              onPressedChange={setShowTranscript} 
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
+            {toggleItems.map((t) => (
+              <Toggle
+                key={t.key}
+                pressed={t.pressed}
+                // cast to any because Toggle's onPressedChange signature may be (v:boolean)=>void
+                onPressedChange={t.setPressed as any}
+                className="cursor-pointer w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
               >
-                Speech-to-Text
-            </Toggle>
-
-            <Toggle
-              pressed={showSummary}
-              onPressedChange={setShowSummary}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Summary
-            </Toggle>
-
-            <Toggle
-              pressed={showObjects}
-              onPressedChange={setShowObjects}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Object Detection
-            </Toggle>
-
-            <Toggle
-              pressed={showQuantity}
-              onPressedChange={setShowQuantity}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Quantity Detection
-            </Toggle>
-
-            <Toggle
-              pressed={showAnnotations}
-              onPressedChange={setShowAnnotations}
-              className="w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-            >
-              Annotation
-            </Toggle>
+                {t.label}
+              </Toggle>
+            ))}
           </div>
         </aside>
 
@@ -289,7 +203,7 @@ export default function AnalyzePage() {
               </CardHeader>
               {expandTranscript && (
                 <CardContent className="space-y-3 max-h-[350px] overflow-y-auto">
-                  {transcript.map((row) => (
+                  {transcript.map((row: any) => (
                     <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
                       <div className="text-xs text-cyan-300">{row.t} • {row.speaker}</div>
                       <div className="text-sm text-slate-200">{row.text}</div>
@@ -324,13 +238,13 @@ export default function AnalyzePage() {
               </CardHeader>
               {expandObjects && (
                 <CardContent className="space-y-3">
-                  {detectedObjects.map((obj) => (
+                  {detectedObjects.map((obj: any) => (
                     <div key={obj.name} className="p-3 rounded-lg bg-slate-700/30">
                       <div className="flex justify-between text-white">
                         <span>{obj.name}</span>
                         <span>{obj.count}</span>
                       </div>
-                      <div className="text-xs text-slate-400">First seen at {obj.time}</div>
+                      <div className="text-xs text-slate-400">First seen at {obj.firstSeen ?? obj.time}</div>
                     </div>
                   ))}
                 </CardContent>
@@ -347,10 +261,10 @@ export default function AnalyzePage() {
               </CardHeader>
               {expandQuantity && (
                 <CardContent>
-                  {quantityInfo.map((q) => (
+                  {quantityInfo.map((q: any) => (
                     <div key={q.label} className="p-3 bg-slate-700/30 rounded-lg">
                       <div className="text-white font-medium">{q.label}</div>
-                      <div className="text-xs text-slate-400">{q.desc}</div>
+                      <div className="text-xs text-slate-400">{q.desc ?? JSON.stringify(q)}</div>
                     </div>
                   ))}
                 </CardContent>
@@ -367,7 +281,7 @@ export default function AnalyzePage() {
               </CardHeader>
               {expandAnnotations && (
                 <CardContent className="space-y-3">
-                  {annotations.map((a, idx) => (
+                  {annotations.map((a: any, idx: number) => (
                     <div key={idx} className="p-3 bg-slate-700/30 rounded-lg">
                       <div className="text-sm text-slate-200">{a.note}</div>
                       <div className="text-xs text-slate-400">{a.time}</div>
@@ -387,6 +301,8 @@ export default function AnalyzePage() {
               <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
                 {videoUrl ? (
                   <video src={videoUrl} controls className="w-full h-full object-contain rounded-lg" />
+                ) : blobMissing ? (
+                  <div className="text-slate-400">Video blob not found — please re-upload the video.</div>
                 ) : (
                   <div className="text-slate-400">Loading video...</div>
                 )}
