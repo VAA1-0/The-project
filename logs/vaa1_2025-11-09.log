@@ -1,10 +1,7 @@
-[2025-11-09 12:45:58] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
-[2025-11-09 12:46:00] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
-[2025-11-09 12:48:04] [INFO] [src.backend.analysis.pipeline_video_frames:71] — End of video reached.
-[2025-11-09 12:48:04] [INFO] [src.backend.analysis.pipeline_video_frames:173] — Saved results:
- - outputs\frames\Helsinki_main_street_yolo_20251109_104804.csv
- - outputs\frames\Helsinki_main_street_ocr_20251109_104804.csv
- - outputs\frames\Helsinki_main_street_summary.json
-[2025-11-09 12:48:04] [INFO] [src.backend.analysis.pipeline_video_frames:121] — Frame analysis complete.
-[2025-11-09 12:48:04] [INFO] [__main__:33] — Analysis complete.
-[2025-11-09 12:48:04] [INFO] [__main__:34] — Annotated video saved to: outputs\frames\Helsinki_main_street_annotated.mp4
+[2025-11-09 20:15:36] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:16:09] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-09 20:21:17] [INFO] [src.backend.analysis.pipeline_video_frames:71] — End of video reached.
+[2025-11-09 20:39:14] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:39:16] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
+[2025-11-09 20:47:47] [INFO] [__main__:22] — Starting analysis for Helsinki_main_street.mp4
+[2025-11-09 20:47:49] [INFO] [src.backend.analysis.pipeline_video_frames:50] — Starting frame analysis on samples\Helsinki_main_street.mp4
