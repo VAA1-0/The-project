@@ -169,3 +169,10 @@ Azure
 Oracle Free Tier
 
 Tell me, and I will give you exact copy–paste commands for your chosen cloud.
+
+<-------------CVAT Canvas implementation ------------------------------>
+Electron Renderer (React)
+     ⬇
+CanvasWrapper.jsx (React component)
+     ⬇
+CVAT Canvas JS (from cvat repository)
