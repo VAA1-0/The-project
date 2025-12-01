@@ -1,0 +1,48 @@
+#!/bin/bash
+
+echo "🚀 Testing Complete Fixed Pipeline..."
+
+# 1. Check status
+echo "📊 Checking analysis status..."
+STATUS_RESPONSE=$(curl -s "http://localhost:8000/api/status/c7054f65-64e6-48b5-9da6-8383d200fd56")
+STATUS=$(echo $STATUS_RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+PROGRESS=$(echo $STATUS_RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['progress'])")
+
+echo "Status: $STATUS, Progress: $PROGRESS%"
+
+if [ "$STATUS" = "completed" ]; then
+    echo "🎉 Analysis completed successfully!"
+    
+    # 2. Download files
+    echo "📥 Downloading results..."
+    curl -s -o "test_transcript.json" "http://localhost:8000/api/download/c7054f65-64e6-48b5-9da6-8383d200fd56/transcript"
+    curl -s -o "test_audio.wav" "http://localhost:8000/api/download/c7054f65-64e6-48b5-9da6-8383d200fd56/audio"
+    
+    # 3. Verify files
+    if [ -s "test_transcript.json" ]; then
+        echo "✅ Transcript downloaded successfully!"
+        echo "Transcript preview:"
+        python3 -c "
+import json
+with open('test_transcript.json', 'r') as f:
+    data = json.load(f)
+segments = data.get('segments', [])
+if segments:
+    print(f'First segment: \"{segments[0][\"text\"]}\"')
+    print(f'Total segments: {len(segments)}')
+else:
+    print('No segments found')
+"
+    else
+        echo "❌ Transcript download failed"
+    fi
+    
+    if [ -s "test_audio.wav" ]; then
+        echo "✅ Audio file downloaded successfully! ($(du -h test_audio.wav | cut -f1))"
+    else
+        echo "❌ Audio download failed"
+    fi
+    
+else
+    echo "⏳ Analysis still in progress: $STATUS"
+fi

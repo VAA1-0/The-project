@@ -16,12 +16,16 @@ export interface AnalysisStatus {
   summary?: {
     yolo_detections: number;
     ocr_detections: number;
+    audio_segments?: number;
+    audio_language?: string;
   };
   download_links?: {
     video?: string;
     yolo_csv?: string;
     ocr_csv?: string;
     summary_json?: string;
+    audio?: string;
+    transcript?: string;
   };
 }
 

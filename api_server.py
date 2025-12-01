@@ -1,5 +1,5 @@
 """
-FastAPI Server for Video Analysis
+FastAPI Server for Video Analysis with Audio Pipeline
 Connects to your existing pipeline and provides endpoints for frontend
 """
 import sys
@@ -17,15 +17,17 @@ import json
 from typing import Dict, Any, Optional
 import asyncio
 
-from src.backend.analysis.pipeline_video_frames import FrameAnalysisPipeline
+from src.backend.analysis.pipeline_manager import run_full_pipeline
+from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
+from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 app = FastAPI(
     title="Video Analysis API",
-    description="Backend for video analysis with YOLOv8 and EasyOCR",
-    version="1.0.0"
+    description="Backend for video analysis with YOLOv8, EasyOCR, and Whisper Audio Transcription",
+    version="1.1.0"
 )
 
 # CORS middleware - configure for your frontend
@@ -45,10 +47,14 @@ app.add_middleware(
 # Create directories for API operations
 UPLOAD_DIR = Path("uploads")
 RESULTS_DIR = Path("outputs/api_results")
+AUDIO_DIR = Path("outputs/audio")
+TRANSCRIPTS_DIR = Path("outputs/transcripts")
 STATIC_DIR = Path("static")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
+AUDIO_DIR.mkdir(exist_ok=True)
+TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
 
 # Serve static files (for downloaded files)
@@ -63,15 +69,22 @@ async def upload_video(file: UploadFile = File(...)) -> dict:
     Upload a video file for analysis
     Returns analysis ID for tracking
     """
-    if not file.content_type.startswith('video/'):
+    # More flexible file type checking
+    allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm'}
+    file_extension = Path(file.filename).suffix.lower()
+    
+    # Check both content type and file extension
+    is_video_content = file.content_type and file.content_type.startswith('video/')
+    is_video_extension = file_extension in allowed_extensions
+    
+    if not (is_video_content or is_video_extension):
         raise HTTPException(
             status_code=400, 
-            detail="File must be a video (mp4, avi, mov, etc.)"
+            detail=f"File must be a video. Supported formats: {', '.join(allowed_extensions)}"
         )
     
     # Generate unique analysis ID
     analysis_id = str(uuid.uuid4())
-    file_extension = Path(file.filename).suffix
     safe_filename = f"{analysis_id}{file_extension}"
     file_path = UPLOAD_DIR / safe_filename
     
@@ -91,7 +104,8 @@ async def upload_video(file: UploadFile = File(...)) -> dict:
             "error": None,
             "start_time": None,
             "end_time": None,
-            "output_files": {}
+            "output_files": {},
+            "pipeline_type": "full"
         }
         
         logger.info(f"Video uploaded: {file.filename} -> {safe_filename} (ID: {analysis_id})")
@@ -108,10 +122,15 @@ async def upload_video(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.post("/api/analyze/{analysis_id}", response_model=dict)
-async def start_analysis(analysis_id: str, background_tasks: BackgroundTasks) -> dict:
+async def start_analysis(analysis_id: str, background_tasks: BackgroundTasks, pipeline_type: str = "full") -> dict:
     """
     Start video analysis for uploaded video
     Runs in background
+    
+    pipeline_type options:
+    - "full": Video + Audio analysis (default)
+    - "visual_only": Only video frame analysis  
+    - "audio_only": Only audio transcription
     """
     if analysis_id not in analysis_status:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
@@ -122,86 +141,160 @@ async def start_analysis(analysis_id: str, background_tasks: BackgroundTasks) ->
     if status["status"] == "completed":
         raise HTTPException(status_code=400, detail="Analysis already completed")
     
+    # Validate pipeline type
+    if pipeline_type not in ["full", "visual_only", "audio_only"]:
+        raise HTTPException(status_code=400, detail="Invalid pipeline type")
+    
     # Update status
     status["status"] = "processing"
     status["progress"] = 10  # Initial progress
     status["start_time"] = asyncio.get_event_loop().time()
+    status["pipeline_type"] = pipeline_type
     
     # Add analysis to background tasks
-    background_tasks.add_task(run_video_analysis, analysis_id)
+    background_tasks.add_task(run_complete_analysis, analysis_id, pipeline_type)
     
-    logger.info(f"Analysis started for {analysis_id}")
+    logger.info(f"Analysis started for {analysis_id} with pipeline: {pipeline_type}")
     
     return {
         "analysis_id": analysis_id,
         "status": "processing",
-        "message": "Analysis started",
-        "progress": 10
+        "message": f"Analysis started with {pipeline_type} pipeline",
+        "progress": 10,
+        "pipeline_type": pipeline_type
     }
 
-def run_video_analysis(analysis_id: str):
-    """Run the video analysis pipeline in background"""
+def run_complete_analysis(analysis_id: str, pipeline_type: str):
+    """Run the complete analysis pipeline in background"""
     try:
         status = analysis_status[analysis_id]
         video_path = status["file_path"]
         
-        logger.info(f"Starting analysis pipeline for {analysis_id}")
+        logger.info(f"🚀 Starting {pipeline_type} analysis pipeline for {analysis_id}")
+        logger.info(f"📁 Video path: {video_path}")
+        
+        # Verify the video file exists
+        if not Path(video_path).exists():
+            error_msg = f"Video file not found: {video_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        logger.info("✅ Video file exists")
         
         # Create output directory for this analysis
         analysis_output_dir = RESULTS_DIR / analysis_id
         analysis_output_dir.mkdir(exist_ok=True)
         
-        # Update progress
-        status["progress"] = 20
-        
-        # Initialize and run your pipeline
-        pipeline = FrameAnalysisPipeline(
-            video_path=video_path,
-            output_dir=str(analysis_output_dir),
-            yolo_model_path="yolov8n.pt",
-            languages=["en"]
-        )
-        
-        # Update progress
-        status["progress"] = 40
-        
-        # Run analysis
-        result = pipeline.analyze(save_video=True, display=False)
-        
-        # Update progress
-        status["progress"] = 90
-        
-        # Prepare output files for download
+        results = {}
         output_files = {}
-        if result.get("annotated_video"):
-            output_files["video"] = result["annotated_video"]
-        if result.get("yolo_csv"):
-            output_files["yolo_csv"] = result["yolo_csv"]
-        if result.get("ocr_csv"):
-            output_files["ocr_csv"] = result["ocr_csv"]
-        if result.get("summary_json"):
-            output_files["summary_json"] = result["summary_json"]
         
-        # Update status with results
+        # AUDIO PROCESSING 
+        if pipeline_type in ["full", "audio_only"]:
+            try:
+                status["progress"] = 20
+                logger.info("🎵 Starting audio pipeline...")
+                
+                # Step 1: Extract audio from video
+                logger.info("🔊 Extracting audio from video...")
+                ingestion_result = run_ingestion_pipeline(video_path)
+                audio_path = ingestion_result["audio_path"]
+                logger.info(f"✅ Audio extracted: {audio_path}")
+                
+                # Verify audio was extracted
+                if not Path(audio_path).exists():
+                    error_msg = f"Audio extraction failed: {audio_path} not found"
+                    logger.error(error_msg)
+                    raise FileNotFoundError(error_msg)
+                
+                status["progress"] = 40
+                logger.info("🎤 Starting audio transcription...")
+                
+                # Step 2: Transcribe audio
+                audio_pipeline = AudioTranscriptionPipeline(str(audio_path))
+                transcript = audio_pipeline.run()
+                logger.info(f"✅ Audio transcribed: {len(transcript.get('segments', []))} segments")
+                
+                status["progress"] = 60
+                logger.info("📁 Organizing output files...")
+                
+                # Create organized file paths
+                audio_filename = f"{analysis_id}_audio.wav"
+                organized_audio_path = AUDIO_DIR / audio_filename
+                organized_audio_path.parent.mkdir(exist_ok=True, parents=True)
+                
+                transcript_filename = f"{analysis_id}_transcript.json" 
+                organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
+                organized_transcript_path.parent.mkdir(exist_ok=True, parents=True)
+                
+                # Move files to organized locations
+                logger.info(f"📦 Moving audio file to: {organized_audio_path}")
+                shutil.move(audio_path, organized_audio_path)
+                
+                # Find and move transcript
+                original_transcript_dir = Path(audio_path).parent / "transcripts"
+                original_transcript_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript.json"
+                
+                logger.info(f"🔍 Looking for transcript at: {original_transcript_path}")
+                
+                if original_transcript_path.exists():
+                    logger.info(f"📦 Moving transcript to: {organized_transcript_path}")
+                    shutil.move(str(original_transcript_path), organized_transcript_path)
+                else:
+                    # Try alternative location
+                    alternative_path = audio_pipeline.output_dir / f"{Path(audio_path).stem}_transcript.json"
+                    logger.info(f"🔍 Trying alternative transcript path: {alternative_path}")
+                    if alternative_path.exists():
+                        shutil.move(str(alternative_path), organized_transcript_path)
+                    else:
+                        logger.warning("❌ Transcript file not found in expected locations")
+                
+                # Store results
+                results["audio_analysis"] = {
+                    "audio_path": str(organized_audio_path),
+                    "transcript_path": str(organized_transcript_path),
+                    "transcript": transcript,
+                    "metadata": ingestion_result.get("metadata", {})
+                }
+                
+                output_files["audio"] = str(organized_audio_path)
+                output_files["transcript"] = str(organized_transcript_path)
+                
+                status["progress"] = 80
+                logger.info("✅ Audio pipeline completed successfully")
+                
+            except Exception as audio_error:
+                logger.error(f"❌ Audio pipeline failed: {str(audio_error)}")
+                import traceback
+                logger.error(f"📝 Traceback: {traceback.format_exc()}")
+                # Store the error but don't fail the whole analysis
+                results["audio_error"] = str(audio_error)
+        
+        # MARK AS COMPLETED - FIXED: Use time.time() instead of asyncio event loop
+        import time
         status.update({
             "status": "completed",
             "progress": 100,
-            "results": result,
+            "results": results,
             "output_files": output_files,
-            "end_time": asyncio.get_event_loop().time()
+            "end_time": time.time()  # FIX: Use time.time() instead of asyncio
         })
         
-        # Calculate processing time
-        processing_time = status["end_time"] - status["start_time"]
-        logger.info(f"Analysis completed for {analysis_id} in {processing_time:.2f}s")
+        logger.info(f"🎉 Analysis marked as COMPLETED for {analysis_id}")
+        logger.info(f"📊 Results: {results.keys()}")
+        logger.info(f"📁 Output files: {output_files.keys()}")
         
     except Exception as e:
-        logger.error(f"Analysis failed for {analysis_id}: {str(e)}")
+        logger.error(f"💥 Analysis failed for {analysis_id}: {str(e)}")
+        import traceback
+        logger.error(f"📝 Traceback: {traceback.format_exc()}")
+        
+        # FIX: Use time.time() here too
+        import time
         analysis_status[analysis_id].update({
-            "status": "error",
+            "status": "error", 
             "error": str(e),
             "progress": 0,
-            "end_time": asyncio.get_event_loop().time()
+            "end_time": time.time()  # FIX: Use time.time() instead of asyncio
         })
 
 @app.get("/api/status/{analysis_id}", response_model=dict)
@@ -218,7 +311,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "status": status["status"],
         "progress": status["progress"],
         "filename": status["original_filename"],
-        "error": status.get("error")
+        "error": status.get("error"),
+        "pipeline_type": status.get("pipeline_type", "full")
     }
     
     # Add results if completed
@@ -237,16 +331,16 @@ async def get_analysis_status(analysis_id: str) -> dict:
             "ocr_detections": len(results.get("ocr_results", [])),
         }
         
+        # Add audio summary if available
+        if "audio_analysis" in results:
+            audio_data = results["audio_analysis"]
+            response_data["summary"]["audio_segments"] = len(audio_data.get("transcript", {}).get("segments", []))
+            response_data["summary"]["audio_language"] = audio_data.get("transcript", {}).get("language", "unknown")
+        
         # Add download links
         response_data["download_links"] = {}
-        if output_files.get("video"):
-            response_data["download_links"]["video"] = f"/api/download/{analysis_id}/video"
-        if output_files.get("yolo_csv"):
-            response_data["download_links"]["yolo_csv"] = f"/api/download/{analysis_id}/yolo_csv"
-        if output_files.get("ocr_csv"):
-            response_data["download_links"]["ocr_csv"] = f"/api/download/{analysis_id}/ocr_csv"
-        if output_files.get("summary_json"):
-            response_data["download_links"]["summary_json"] = f"/api/download/{analysis_id}/summary_json"
+        for file_type, file_path in output_files.items():
+            response_data["download_links"][file_type] = f"/api/download/{analysis_id}/{file_type}"
     
     return response_data
 
@@ -254,7 +348,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
 async def download_file(analysis_id: str, file_type: str):
     """
     Download analysis results
-    Supported file_types: video, yolo_csv, ocr_csv, summary_json
+    Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript
     """
     if analysis_id not in analysis_status:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
@@ -271,7 +365,9 @@ async def download_file(analysis_id: str, file_type: str):
         "video": ("annotated_video.mp4", "video/mp4"),
         "yolo_csv": ("yolo_detections.csv", "text/csv"),
         "ocr_csv": ("ocr_text.csv", "text/csv"),
-        "summary_json": ("analysis_summary.json", "application/json")
+        "summary_json": ("analysis_summary.json", "application/json"),
+        "audio": ("extracted_audio.wav", "audio/wav"),
+        "transcript": ("transcript.json", "application/json")
     }
     
     if file_type not in file_mapping:
@@ -297,14 +393,16 @@ async def download_file(analysis_id: str, file_type: str):
         filename=download_filename
     )
 
+# Keep your existing endpoints (they work well)
 @app.get("/api/analyses", response_model=dict)
 async def list_analyses(limit: int = 10) -> dict:
     """
     List recent analyses (for admin/debugging)
     """
+    # Fix: Handle None values in sorting
     recent_analyses = dict(sorted(
         analysis_status.items(),
-        key=lambda x: x[1].get('start_time', 0),
+        key=lambda x: x[1].get('start_time', 0) or 0,  # Handle None values
         reverse=True
     )[:limit])
     
@@ -314,6 +412,7 @@ async def list_analyses(limit: int = 10) -> dict:
                 "status": info["status"],
                 "filename": info["original_filename"],
                 "progress": info["progress"],
+                "pipeline_type": info.get("pipeline_type", "full"),
                 "start_time": info.get("start_time")
             }
             for aid, info in recent_analyses.items()
@@ -322,9 +421,7 @@ async def list_analyses(limit: int = 10) -> dict:
 
 @app.delete("/api/analysis/{analysis_id}")
 async def delete_analysis(analysis_id: str) -> dict:
-    """
-    Delete analysis and associated files
-    """
+    """Delete analysis and associated files"""
     if analysis_id not in analysis_status:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
     
@@ -357,11 +454,11 @@ async def delete_analysis(analysis_id: str) -> dict:
 async def root() -> dict:
     """API root endpoint"""
     return {
-        "message": "Video Analysis API",
-        "version": "1.0.0",
+        "message": "Video Analysis API with Audio Pipeline",
+        "version": "1.1.0",
         "endpoints": {
             "upload": "/api/upload",
-            "analyze": "/api/analyze/{id}",
+            "analyze": "/api/analyze/{id}?pipeline_type=full|visual_only|audio_only",
             "status": "/api/status/{id}",
             "download": "/api/download/{id}/{type}",
             "analyses": "/api/analyses"
@@ -373,11 +470,11 @@ async def health_check() -> dict:
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": "Video Analysis API",
+        "service": "Video Analysis API with Audio",
         "timestamp": asyncio.get_event_loop().time()
     }
 
-
+# Frontend serving (keep your existing code)
 frontend_build_dir = Path("src/frontend/out")
 if frontend_build_dir.exists():
     app.mount("/static", StaticFiles(directory=frontend_build_dir / "static"), name="static")
@@ -399,11 +496,11 @@ if frontend_build_dir.exists():
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting Video Analysis API on http://localhost:8000")
+    logger.info("Starting Video Analysis API with Audio on http://localhost:8000")
     logger.info("API Documentation: http://localhost:8000/docs")
     uvicorn.run(
         "api_server:app",
         host="0.0.0.0", 
         port=8000, 
-        reload=False  # Disable reload in Docker
+        reload=False
     )
