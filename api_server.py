@@ -16,7 +16,7 @@ from pathlib import Path
 import json
 from typing import Dict, Any, Optional
 import asyncio
-
+from src.backend.analysis.pipeline_video_frames import FrameAnalysisPipeline
 from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
@@ -188,10 +188,47 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
         results = {}
         output_files = {}
         
+        # VISUAL PROCESSING (YOLO + OCR)
+        if pipeline_type in ["full", "visual_only"]:
+            try:
+                logger.info("🎥 Starting visual analysis pipeline...")
+                
+                # Initialize frame analysis pipeline
+                frame_pipeline = FrameAnalysisPipeline(video_path)
+                
+                # Run the analysis
+                visual_results = frame_pipeline.analyze(
+                    save_video=True, 
+                    display=False
+                )
+                
+                # Store visual results
+                results["visual_analysis"] = {
+                    "yolo_results": visual_results.get("yolo_results", []),
+                    "ocr_results": visual_results.get("ocr_results", []),
+                    "annotated_video": visual_results.get("annotated_video"),
+                    "yolo_csv": visual_results.get("yolo_csv"),
+                    "ocr_csv": visual_results.get("ocr_csv"),
+                    "summary_json": visual_results.get("summary_json")
+                }
+                
+                # Add output files for download
+                output_files["video"] = visual_results.get("annotated_video")
+                output_files["yolo_csv"] = visual_results.get("yolo_csv")
+                output_files["ocr_csv"] = visual_results.get("ocr_csv")
+                output_files["summary_json"] = visual_results.get("summary_json")
+                
+                logger.info(f"✅ Visual analysis completed: {len(visual_results.get('yolo_results', []))} detections")
+                
+            except Exception as visual_error:
+                logger.error(f"❌ Visual pipeline failed: {str(visual_error)}")
+                import traceback
+                logger.error(f"📝 Traceback: {traceback.format_exc()}")
+                results["visual_error"] = str(visual_error)
+        
         # AUDIO PROCESSING 
         if pipeline_type in ["full", "audio_only"]:
             try:
-                status["progress"] = 20
                 logger.info("🎵 Starting audio pipeline...")
                 
                 # Step 1: Extract audio from video
@@ -206,7 +243,6 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     logger.error(error_msg)
                     raise FileNotFoundError(error_msg)
                 
-                status["progress"] = 40
                 logger.info("🎤 Starting audio transcription...")
                 
                 # Step 2: Transcribe audio
@@ -214,7 +250,6 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 transcript = audio_pipeline.run()
                 logger.info(f"✅ Audio transcribed: {len(transcript.get('segments', []))} segments")
                 
-                status["progress"] = 60
                 logger.info("📁 Organizing output files...")
                 
                 # Create organized file paths
@@ -259,42 +294,39 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
                 
-                status["progress"] = 80
                 logger.info("✅ Audio pipeline completed successfully")
                 
             except Exception as audio_error:
                 logger.error(f"❌ Audio pipeline failed: {str(audio_error)}")
                 import traceback
                 logger.error(f"📝 Traceback: {traceback.format_exc()}")
-                # Store the error but don't fail the whole analysis
                 results["audio_error"] = str(audio_error)
         
-        # MARK AS COMPLETED - FIXED: Use time.time() instead of asyncio event loop
+        # MARK AS COMPLETED
         import time
         status.update({
             "status": "completed",
             "progress": 100,
             "results": results,
             "output_files": output_files,
-            "end_time": time.time()  # FIX: Use time.time() instead of asyncio
+            "end_time": time.time()
         })
         
         logger.info(f"🎉 Analysis marked as COMPLETED for {analysis_id}")
-        logger.info(f"📊 Results: {results.keys()}")
-        logger.info(f"📁 Output files: {output_files.keys()}")
+        logger.info(f"📊 Results keys: {list(results.keys())}")
+        logger.info(f"📁 Output files: {output_files}")
         
     except Exception as e:
         logger.error(f"💥 Analysis failed for {analysis_id}: {str(e)}")
         import traceback
         logger.error(f"📝 Traceback: {traceback.format_exc()}")
         
-        # FIX: Use time.time() here too
         import time
         analysis_status[analysis_id].update({
             "status": "error", 
             "error": str(e),
             "progress": 0,
-            "end_time": time.time()  # FIX: Use time.time() instead of asyncio
+            "end_time": time.time()
         })
 
 @app.get("/api/status/{analysis_id}", response_model=dict)

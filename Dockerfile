@@ -1,33 +1,30 @@
-# Dockerfile - Updated with Audio Processing
 FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies (added libsndfile1 for audio processing)
+# Install system dependencies for OpenCV and FFmpeg
+# libgl1-mesa-glx is replaced with libgl1 in newer Debian
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libsndfile1 \
+    libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first (for better caching)
+# Copy requirements first (for caching)
 COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install spaCy model correctly
-RUN python -m spacy download en_core_web_sm --direct
-
-# Copy project
+# Copy application code
 COPY . .
 
-# Create directories (added audio and transcripts directories)
-RUN mkdir -p uploads outputs/api_results static outputs/audio outputs/transcripts
+# Create necessary directories
+RUN mkdir -p /app/outputs /app/uploads /app/models
 
+# Expose port
 EXPOSE 8000
 
+# Run the application
 CMD ["python", "api_server.py"]

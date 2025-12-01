@@ -71,72 +71,116 @@ export default function AnalyzePage() {
 
 
   // KIAVASH HERE: Load metadata, blob and analysis on mount
-  React.useEffect(() => {
-    async function load() {
-      if (!id) return;
-      setIsLoading(true);
+React.useEffect(() => {
+  async function load() {
+    if (!id) return;
+    setIsLoading(true);
 
-      // 1. Load metadata from VideoService
-      try {
-        const m = await VideoService.get(id) as any;
-        setMetadata(m);
-      } catch (err) {
-        console.error("Failed to load metadata", err);
-        setMetadata(null);
-      }
+    try {
+      // Load metadata
+      const m = await VideoService.get(id);
+      setMetadata(m);
 
-      // 2. Load blob from VideoService
-      try {
-        const blob = await VideoService.getBlob(id) as any;
-        if (blob) {
-          // revoke previous URL if present
-          if (lastObjectUrl.current) {
-            try { URL.revokeObjectURL(lastObjectUrl.current); } catch {};
-            lastObjectUrl.current = null;
-          }
-          const url = URL.createObjectURL(blob);
-          lastObjectUrl.current = url;
-          setVideoUrl(url);
-          setBlobMissing(false);
-        } else {
-          // missing blob — show friendly message and don't try to use a URL
-          setBlobMissing(true);
-          setVideoUrl(null);
+      // Load video blob (annotated video)
+      const blob = await VideoService.getBlob(id);
+      if (blob) {
+        if (lastObjectUrl.current) {
+          URL.revokeObjectURL(lastObjectUrl.current);
         }
-      } catch (err) {
-        console.warn("Failed to load blob", err);
+        const url = URL.createObjectURL(blob);
+        lastObjectUrl.current = url;
+        setVideoUrl(url);
+        setBlobMissing(false);
+      } else {
         setBlobMissing(true);
         setVideoUrl(null);
       }
 
-      // 3. Load analysis from VideoService
-      try {
-        const analysis = await VideoService.getAnalysis(id) as any;
-        setAnalysisData(analysis);
-        setRawCsv((analysis as any)?.rawCsv ?? null);
-      } catch (err) {
-        console.warn("Failed to load analysis", err);
-        setAnalysisData(null);
-        setRawCsv(null);
-      }
+      // Load analysis data
+      const analysis = await VideoService.getAnalysis(id);
+      setAnalysisData(analysis);
+      setRawCsv(analysis.rawCsv || null);
 
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      setBlobMissing(true);
+      setVideoUrl(null);
+      setAnalysisData(null);
+      setRawCsv(null);
+    } finally {
       setIsLoading(false);
     }
-    load();
-  }, [id]);
-
-  // KIAVASH HERE : ANALYZE VIDEO HANDLER
-  function handleAnalyzeVideo() {
-    alert("Starting analysis (stub)");
   }
+  load();
+}, [id]);
 
-  // KIAVASH HERE : EXPORT RAW DATA HANDLER
-  function handleExport() {
-    // Hook your export logic here
-    alert("Exporting analysis (stub)");
+// KIAVASH HERE : ANALYZE VIDEO HANDLER
+async function handleAnalyzeVideo() {
+  if (!id) return;
+  
+  try {
+    setAnalysisProgress(0);
+    const result = await VideoService.startAnalysis(id, 'full');
+    alert(`Analysis started! Status: ${result.status}`);
+    
+    // Start polling
+    pollAnalysisProgress(id);
+    
+  } catch (error) {
+    console.error('Failed to start analysis:', error);
+    alert('Failed to start analysis.');
   }
+}
 
+// KIAVASH HERE : EXPORT RAW DATA HANDLER
+async function handleExport() {
+  if (!id || !analysisData) return;
+  
+  try {
+    // Download the CSV file
+    await VideoService.exportFile(id, 'yolo_csv');
+    
+    // Optionally download other files
+    // await VideoService.exportFile(id, 'ocr_csv');
+    // await VideoService.exportFile(id, 'summary_json');
+    
+  } catch (error) {
+    console.error('Failed to export:', error);
+    alert('Failed to export data. Check console for details.');
+  }
+}
 
+const [analysisProgress, setAnalysisProgress] = useState(0);
+const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+async function pollAnalysisProgress(analysisId: string) {
+  setIsAnalyzing(true);
+  
+  const interval = setInterval(async () => {
+    try {
+      const status = await VideoService.get(analysisId);
+      setAnalysisProgress(status.progress || 0);
+      
+      if (status.status === 'completed') {
+        clearInterval(interval);
+        setIsAnalyzing(false);
+        
+        // Refresh analysis data
+        const updatedAnalysis = await VideoService.getAnalysis(analysisId);
+        setAnalysisData(updatedAnalysis);
+        setRawCsv(updatedAnalysis.rawCsv || null);
+        
+        alert('Analysis completed!');
+      } else if (status.status === 'error') {
+        clearInterval(interval);
+        setIsAnalyzing(false);
+        alert(`Analysis failed: ${status.error}`);
+      }
+    } catch (error) {
+      console.error('Polling error:', error);
+    }
+  }, 2000);
+}
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
@@ -332,13 +376,27 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* Button to start analyzing video*/}
+                {/* Add progress indicator near Analyze button */}
+                {isAnalyzing && (
+                  <div className="mt-2">
+                    <div className="text-sm text-slate-400">Analysis in progress: {analysisProgress}%</div>
+                    <div className="w-full bg-slate-700 rounded-full h-2 mt-1">
+                      <div 
+                        className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${analysisProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Update Analyze button */}
                 <Button
                   variant="default"
                   className="bg-green-600/40 hover:bg-green-600/60 transition"
                   onClick={handleAnalyzeVideo}
+                  disabled={isAnalyzing || !id}
                 >
-                  Analyze
+                  {isAnalyzing ? 'Analyzing...' : 'Analyze'}
                 </Button>
 
                 {/* Download CSV button */}

@@ -27,7 +27,7 @@ export interface AnalysisStatus {
     audio?: string;
     transcript?: string;
   };
-}
+    pipeline_type?: string;}
 
 export interface AnalysisStartResponse {
   analysis_id: string;
