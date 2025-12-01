@@ -17,6 +17,7 @@ import { Separator } from "./ui/separator";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "./VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import { AnalyzeResultsPanel } from "./AnalyzeResultsPanel";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
@@ -26,7 +27,7 @@ export const Dashboard: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<"upload" | "library">("upload");
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
-  
+
   // Per-item edit UI is handled inside `VideoItem` now.
 
   const [searchString, setSearchString] = useState<string>("");
@@ -42,7 +43,9 @@ export const Dashboard: React.FC = () => {
         if (mounted) setLibraryVideos([]);
       }
     })();
-    return () => { mounted = false };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -56,16 +59,19 @@ export const Dashboard: React.FC = () => {
           setLibraryVideos(all as any[]);
           return;
         }
-        const filtered = (all as any[]).filter((v: any) =>
-          v.name.toLowerCase().includes(searchString.toLowerCase()) ||
-          (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase()))
+        const filtered = (all as any[]).filter(
+          (v: any) =>
+            v.name.toLowerCase().includes(searchString.toLowerCase()) ||
+            (v.tag && v.tag.toLowerCase().includes(searchString.toLowerCase()))
         );
         setLibraryVideos(filtered);
       } catch (e) {
         if (mounted) setLibraryVideos([]);
       }
     })();
-    return () => { mounted = false };
+    return () => {
+      mounted = false;
+    };
   }, [searchString]);
 
   // Handle search input change
@@ -83,7 +89,7 @@ export const Dashboard: React.FC = () => {
     const selected = e.target.files;
     if (!selected || selected.length === 0) return;
 
-    setFiles(prev => {
+    setFiles((prev) => {
       const arr = prev ? prev : [];
       return [...arr, ...Array.from(selected)];
     });
@@ -125,8 +131,9 @@ export const Dashboard: React.FC = () => {
 
   // Upload handler (frontend-only): persist blob to IndexedDB and metadata to local Library
   const handleUpload = async () => {
-    const selected = files || (file ? [file] as any : null);
-    if (!selected || selected.length === 0) return alert("Select a video first");
+    const selected = files || (file ? ([file] as any) : null);
+    if (!selected || selected.length === 0)
+      return alert("Select a video first");
     setUploading(true);
     try {
       const arr = Array.from(selected as any) as File[];
@@ -146,12 +153,12 @@ export const Dashboard: React.FC = () => {
       alert("Upload successful (saved in browser storage)");
     } catch (err) {
       console.error(err);
-      alert("Upload failed: " + (((err as any)?.message) ?? String(err)));
+      alert("Upload failed: " + ((err as any)?.message ?? String(err)));
     } finally {
       setUploading(false);
     }
   };
-  
+
   // Navigate to analyze results page, later navigates to specific video analysis with file ID/name
   const handleView = async (id?: string) => {
     // Use an absolute path so navigation isn't resolved relative to the current route.
@@ -159,83 +166,107 @@ export const Dashboard: React.FC = () => {
     const base = "/dashboard/analyze-results";
     const target = id ? `${base}/${encodeURIComponent(id)}` : base;
     await router.push(target);
-  }
+  };
 
   // Delete a video: remove blob from IndexedDB and metadata from Library
   const handleDeleteVideo = async (id: string) => {
     if (!confirm("Delete this video? This cannot be undone.")) return;
     try {
       // Optimistic: remove from UI immediately and keep a backup for rollback
-      const backup = libraryVideos.find(v => v.id === id);
-      setLibraryVideos(prev => prev.filter(v => v.id !== id));
+      const backup = libraryVideos.find((v) => v.id === id);
+      setLibraryVideos((prev) => prev.filter((v) => v.id !== id));
 
       try {
         await VideoService.delete(id);
       } catch (err) {
         // rollback on failure
         console.error("Delete failed, restoring item", err);
-        if (backup) setLibraryVideos(prev => [backup, ...(prev || [])]);
+        if (backup) setLibraryVideos((prev) => [backup, ...(prev || [])]);
         alert("Failed to delete video: " + String(err));
         return;
       }
 
       // ensure local blob is removed
-      try { await deleteVideoBlob(id); } catch (e) { console.warn("Failed to delete local blob", e); }
+      try {
+        await deleteVideoBlob(id);
+      } catch (e) {
+        console.warn("Failed to delete local blob", e);
+      }
     } catch (err) {
       console.error(err);
       alert("Failed to delete video: " + String(err));
     }
-  }
+  };
 
   // Rename video: edit metadata in Library
   const handleRenameVideo = async (id: string, newName: string) => {
-  try {
-    // Preserve the original file extension. If the original name had an extension,
-    // strip any extension from the newName and append the original extension.
-    const orig = await VideoService.get(id);
-    let finalName = newName;
-    if (orig && orig.name) {
-      const dot = orig.name.lastIndexOf('.');
-      const origExt = dot >= 0 ? orig.name.slice(dot) : '';
-      if (origExt) {
-        // remove extension from user input if present
-        const userDot = newName.lastIndexOf('.');
-        const base = userDot >= 0 ? newName.slice(0, userDot) : newName;
-        finalName = base + origExt;
-      }
-    }
-
-    // Optimistic update
-    const prev = libraryVideos.find(v => v.id === id)?.name;
-    setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: finalName, status: "pending" } : v));
     try {
-      await VideoService.rename(id, finalName);
-      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+      // Preserve the original file extension. If the original name had an extension,
+      // strip any extension from the newName and append the original extension.
+      const orig = await VideoService.get(id);
+      let finalName = newName;
+      if (orig && orig.name) {
+        const dot = orig.name.lastIndexOf(".");
+        const origExt = dot >= 0 ? orig.name.slice(dot) : "";
+        if (origExt) {
+          // remove extension from user input if present
+          const userDot = newName.lastIndexOf(".");
+          const base = userDot >= 0 ? newName.slice(0, userDot) : newName;
+          finalName = base + origExt;
+        }
+      }
+
+      // Optimistic update
+      const prev = libraryVideos.find((v) => v.id === id)?.name;
+      setLibraryVideos((prevList) =>
+        prevList.map((v) =>
+          v.id === id ? { ...v, name: finalName, status: "pending" } : v
+        )
+      );
+      try {
+        await VideoService.rename(id, finalName);
+        setLibraryVideos((prevList) =>
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+        );
+      } catch (err) {
+        // rollback
+        setLibraryVideos((prevList) =>
+          prevList.map((v) =>
+            v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v
+          )
+        );
+        console.error(err);
+        alert("Failed to rename video: " + String(err));
+        return;
+      }
+      // per-item UI state is managed in VideoItem; no local clear needed here
     } catch (err) {
-      // rollback
-      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v));
       console.error(err);
       alert("Failed to rename video: " + String(err));
-      return;
     }
-    // per-item UI state is managed in VideoItem; no local clear needed here
-  } catch (err) {
-    console.error(err);
-    alert("Failed to rename video: " + String(err));
-  }
-};
+  };
 
   // Update video tag: edit metadata in Library
   const handleUpdateVideoTag = async (id: string, newTag: string) => {
     try {
-      const prev = libraryVideos.find(v => v.id === id)?.tag ?? null;
-      setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: newTag, status: "pending" } : v));
+      const prev = libraryVideos.find((v) => v.id === id)?.tag ?? null;
+      setLibraryVideos((prevList) =>
+        prevList.map((v) =>
+          v.id === id ? { ...v, tag: newTag, status: "pending" } : v
+        )
+      );
       try {
         await VideoService.updateTag(id, newTag);
-        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, status: "synced" } : v));
+        setLibraryVideos((prevList) =>
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+        );
       } catch (err) {
         // rollback
-        setLibraryVideos(prevList => prevList.map(v => v.id === id ? { ...v, tag: prev, status: "failed" } : v));
+        setLibraryVideos((prevList) =>
+          prevList.map((v) =>
+            v.id === id ? { ...v, tag: prev, status: "failed" } : v
+          )
+        );
         throw err;
       }
     } catch (err) {
@@ -247,22 +278,38 @@ export const Dashboard: React.FC = () => {
   // Sample stats data
   const stats = [
     { id: "total", title: "Total Videos", value: 3, colorBg: "bg-blue-600/20" },
-    { id: "analyzed", title: "Analyzed", value: 2, colorBg: "bg-emerald-600/20" },
-    { id: "processing", title: "Processing", value: 1, colorBg: "bg-yellow-600/20" },
-    { id: "confidence", title: "Avg Confidence", value: "91%", colorBg: "bg-purple-600/20" },
+    {
+      id: "analyzed",
+      title: "Analyzed",
+      value: 2,
+      colorBg: "bg-emerald-600/20",
+    },
+    {
+      id: "processing",
+      title: "Processing",
+      value: 1,
+      colorBg: "bg-yellow-600/20",
+    },
+    {
+      id: "confidence",
+      title: "Avg Confidence",
+      value: "91%",
+      colorBg: "bg-purple-600/20",
+    },
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
         <section className="w-full space-y-8">
-
           {/* Stats cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
             {stats.map((s) => (
-              <Card key={s.id} className="bg-slate-800/50 border-slate-700 overflow-hidden">
+              <Card
+                key={s.id}
+                className="bg-slate-800/50 border-slate-700 overflow-hidden"
+              >
                 <CardContent className="flex items-center gap-4 py-6">
                   <div className={`p-3 rounded-lg ${s.colorBg}`}>
                     <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
@@ -271,7 +318,9 @@ export const Dashboard: React.FC = () => {
                   </div>
                   <div>
                     <div className="text-sm text-slate-400">{s.title}</div>
-                    <div className="text-lg font-semibold text-white">{s.value}</div>
+                    <div className="text-lg font-semibold text-white">
+                      {s.value}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -284,7 +333,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("upload")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "upload" ? "bg-slate-700" : ""
+                }`}
               >
                 Upload Video
               </Button>
@@ -292,7 +343,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""}`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "library" ? "bg-slate-700" : ""
+                }`}
               >
                 Video Library
               </Button>
@@ -302,7 +355,6 @@ export const Dashboard: React.FC = () => {
           {/* Conditional content */}
           {tab === "upload" && (
             <Card className="bg-slate-800/50 border-slate-700 w-full">
-
               <CardHeader>
                 <CardTitle>Upload New Video</CardTitle>
                 <CardDescription>
@@ -318,20 +370,27 @@ export const Dashboard: React.FC = () => {
                 >
                   <div className="flex items-center gap-4">
                     <div className="p-3 rounded-lg bg-blue-600/20">
-                      <svg className="w-8 h-8 text-blue-400" viewBox="0 0 24 24" fill="none">
+                      <svg
+                        className="w-8 h-8 text-blue-400"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
                         <path d="M5 3v18l15-9L5 3z" fill="currentColor" />
                       </svg>
                     </div>
 
                     <div className="text-center">
-                      <div className="text-white font-medium">Drop your video here or click to browse</div>
-                      <div className="text-sm text-slate-400">Supports MP4, MOV, AVI, WebM up to 500MB</div>
+                      <div className="text-white font-medium">
+                        Drop your video here or click to browse
+                      </div>
+                      <div className="text-sm text-slate-400">
+                        Supports MP4, MOV, AVI, WebM up to 500MB
+                      </div>
                     </div>
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-3 mt-3">
                     <label className="cursor-pointer">
-
                       {/* Hidden file input */}
                       <input
                         id="videoUpload"
@@ -344,7 +403,9 @@ export const Dashboard: React.FC = () => {
 
                       <Button
                         className="cursor-pointer bg-blue-600"
-                        onClick={() => document.getElementById("videoUpload")?.click()}
+                        onClick={() =>
+                          document.getElementById("videoUpload")?.click()
+                        }
                       >
                         Choose File
                       </Button>
@@ -355,7 +416,13 @@ export const Dashboard: React.FC = () => {
                       onClick={handleUpload}
                       className="cursor-pointer bg-white text-slate-900"
                     >
-                      {previewUrl && <video src={previewUrl} controls className="w-full mt-2 max-h-40" />}
+                      {previewUrl && (
+                        <video
+                          src={previewUrl}
+                          controls
+                          className="w-full mt-2 max-h-40"
+                        />
+                      )}
                       {uploading
                         ? "Uploading..."
                         : files
@@ -363,13 +430,15 @@ export const Dashboard: React.FC = () => {
                         : "Upload"}
                     </Button>
                   </div>
-                  
+
                   {/* Selected files list */}
                   {files && files.length > 0 && (
                     <>
                       <Separator className="my-4" />
                       <div className="w-full max-w-2xl text-sm">
-                        <div className="text-slate-300 mb-2">Files selected:</div>
+                        <div className="text-slate-300 mb-2">
+                          Files selected:
+                        </div>
                         <ul className="list-disc pl-6 text-slate-200">
                           {Array.from(files).map((f) => (
                             <li key={f.name}>
@@ -394,59 +463,68 @@ export const Dashboard: React.FC = () => {
               </CardHeader>
 
               <CardContent className="space-y-3">
-
                 {/* Search bar */}
-                  <div className="flex items-center justify-between">
-                    <Input placeholder="Search…" value={searchString} onChange={handleSearchChange} />
-                  </div>
+                <div className="flex items-center justify-between">
+                  <Input
+                    placeholder="Search…"
+                    value={searchString}
+                    onChange={handleSearchChange}
+                  />
+                </div>
 
                 {/* Video list */}
-                  <div className="space-y-2">
+                <div className="space-y-2">
+                  {/* Real mapped videos */}
+                  {libraryVideos.length === 0 && (
+                    <div className="text-sm text-slate-400 p-3">
+                      No videos uploaded yet.
+                    </div>
+                  )}
 
-                    {/* Real mapped videos */}
-                      {libraryVideos.length === 0 && (
-                        <div className="text-sm text-slate-400 p-3">
-                          No videos uploaded yet.
-                        </div>
-                      )}
-
-                      {libraryVideos.map((vid: any) => (
-                      <div
-                        key={vid.id}
-                        className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="font-medium">{vid.name}</div>
-                          <div className="text-xs text-slate-400">
-                            {vid.analysis ? "Analyzed" : "Uploaded"}
-                            {vid.status === "pending" && (
-                              <span className="ml-2 text-yellow-300">• Pending</span>
-                            )}
-                            {vid.status === "synced" && (
-                              <span className="ml-2 text-emerald-300">• Synced</span>
-                            )}
-                            {vid.status === "failed" && (
-                              <span className="ml-2 text-red-400">• Failed</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2">
-                          <VideoItem
-                            vid={vid}
-                            onView={handleView}
-                            onDelete={handleDeleteVideo}
-                            onRename={handleRenameVideo}
-                            onUpdateTag={handleUpdateVideoTag}
-                          />
+                  {libraryVideos.map((vid: any) => (
+                    <div
+                      key={vid.id}
+                      className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="font-medium">{vid.name}</div>
+                        <div className="text-xs text-slate-400">
+                          {vid.analysis ? "Analyzed" : "Uploaded"}
+                          {vid.status === "pending" && (
+                            <span className="ml-2 text-yellow-300">
+                              • Pending
+                            </span>
+                          )}
+                          {vid.status === "synced" && (
+                            <span className="ml-2 text-emerald-300">
+                              • Synced
+                            </span>
+                          )}
+                          {vid.status === "failed" && (
+                            <span className="ml-2 text-red-400">• Failed</span>
+                          )}
                         </div>
                       </div>
-                      ))}
 
-                  </div>
+                      <div className="flex gap-2">
+                        <VideoItem
+                          vid={vid}
+                          onView={handleView}
+                          onDelete={handleDeleteVideo}
+                          onRename={handleRenameVideo}
+                          onUpdateTag={handleUpdateVideoTag}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           )}
+
+          {/* Analyze Results Panel */}
+          {/* Kiavash please read this line to add this component to the page */}
+          <AnalyzeResultsPanel />
         </section>
       </main>
     </div>
