@@ -10,7 +10,8 @@ ffmpeg-python==0.2.0
 openai-whisper==20231117
 
 # NLP & Text Processing
-spacy==3.7.2
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+spacy==3.7.1
 transformers==4.35.2
 
 # PyTorch
