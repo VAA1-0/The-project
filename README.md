@@ -47,3 +47,22 @@ deactivate
 - Permission errors in PowerShell: run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force` (Windows admin rights may be required).
 
 That's it — activate `.venv`, then run `demo_video_analysis.py` and all the dependencies should be installed.
+
+# vaa1_compatible — Development Environment Setup  
+Python version: **3.10.19**
+
+This guide explains how to recreate the `vaa1_compatible` Conda environment on any machine.  
+Follow these steps if you need to reinstall the environment, move it to another computer, or share it with collaborators.
+
+---
+
+## 1. Install Miniconda or Anaconda
+Download and install either:
+
+- **Miniconda** (recommended)  
+- **Anaconda**
+
+You can confirm installation with:
+
+```bash
+conda --version
