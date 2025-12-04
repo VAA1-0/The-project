@@ -66,3 +66,14 @@ You can confirm installation with:
 
 ```bash
 conda --version
+
+
+## 📘 Installing spaCy Language Model
+
+The spaCy English model **cannot be installed through `environment.yml`**, because spaCy model packages are no longer distributed on PyPI.  
+Therefore, after creating or updating the Conda environment, you must install the model manually.
+
+Run the following command **after activating the environment**:
+
+```bash
+python -m spacy download en_core_web_sm
