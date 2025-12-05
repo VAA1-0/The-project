@@ -24,6 +24,7 @@ function createWindow() {
     // In development mode, open localhost (Next.js dev server)
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools(); // optional
+
   } else {
     // In production mode, open the built page
     const frontendPath = path.join(__dirname, 'src', 'frontend', 'out', 'index.html');
