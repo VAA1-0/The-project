@@ -1,0 +1,3 @@
+[submodule "src/cvat/src/cvat-engine"]
+	path = src/cvat/src/cvat-engine
+	url = https://github.com/cvat-ai/cvat.git
