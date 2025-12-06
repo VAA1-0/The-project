@@ -2,3 +2,10 @@
 virtenvir/
 
 src/cvat/backend/node_modules/
+
+outputs/*
+
+src/cvat/src/
+wheels/
+Dockerfile
+logs/

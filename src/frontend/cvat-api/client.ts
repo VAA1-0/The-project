@@ -3,9 +3,9 @@ import axios from 'axios';
 
 const BASE = "http://localhost:3001";
 
-const backend = axios.create({
+/*const backend = axios.create({
   baseURL: 'http://localhost:3001',
-});
+});*/
 
 // <---- CVAT Login ---->
 // 🔹 Token login (backend CVAT API access)
@@ -14,21 +14,22 @@ export async function loginToCvat(username: string, password: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
-    credentials: "include"
+    //credentials: "include"
   });
-
+  
   const data = await res.json();
 
   // 🔥 Store token in browser (renderer) localStorage
-  if (data.token) {
+  /*if (data.token) {
     window.localStorage.setItem("cvat_token", data.token);
     console.log("🔑 CVAT token stored:", data.token);
-  }
+  }*/
 
   return data;
 }
 
 export async function getCvatHealth() {
+  console.log("Function Accessed!")
   return fetch(`${BASE}/health/cvat`).then(r => r.json());
 }
 
@@ -73,7 +74,7 @@ export async function saveAnnotations(jobId: number, body: any) {
 // Create task (video only)
 export async function createVideoTask(
   name: string,
-  labels: Array<{ name: string; color: string }>,
+  //labels: Array<{ name: string; color: string }>,
   file: File
 ) {
   try {
@@ -82,8 +83,8 @@ export async function createVideoTask(
     const taskRes = await fetch(`${BASE}/api/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, labels }),
-      credentials: "include", // 🔥 required for cookie-based auth
+      body: JSON.stringify({ name/*, labels */}),
+      //credentials: "include", // 🔥 required for cookie-based auth
     });
 
     if (!taskRes.ok) {
@@ -125,13 +126,13 @@ export async function createVideoTask(
 
 
 // 🔹 Cookie login (CVAT iframe access)
-export async function loginForIframe(username: string, password: string) {
+/*export async function loginForIframe(username: string, password: string) {
   const resp = await backend.post('/api/cvat/login', { username, password }, {
     withCredentials: true   // <── IMPORTANT
   });
 
   return resp.data;
-}
+}*/
 
 export async function listExportFormats() {
   const res = await fetch("http://localhost:8080/api/server/annotation/formats");

@@ -13,6 +13,7 @@ export interface VideoMetadata {
   uploadedAt?: string;
   processingTime?: number;
   pipelineType?: 'full' | 'visual_only' | 'audio_only';
+  cvatID?: number;
 }
 
 export interface TranscriptSegment {
@@ -56,6 +57,7 @@ export interface UploadResponse {
   status: string;
   duration?: number;
   size?: number;
+  cvatID: number;
 }
 
 // Updated AnalysisStatus with pipeline_type
@@ -74,6 +76,7 @@ export interface AnalysisStatus {
   };
   download_links?: Record<string, string>;
   pipeline_type?: string; // This was missing
+  cvatID?: number;
 }
 
 export class VideoService {
@@ -82,14 +85,14 @@ export class VideoService {
   /**
    * Upload a video file to the Docker API
    */
-  static async upload(file: File, duration?: number): Promise<UploadResponse> {
+  static async upload(file: File, cvatID: number, duration?: number): Promise<UploadResponse> {
     try {
-      const response = await apiService.uploadVideo(file);
-      
+      const response = await apiService.uploadVideo(file, cvatID);
       return {
         ...response,
-        duration: duration || 0,
-        size: file.size
+        cvatID : cvatID || 0,
+        duration : duration || 0,
+        size: file.size,
       };
     } catch (error) {
       console.error('VideoService.upload failed:', error);
@@ -112,7 +115,8 @@ export class VideoService {
         progress: status.progress || 0,
         error: status.error,
         processingTime: status.processing_time,
-        pipelineType: status.pipeline_type as 'full' | 'visual_only' | 'audio_only'
+        pipelineType: status.pipeline_type as 'full' | 'visual_only' | 'audio_only',
+        cvatID : status.cvatID,
       };
     } catch (error) {
       console.error('VideoService.get failed:', error);

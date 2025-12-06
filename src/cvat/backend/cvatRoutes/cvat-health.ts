@@ -6,12 +6,12 @@ export async function getCvatHealth (req: any, res: any) {
   try {
     if (!GlobalState.token) {
       return res.json({ ok: true, tokenValid: false });    }
-
+    
+    console.log(GlobalState.token);
     // Verify token is still valid
     await axios.get(`${GlobalConstants.CVAT_BASE}/server/about`, {
       headers: { Authorization: `Token ${GlobalState.token}` },
     });
-
     await axios.get(`${GlobalConstants.CVAT_BASE}/users/self`, {
         headers: { Authorization: `Token ${GlobalState.token}` },
     });

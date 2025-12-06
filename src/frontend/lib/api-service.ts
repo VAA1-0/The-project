@@ -1,7 +1,7 @@
-import { 
-  UploadResponse, 
-  AnalysisStatus, 
-  AnalysisStartResponse 
+import {
+  UploadResponse,
+  AnalysisStatus,
+  AnalysisStartResponse
 } from '../frontend_types';
 
 class ApiService {
@@ -14,9 +14,10 @@ class ApiService {
   /**
    * Upload a video file for analysis
    */
-  async uploadVideo(file: File): Promise<UploadResponse> {
+  async uploadVideo(file: File, cvatID: number): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append("cvatID", String(cvatID));
 
     const response = await fetch(`${this.baseURL}/api/upload`, {
       method: 'POST',
@@ -35,7 +36,7 @@ class ApiService {
    * Start analysis on an uploaded video
    */
   async startAnalysis(
-    analysisId: string, 
+    analysisId: string,
     pipelineType: 'full' | 'visual_only' | 'audio_only' = 'full'
   ): Promise<AnalysisStartResponse> {
     const response = await fetch(
@@ -85,14 +86,14 @@ class ApiService {
    * Poll for status updates with progress tracking
    */
   async pollStatus(
-    analysisId: string, 
+    analysisId: string,
     onProgress: (status: AnalysisStatus) => void,
     interval: number = 2000,
     timeout: number = 300000 // 5 minutes
   ): Promise<AnalysisStatus> {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
-      
+
       const poll = async () => {
         try {
           const status = await this.getStatus(analysisId);
@@ -134,16 +135,16 @@ class ApiService {
    * Download and save a file from analysis results
    */
   async downloadAndSaveFile(
-    analysisId: string, 
-    fileType: string, 
+    analysisId: string,
+    fileType: string,
     filename?: string
   ): Promise<void> {
     try {
       const blob = await this.downloadFile(analysisId, fileType);
-      
+
       // Use provided filename or generate one
       const downloadFilename = filename || `${analysisId}_${fileType}`;
-      
+
       this.downloadBlob(blob, downloadFilename);
     } catch (error) {
       console.error(`Failed to download ${fileType}:`, error);
@@ -271,7 +272,7 @@ class ApiService {
   getSupportedFileTypes(): string[] {
     return [
       'video',
-      'yolo_csv', 
+      'yolo_csv',
       'ocr_csv',
       'summary_json',
       'audio',
@@ -286,12 +287,12 @@ class ApiService {
     const displayNames: Record<string, string> = {
       'video': 'Annotated Video',
       'yolo_csv': 'Object Detection Results (CSV)',
-      'ocr_csv': 'Text Detection Results (CSV)', 
+      'ocr_csv': 'Text Detection Results (CSV)',
       'summary_json': 'Analysis Summary (JSON)',
       'audio': 'Extracted Audio',
       'transcript': 'Transcript (JSON)'
     };
-    
+
     return displayNames[fileType] || fileType;
   }
 
@@ -307,7 +308,7 @@ class ApiService {
       'audio': '.wav',
       'transcript': '.json'
     };
-    
+
     return extensions[fileType] || '';
   }
 }

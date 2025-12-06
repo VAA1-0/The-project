@@ -5,7 +5,7 @@ import axios from "axios";
 export async function postCvatData (req: any, res: any) {
   try {
     const taskId = req.params.id;
-
+    console.log("MULTER RECEIVED:", req.file);
     if (!req.file) {
       return res.status(400).json({ error: "No video file received" });
     }
