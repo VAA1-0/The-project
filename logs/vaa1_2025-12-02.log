@@ -1,0 +1,60 @@
+[2025-12-02 16:07:11] [INFO] [__main__:531] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-02 16:07:11] [INFO] [__main__:532] — API Documentation: http://localhost:8000/docs
+[2025-12-02 16:08:35] [INFO] [__main__:531] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-02 16:08:35] [INFO] [__main__:532] — API Documentation: http://localhost:8000/docs
+[2025-12-02 16:10:16] [INFO] [api_server:111] — Video uploaded: Helsinki_short.mp4 -> c30fc713-b956-4e8f-b5d7-c9cad3818b89.mp4 (ID: c30fc713-b956-4e8f-b5d7-c9cad3818b89)
+[2025-12-02 16:10:27] [INFO] [api_server:157] — Analysis started for c30fc713-b956-4e8f-b5d7-c9cad3818b89 with pipeline: full
+[2025-12-02 16:10:27] [INFO] [api_server:173] — 🚀 Starting full analysis pipeline for c30fc713-b956-4e8f-b5d7-c9cad3818b89
+[2025-12-02 16:10:27] [INFO] [api_server:174] — 📁 Video path: uploads\c30fc713-b956-4e8f-b5d7-c9cad3818b89.mp4
+[2025-12-02 16:10:27] [INFO] [api_server:182] — ✅ Video file exists
+[2025-12-02 16:10:27] [INFO] [api_server:194] — 🎥 Starting visual analysis pipeline...
+[2025-12-02 16:10:31] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\c30fc713-b956-4e8f-b5d7-c9cad3818b89.mp4
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:81] — End of video reached.
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:191] — Saved organized results:
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:192] —  - Video: outputs\frames\videos\c30fc713-b956-4e8f-b5d7-c9cad3818b89_annotated.mp4
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:193] —  - YOLO CSV: outputs\frames\csv\c30fc713-b956-4e8f-b5d7-c9cad3818b89_yolo_20251202_141033.csv
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:194] —  - OCR CSV: outputs\frames\csv\c30fc713-b956-4e8f-b5d7-c9cad3818b89_ocr_20251202_141033.csv
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:195] —  - Summary: outputs\frames\json\c30fc713-b956-4e8f-b5d7-c9cad3818b89_summary.json
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_video_frames:131] — Frame analysis complete.
+[2025-12-02 16:10:33] [INFO] [api_server:221] — ✅ Visual analysis completed: 372 detections
+[2025-12-02 16:10:33] [INFO] [api_server:232] — 🎵 Starting audio pipeline...
+[2025-12-02 16:10:33] [INFO] [api_server:235] — 🔊 Extracting audio from video...
+[2025-12-02 16:10:33] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\c30fc713-b956-4e8f-b5d7-c9cad3818b89.mp4
+[2025-12-02 16:10:33] [ERROR] [api_server:300] — ❌ Audio pipeline failed: [WinError 2] 系统找不到指定的文件。
+[2025-12-02 16:10:33] [ERROR] [api_server:302] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 236, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+[2025-12-02 16:10:33] [INFO] [api_server:315] — 🎉 Analysis marked as COMPLETED for c30fc713-b956-4e8f-b5d7-c9cad3818b89
+[2025-12-02 16:10:33] [INFO] [api_server:316] — 📊 Results keys: ['visual_analysis', 'audio_error']
+[2025-12-02 16:10:33] [INFO] [api_server:317] — 📁 Output files: {'video': 'outputs\\frames\\videos\\c30fc713-b956-4e8f-b5d7-c9cad3818b89_annotated.mp4', 'yolo_csv': 'outputs\\frames\\csv\\c30fc713-b956-4e8f-b5d7-c9cad3818b89_yolo_20251202_141033.csv', 'ocr_csv': 'outputs\\frames\\csv\\c30fc713-b956-4e8f-b5d7-c9cad3818b89_ocr_20251202_141033.csv', 'summary_json': 'outputs\\frames\\json\\c30fc713-b956-4e8f-b5d7-c9cad3818b89_summary.json'}
+[2025-12-02 16:15:52] [INFO] [__main__:78] — Starting analysis for: Helsinki_short.mp4
+[2025-12-02 16:15:53] [INFO] [__main__:95] — Running analysis pipeline...
+[2025-12-02 16:15:53] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on samples\Helsinki_short.mp4
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:81] — End of video reached.
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:191] — Saved organized results:
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:192] —  - Video: outputs\frames\videos\Helsinki_short_annotated.mp4
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:193] —  - YOLO CSV: outputs\frames\csv\Helsinki_short_yolo_20251202_141558.csv
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:194] —  - OCR CSV: outputs\frames\csv\Helsinki_short_ocr_20251202_141558.csv
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:195] —  - Summary: outputs\frames\json\Helsinki_short_summary.json
+[2025-12-02 16:15:58] [INFO] [src.backend.analysis.pipeline_video_frames:131] — Frame analysis complete.
+[2025-12-02 16:15:58] [INFO] [__main__:98] — ✅ Analysis complete!
+[2025-12-02 16:15:58] [INFO] [__main__:99] — Annotated video: outputs\frames\videos\Helsinki_short_annotated.mp4
+[2025-12-02 16:15:58] [INFO] [__main__:100] — YOLO detections: 372
+[2025-12-02 16:15:58] [INFO] [__main__:101] — OCR detections: 0
