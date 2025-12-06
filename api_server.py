@@ -21,6 +21,8 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
+from fastapi import Form
+
 
 logger = get_logger(__name__)
 
@@ -64,7 +66,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 analysis_status: Dict[str, Dict[str, Any]] = {}
 
 @app.post("/api/upload", response_model=dict)
-async def upload_video(file: UploadFile = File(...)) -> dict:
+async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) -> dict:
     """
     Upload a video file for analysis
     Returns analysis ID for tracking
@@ -105,14 +107,17 @@ async def upload_video(file: UploadFile = File(...)) -> dict:
             "start_time": None,
             "end_time": None,
             "output_files": {},
-            "pipeline_type": "full"
+            "pipeline_type": "full",
+            "cvatID": cvatID
         }
         
         logger.info(f"Video uploaded: {file.filename} -> {safe_filename} (ID: {analysis_id})")
-        
+        logger.info(f"Video uploaded: {cvatID})")
+        logger.info(f"Video uploaded: {file.filename} -> {safe_filename} (ID: {analysis_id})")
         return {
             "analysis_id": analysis_id,
             "filename": file.filename,
+            "cvatID": cvatID,
             "message": "Video uploaded successfully",
             "status": "uploaded"
         }
@@ -344,7 +349,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "progress": status["progress"],
         "filename": status["original_filename"],
         "error": status.get("error"),
-        "pipeline_type": status.get("pipeline_type", "full")
+        "pipeline_type": status.get("pipeline_type", "full"),
+        "cvatID" : status["cvatID"],
     }
     
     # Add results if completed

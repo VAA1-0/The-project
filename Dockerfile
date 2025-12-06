@@ -14,8 +14,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+#COPY requirements.txt .
+#ENV PIP_DEFAULT_TIMEOUT=120
+#RUN pip install --no-cache-dir -r requirements.txt
+
+COPY wheels/ /wheels/
+RUN pip install --no-cache-dir /wheels/*
 
 # Copy application code
 COPY . .

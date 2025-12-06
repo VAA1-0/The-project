@@ -16,7 +16,9 @@ import {
   CardDescription,
 } from "./ui/card";
 import { Separator } from "./ui/separator";
-import {Toggle} from "./ui/toggle";
+import { Toggle } from "./ui/toggle";
+import { listJobs, listTasks } from "@/cvat-api/client";
+import { CvatCanvas } from "@/cvat-api/components/CvatCanvas";
 
 export default function AnalyzePage() {
 
@@ -71,116 +73,196 @@ export default function AnalyzePage() {
 
 
   // KIAVASH HERE: Load metadata, blob and analysis on mount
-React.useEffect(() => {
-  async function load() {
-    if (!id) return;
-    setIsLoading(true);
+  React.useEffect(() => {
+    async function load() {
+      if (!id) return;
+      setIsLoading(true);
 
-    try {
-      // Load metadata
-      const m = await VideoService.get(id);
-      setMetadata(m);
+      try {
+        // Load metadata
+        const m = await VideoService.get(id);
+        setMetadata(m);
 
-      // Load video blob (annotated video)
-      const blob = await VideoService.getBlob(id);
-      if (blob) {
-        if (lastObjectUrl.current) {
-          URL.revokeObjectURL(lastObjectUrl.current);
+        // Load video blob (annotated video)
+        const blob = await VideoService.getBlob(id);
+        if (blob) {
+          if (lastObjectUrl.current) {
+            URL.revokeObjectURL(lastObjectUrl.current);
+          }
+          const url = URL.createObjectURL(blob);
+          lastObjectUrl.current = url;
+          setVideoUrl(url);
+          setBlobMissing(false);
+        } else {
+          setBlobMissing(true);
+          setVideoUrl(null);
         }
-        const url = URL.createObjectURL(blob);
-        lastObjectUrl.current = url;
-        setVideoUrl(url);
-        setBlobMissing(false);
-      } else {
+
+        // Load analysis data
+        const analysis = await VideoService.getAnalysis(id);
+        setAnalysisData(analysis);
+        setRawCsv(analysis.rawCsv || null);
+
+      } catch (err) {
+        console.error('Failed to load data:', err);
         setBlobMissing(true);
         setVideoUrl(null);
+        setAnalysisData(null);
+        setRawCsv(null);
+      } finally {
+        setIsLoading(false);
       }
-
-      // Load analysis data
-      const analysis = await VideoService.getAnalysis(id);
-      setAnalysisData(analysis);
-      setRawCsv(analysis.rawCsv || null);
-
-    } catch (err) {
-      console.error('Failed to load data:', err);
-      setBlobMissing(true);
-      setVideoUrl(null);
-      setAnalysisData(null);
-      setRawCsv(null);
-    } finally {
-      setIsLoading(false);
     }
-  }
-  load();
-}, [id]);
+    load();
+  }, [id]);
 
-// KIAVASH HERE : ANALYZE VIDEO HANDLER
-async function handleAnalyzeVideo() {
-  if (!id) return;
-  
-  try {
-    setAnalysisProgress(0);
-    const result = await VideoService.startAnalysis(id, 'full');
-    alert(`Analysis started! Status: ${result.status}`);
-    
-    // Start polling
-    pollAnalysisProgress(id);
-    
-  } catch (error) {
-    console.error('Failed to start analysis:', error);
-    alert('Failed to start analysis.');
-  }
-}
+  // KIAVASH HERE : ANALYZE VIDEO HANDLER
+  async function handleAnalyzeVideo() {
+    if (!id) return;
 
-// KIAVASH HERE : EXPORT RAW DATA HANDLER
-async function handleExport() {
-  if (!id || !analysisData) return;
-  
-  try {
-    // Download the CSV file
-    await VideoService.exportFile(id, 'yolo_csv');
-    
-    // Optionally download other files
-    // await VideoService.exportFile(id, 'ocr_csv');
-    // await VideoService.exportFile(id, 'summary_json');
-    
-  } catch (error) {
-    console.error('Failed to export:', error);
-    alert('Failed to export data. Check console for details.');
-  }
-}
-
-const [analysisProgress, setAnalysisProgress] = useState(0);
-const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-async function pollAnalysisProgress(analysisId: string) {
-  setIsAnalyzing(true);
-  
-  const interval = setInterval(async () => {
     try {
-      const status = await VideoService.get(analysisId);
-      setAnalysisProgress(status.progress || 0);
-      
-      if (status.status === 'completed') {
-        clearInterval(interval);
-        setIsAnalyzing(false);
-        
-        // Refresh analysis data
-        const updatedAnalysis = await VideoService.getAnalysis(analysisId);
-        setAnalysisData(updatedAnalysis);
-        setRawCsv(updatedAnalysis.rawCsv || null);
-        
-        alert('Analysis completed!');
-      } else if (status.status === 'error') {
-        clearInterval(interval);
-        setIsAnalyzing(false);
-        alert(`Analysis failed: ${status.error}`);
-      }
+      setAnalysisProgress(0);
+      const result = await VideoService.startAnalysis(id, 'full');
+      alert(`Analysis started! Status: ${result.status}`);
+
+      // Start polling
+      pollAnalysisProgress(id);
+
     } catch (error) {
-      console.error('Polling error:', error);
+      console.error('Failed to start analysis:', error);
+      alert('Failed to start analysis.');
     }
-  }, 2000);
-}
+  }
+
+  //<================ OPEN TASK AND LOAD JOB========================>
+
+  // CVAT task/job state
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [taskID, setTaskId] = useState<any>();
+  const [jobReady, setJobReady] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
+  const [isPolling, setIsPolling] = useState(false);
+
+  async function openTask() {
+    setIsPolling(true);
+    setJobs([]);
+    if (metadata) {
+      console.log("Metadata found");
+      console.log(metadata);
+    }
+    setTaskId(metadata?.cvatID ?? null);
+    if (taskID) {
+      console.log(`📂 Opening task ${taskID}...`);
+
+      // Poll for jobs (they may not be ready immediately)
+      let attempts = 0;
+      const maxAttempts = 60; // 180 seconds total
+
+      async function pollJobs() {
+        try {
+          const result = await listJobs(taskID);
+          const jobList = Array.isArray(result) ? result : result.results || [];
+
+          setJobs(jobList);
+
+          if (jobList.length === 0 && attempts < maxAttempts) {
+            attempts++;
+            console.log(`⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`);
+            setTimeout(pollJobs, 3000);
+          } else if (jobList.length > 0) {
+            console.log(`✅ Found ${jobList.length} job(s)`);
+            setJobReady(true);
+            setIsPolling(false);
+            setSelectedJob(jobList[0]);
+          } else {
+            console.warn("⚠️ No jobs found after maximum attempts");
+            alert("Jobs are taking longer than expected. Try refreshing the task.");
+          }
+        } catch (err) {
+          console.error("Failed to load jobs:", err);
+          attempts++;
+          if (attempts < maxAttempts) {
+            setTimeout(pollJobs, 3000);
+          }
+        }
+      }
+
+      pollJobs();
+    }
+    else {
+      console.log("No CVAT id found in metaData!");
+    }
+
+
+  }
+  //<============================================================>
+
+  //<================OPEN JOBS==================================>
+  const handleJobClick = async () => {
+    setJobReady(false);
+  }
+
+  //<============= LOAD TASKS ==========>
+  // Load tasks
+  /*async function loadTasks() {
+    try {
+      const result = await listTasks();
+      setTasks(result.results || []);
+    } catch (err) {
+      console.error("Failed to load tasks:", err);
+    }
+  }*/
+  //<=========================================>
+
+  // KIAVASH HERE : EXPORT RAW DATA HANDLER
+  async function handleExport() {
+    if (!id || !analysisData) return;
+
+    try {
+      // Download the CSV file
+      await VideoService.exportFile(id, 'yolo_csv');
+
+      // Optionally download other files
+      // await VideoService.exportFile(id, 'ocr_csv');
+      // await VideoService.exportFile(id, 'summary_json');
+
+    } catch (error) {
+      console.error('Failed to export:', error);
+      alert('Failed to export data. Check console for details.');
+    }
+  }
+
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  async function pollAnalysisProgress(analysisId: string) {
+    setIsAnalyzing(true);
+
+    const interval = setInterval(async () => {
+      try {
+        const status = await VideoService.get(analysisId);
+        setAnalysisProgress(status.progress || 0);
+
+        if (status.status === 'completed') {
+          clearInterval(interval);
+          setIsAnalyzing(false);
+
+          // Refresh analysis data
+          const updatedAnalysis = await VideoService.getAnalysis(analysisId);
+          setAnalysisData(updatedAnalysis);
+          setRawCsv(updatedAnalysis.rawCsv || null);
+
+          alert('Analysis completed!');
+        } else if (status.status === 'error') {
+          clearInterval(interval);
+          setIsAnalyzing(false);
+          alert(`Analysis failed: ${status.error}`);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    }, 2000);
+  }
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
@@ -192,7 +274,7 @@ async function pollAnalysisProgress(analysisId: string) {
     return () => {
       // cleanup object URL when component unmounts
       if (lastObjectUrl.current) {
-        try { URL.revokeObjectURL(lastObjectUrl.current); } catch {};
+        try { URL.revokeObjectURL(lastObjectUrl.current); } catch { };
         lastObjectUrl.current = null;
       }
     };
@@ -203,7 +285,7 @@ async function pollAnalysisProgress(analysisId: string) {
 
       {/* BODY LAYOUT */}
       <div className="flex flex-1 overflow-hidden">
-        
+
         {/* LEFT SIDEBAR */}
         <aside className="w-64 border-r border-slate-700 bg-slate-800/40 p-6 flex flex-col gap-6 overflow-y-auto">
           {/* User info placeholder */}
@@ -381,7 +463,7 @@ async function pollAnalysisProgress(analysisId: string) {
                   <div className="mt-2">
                     <div className="text-sm text-slate-400">Analysis in progress: {analysisProgress}%</div>
                     <div className="w-full bg-slate-700 rounded-full h-2 mt-1">
-                      <div 
+                      <div
                         className="bg-green-500 h-2 rounded-full transition-all duration-300"
                         style={{ width: `${analysisProgress}%` }}
                       />
@@ -407,6 +489,28 @@ async function pollAnalysisProgress(analysisId: string) {
                 >
                   Download
                 </Button>
+
+                {/* Annotate Button */}
+                {!isPolling && !jobReady &&
+                  <Button
+                    variant="default"
+                    className="bg-green-600/40 hover:bg-green-600/60 transition"
+                    onClick={openTask}
+                    disabled={isAnalyzing || isPolling}
+                  >
+                    Jobs
+                  </Button>
+                }
+                {isPolling || jobReady && 
+                <Button
+                  variant="default"
+                  className="bg-green-600/40 hover:bg-green-600/60 transition"
+                  onClick={handleJobClick}
+                  disabled={isAnalyzing || isPolling}
+                >
+                  {!jobReady ? 'Polling' : 'Annotate'}
+                </Button>
+                }
               </div>
             </CardHeader>
 
