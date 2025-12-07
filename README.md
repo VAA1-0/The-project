@@ -80,6 +80,11 @@ Run the following command **after activating the environment**:
 python -m spacy download en_core_web_sm
 ```
 
+# Remember to npm install
+
+If dependencies/packages are not recognized, run npm install in the folder. For example in `project root folder`, `src/frontend`, `cvat/backend`
+
+___
 
 # Commands for the whole project
 NOTE: To run the whole project, you need all of this running at the same time. Currently backend does not communicate with frontend without cvat running.
@@ -153,5 +158,5 @@ npm run dev
 or for electron app
 
 ```bash
-npm run satrt:electron
+npm run start:electron
 ```
