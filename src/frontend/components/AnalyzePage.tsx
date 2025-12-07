@@ -210,7 +210,7 @@ export default function AnalyzePage() {
   //<================OPEN JOBS==================================>
   const handleJobClick = async () => {
     // Navigate to the annotation page
-    router.push(`/dashboard/annotate/${id}`);
+    router.push(`/annotate/${id}`);
   }
 
   //<============= LOAD TASKS ==========>

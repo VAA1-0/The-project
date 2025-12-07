@@ -3,9 +3,10 @@ import axios from 'axios';
 
 const BASE = "http://localhost:3001";
 
-/*const backend = axios.create({
-  baseURL: 'http://localhost:3001',
-});*/
+const backend = axios.create({
+  baseURL: BASE,
+  withCredentials: true,
+});
 
 // <---- CVAT Login ---->
 // 🔹 Token login (backend CVAT API access)
@@ -80,10 +81,11 @@ export async function createVideoTask(
   try {
     // Step 1: Create task structure via backend
     console.log("📝 Creating task structure...");
+    const labels = [{ name: "Person", color: "#ff0000" }]; // TODO: User should choose labels later in development
     const taskRes = await fetch(`${BASE}/api/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name/*, labels */}),
+      body: JSON.stringify({ name, labels }),
       //credentials: "include", // 🔥 required for cookie-based auth
     });
 
@@ -126,13 +128,15 @@ export async function createVideoTask(
 
 
 // 🔹 Cookie login (CVAT iframe access)
-/*export async function loginForIframe(username: string, password: string) {
-  const resp = await backend.post('/api/cvat/login', { username, password }, {
-    withCredentials: true   // <── IMPORTANT
-  });
-
-  return resp.data;
-}*/
+export async function loginForIframe(username: string, password: string) {
+  try {
+    const resp = await backend.post('/api/cvat/login', { username, password });
+    return resp.data;
+  } catch (err: any) {
+    const message = err?.response?.data?.error || err?.message || 'Iframe login failed';
+    return { ok: false, error: message };
+  }
+}
 
 export async function listExportFormats() {
   const res = await fetch("http://localhost:8080/api/server/annotation/formats");

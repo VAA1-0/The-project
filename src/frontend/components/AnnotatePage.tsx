@@ -7,6 +7,8 @@ import { listJobs } from "@/cvat-api/client";
 import { VideoService } from "@/lib/video-service";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { GameRunLogo } from "./ProjectLogo";
+import Divider from "./ui/Divider";
 
 export default function AnnotatePage() {
   const router = useRouter();
@@ -125,29 +127,92 @@ export default function AnnotatePage() {
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Top navigation bar */}
-      <div className="bg-slate-800/80 border-b border-slate-700 px-6 py-3 flex items-center justify-between">
+      <header className="w-full border-b border-slate-700 bg-slate-800/50">
+        <div className="px-6 py-4 flex items-center justify-between">
+          {/* Left section: Logo, Dashboard, Video name */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 cursor-pointer" onClick={handleBack}>
+              <GameRunLogo size="sm" />
+            </div>
 
-        
-        {jobs.length > 1 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-400">Job:</span>
-            <select
-              value={selectedJob.id}
-              onChange={(e) => {
-                const job = jobs.find(j => j.id === parseInt(e.target.value));
-                if (job) setSelectedJob(job);
-              }}
-              className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-1 text-sm"
-            >
-              {jobs.map((job) => (
-                <option key={job.id} value={job.id}>
-                  Job {job.id} ({job.status || 'unknown'})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2.5 text-white font-medium">
+              <Button 
+                variant="ghost" 
+                className="cursor-default hover:bg-slate-700/40 transition"
+                onClick={() => router.push("/dashboard")}
+              >
+                Dashboard
+              </Button>
+              <Divider />
+              
+              <Button
+                variant="ghost"
+                className="cursor-default hover:bg-slate-700/40 transition "
+                onClick={handleBack}
+              >
+                Go Back
+              </Button>
+            
+              <div className="text-white font-medium px-2">
+                {metadata?.name || "Video"}
+              </div>
           </div>
-        )}
-      </div>
+
+          {/* Right section: Job selector (if multiple) + Download button */}
+          <div className="flex items-center gap-3">
+            {jobs.length > 1 && (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-slate-400">Job:</span>
+                  <select
+                    value={selectedJob.id}
+                    onChange={(e) => {
+                      const job = jobs.find(j => j.id === parseInt(e.target.value));
+                      if (job) setSelectedJob(job);
+                    }}
+                    className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-1 text-sm"
+                  >
+                    {jobs.map((job) => (
+                      <option key={job.id} value={job.id}>
+                        Job {job.id} ({job.status || 'unknown'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Divider />
+              </>
+            )}
+
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white border border-blue-500 transition"
+              onClick={async () => {
+                try {
+                  // Download annotations via backend API
+                  const res = await fetch(`http://localhost:3001/api/jobs/${selectedJob.id}/annotations`);
+                  if (!res.ok) throw new Error('Failed to download annotations');
+                  const data = await res.json();
+                  
+                  // Trigger download
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `annotations_job_${selectedJob.id}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  
+                  alert('Annotations downloaded!');
+                } catch (err: any) {
+                  alert('Export failed: ' + err.message);
+                }
+              }}
+            >
+              💾 Save Annotations
+            </Button>
+          </div>
+        </div>
+        </div>
+      </header>
 
       {/* CVAT Canvas - takes full remaining height */}
       <div className="flex-1 overflow-hidden">

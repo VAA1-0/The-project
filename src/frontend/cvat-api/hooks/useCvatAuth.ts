@@ -1,6 +1,6 @@
 // src/renderer/hooks/useCvatAuth.ts
 import { useState } from 'react';
-import { loginToCvat, loginForIframe } from '../api/cvatClient';
+import { loginToCvat, loginForIframe } from "@/cvat-api/client";
 
 
 export function useCvatAuth() {
@@ -17,7 +17,12 @@ export function useCvatAuth() {
       if (!iframeLogin.ok || !iframeLogin.cookie) {
         throw new Error(iframeLogin.error || "Iframe login failed");
       }
-      await window.electronAPI.setCvatCookie(iframeLogin.cookie);
+      // In Electron, set via main; in browser, fall back to document.cookie
+      if (typeof window !== "undefined" && (window as any).electronAPI?.setCvatCookie) {
+        await (window as any).electronAPI.setCvatCookie(iframeLogin.cookie);
+      } else if (typeof document !== "undefined") {
+        document.cookie = iframeLogin.cookie;
+      }
 
       // 2️⃣ Login for backend task API (token-based)
       const res = await loginToCvat(username, password);
