@@ -1,26 +1,3 @@
-/*import React, { useState } from 'react';
-
-interface Props {
-  jobId: number;
-  taskId: number;
-}
-
-export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
-  const [loaded, setLoaded] = useState(false);
-  const src = `http://localhost:8080/tasks/${taskId}/jobs/${jobId}/`;
-
-  
-
-  return (
-    <iframe
-      src={src}
-      onLoad={() => setLoaded(true)}
-      style={{ width: "100%", height: "100%", border: "none" }}
-    />
-  );
-};*/
-
-
 import React, { useRef, useEffect, useState } from 'react';
 
 interface Props {
@@ -31,11 +8,10 @@ interface Props {
 export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
-  const [isSameOrigin, setIsSameOrigin] = useState(false);
   const cvatBase = (process.env.NEXT_PUBLIC_CVAT_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
   const src = `${cvatBase}/tasks/${taskId}/jobs/${jobId}/`;
 
-  // Determine once whether the iframe is same-origin (so DOM access is allowed)
+  /*// Determine once whether the iframe is same-origin (so DOM access is allowed)
   useEffect(() => {
     try {
       const frameUrl = new URL(src, window.location.href);
@@ -44,13 +20,13 @@ export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
       console.warn('Could not evaluate iframe origin:', err);
       setIsSameOrigin(false);
     }
-  }, [src]);
+  }, [src]);*/
 
   const handleLoad = () => {
     console.log("🎨 CVAT iframe loaded");
 
     // If cross-origin, skip DOM/localStorage access to avoid security errors
-    if (isSameOrigin && iframeRef.current?.contentWindow) {
+    /*if (isSameOrigin && iframeRef.current?.contentWindow) {
       // 🔥 Inject token BEFORE CVAT sends authentication requests
       const token = window.localStorage.getItem("cvat_token");
       if (token) {
@@ -61,13 +37,13 @@ export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
           console.error("⚠ Unable to inject token inside iframe", err);
         }
       }
-    }
+    }*/
 
     setLoaded(true);
   };
 
   useEffect(() => {
-    if (!loaded || !iframeRef.current || !isSameOrigin) return;
+    if (!loaded || !iframeRef.current) return;
 
     const iframe = iframeRef.current;
 
