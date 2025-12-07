@@ -1,7 +1,7 @@
 "use client"; // ⚠️ This component uses client-side hooks, review it
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -13,6 +13,7 @@ import {
 } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { GameRunLogo } from "./ProjectLogo";
+import { getCvatHealth, loginToCvat } from "@/cvat-api/client";
 
 const Play: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
@@ -45,6 +46,18 @@ export function LandingPage() {
   const [password, setPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(true);
 
+  useEffect(() => {
+    loginToCvat("admin", "admin123")
+    .then(auth=> {
+      if (auth.ok) {
+          console.log("✅ Logged In");
+        }
+    })
+      .catch(err => {
+        console.warn("Log in failed:", err);
+      });
+  }, []);
+
   /*
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,7 +72,7 @@ export function LandingPage() {
     // Simulate Google authentication
     router.push("/dashboard");
   };
-  
+
 
   return (
     <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">

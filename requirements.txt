@@ -10,6 +10,7 @@ ffmpeg-python==0.2.0
 openai-whisper==20231117
 
 # NLP & Text Processing
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 spacy==3.7.2
 transformers==4.35.2
 
@@ -27,3 +28,7 @@ aiofiles==23.2.1
 # Utilities
 requests==2.31.0
 tqdm==4.66.1
+
+# Download models (specifically for spaCy)
+# try one of these lines to download the spaCy model
+# python -m spacy download en_core_web_sm
