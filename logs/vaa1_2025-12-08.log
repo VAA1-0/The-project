@@ -1,0 +1,4 @@
+[2025-12-08 00:01:33] [INFO] [__main__:531] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-08 00:01:33] [INFO] [__main__:532] — API Documentation: http://localhost:8000/docs
+[2025-12-08 00:02:06] [INFO] [api_server:111] — Video uploaded: Helsinki_main_street.mp4 -> 739123a4-c26d-4337-b18b-d4567e5211c2.mp4 (ID: 739123a4-c26d-4337-b18b-d4567e5211c2)
+[2025-12-08 00:02:12] [INFO] [api_server:111] — Video uploaded: Helsinki_short.mp4 -> c87f4efd-1349-469a-a1b2-06a5e97ff442.mp4 (ID: c87f4efd-1349-469a-a1b2-06a5e97ff442)

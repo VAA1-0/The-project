@@ -1,0 +1,62 @@
+[2025-12-07 21:31:05] [INFO] [__main__:531] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-07 21:31:05] [INFO] [__main__:532] — API Documentation: http://localhost:8000/docs
+[2025-12-07 21:31:48] [INFO] [api_server:111] — Video uploaded: Helsinki_main_street.mp4 -> 21e93ff9-7e3e-44ab-84c4-e66179fe47cf.mp4 (ID: 21e93ff9-7e3e-44ab-84c4-e66179fe47cf)
+[2025-12-07 21:43:43] [INFO] [api_server:157] — Analysis started for 21e93ff9-7e3e-44ab-84c4-e66179fe47cf with pipeline: full
+[2025-12-07 21:43:43] [INFO] [api_server:173] — 🚀 Starting full analysis pipeline for 21e93ff9-7e3e-44ab-84c4-e66179fe47cf
+[2025-12-07 21:43:43] [INFO] [api_server:174] — 📁 Video path: uploads\21e93ff9-7e3e-44ab-84c4-e66179fe47cf.mp4
+[2025-12-07 21:43:43] [INFO] [api_server:182] — ✅ Video file exists
+[2025-12-07 21:43:43] [INFO] [api_server:194] — 🎥 Starting visual analysis pipeline...
+[2025-12-07 21:43:46] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\21e93ff9-7e3e-44ab-84c4-e66179fe47cf.mp4
+[2025-12-07 21:44:08] [ERROR] [api_server:224] — ❌ Visual pipeline failed: module 'PIL.Image' has no attribute 'ANTIALIAS'
+[2025-12-07 21:44:08] [ERROR] [api_server:226] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 200, in run_complete_analysis
+    visual_results = frame_pipeline.analyze(
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_video_frames.py", line 110, in analyze
+    ocr_results = self.run_ocr(frame, timestamp)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_video_frames.py", line 147, in run_ocr
+    results = self.ocr.readtext(frame_rgb)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\easyocr.py", line 464, in readtext
+    result = self.recognize(img_cv_grey, horizontal_list, free_list,\
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\easyocr.py", line 391, in recognize
+    image_list, max_width = get_image_list(h_list, f_list, img_cv_grey, model_height = imgH)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\utils.py", line 593, in get_image_list
+    crop_img,ratio = compute_ratio_and_resize(transformed_img,transformed_img.shape[1],transformed_img.shape[0],model_height)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\utils.py", line 576, in compute_ratio_and_resize
+    img = cv2.resize(img,(int(model_height*ratio),model_height),interpolation=Image.ANTIALIAS)
+                                                                              ^^^^^^^^^^^^^^^
+AttributeError: module 'PIL.Image' has no attribute 'ANTIALIAS'
+
+[2025-12-07 21:44:08] [INFO] [api_server:232] — 🎵 Starting audio pipeline...
+[2025-12-07 21:44:08] [INFO] [api_server:235] — 🔊 Extracting audio from video...
+[2025-12-07 21:44:08] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\21e93ff9-7e3e-44ab-84c4-e66179fe47cf.mp4
+[2025-12-07 21:44:08] [ERROR] [api_server:300] — ❌ Audio pipeline failed: [WinError 2] 系统找不到指定的文件。
+[2025-12-07 21:44:08] [ERROR] [api_server:302] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 236, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+[2025-12-07 21:44:08] [INFO] [api_server:315] — 🎉 Analysis marked as COMPLETED for 21e93ff9-7e3e-44ab-84c4-e66179fe47cf
+[2025-12-07 21:44:08] [INFO] [api_server:316] — 📊 Results keys: ['visual_error', 'audio_error']
+[2025-12-07 21:44:08] [INFO] [api_server:317] — 📁 Output files: {}
+[2025-12-07 22:45:34] [INFO] [api_server:111] — Video uploaded: Helsinki_short.mp4 -> 5c08d132-6df9-4365-96a8-74daad0c82fe.mp4 (ID: 5c08d132-6df9-4365-96a8-74daad0c82fe)
