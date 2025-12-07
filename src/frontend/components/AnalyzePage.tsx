@@ -3,9 +3,10 @@
 // Not the exact same as Figma, needs some refactoring later
 
 import React, { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { VideoService } from "@/lib/video-service";
+import { getVideoBlob } from "@/lib/blob-store";
 
 import { Button } from "./ui/button";
 import {
@@ -18,11 +19,11 @@ import {
 import { Separator } from "./ui/separator";
 import { Toggle } from "./ui/toggle";
 import { listJobs, listTasks } from "@/cvat-api/client";
-import { CvatCanvas } from "@/cvat-api/components/CvatCanvas";
 
 export default function AnalyzePage() {
 
   const { id } = useParams() as { id: string };
+  const router = useRouter();
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
@@ -83,8 +84,14 @@ export default function AnalyzePage() {
         const m = await VideoService.get(id);
         setMetadata(m);
 
-        // Load video blob (annotated video)
-        const blob = await VideoService.getBlob(id);
+        // Load video blob - hybrid approach
+        // 1. First try to get the original video from IndexedDB (instant preview)
+        let blob = await getVideoBlob(id);
+        
+        if (!blob) {
+          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
+          blob = await VideoService.getBlob(id);
+        }
         if (blob) {
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
@@ -202,7 +209,8 @@ export default function AnalyzePage() {
 
   //<================OPEN JOBS==================================>
   const handleJobClick = async () => {
-    setJobReady(false);
+    // Navigate to the annotation page
+    router.push(`/dashboard/annotate/${id}`);
   }
 
   //<============= LOAD TASKS ==========>

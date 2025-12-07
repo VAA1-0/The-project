@@ -31,20 +31,35 @@ interface Props {
 export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
-  const src = `http://localhost:8080/tasks/${taskId}/jobs/${jobId}/`;
+  const [isSameOrigin, setIsSameOrigin] = useState(false);
+  const cvatBase = (process.env.NEXT_PUBLIC_CVAT_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+  const src = `${cvatBase}/tasks/${taskId}/jobs/${jobId}/`;
+
+  // Determine once whether the iframe is same-origin (so DOM access is allowed)
+  useEffect(() => {
+    try {
+      const frameUrl = new URL(src, window.location.href);
+      setIsSameOrigin(frameUrl.origin === window.location.origin);
+    } catch (err) {
+      console.warn('Could not evaluate iframe origin:', err);
+      setIsSameOrigin(false);
+    }
+  }, [src]);
 
   const handleLoad = () => {
     console.log("🎨 CVAT iframe loaded");
 
-    // 🔥 Inject token BEFORE CVAT sends authentication requests
-    const token = window.localStorage.getItem("cvat_token");
-    if (token && iframeRef.current?.contentWindow) {
-      try {
-        iframeRef.current.contentWindow.localStorage.setItem("token", token);
-        console.log(token);
-        console.log("🔑 Token injected into iframe");
-      } catch (err) {
-        console.error("⚠ Unable to inject token inside iframe", err);
+    // If cross-origin, skip DOM/localStorage access to avoid security errors
+    if (isSameOrigin && iframeRef.current?.contentWindow) {
+      // 🔥 Inject token BEFORE CVAT sends authentication requests
+      const token = window.localStorage.getItem("cvat_token");
+      if (token) {
+        try {
+          iframeRef.current.contentWindow.localStorage.setItem("token", token);
+          console.log("🔑 Token injected into iframe");
+        } catch (err) {
+          console.error("⚠ Unable to inject token inside iframe", err);
+        }
       }
     }
 
@@ -52,7 +67,7 @@ export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
   };
 
   useEffect(() => {
-    if (!loaded || !iframeRef.current) return;
+    if (!loaded || !iframeRef.current || !isSameOrigin) return;
 
     const iframe = iframeRef.current;
 
