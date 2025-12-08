@@ -3,20 +3,17 @@
 import React, { useState } from "react";
 
 import { VideoService } from "@/lib/video-service";
+import { getVideoBlob } from "@/lib/blob-store";
 
 interface VideoPanelProps {
   videoId?: string | null;
 }
 
 export default function VideoPanel({ videoId }: VideoPanelProps) {
-  const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
-  const [metadata, setMetadata] = useState<any>(null);
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
-  const [analysisData, setAnalysisData] = useState<any>(null);
-  const [rawCsv, setRawCsv] = useState<string | null>(null);
 
   React.useEffect(() => {
     async function load() {
@@ -28,43 +25,30 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
       setIsLoading(true);
 
       try {
-        // Load metadata
-        const m = await VideoService.get(videoId);
+        // Load video blob - hybrid approach
+        // 1. First try to get the original video from IndexedDB (instant preview)
+        let blob = await getVideoBlob(videoId);
 
-        console.log("Loaded metadata:", m);
-
-        setMetadata(m);
-
-        // Load video blob (annotated video)
-        const blob = await VideoService.getBlob(videoId);
+        if (!blob) {
+          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
+          blob = await VideoService.getBlob(videoId);
+        }
         if (blob) {
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
           }
           const url = URL.createObjectURL(blob);
           lastObjectUrl.current = url;
-
-          console.log("Loaded blob for url:", url);
-
           setVideoUrl(url);
           setBlobMissing(false);
         } else {
-          console.warn("Blob missing for videoId:", videoId);
-
           setBlobMissing(true);
           setVideoUrl(null);
         }
-
-        // Load analysis data
-        const analysis = await VideoService.getAnalysis(videoId);
-        setAnalysisData(analysis);
-        setRawCsv(analysis.rawCsv || null);
       } catch (err) {
         console.error("Failed to load data:", err);
         setBlobMissing(true);
         setVideoUrl(null);
-        setAnalysisData(null);
-        setRawCsv(null);
       } finally {
         setIsLoading(false);
       }
@@ -73,11 +57,26 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
   }, [videoId]);
 
   return (
-    <main>
+    <main className="flex-0 overflow-auto">
       <div>video Id: {videoId}</div>
       <div>video Url: {videoUrl}</div>
       <div>isLoading: {isLoading ? "true" : "false"}</div>
       <div>blobMissing: {blobMissing ? "true" : "false"}</div>
+      <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
+        {videoUrl ? (
+          <video
+            src={videoUrl}
+            controls
+            className="w-full h-full object-contain rounded-lg"
+          />
+        ) : blobMissing ? (
+          <div className="text-slate-400">
+            Video blob not found — please re-upload the video.
+          </div>
+        ) : (
+          <div className="text-slate-400">Loading video...</div>
+        )}
+      </div>
     </main>
   );
 }

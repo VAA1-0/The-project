@@ -159,6 +159,7 @@ export const Dashboard: React.FC = () => {
     try {
       //=========Upload to CVAT==================
 
+      /*
       for (const video of selected) {
         let taskName = `Task-${Date.now()}`;
         console.log("🎬 Creating video task...");
@@ -167,6 +168,8 @@ export const Dashboard: React.FC = () => {
         alert(cvatID);
         alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
       }
+      */
+
       //<=============================================>
       try {
         const arr = Array.from(selected as any) as File[];
@@ -174,16 +177,21 @@ export const Dashboard: React.FC = () => {
           // compute actual duration (in seconds) from the file
           const length = await getVideoDuration(f);
           // use VideoService to upload (saves blob + metadata)
-          const res = await VideoService.upload(f, cvatID, length);
+          const res = await VideoService.upload(f, 1, length);
           console.log(res);
-          
+
           // Store the original video blob in IndexedDB for instant preview on analyze page
           try {
             const videoBlob = new Blob([f], { type: f.type });
             await saveVideoBlob(res.analysis_id, videoBlob);
-            console.log(`Saved original video blob to IndexedDB for ${res.analysis_id}`);
+            console.log(
+              `Saved original video blob to IndexedDB for ${res.analysis_id}`
+            );
           } catch (storageErr) {
-            console.warn("Failed to save video to IndexedDB (preview may be unavailable):", storageErr);
+            console.warn(
+              "Failed to save video to IndexedDB (preview may be unavailable):",
+              storageErr
+            );
           }
         }
 
@@ -198,11 +206,10 @@ export const Dashboard: React.FC = () => {
         console.error(err);
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
       }
-    }catch (err){
+    } catch (err) {
       console.log("Video uploading to CVAT failed. Try again!");
       alert("Upload failed: " + ((err as any)?.message ?? String(err)));
-    }
-     finally {
+    } finally {
       setUploading(false);
     }
   };
@@ -381,8 +388,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("upload")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""
-                  }`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "upload" ? "bg-slate-700" : ""
+                }`}
               >
                 Upload Video
               </Button>
@@ -390,8 +398,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""
-                  }`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "library" ? "bg-slate-700" : ""
+                }`}
               >
                 Video Library
               </Button>
@@ -472,8 +481,8 @@ export const Dashboard: React.FC = () => {
                       {uploading
                         ? "Uploading..."
                         : files
-                          ? `Upload ${files.length} file(s)`
-                          : "Upload"}
+                        ? `Upload ${files.length} file(s)`
+                        : "Upload"}
                     </Button>
                   </div>
 

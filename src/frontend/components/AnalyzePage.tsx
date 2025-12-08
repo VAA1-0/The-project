@@ -16,11 +16,10 @@ import {
   CardTitle,
   CardDescription,
 } from "./ui/card";
-
-import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
 import { Separator } from "./ui/separator";
 import { Toggle } from "./ui/toggle";
 import { listJobs, listTasks } from "@/cvat-api/client";
+import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
 
 export default function AnalyzePage() {
   const { id } = useParams() as { id: string };
@@ -59,6 +58,40 @@ export default function AnalyzePage() {
   const [expandQuantity, setExpandQuantity] = useState(false);
   const [expandAnnotations, setExpandAnnotations] = useState(false);
 
+  // Compact toggle definitions to render via map (reduces repeated JSX)
+  const toggleItems = [
+    {
+      key: "transcript",
+      label: "Speech-to-Text",
+      pressed: showTranscript,
+      setPressed: setShowTranscript,
+    },
+    {
+      key: "summary",
+      label: "Summary",
+      pressed: showSummary,
+      setPressed: setShowSummary,
+    },
+    {
+      key: "objects",
+      label: "Object Detection",
+      pressed: showObjects,
+      setPressed: setShowObjects,
+    },
+    {
+      key: "quantity",
+      label: "Quantity Detection",
+      pressed: showQuantity,
+      setPressed: setShowQuantity,
+    },
+    {
+      key: "annotations",
+      label: "Annotation",
+      pressed: showAnnotations,
+      setPressed: setShowAnnotations,
+    },
+  ];
+
   // Raw CSV data state
   const [isLoading, setIsLoading] = useState(true);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
@@ -77,7 +110,7 @@ export default function AnalyzePage() {
         // Load video blob - hybrid approach
         // 1. First try to get the original video from IndexedDB (instant preview)
         let blob = await getVideoBlob(id);
-        
+
         if (!blob) {
           // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
           blob = await VideoService.getBlob(id);
@@ -111,23 +144,6 @@ export default function AnalyzePage() {
     }
     load();
   }, [id]);
-        // Load analysis data
-        const analysis = await VideoService.getAnalysis(id);
-        setAnalysisData(analysis);
-        setRawCsv(analysis.rawCsv || null);
-
-      } catch (err) {
-        console.error('Failed to load data:', err);
-        setBlobMissing(true);
-        setVideoUrl(null);
-        setAnalysisData(null);
-        setRawCsv(null);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    load();
-  }, [id]);
 
   // KIAVASH HERE : ANALYZE VIDEO HANDLER
   async function handleAnalyzeVideo() {
@@ -135,15 +151,14 @@ export default function AnalyzePage() {
 
     try {
       setAnalysisProgress(0);
-      const result = await VideoService.startAnalysis(id, 'full');
+      const result = await VideoService.startAnalysis(id, "full");
       alert(`Analysis started! Status: ${result.status}`);
 
       // Start polling
       pollAnalysisProgress(id);
-
     } catch (error) {
-      console.error('Failed to start analysis:', error);
-      alert('Failed to start analysis.');
+      console.error("Failed to start analysis:", error);
+      alert("Failed to start analysis.");
     }
   }
 
@@ -189,7 +204,9 @@ export default function AnalyzePage() {
 
         if (jobList.length === 0 && attempts < maxAttempts) {
           attempts++;
-          console.log(`⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`);
+          console.log(
+            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`
+          );
           setTimeout(pollJobs, 3000);
         } else if (jobList.length > 0) {
           console.log(`✅ Found ${jobList.length} job(s)`);
@@ -198,7 +215,9 @@ export default function AnalyzePage() {
           setSelectedJob(jobList[0]);
         } else {
           console.warn("⚠️ No jobs found after maximum attempts");
-          alert("Jobs are taking longer than expected. Try refreshing the task.");
+          alert(
+            "Jobs are taking longer than expected. Try refreshing the task."
+          );
         }
       } catch (err) {
         console.error("Failed to load jobs:", err);
@@ -217,7 +236,7 @@ export default function AnalyzePage() {
   const handleJobClick = async () => {
     // Navigate to the annotation page
     router.push(`/annotate/${id}`);
-  }
+  };
 
   //<============= LOAD TASKS ==========>
   // Load tasks
@@ -245,23 +264,6 @@ export default function AnalyzePage() {
     } catch (error) {
       console.error("Failed to export:", error);
       alert("Failed to export data. Check console for details.");
-    }
-  }
-  // KIAVASH HERE : EXPORT RAW DATA HANDLER
-  async function handleExport() {
-    if (!id || !analysisData) return;
-
-    try {
-      // Download the CSV file
-      await VideoService.exportFile(id, 'yolo_csv');
-
-      // Optionally download other files
-      // await VideoService.exportFile(id, 'ocr_csv');
-      // await VideoService.exportFile(id, 'summary_json');
-
-    } catch (error) {
-      console.error('Failed to export:', error);
-      alert('Failed to export data. Check console for details.');
     }
   }
 
@@ -296,34 +298,6 @@ export default function AnalyzePage() {
       }
     }, 2000);
   }
-  async function pollAnalysisProgress(analysisId: string) {
-    setIsAnalyzing(true);
-
-    const interval = setInterval(async () => {
-      try {
-        const status = await VideoService.get(analysisId);
-        setAnalysisProgress(status.progress || 0);
-
-        if (status.status === 'completed') {
-          clearInterval(interval);
-          setIsAnalyzing(false);
-
-          // Refresh analysis data
-          const updatedAnalysis = await VideoService.getAnalysis(analysisId);
-          setAnalysisData(updatedAnalysis);
-          setRawCsv(updatedAnalysis.rawCsv || null);
-
-          alert('Analysis completed!');
-        } else if (status.status === 'error') {
-          clearInterval(interval);
-          setIsAnalyzing(false);
-          alert(`Analysis failed: ${status.error}`);
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-      }
-    }, 2000);
-  }
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
@@ -338,7 +312,6 @@ export default function AnalyzePage() {
         try {
           URL.revokeObjectURL(lastObjectUrl.current);
         } catch {}
-        try { URL.revokeObjectURL(lastObjectUrl.current); } catch { };
         lastObjectUrl.current = null;
       }
     };
@@ -348,53 +321,27 @@ export default function AnalyzePage() {
     <div className=" flex flex-col bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       {/* BODY LAYOUT */}
       <div className="flex flex-1 overflow-hidden">
-
-        {/* LEFT SIDEBAR */}
-        <aside className="w-64 border-r border-slate-700 bg-slate-800/40 p-6 flex flex-col gap-6 overflow-y-auto">
-          {/* User info placeholder */}
-          <div className="flex justify-start text-center gap-2">
-            <div className="w-16 h-16 rounded-lg bg-blue-700 flex items-center justify-center text-xl font-semibold">
-              JD
-            </div>
-            <div className="flex flex-col justify-center">
-              <div className="text-white font-medium">John Doe</div>
-              <div className="text-xs text-slate-400">john@example.com</div>
-            </div>
-          </div>
-
-          <Separator />
-
-          {/* TOGGLES (rendered from compact config) */}
-          <div className="space-y-3">
-            {toggleItems.map((t) => (
-              <Toggle
-                key={t.key}
-                pressed={t.pressed}
-                // cast to any because Toggle's onPressedChange signature may be (v:boolean)=>void
-                onPressedChange={t.setPressed as any}
-                className="cursor-pointer w-full justify-start bg-slate-700/30 data-[state=on]:bg-blue-600/40"
-              >
-                {t.label}
-              </Toggle>
-            ))}
-          </div>
-        </aside>
-
         {/* MIDDLE SCROLLABLE AREA */}
         <main className="flex-1 overflow-y-auto p-6 space-y-6 max-w-[900px] mx-auto">
-
           {/* TRANSCRIPT */}
           {showTranscript && (
             <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
-              <CardHeader onClick={() => setExpandTranscript(!expandTranscript)} className="cursor-pointer">
+              <CardHeader
+                onClick={() => setExpandTranscript(!expandTranscript)}
+                className="cursor-pointer"
+              >
                 <CardTitle>Speech-to-Text</CardTitle>
-                <CardDescription>Transcript generated from audio</CardDescription>
+                <CardDescription>
+                  Transcript generated from audio
+                </CardDescription>
               </CardHeader>
               {expandTranscript && (
                 <CardContent className="space-y-3 max-h-[350px] overflow-y-auto">
                   {transcript.map((row: any) => (
                     <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
-                      <div className="text-xs text-cyan-300">{row.t} • {row.speaker}</div>
+                      <div className="text-xs text-cyan-300">
+                        {row.t} • {row.speaker}
+                      </div>
                       <div className="text-sm text-slate-200">{row.text}</div>
                     </div>
                   ))}
@@ -406,7 +353,10 @@ export default function AnalyzePage() {
           {/* SUMMARY */}
           {showSummary && (
             <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
-              <CardHeader onClick={() => setExpandSummary(!expandSummary)} className="cursor-pointer">
+              <CardHeader
+                onClick={() => setExpandSummary(!expandSummary)}
+                className="cursor-pointer"
+              >
                 <CardTitle>Summary</CardTitle>
                 <CardDescription>Short breakdown of the video</CardDescription>
               </CardHeader>
@@ -421,19 +371,27 @@ export default function AnalyzePage() {
           {/* OBJECTS */}
           {showObjects && (
             <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
-              <CardHeader onClick={() => setExpandObjects(!expandObjects)} className="cursor-pointer">
+              <CardHeader
+                onClick={() => setExpandObjects(!expandObjects)}
+                className="cursor-pointer"
+              >
                 <CardTitle>Detected Objects</CardTitle>
                 <CardDescription>AI object detection results</CardDescription>
               </CardHeader>
               {expandObjects && (
                 <CardContent className="space-y-3">
                   {detectedObjects.map((obj: any) => (
-                    <div key={obj.name} className="p-3 rounded-lg bg-slate-700/30">
+                    <div
+                      key={obj.name}
+                      className="p-3 rounded-lg bg-slate-700/30"
+                    >
                       <div className="flex justify-between text-white">
                         <span>{obj.name}</span>
                         <span>{obj.count}</span>
                       </div>
-                      <div className="text-xs text-slate-400">First seen at {obj.firstSeen ?? obj.time}</div>
+                      <div className="text-xs text-slate-400">
+                        First seen at {obj.firstSeen ?? obj.time}
+                      </div>
                     </div>
                   ))}
                 </CardContent>
@@ -444,16 +402,24 @@ export default function AnalyzePage() {
           {/* QUANTITY DETECTION */}
           {showQuantity && (
             <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
-              <CardHeader onClick={() => setExpandQuantity(!expandQuantity)} className="cursor-pointer">
+              <CardHeader
+                onClick={() => setExpandQuantity(!expandQuantity)}
+                className="cursor-pointer"
+              >
                 <CardTitle>Quantity Detection</CardTitle>
                 <CardDescription>Counts of people/objects</CardDescription>
               </CardHeader>
               {expandQuantity && (
                 <CardContent>
                   {quantityInfo.map((q: any) => (
-                    <div key={q.label} className="p-3 bg-slate-700/30 rounded-lg">
+                    <div
+                      key={q.label}
+                      className="p-3 bg-slate-700/30 rounded-lg"
+                    >
                       <div className="text-white font-medium">{q.label}</div>
-                      <div className="text-xs text-slate-400">{q.desc ?? JSON.stringify(q)}</div>
+                      <div className="text-xs text-slate-400">
+                        {q.desc ?? JSON.stringify(q)}
+                      </div>
                     </div>
                   ))}
                 </CardContent>
@@ -464,7 +430,10 @@ export default function AnalyzePage() {
           {/* ANNOTATIONS */}
           {showAnnotations && (
             <Card className="bg-slate-800/50 border-slate-700 hover:bg-slate-700/40 transition">
-              <CardHeader onClick={() => setExpandAnnotations(!expandAnnotations)} className="cursor-pointer">
+              <CardHeader
+                onClick={() => setExpandAnnotations(!expandAnnotations)}
+                className="cursor-pointer"
+              >
                 <CardTitle>Annotations</CardTitle>
                 <CardDescription>User notes</CardDescription>
               </CardHeader>
@@ -480,11 +449,30 @@ export default function AnalyzePage() {
               )}
             </Card>
           )}
-
         </main>
 
         {/* FIXED RIGHT COLUMN — VIDEO PLAYER */}
         <aside className="w-[580px] border-l border-slate-700 bg-slate-800/30 p-6 flex flex-col gap-6">
+          <Card className="bg-slate-900 border-slate-700">
+            <CardContent className="p-0">
+              <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
+                {videoUrl ? (
+                  <video
+                    src={videoUrl}
+                    controls
+                    className="w-full h-full object-contain rounded-lg"
+                  />
+                ) : blobMissing ? (
+                  <div className="text-slate-400">
+                    Video blob not found — please re-upload the video.
+                  </div>
+                ) : (
+                  <div className="text-slate-400">Loading video...</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader>
               <CardTitle>Video Info</CardTitle>
@@ -546,7 +534,7 @@ export default function AnalyzePage() {
                 </Button>
 
                 {/* Annotate Button */}
-                {!isPolling && !jobReady &&
+                {!isPolling && !jobReady && (
                   <Button
                     variant="default"
                     className="bg-green-600/40 hover:bg-green-600/60 transition"
@@ -555,17 +543,18 @@ export default function AnalyzePage() {
                   >
                     Jobs
                   </Button>
-                }
-                {isPolling || jobReady &&
-                  <Button
-                    variant="default"
-                    className="bg-green-600/40 hover:bg-green-600/60 transition"
-                    onClick={handleJobClick}
-                    disabled={isAnalyzing || isPolling}
-                  >
-                    {!jobReady ? 'Polling' : 'Annotate'}
-                  </Button>
-                }
+                )}
+                {isPolling ||
+                  (jobReady && (
+                    <Button
+                      variant="default"
+                      className="bg-green-600/40 hover:bg-green-600/60 transition"
+                      onClick={handleJobClick}
+                      disabled={isAnalyzing || isPolling}
+                    >
+                      {!jobReady ? "Polling" : "Annotate"}
+                    </Button>
+                  ))}
               </div>
             </CardHeader>
 

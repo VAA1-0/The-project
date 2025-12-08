@@ -14,7 +14,7 @@ export default function AnalyzeResultsPanel() {
     <div className="bg-[#1a1a1a] border-t border-[#0a0a0a] flex flex-col h-full">
       {/* Header */}
       <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
-        <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
+        <span className="text-[#b8b8b8] text-[14px]">Analyze Results</span>
         <div className="flex items-center gap-1">
           <button className="p-1 hover:bg-[#2a2a2a] rounded">
             <Search className="size-3.5 text-[#b8b8b8]" />

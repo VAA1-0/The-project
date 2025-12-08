@@ -8,13 +8,16 @@ import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
 import ProjectPanel from "./panels/ProjectPanel";
 import AnalyzeResultsPanel from "./panels/AnalyzeResultsPanel";
 import VideoPanel from "./panels/VideoPanel";
-import PanelB from "./panels/PanelB";
+import ToolsPanel from "./panels/ToolsPanel";
+import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import { createRoot } from "react-dom/client";
 
 export default function PanelManager() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [videoId, setVideoId] = useState<string | null>(null);
   const videoRootRef = useRef<any>(null);
+  const toolsRootRef = useRef<any>(null);
+  const speechToTextRootRef = useRef<any>(null);
 
   // Initialize GoldenLayout once
   useEffect(() => {
@@ -64,14 +67,29 @@ export default function PanelManager() {
       });
     });
 
-    layout.registerComponent("PanelB", (container: any) => {
+    layout.registerComponent("ToolsPanel", (container: any) => {
       const mountEl = document.createElement("div");
       container.getElement().append(mountEl);
-      const root = createRoot(mountEl);
-      root.render(<PanelB />);
+
+      const videoRoot = createRoot(mountEl);
+      toolsRootRef.current = videoRoot;
+      toolsRootRef.current.render(<ToolsPanel videoId={null} />);
+
       container.on("destroy", () => {
         // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => root.unmount(), 0);
+        setTimeout(() => toolsRootRef.current?.unmount(), 0);
+      });
+    });
+
+    layout.registerComponent("SpeechToTextPanel", (container: any) => {
+      const mountEl = document.createElement("div");
+      container.getElement().append(mountEl);
+      const speechToTextRoot = createRoot(mountEl);
+      speechToTextRootRef.current = speechToTextRoot;
+      speechToTextRootRef.current.render(<SpeechToTextPanel videoId={null} />);
+      container.on("destroy", () => {
+        // Defer unmount to avoid synchronous unmount during React rendering
+        setTimeout(() => speechToTextRootRef.current?.unmount(), 0);
       });
     });
 
@@ -107,8 +125,18 @@ export default function PanelManager() {
                 title: "Video Panel",
                 height: 70,
               },
-              { type: "component", componentType: "PanelB", title: "Panel B" },
+              {
+                type: "component",
+                componentType: "ToolsPanel",
+                title: "ToolsPanel",
+              },
             ],
+          },
+          {
+            type: "component",
+            componentType: "SpeechToTextPanel",
+            title: "SpeechToTextPanel",
+            width: 20,
           },
         ],
       },
@@ -121,6 +149,14 @@ export default function PanelManager() {
   useEffect(() => {
     if (videoRootRef.current) {
       videoRootRef.current.render(<VideoPanel videoId={videoId} />);
+    }
+    if (toolsRootRef.current) {
+      toolsRootRef.current.render(<ToolsPanel videoId={videoId} />);
+    }
+    if (speechToTextRootRef.current) {
+      speechToTextRootRef.current.render(
+        <SpeechToTextPanel videoId={videoId} />
+      );
     }
   }, [videoId]);
 

@@ -2,3 +2,110 @@
 [2025-12-08 00:01:33] [INFO] [__main__:532] — API Documentation: http://localhost:8000/docs
 [2025-12-08 00:02:06] [INFO] [api_server:111] — Video uploaded: Helsinki_main_street.mp4 -> 739123a4-c26d-4337-b18b-d4567e5211c2.mp4 (ID: 739123a4-c26d-4337-b18b-d4567e5211c2)
 [2025-12-08 00:02:12] [INFO] [api_server:111] — Video uploaded: Helsinki_short.mp4 -> c87f4efd-1349-469a-a1b2-06a5e97ff442.mp4 (ID: c87f4efd-1349-469a-a1b2-06a5e97ff442)
+[2025-12-08 00:52:36] [INFO] [__main__:537] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-08 00:52:36] [INFO] [__main__:538] — API Documentation: http://localhost:8000/docs
+[2025-12-08 01:03:25] [INFO] [api_server:114] — Video uploaded: Helsinki_main_street.mp4 -> 1b52451a-4372-42db-9bc2-2108d4502391.mp4 (ID: 1b52451a-4372-42db-9bc2-2108d4502391)
+[2025-12-08 01:03:25] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 01:03:25] [INFO] [api_server:116] — Video uploaded: Helsinki_main_street.mp4 -> 1b52451a-4372-42db-9bc2-2108d4502391.mp4 (ID: 1b52451a-4372-42db-9bc2-2108d4502391)
+[2025-12-08 01:03:31] [INFO] [api_server:114] — Video uploaded: Helsinki_short.mp4 -> d78c2492-053b-457c-90d4-aa104e6aeb08.mp4 (ID: d78c2492-053b-457c-90d4-aa104e6aeb08)
+[2025-12-08 01:03:31] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 01:03:31] [INFO] [api_server:116] — Video uploaded: Helsinki_short.mp4 -> d78c2492-053b-457c-90d4-aa104e6aeb08.mp4 (ID: d78c2492-053b-457c-90d4-aa104e6aeb08)
+[2025-12-08 01:03:48] [INFO] [api_server:162] — Analysis started for 1b52451a-4372-42db-9bc2-2108d4502391 with pipeline: full
+[2025-12-08 01:03:48] [INFO] [api_server:178] — 🚀 Starting full analysis pipeline for 1b52451a-4372-42db-9bc2-2108d4502391
+[2025-12-08 01:03:48] [INFO] [api_server:179] — 📁 Video path: uploads\1b52451a-4372-42db-9bc2-2108d4502391.mp4
+[2025-12-08 01:03:48] [INFO] [api_server:187] — ✅ Video file exists
+[2025-12-08 01:03:48] [INFO] [api_server:199] — 🎥 Starting visual analysis pipeline...
+[2025-12-08 01:03:51] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\1b52451a-4372-42db-9bc2-2108d4502391.mp4
+[2025-12-08 01:04:19] [ERROR] [api_server:229] — ❌ Visual pipeline failed: module 'PIL.Image' has no attribute 'ANTIALIAS'
+[2025-12-08 01:04:19] [ERROR] [api_server:231] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 205, in run_complete_analysis
+    visual_results = frame_pipeline.analyze(
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_video_frames.py", line 110, in analyze
+    ocr_results = self.run_ocr(frame, timestamp)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_video_frames.py", line 147, in run_ocr
+    results = self.ocr.readtext(frame_rgb)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\easyocr.py", line 464, in readtext
+    result = self.recognize(img_cv_grey, horizontal_list, free_list,\
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\easyocr.py", line 391, in recognize
+    image_list, max_width = get_image_list(h_list, f_list, img_cv_grey, model_height = imgH)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\utils.py", line 593, in get_image_list
+    crop_img,ratio = compute_ratio_and_resize(transformed_img,transformed_img.shape[1],transformed_img.shape[0],model_height)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\easyocr\utils.py", line 576, in compute_ratio_and_resize
+    img = cv2.resize(img,(int(model_height*ratio),model_height),interpolation=Image.ANTIALIAS)
+                                                                              ^^^^^^^^^^^^^^^
+AttributeError: module 'PIL.Image' has no attribute 'ANTIALIAS'
+
+[2025-12-08 01:04:19] [INFO] [api_server:237] — 🎵 Starting audio pipeline...
+[2025-12-08 01:04:19] [INFO] [api_server:240] — 🔊 Extracting audio from video...
+[2025-12-08 01:04:19] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\1b52451a-4372-42db-9bc2-2108d4502391.mp4
+[2025-12-08 01:04:19] [ERROR] [api_server:305] — ❌ Audio pipeline failed: [WinError 2] 系统找不到指定的文件。
+[2025-12-08 01:04:19] [ERROR] [api_server:307] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 241, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+[2025-12-08 01:04:19] [INFO] [api_server:320] — 🎉 Analysis marked as COMPLETED for 1b52451a-4372-42db-9bc2-2108d4502391
+[2025-12-08 01:04:19] [INFO] [api_server:321] — 📊 Results keys: ['visual_error', 'audio_error']
+[2025-12-08 01:04:19] [INFO] [api_server:322] — 📁 Output files: {}
+[2025-12-08 01:08:12] [INFO] [api_server:162] — Analysis started for d78c2492-053b-457c-90d4-aa104e6aeb08 with pipeline: full
+[2025-12-08 01:08:12] [INFO] [api_server:178] — 🚀 Starting full analysis pipeline for d78c2492-053b-457c-90d4-aa104e6aeb08
+[2025-12-08 01:08:12] [INFO] [api_server:179] — 📁 Video path: uploads\d78c2492-053b-457c-90d4-aa104e6aeb08.mp4
+[2025-12-08 01:08:12] [INFO] [api_server:187] — ✅ Video file exists
+[2025-12-08 01:08:12] [INFO] [api_server:199] — 🎥 Starting visual analysis pipeline...
+[2025-12-08 01:08:15] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\d78c2492-053b-457c-90d4-aa104e6aeb08.mp4
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:81] — End of video reached.
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:191] — Saved organized results:
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:192] —  - Video: outputs\frames\videos\d78c2492-053b-457c-90d4-aa104e6aeb08_annotated.mp4
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:193] —  - YOLO CSV: outputs\frames\csv\d78c2492-053b-457c-90d4-aa104e6aeb08_yolo_20251207_230822.csv
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:194] —  - OCR CSV: outputs\frames\csv\d78c2492-053b-457c-90d4-aa104e6aeb08_ocr_20251207_230822.csv
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:195] —  - Summary: outputs\frames\json\d78c2492-053b-457c-90d4-aa104e6aeb08_summary.json
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_video_frames:131] — Frame analysis complete.
+[2025-12-08 01:08:22] [INFO] [api_server:226] — ✅ Visual analysis completed: 372 detections
+[2025-12-08 01:08:22] [INFO] [api_server:237] — 🎵 Starting audio pipeline...
+[2025-12-08 01:08:22] [INFO] [api_server:240] — 🔊 Extracting audio from video...
+[2025-12-08 01:08:22] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\d78c2492-053b-457c-90d4-aa104e6aeb08.mp4
+[2025-12-08 01:08:22] [ERROR] [api_server:305] — ❌ Audio pipeline failed: [WinError 2] 系统找不到指定的文件。
+[2025-12-08 01:08:22] [ERROR] [api_server:307] — 📝 Traceback: Traceback (most recent call last):
+  File "e:\wenjian\123\3rd\The-project\api_server.py", line 241, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "e:\wenjian\123\3rd\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\wenjian\123\3rd\The-project\.venv\Lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\Calorie\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] 系统找不到指定的文件。
+
+[2025-12-08 01:08:22] [INFO] [api_server:320] — 🎉 Analysis marked as COMPLETED for d78c2492-053b-457c-90d4-aa104e6aeb08
+[2025-12-08 01:08:22] [INFO] [api_server:321] — 📊 Results keys: ['visual_analysis', 'audio_error']
+[2025-12-08 01:08:22] [INFO] [api_server:322] — 📁 Output files: {'video': 'outputs\\frames\\videos\\d78c2492-053b-457c-90d4-aa104e6aeb08_annotated.mp4', 'yolo_csv': 'outputs\\frames\\csv\\d78c2492-053b-457c-90d4-aa104e6aeb08_yolo_20251207_230822.csv', 'ocr_csv': 'outputs\\frames\\csv\\d78c2492-053b-457c-90d4-aa104e6aeb08_ocr_20251207_230822.csv', 'summary_json': 'outputs\\frames\\json\\d78c2492-053b-457c-90d4-aa104e6aeb08_summary.json'}
