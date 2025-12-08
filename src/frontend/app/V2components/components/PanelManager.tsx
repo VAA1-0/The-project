@@ -8,7 +8,7 @@ import { createRoot } from "react-dom/client";
 
 // Import your panel components here
 import ProjectPanel from "./panels/ProjectPanel";
-import AnalyzeResultsPanel from "./panels/AnalyzeResultsPanel";
+import DownloadPanel from "./panels/DownloadPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
@@ -33,7 +33,7 @@ const panelConfigs: PanelConfig[] = [
   },
   {
     componentName: "AnalyzeResultsPanel",
-    Component: AnalyzeResultsPanel,
+    Component: DownloadPanel,
   },
   {
     componentName: "VideoPanel",
@@ -68,8 +68,8 @@ const layoutConfig = {
           },
           {
             type: "component",
-            componentType: "AnalyzeResultsPanel",
-            title: "AnalyzeResultsPanel",
+            componentType: "DownloadPanel",
+            title: "DownloadPanel",
             height: 50,
           },
         ],

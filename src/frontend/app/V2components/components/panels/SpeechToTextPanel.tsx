@@ -58,6 +58,12 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
 
         // Load analysis data
         const analysis = await VideoService.getAnalysis(videoId);
+
+        console.log(
+          "Loaded analysis data quantityDetection:",
+          analysis.quantityDetection
+        );
+
         setAnalysisData(analysis);
         setRawCsv(analysis.rawCsv || null);
       } catch (err) {
@@ -101,6 +107,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         {/* Speech to text */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Speech to Text:
           {transcript.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No speech to text detected
@@ -119,6 +126,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
 
         {/* SUMMARY */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Summary:
           {summaryText.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No summary available
@@ -133,6 +141,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         {/* Detected Objects */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Detected Objects:
           {detectedObjects.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No detected objects
@@ -140,15 +149,14 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
           ) : (
             detectedObjects.map((obj: any, idx: number) => (
               <div
-                key={`${obj.name}-${idx}`}
+                key={`${obj.class_name}-${idx}`}
                 className="p-3 rounded-lg bg-slate-700/30"
               >
                 <div className="flex justify-between text-white">
-                  <span>{obj.name}</span>
-                  <span>{obj.count}</span>
+                  <span>{obj.class_name}</span>
                 </div>
                 <div className="text-xs text-slate-400">
-                  First seen at {obj.firstSeen ?? obj.time}
+                  Seen at {obj.timestamp}
                 </div>
               </div>
             ))
@@ -158,6 +166,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         {/* Quantity Detection */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Quantity Detection:
           {quantityInfo.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No speech to text detected
@@ -177,6 +186,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         {/* Annotations */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Annotations:
           {annotations.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No annotations available

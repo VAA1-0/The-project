@@ -66,6 +66,8 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   }
 
   async function handleExport() {
+    console.log("Exporting data for videoId:", videoId);
+
     if (!videoId || !analysisData) return;
 
     try {
@@ -140,7 +142,10 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
         <Button
           variant="default"
           className="bg-blue-600/40 hover:bg-blue-600/60 transition"
-          onClick={handleExport}
+          onClick={() => {
+            handleExport();
+            console.log("Download button clicked");
+          }}
         >
           Download
         </Button>

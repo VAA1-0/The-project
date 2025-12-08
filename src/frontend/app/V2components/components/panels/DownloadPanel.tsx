@@ -1,6 +1,6 @@
 import { Download, Search, MoreHorizontal } from "lucide-react";
 
-export default function AnalyzeResultsPanel() {
+export default function DownloadPanel() {
   const results = [
     { name: "Video-name_Speech_to_text.csv" },
     { name: "Video-name_Summary.json" },
