@@ -176,6 +176,15 @@ export const Dashboard: React.FC = () => {
           // use VideoService to upload (saves blob + metadata)
           const res = await VideoService.upload(f, cvatID, length);
           console.log(res);
+          
+          // Store the original video blob in IndexedDB for instant preview on analyze page
+          try {
+            const videoBlob = new Blob([f], { type: f.type });
+            await saveVideoBlob(res.analysis_id, videoBlob);
+            console.log(`Saved original video blob to IndexedDB for ${res.analysis_id}`);
+          } catch (storageErr) {
+            console.warn("Failed to save video to IndexedDB (preview may be unavailable):", storageErr);
+          }
         }
 
         // refresh local view
