@@ -4,114 +4,133 @@ import { useEffect, useRef, useState } from "react";
 import { GoldenLayout } from "golden-layout";
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
+import { createRoot } from "react-dom/client";
 
+// Import your panel components here
 import ProjectPanel from "./panels/ProjectPanel";
 import AnalyzeResultsPanel from "./panels/AnalyzeResultsPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
-import { createRoot } from "react-dom/client";
+
+// Import State manager and laytout factory if needed
+import { panelStateManager } from "@/lib/panel-state-manager";
+import { GoldenLayoutFactory } from "@/lib/golden-layout-factory";
+
+interface PanelConfig {
+  componentName: string;
+  Component: React.ComponentType<any>;
+  getProps?: (state?: any) => Record<string, any>;
+}
+
+const panelConfigs: PanelConfig[] = [
+  {
+    componentName: "ProjectPanel",
+    Component: ProjectPanel,
+    getProps: () => ({
+      onVideoSelect: (id: string) => panelStateManager.setVideoId(id),
+    }),
+  },
+  {
+    componentName: "AnalyzeResultsPanel",
+    Component: AnalyzeResultsPanel,
+  },
+  {
+    componentName: "VideoPanel",
+    Component: VideoPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+  {
+    componentName: "ToolsPanel",
+    Component: ToolsPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+  {
+    componentName: "SpeechToTextPanel",
+    Component: SpeechToTextPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+];
+
+const layoutConfig = {
+  root: {
+    type: "row",
+    content: [
+      {
+        type: "column",
+        width: 15,
+        content: [
+          {
+            type: "component",
+            componentType: "ProjectPanel",
+            title: "ProjectPanel",
+            height: 50,
+          },
+          {
+            type: "component",
+            componentType: "AnalyzeResultsPanel",
+            title: "AnalyzeResultsPanel",
+            height: 50,
+          },
+        ],
+      },
+      {
+        type: "column",
+        content: [
+          {
+            type: "component",
+            componentType: "VideoPanel",
+            title: "VideoPanel",
+            height: 70,
+          },
+          {
+            type: "component",
+            componentType: "ToolsPanel",
+            title: "ToolsPanel",
+          },
+        ],
+      },
+      {
+        type: "component",
+        componentType: "SpeechToTextPanel",
+        title: "SpeechToTextPanel",
+        width: 20,
+      },
+    ],
+  },
+};
 
 export default function PanelManager() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [videoId, setVideoId] = useState<string | null>(null);
-  const videoRootRef = useRef<any>(null);
-  const toolsRootRef = useRef<any>(null);
-  const speechToTextRootRef = useRef<any>(null);
+  const factoryRef = useRef<GoldenLayoutFactory | null>(null);
 
-  // Initialize GoldenLayout once
   useEffect(() => {
     if (!containerRef.current) return;
 
     const layout = new GoldenLayout(containerRef.current);
 
-    // Mount React components into the GoldenLayout containers
-    layout.registerComponent("ProjectPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const root = createRoot(mountEl);
-      root.render(
-        <ProjectPanel
-          onVideoSelect={(id: string) => {
-            setVideoId(id);
-          }}
-        />
-      );
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => root.unmount(), 0);
-      });
-    });
+    const factory = new GoldenLayoutFactory(layout);
+    panelConfigs.forEach((config) => factory.registerFactory(config));
+    factoryRef.current = factory;
 
-    layout.registerComponent("AnalyzeResultsPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const root = createRoot(mountEl);
-      root.render(<AnalyzeResultsPanel />);
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => root.unmount(), 0);
-      });
-    });
-
-    layout.registerComponent("VideoPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const videoRoot = createRoot(mountEl);
-      videoRootRef.current = videoRoot;
-      videoRootRef.current.render(<VideoPanel videoId={null} />);
-
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => videoRootRef.current?.unmount(), 0);
-      });
-    });
-
-    layout.registerComponent("ToolsPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-
-      const videoRoot = createRoot(mountEl);
-      toolsRootRef.current = videoRoot;
-      toolsRootRef.current.render(<ToolsPanel videoId={null} />);
-
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => toolsRootRef.current?.unmount(), 0);
-      });
-    });
-
-    layout.registerComponent("SpeechToTextPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const speechToTextRoot = createRoot(mountEl);
-      speechToTextRootRef.current = speechToTextRoot;
-      speechToTextRootRef.current.render(<SpeechToTextPanel videoId={null} />);
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => speechToTextRootRef.current?.unmount(), 0);
-      });
-    });
-
-    // Initialize the layout with two panels
     layout.loadLayout({
       root: {
         type: "row",
         content: [
           {
             type: "column",
-            width: 15,
+            width: 20,
             content: [
               {
                 type: "component",
                 componentType: "ProjectPanel",
-                title: "Project Panel",
+                title: "ProjectPanel",
                 height: 50,
               },
               {
                 type: "component",
                 componentType: "AnalyzeResultsPanel",
-                title: "Analyze Results",
+                title: "AnalyzeResultsPanel",
                 height: 50,
               },
             ],
@@ -122,7 +141,7 @@ export default function PanelManager() {
               {
                 type: "component",
                 componentType: "VideoPanel",
-                title: "Video Panel",
+                title: "VideoPanel",
                 height: 70,
               },
               {
@@ -142,23 +161,11 @@ export default function PanelManager() {
       },
     });
 
-    return () => layout.destroy();
-  }, []); // ← Empty dependency array ensures this runs only once
-
-  // Update VideoPanel when videoId changes
-  useEffect(() => {
-    if (videoRootRef.current) {
-      videoRootRef.current.render(<VideoPanel videoId={videoId} />);
-    }
-    if (toolsRootRef.current) {
-      toolsRootRef.current.render(<ToolsPanel videoId={videoId} />);
-    }
-    if (speechToTextRootRef.current) {
-      speechToTextRootRef.current.render(
-        <SpeechToTextPanel videoId={videoId} />
-      );
-    }
-  }, [videoId]);
+    return () => {
+      factory.destroy();
+      layout.destroy();
+    };
+  }, []);
 
   return (
     <div
