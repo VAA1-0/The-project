@@ -33,16 +33,10 @@ export interface DetectedObject {
   confidence: number;
 }
 
-export interface QuantityDetection {
-  name: string;
-  count: number;
-  confidence?: number;
-}
-
 export interface AnalysisData {
   transcript: TranscriptSegment[];
   detectedObjects: DetectedObject[];
-  quantityDetection: QuantityDetection[];
+  quantityDetection: DetectedObject[];
   annotations: any[];
   summary: string;
   rawCsv: string;
@@ -421,47 +415,8 @@ export class VideoService {
         timestamp: row.timestamp ? Number(row.timestamp) : 0,
         class_id: row.class_id ? Number(row.class_id) : 0,
         class_name: row.label || row.class_name || "",
-        confidence: row.score ? Number(row.score) : 0,
+        confidence: Number(row.confidence) ? Number(row.confidence) : 0,
       }));
-
-      /*
-      const lines = csvText.split("\n").slice(1); // Skip header
-      const objectStats = new Map<
-        string,
-        { count: number; confidences: number[] }
-      >();
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const parts = line.split(",");
-        if (parts.length >= 4) {
-          const className = parts[3]?.replace(/"/g, "").trim();
-          const confidence = parseFloat(
-            parts[2]?.replace(/"/g, "").trim() || "0"
-          );
-
-          if (className) {
-            const existing = objectStats.get(className) || {
-              count: 0,
-              confidences: [],
-            };
-            existing.count += 1;
-            existing.confidences.push(confidence);
-            objectStats.set(className, existing);
-          }
-        }
-      }
-
-      return Array.from(objectStats.entries()).map(([name, stats]) => ({
-        name,
-        count: stats.count,
-        confidence:
-          stats.confidences.length > 0
-            ? stats.confidences.reduce((a, b) => a + b, 0) /
-              stats.confidences.length
-            : undefined,
-      }));*/
     } catch (error) {
       console.warn("Failed to parse detected objects:", error);
       return [];

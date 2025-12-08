@@ -59,11 +59,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         // Load analysis data
         const analysis = await VideoService.getAnalysis(videoId);
 
-        console.log(
-          "Loaded analysis data quantityDetection:",
-          analysis.quantityDetection
-        );
-
         setAnalysisData(analysis);
         setRawCsv(analysis.rawCsv || null);
       } catch (err) {
@@ -103,7 +98,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             </button>
           </div>
         </div>
-
         {/* Speech to text */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
@@ -123,7 +117,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             ))
           )}
         </div>
-
         {/* SUMMARY */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
           Summary:
@@ -137,10 +130,9 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             </div>
           )}
         </div>
-
         {/* Detected Objects */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-50 overflow-y-auto space-y-2 pr-2">
           Detected Objects:
           {detectedObjects.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -157,14 +149,14 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
                 </div>
                 <div className="text-xs text-slate-400">
                   Seen at {obj.timestamp}
+                  {" • "}Confidence: {(obj.confidence * 100).toFixed(2)}%
                 </div>
               </div>
             ))
           )}
         </div>
-
-        {/* Quantity Detection */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
+        {/*
+        Quantity Detection
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
           Quantity Detection:
           {quantityInfo.length === 0 ? (
@@ -182,9 +174,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             ))
           )}
         </div>
-
-        {/* Annotations */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
+        Annotations
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
           Annotations:
           {annotations.length === 0 ? (
@@ -200,6 +190,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             ))
           )}
         </div>
+        */}
       </div>
     </main>
   );

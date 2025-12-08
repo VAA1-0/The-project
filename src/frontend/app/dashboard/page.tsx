@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "../../styles/globals.css";
 import { Dashboard } from "@/components/Dashboard";
+import AnalyzePageV2 from "../V2components/AnalyzePageV2";
 
 export const metadata: Metadata = {
   title: "VAA1 Platform - Dashboard",
@@ -8,5 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardPage() {
-  return <Dashboard />;
+  // return <Dashboard />;
+  return <AnalyzePageV2 />;
 }

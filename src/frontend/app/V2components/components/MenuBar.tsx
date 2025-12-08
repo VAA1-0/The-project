@@ -34,42 +34,27 @@ export function MenuBar() {
     });
   }
 
-  // Upload handler (frontend-only): persist blob to IndexedDB and metadata to local Library
+  // Upload handler: show file selector and upload video
   const handleUpload = async () => {
-    console.log("Uploading video...");
+    // Create a hidden file input
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "video/*";
+    input.multiple = true;
+    input.style.display = "none";
 
-    document.getElementById("videoUpload")?.click();
-
-    const selected = files || (file ? ([file] as any) : null);
-    if (!selected || selected.length === 0)
-      return alert("Select a video first");
-    setUploading(true);
-    let cvatID = null;
-    try {
-      //=========Upload to CVAT==================
-
-      /*
-        for (const video of selected) {
-          let taskName = `Task-${Date.now()}`;
-          console.log("🎬 Creating video task...");
-          let result = await createVideoTask(taskName, video);
-          cvatID = result.taskId;
-          alert(cvatID);
-          alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
-        }
-        */
-
-      //<=============================================>
+    input.onchange = async (e: any) => {
+      const selectedFiles = Array.from(e.target.files) as File[];
+      if (!selectedFiles || selectedFiles.length === 0) {
+        alert("Select a video first");
+        return;
+      }
+      setUploading(true);
       try {
-        const arr = Array.from(selected as any) as File[];
-        for (const f of arr) {
-          // compute actual duration (in seconds) from the file
+        for (const f of selectedFiles) {
           const length = await getVideoDuration(f);
-          // use VideoService to upload (saves blob + metadata)
           const res = await VideoService.upload(f, 1, length);
           console.log(res);
-
-          // Store the original video blob in IndexedDB for instant preview on analyze page
           try {
             const videoBlob = new Blob([f], { type: f.type });
             await saveVideoBlob(res.analysis_id, videoBlob);
@@ -83,24 +68,26 @@ export function MenuBar() {
             );
           }
         }
-
         // refresh local view
         const list = await VideoService.list();
         setLibraryVideos(list);
         setFiles(null);
         setFile(null);
         setPreviewUrl(null);
+        // Dispatch a custom event to notify other components
+        window.dispatchEvent(new CustomEvent("video-uploaded"));
         alert("Upload successful (saved in browser storage)");
       } catch (err) {
         console.error(err);
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
+      } finally {
+        setUploading(false);
       }
-    } catch (err) {
-      console.log("Video uploading to CVAT failed. Try again!");
-      alert("Upload failed: " + ((err as any)?.message ?? String(err)));
-    } finally {
-      setUploading(false);
-    }
+    };
+
+    document.body.appendChild(input);
+    input.click();
+    document.body.removeChild(input);
   };
 
   const menuItems = [
@@ -108,10 +95,9 @@ export function MenuBar() {
       label: "File",
       submenu: [
         {
-          label: "New File",
+          label: "Upload New File",
           onClick: () => {
             handleUpload();
-            console.log("Open File Dialog");
           },
         },
         { label: "Open…", onClick: () => console.log("Open File Dialog") },

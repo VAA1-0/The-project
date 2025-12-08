@@ -23,18 +23,22 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
   const [metadata, setMetadata] = useState<any>(null);
 
   useEffect(() => {
-    // Load persisted library metadata via VideoService
     let mounted = true;
-    (async () => {
+    async function loadList() {
       try {
         const list = await VideoService.list();
         if (mounted) setLibraryVideos(list);
       } catch (e) {
         if (mounted) setLibraryVideos([]);
       }
-    })();
+    }
+    loadList();
+    // Listen for video-uploaded event to refresh list
+    const handler = () => loadList();
+    window.addEventListener("video-uploaded", handler);
     return () => {
       mounted = false;
+      window.removeEventListener("video-uploaded", handler);
     };
   }, []);
 

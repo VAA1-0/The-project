@@ -293,3 +293,100 @@ FileNotFoundError: [WinError 2] The system cannot find the file specified
 [2025-12-08 07:36:05] [INFO] [api_server:114] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> c1dc62d1-6c6a-44fe-b098-1e250b0ed661.mp4 (ID: c1dc62d1-6c6a-44fe-b098-1e250b0ed661)
 [2025-12-08 07:36:05] [INFO] [api_server:115] — Video uploaded: 1)
 [2025-12-08 07:36:05] [INFO] [api_server:116] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> c1dc62d1-6c6a-44fe-b098-1e250b0ed661.mp4 (ID: c1dc62d1-6c6a-44fe-b098-1e250b0ed661)
+[2025-12-08 11:29:53] [INFO] [__main__:537] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-08 11:29:53] [INFO] [__main__:538] — API Documentation: http://localhost:8000/docs
+[2025-12-08 11:31:56] [INFO] [api_server:114] — Video uploaded: Helsinki_main_street.mp4 -> e9076975-0356-444c-b530-614c6adf45fd.mp4 (ID: e9076975-0356-444c-b530-614c6adf45fd)
+[2025-12-08 11:31:56] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 11:31:56] [INFO] [api_server:116] — Video uploaded: Helsinki_main_street.mp4 -> e9076975-0356-444c-b530-614c6adf45fd.mp4 (ID: e9076975-0356-444c-b530-614c6adf45fd)
+[2025-12-08 11:33:14] [INFO] [api_server:162] — Analysis started for e9076975-0356-444c-b530-614c6adf45fd with pipeline: full
+[2025-12-08 11:33:14] [INFO] [api_server:178] — 🚀 Starting full analysis pipeline for e9076975-0356-444c-b530-614c6adf45fd
+[2025-12-08 11:33:14] [INFO] [api_server:179] — 📁 Video path: uploads\e9076975-0356-444c-b530-614c6adf45fd.mp4
+[2025-12-08 11:33:14] [INFO] [api_server:187] — ✅ Video file exists
+[2025-12-08 11:33:14] [INFO] [api_server:199] — 🎥 Starting visual analysis pipeline...
+[2025-12-08 11:33:17] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\e9076975-0356-444c-b530-614c6adf45fd.mp4
+[2025-12-08 11:35:45] [INFO] [src.backend.analysis.pipeline_video_frames:81] — End of video reached.
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:191] — Saved organized results:
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:192] —  - Video: outputs\frames\videos\e9076975-0356-444c-b530-614c6adf45fd_annotated.mp4
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:193] —  - YOLO CSV: outputs\frames\csv\e9076975-0356-444c-b530-614c6adf45fd_yolo_20251208_093545.csv
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:194] —  - OCR CSV: outputs\frames\csv\e9076975-0356-444c-b530-614c6adf45fd_ocr_20251208_093545.csv
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:195] —  - Summary: outputs\frames\json\e9076975-0356-444c-b530-614c6adf45fd_summary.json
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_video_frames:131] — Frame analysis complete.
+[2025-12-08 11:35:46] [INFO] [api_server:226] — ✅ Visual analysis completed: 9181 detections
+[2025-12-08 11:35:46] [INFO] [api_server:237] — 🎵 Starting audio pipeline...
+[2025-12-08 11:35:46] [INFO] [api_server:240] — 🔊 Extracting audio from video...
+[2025-12-08 11:35:46] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\e9076975-0356-444c-b530-614c6adf45fd.mp4
+[2025-12-08 11:35:46] [ERROR] [api_server:305] — ❌ Audio pipeline failed: [WinError 2] The system cannot find the file specified
+[2025-12-08 11:35:46] [ERROR] [api_server:307] — 📝 Traceback: Traceback (most recent call last):
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\api_server.py", line 241, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\subprocess.py", line 971, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\subprocess.py", line 1456, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+FileNotFoundError: [WinError 2] The system cannot find the file specified
+
+[2025-12-08 11:35:46] [INFO] [api_server:320] — 🎉 Analysis marked as COMPLETED for e9076975-0356-444c-b530-614c6adf45fd
+[2025-12-08 11:35:46] [INFO] [api_server:321] — 📊 Results keys: ['visual_analysis', 'audio_error']
+[2025-12-08 11:35:46] [INFO] [api_server:322] — 📁 Output files: {'video': 'outputs\\frames\\videos\\e9076975-0356-444c-b530-614c6adf45fd_annotated.mp4', 'yolo_csv': 'outputs\\frames\\csv\\e9076975-0356-444c-b530-614c6adf45fd_yolo_20251208_093545.csv', 'ocr_csv': 'outputs\\frames\\csv\\e9076975-0356-444c-b530-614c6adf45fd_ocr_20251208_093545.csv', 'summary_json': 'outputs\\frames\\json\\e9076975-0356-444c-b530-614c6adf45fd_summary.json'}
+[2025-12-08 13:36:44] [INFO] [api_server:114] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 17f94563-4655-452e-9849-4988465058cb.mp4 (ID: 17f94563-4655-452e-9849-4988465058cb)
+[2025-12-08 13:36:44] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 13:36:44] [INFO] [api_server:116] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 17f94563-4655-452e-9849-4988465058cb.mp4 (ID: 17f94563-4655-452e-9849-4988465058cb)
+[2025-12-08 13:37:30] [INFO] [api_server:114] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 86041386-5d86-4eaa-a699-034747c5988e.mp4 (ID: 86041386-5d86-4eaa-a699-034747c5988e)
+[2025-12-08 13:37:30] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 13:37:30] [INFO] [api_server:116] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 86041386-5d86-4eaa-a699-034747c5988e.mp4 (ID: 86041386-5d86-4eaa-a699-034747c5988e)
+[2025-12-08 13:38:09] [INFO] [api_server:114] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 799cf760-64a7-4704-9dd0-add9123487f2.mp4 (ID: 799cf760-64a7-4704-9dd0-add9123487f2)
+[2025-12-08 13:38:09] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 13:38:09] [INFO] [api_server:116] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 799cf760-64a7-4704-9dd0-add9123487f2.mp4 (ID: 799cf760-64a7-4704-9dd0-add9123487f2)
+[2025-12-08 13:52:59] [INFO] [__main__:537] — Starting Video Analysis API with Audio on http://localhost:8000
+[2025-12-08 13:52:59] [INFO] [__main__:538] — API Documentation: http://localhost:8000/docs
+[2025-12-08 13:53:28] [INFO] [api_server:114] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 8650dab0-3e8e-4cab-a816-28a2aff387aa.mp4 (ID: 8650dab0-3e8e-4cab-a816-28a2aff387aa)
+[2025-12-08 13:53:28] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 13:53:28] [INFO] [api_server:116] — Video uploaded: Grand_Theft_Auto_VI_Trailer_1.mp4 -> 8650dab0-3e8e-4cab-a816-28a2aff387aa.mp4 (ID: 8650dab0-3e8e-4cab-a816-28a2aff387aa)
+[2025-12-08 13:53:34] [INFO] [api_server:114] — Video uploaded: Helsinki_main_street.mp4 -> 2331677c-0ef2-468a-983b-926b6c4911ec.mp4 (ID: 2331677c-0ef2-468a-983b-926b6c4911ec)
+[2025-12-08 13:53:34] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 13:53:34] [INFO] [api_server:116] — Video uploaded: Helsinki_main_street.mp4 -> 2331677c-0ef2-468a-983b-926b6c4911ec.mp4 (ID: 2331677c-0ef2-468a-983b-926b6c4911ec)
+[2025-12-08 14:03:42] [INFO] [api_server:114] — Video uploaded: Helsinki_short.mp4 -> 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91.mp4 (ID: 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91)
+[2025-12-08 14:03:42] [INFO] [api_server:115] — Video uploaded: 1)
+[2025-12-08 14:03:42] [INFO] [api_server:116] — Video uploaded: Helsinki_short.mp4 -> 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91.mp4 (ID: 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91)
+[2025-12-08 14:04:48] [INFO] [api_server:162] — Analysis started for 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91 with pipeline: full
+[2025-12-08 14:04:48] [INFO] [api_server:178] — 🚀 Starting full analysis pipeline for 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91
+[2025-12-08 14:04:48] [INFO] [api_server:179] — 📁 Video path: uploads\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91.mp4
+[2025-12-08 14:04:48] [INFO] [api_server:187] — ✅ Video file exists
+[2025-12-08 14:04:48] [INFO] [api_server:199] — 🎥 Starting visual analysis pipeline...
+[2025-12-08 14:04:51] [INFO] [src.backend.analysis.pipeline_video_frames:60] — Starting frame analysis on uploads\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91.mp4
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:81] — End of video reached.
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:191] — Saved organized results:
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:192] —  - Video: outputs\frames\videos\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_annotated.mp4
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:193] —  - YOLO CSV: outputs\frames\csv\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_yolo_20251208_120458.csv
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:194] —  - OCR CSV: outputs\frames\csv\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_ocr_20251208_120458.csv
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:195] —  - Summary: outputs\frames\json\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_summary.json
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_video_frames:131] — Frame analysis complete.
+[2025-12-08 14:04:58] [INFO] [api_server:226] — ✅ Visual analysis completed: 372 detections
+[2025-12-08 14:04:58] [INFO] [api_server:237] — 🎵 Starting audio pipeline...
+[2025-12-08 14:04:58] [INFO] [api_server:240] — 🔊 Extracting audio from video...
+[2025-12-08 14:04:58] [INFO] [src.backend.analysis.pipeline_ingestion:129] — Starting ingestion pipeline for: uploads\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91.mp4
+[2025-12-08 14:04:58] [ERROR] [api_server:305] — ❌ Audio pipeline failed: [WinError 2] The system cannot find the file specified
+[2025-12-08 14:04:58] [ERROR] [api_server:307] — 📝 Traceback: Traceback (most recent call last):
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\api_server.py", line 241, in run_complete_analysis
+    ingestion_result = run_ingestion_pipeline(video_path)
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\src\backend\analysis\pipeline_ingestion.py", line 131, in run_ingestion_pipeline
+    metadata = validate_video(video_path)
+  File "d:\wenjian\123\3rd\VAA1-Internship\The-project\src\backend\analysis\pipeline_ingestion.py", line 45, in validate_video
+    probe = ffmpeg.probe(video_path)
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\site-packages\ffmpeg\_probe.py", line 20, in probe
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\subprocess.py", line 971, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "D:\wenjian\123\3rd\VAA1-Internship\The-project\.conda\lib\subprocess.py", line 1456, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+FileNotFoundError: [WinError 2] The system cannot find the file specified
+
+[2025-12-08 14:04:58] [INFO] [api_server:320] — 🎉 Analysis marked as COMPLETED for 1f5ae4dd-50a7-46d3-9457-e5b2f749dc91
+[2025-12-08 14:04:58] [INFO] [api_server:321] — 📊 Results keys: ['visual_analysis', 'audio_error']
+[2025-12-08 14:04:58] [INFO] [api_server:322] — 📁 Output files: {'video': 'outputs\\frames\\videos\\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_annotated.mp4', 'yolo_csv': 'outputs\\frames\\csv\\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_yolo_20251208_120458.csv', 'ocr_csv': 'outputs\\frames\\csv\\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_ocr_20251208_120458.csv', 'summary_json': 'outputs\\frames\\json\\1f5ae4dd-50a7-46d3-9457-e5b2f749dc91_summary.json'}
