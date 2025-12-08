@@ -9,17 +9,6 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 
-<<<<<<< HEAD
-import { useState } from "react";
-
-export default function PanelA() {
-  const [file, setFile] = useState<File | null>(null);
-  const [files, setFiles] = useState<File[] | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [tab, setTab] = useState<"upload" | "library">("upload");
-  const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
-=======
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "@/components/VideoItem";
@@ -155,7 +144,6 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
       alert("Failed to update video tag: " + String(err));
     }
   };
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
 
   return (
     <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden">
@@ -187,15 +175,11 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
           {libraryVideos.map((vid: any) => (
             <div
               key={vid.id}
-<<<<<<< HEAD
-              className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between"
-=======
               className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-slate-900/50"
               onClick={() => {
                 onVideoSelect?.(vid.id);
                 console.log("Selected video ID:", vid.id);
               }}
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
             >
               <div>
                 <div className="font-medium">{vid.name}</div>
@@ -212,8 +196,6 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
                   )}
                 </div>
               </div>
-<<<<<<< HEAD
-=======
 
               <div className="flex gap-2">
                 <VideoItem
@@ -224,7 +206,6 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
                   onUpdateTag={handleUpdateVideoTag}
                 />
               </div>
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
             </div>
           ))}
         </div>

@@ -1,10 +1,5 @@
 "use client";
 import { useState, useEffect } from "react";
-<<<<<<< HEAD
-
-export function MenuBar() {
-  const [openMenu, setOpenMenu] = useState<number | null>(null);
-=======
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 
@@ -107,18 +102,10 @@ export function MenuBar() {
       setUploading(false);
     }
   };
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
 
   const menuItems = [
     {
       label: "File",
-<<<<<<< HEAD
-      submenu: ["New File", "Open…", "Save", "Save As…", "Exit"],
-    },
-    {
-      label: "Lenses",
-      submenu: ["Lens 1", "Lens 2", "Lens 3"],
-=======
       submenu: [
         {
           label: "New File",
@@ -140,7 +127,6 @@ export function MenuBar() {
         { label: "Lens 2", onClick: () => alert("Lens 2!") },
         { label: "Lens 3", onClick: () => alert("Lens 3!") },
       ],
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
     },
     { label: "Analyze" },
     { label: "Annotations" },
@@ -151,17 +137,9 @@ export function MenuBar() {
 
   // Click ourside to close menu
   useEffect(() => {
-<<<<<<< HEAD
-    function handleClickOutside() {
-      setOpenMenu(null);
-    }
-    window.addEventListener("click", handleClickOutside);
-    return () => window.removeEventListener("click", handleClickOutside);
-=======
     const close = () => setOpenMenu(null);
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
   }, []);
 
   // Click menu item to toggle submenu
@@ -170,8 +148,6 @@ export function MenuBar() {
     setOpenMenu(openMenu === index ? null : index);
   };
 
-<<<<<<< HEAD
-=======
   // 子菜单点击
   const handleSubClick = (e: React.MouseEvent, fn?: () => void) => {
     e.stopPropagation();
@@ -179,7 +155,6 @@ export function MenuBar() {
     fn?.();
   };
 
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
   return (
     <div className="bg-[#191919] h-8 flex items-center px-2 text-[#b8b8b8] text-[12px] border-b border-[#0a0a0a]">
       {menuItems.map((item, index) => (
@@ -204,16 +179,10 @@ export function MenuBar() {
               {item.submenu.map((sub, subIndex) => (
                 <button
                   key={subIndex}
-<<<<<<< HEAD
-                  className="w-full text-left px-3 py-1 hover:bg-[#3a3a3a] transition-colors"
-                >
-                  {sub}
-=======
                   onClick={(e) => handleSubClick(e, sub.onClick)}
                   className="w-full text-left px-3 py-1 hover:bg-[#3a3a3a] transition-colors"
                 >
                   {sub.label}
->>>>>>> 2e2d0f4e0810f1746ac9f8098bfb210d2aef5040
                 </button>
               ))}
             </div>

@@ -82,7 +82,7 @@ python -m spacy download en_core_web_sm
 
 # Remember to npm install
 
-If dependencies/packages are not recognized, run npm install in the folder. For example in `project root folder`, `src/frontend`, `cvat/backend`
+If dependencies/packages are not recognized, run npm install in the folder. For example in `project root folder`, `src/frontend`, `src/cvat/backend`
 
 ___
 
@@ -125,9 +125,7 @@ NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8091
 
 3. Run the following command and replace the path with your own project path:
 ```bash
-docker run --rm -p 8091:80 `
->>   -v C:/Users/Asus/VAA1_app/The-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro `
->>   nginx:alpine
+docker run --rm -p 8091:80 -v C:/Users/Asus/VAA1_app/The-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
 ```
 ___
 ### Backend
