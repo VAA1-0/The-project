@@ -47,7 +47,7 @@ services:
       SOCIAL_AUTH_GOOGLE_CLIENT_SECRET: ""
       SOCIAL_AUTH_GITHUB_CLIENT_ID: ""
       SOCIAL_AUTH_GITHUB_CLIENT_SECRET: ""
-    command: -c supervisord/server.conf
+    entrypoint: ["/home/django/entrypoint.sh"]
     labels:
       - traefik.enable=true
       - traefik.http.services.cvat.loadbalancer.server.port=8080
@@ -58,6 +58,7 @@ services:
       - cvat_data:/home/django/data
       - cvat_keys:/home/django/keys
       - cvat_logs:/home/django/logs
+      - ./entrypoint.sh:/home/django/entrypoint.sh
     networks:
       cvat:
         aliases:
