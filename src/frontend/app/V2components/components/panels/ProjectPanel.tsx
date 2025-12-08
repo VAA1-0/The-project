@@ -9,15 +9,141 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { VideoService } from "@/lib/video-service";
+import VideoItem from "@/components/VideoItem";
+import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 
-export default function PanelA() {
-  const [file, setFile] = useState<File | null>(null);
-  const [files, setFiles] = useState<File[] | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [tab, setTab] = useState<"upload" | "library">("upload");
+interface ProjectPanelProps {
+  onVideoSelect?: (id: string) => void;
+}
+
+export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
+  const [metadata, setMetadata] = useState<any>(null);
+
+  useEffect(() => {
+    // Load persisted library metadata via VideoService
+    let mounted = true;
+    (async () => {
+      try {
+        const list = await VideoService.list();
+        if (mounted) setLibraryVideos(list);
+      } catch (e) {
+        if (mounted) setLibraryVideos([]);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Delete a video: remove blob from IndexedDB and metadata from Library
+  const handleDeleteVideo = async (id: string) => {
+    if (!confirm("Delete this video? This cannot be undone.")) return;
+    try {
+      // Optimistic: remove from UI immediately and keep a backup for rollback
+      const backup = libraryVideos.find((v) => v.id === id);
+      setLibraryVideos((prev) => prev.filter((v) => v.id !== id));
+
+      try {
+        await VideoService.delete(id);
+      } catch (err) {
+        // rollback on failure
+        console.error("Delete failed, restoring item", err);
+        if (backup) setLibraryVideos((prev) => [backup, ...(prev || [])]);
+        alert("Failed to delete video: " + String(err));
+        return;
+      }
+
+      // ensure local blob is removed
+      try {
+        await deleteVideoBlob(id);
+      } catch (e) {
+        console.warn("Failed to delete local blob", e);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete video: " + String(err));
+    }
+  };
+
+  // Rename video: edit metadata in Library
+  const handleRenameVideo = async (id: string, newName: string) => {
+    try {
+      // Preserve the original file extension. If the original name had an extension,
+      // strip any extension from the newName and append the original extension.
+      const orig = await VideoService.get(id);
+      let finalName = newName;
+      if (orig && orig.name) {
+        const dot = orig.name.lastIndexOf(".");
+        const origExt = dot >= 0 ? orig.name.slice(dot) : "";
+        if (origExt) {
+          // remove extension from user input if present
+          const userDot = newName.lastIndexOf(".");
+          const base = userDot >= 0 ? newName.slice(0, userDot) : newName;
+          finalName = base + origExt;
+        }
+      }
+
+      // Optimistic update
+      const prev = libraryVideos.find((v) => v.id === id)?.name;
+      setLibraryVideos((prevList) =>
+        prevList.map((v) =>
+          v.id === id ? { ...v, name: finalName, status: "pending" } : v
+        )
+      );
+      try {
+        await VideoService.rename(id, finalName);
+        setLibraryVideos((prevList) =>
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+        );
+      } catch (err) {
+        // rollback
+        setLibraryVideos((prevList) =>
+          prevList.map((v) =>
+            v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v
+          )
+        );
+        console.error(err);
+        alert("Failed to rename video: " + String(err));
+        return;
+      }
+      // per-item UI state is managed in VideoItem; no local clear needed here
+    } catch (err) {
+      console.error(err);
+      alert("Failed to rename video: " + String(err));
+    }
+  };
+
+  // Update video tag: edit metadata in Library
+  const handleUpdateVideoTag = async (id: string, newTag: string) => {
+    try {
+      const prev = libraryVideos.find((v) => v.id === id)?.tag ?? null;
+      setLibraryVideos((prevList) =>
+        prevList.map((v) =>
+          v.id === id ? { ...v, tag: newTag, status: "pending" } : v
+        )
+      );
+      try {
+        await VideoService.updateTag(id, newTag);
+        setLibraryVideos((prevList) =>
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+        );
+      } catch (err) {
+        // rollback
+        setLibraryVideos((prevList) =>
+          prevList.map((v) =>
+            v.id === id ? { ...v, tag: prev, status: "failed" } : v
+          )
+        );
+        throw err;
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update video tag: " + String(err));
+    }
+  };
 
   return (
     <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden">
@@ -49,7 +175,11 @@ export default function PanelA() {
           {libraryVideos.map((vid: any) => (
             <div
               key={vid.id}
-              className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between"
+              className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-slate-900/50"
+              onClick={() => {
+                onVideoSelect?.(vid.id);
+                console.log("Selected video ID:", vid.id);
+              }}
             >
               <div>
                 <div className="font-medium">{vid.name}</div>
@@ -65,6 +195,16 @@ export default function PanelA() {
                     <span className="ml-2 text-red-400">• Failed</span>
                   )}
                 </div>
+              </div>
+
+              <div className="flex gap-2">
+                <VideoItem
+                  vid={vid}
+                  onView={() => {}}
+                  onDelete={handleDeleteVideo}
+                  onRename={handleRenameVideo}
+                  onUpdateTag={handleUpdateVideoTag}
+                />
               </div>
             </div>
           ))}

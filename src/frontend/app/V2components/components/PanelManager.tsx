@@ -1,61 +1,170 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GoldenLayout } from "golden-layout";
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
-
-import ProjectPanel from "./panels/ProjectPanel";
-import PanelB from "./panels/PanelB";
 import { createRoot } from "react-dom/client";
+
+// Import your panel components here
+import ProjectPanel from "./panels/ProjectPanel";
+import AnalyzeResultsPanel from "./panels/AnalyzeResultsPanel";
+import VideoPanel from "./panels/VideoPanel";
+import ToolsPanel from "./panels/ToolsPanel";
+import SpeechToTextPanel from "./panels/SpeechToTextPanel";
+
+// Import State manager and laytout factory if needed
+import { panelStateManager } from "@/lib/panel-state-manager";
+import { GoldenLayoutFactory } from "@/lib/golden-layout-factory";
+
+interface PanelConfig {
+  componentName: string;
+  Component: React.ComponentType<any>;
+  getProps?: (state?: any) => Record<string, any>;
+}
+
+const panelConfigs: PanelConfig[] = [
+  {
+    componentName: "ProjectPanel",
+    Component: ProjectPanel,
+    getProps: () => ({
+      onVideoSelect: (id: string) => panelStateManager.setVideoId(id),
+    }),
+  },
+  {
+    componentName: "AnalyzeResultsPanel",
+    Component: AnalyzeResultsPanel,
+  },
+  {
+    componentName: "VideoPanel",
+    Component: VideoPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+  {
+    componentName: "ToolsPanel",
+    Component: ToolsPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+  {
+    componentName: "SpeechToTextPanel",
+    Component: SpeechToTextPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+];
+
+const layoutConfig = {
+  root: {
+    type: "row",
+    content: [
+      {
+        type: "column",
+        width: 15,
+        content: [
+          {
+            type: "component",
+            componentType: "ProjectPanel",
+            title: "ProjectPanel",
+            height: 50,
+          },
+          {
+            type: "component",
+            componentType: "AnalyzeResultsPanel",
+            title: "AnalyzeResultsPanel",
+            height: 50,
+          },
+        ],
+      },
+      {
+        type: "column",
+        content: [
+          {
+            type: "component",
+            componentType: "VideoPanel",
+            title: "VideoPanel",
+            height: 70,
+          },
+          {
+            type: "component",
+            componentType: "ToolsPanel",
+            title: "ToolsPanel",
+          },
+        ],
+      },
+      {
+        type: "component",
+        componentType: "SpeechToTextPanel",
+        title: "SpeechToTextPanel",
+        width: 20,
+      },
+    ],
+  },
+};
 
 export default function PanelManager() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const factoryRef = useRef<GoldenLayoutFactory | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const layout = new GoldenLayout(containerRef.current);
 
-    // Mount React components into the GoldenLayout containers
-    layout.registerComponent("ProjectPanel", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const root = createRoot(mountEl);
-      root.render(<ProjectPanel />);
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => root.unmount(), 0);
-      });
-    });
+    const factory = new GoldenLayoutFactory(layout);
+    panelConfigs.forEach((config) => factory.registerFactory(config));
+    factoryRef.current = factory;
 
-    layout.registerComponent("PanelB", (container: any) => {
-      const mountEl = document.createElement("div");
-      container.getElement().append(mountEl);
-      const root = createRoot(mountEl);
-      root.render(<PanelB />);
-      container.on("destroy", () => {
-        // Defer unmount to avoid synchronous unmount during React rendering
-        setTimeout(() => root.unmount(), 0);
-      });
-    });
-
-    // Initialize the layout with two panels
     layout.loadLayout({
       root: {
         type: "row",
         content: [
           {
-            type: "component",
-            componentType: "ProjectPanel",
-            title: "ProjectPanel",
+            type: "column",
+            width: 20,
+            content: [
+              {
+                type: "component",
+                componentType: "ProjectPanel",
+                title: "ProjectPanel",
+                height: 50,
+              },
+              {
+                type: "component",
+                componentType: "AnalyzeResultsPanel",
+                title: "AnalyzeResultsPanel",
+                height: 50,
+              },
+            ],
           },
-          { type: "component", componentType: "PanelB", title: "Panel B" },
+          {
+            type: "column",
+            content: [
+              {
+                type: "component",
+                componentType: "VideoPanel",
+                title: "VideoPanel",
+                height: 70,
+              },
+              {
+                type: "component",
+                componentType: "ToolsPanel",
+                title: "ToolsPanel",
+              },
+            ],
+          },
+          {
+            type: "component",
+            componentType: "SpeechToTextPanel",
+            title: "SpeechToTextPanel",
+            width: 20,
+          },
         ],
       },
     });
 
-    return () => layout.destroy();
+    return () => {
+      factory.destroy();
+      layout.destroy();
+    };
   }, []);
 
   return (
