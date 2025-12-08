@@ -198,11 +198,10 @@ export const Dashboard: React.FC = () => {
         console.error(err);
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
       }
-    }catch (err){
+    } catch (err) {
       console.log("Video uploading to CVAT failed. Try again!");
       alert("Upload failed: " + ((err as any)?.message ?? String(err)));
-    }
-     finally {
+    } finally {
       setUploading(false);
     }
   };
@@ -347,7 +346,7 @@ export const Dashboard: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
         <section className="w-full space-y-8">
@@ -381,8 +380,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("upload")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "upload" ? "bg-slate-700" : ""
-                  }`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "upload" ? "bg-slate-700" : ""
+                }`}
               >
                 Upload Video
               </Button>
@@ -390,8 +390,9 @@ export const Dashboard: React.FC = () => {
               <Button
                 onClick={() => setTab("library")}
                 variant="ghost"
-                className={`cursor-pointer px-6 py-2 rounded-none ${tab === "library" ? "bg-slate-700" : ""
-                  }`}
+                className={`cursor-pointer px-6 py-2 rounded-none ${
+                  tab === "library" ? "bg-slate-700" : ""
+                }`}
               >
                 Video Library
               </Button>
@@ -472,8 +473,8 @@ export const Dashboard: React.FC = () => {
                       {uploading
                         ? "Uploading..."
                         : files
-                          ? `Upload ${files.length} file(s)`
-                          : "Upload"}
+                        ? `Upload ${files.length} file(s)`
+                        : "Upload"}
                     </Button>
                   </div>
 
