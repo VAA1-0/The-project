@@ -1,0 +1,27 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Install Golden Layout v3.x",
+			"type": "shell",
+			"command": "npm install golden-layout@latest",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Reinstall Golden Layout v3.x",
+			"type": "shell",
+			"command": "npm install",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint"
+			],
+			"group": "build"
+		}
+	]
+}
