@@ -19,6 +19,7 @@ import VideoItem from "./VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { AnalyzeResultsPanel } from "./AnalyzeResultsPanel";
 import { createVideoTask, getCvatHealth, listJobs } from "@/cvat-api/client";
+import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
@@ -330,58 +331,11 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  // Sample stats data
-  const stats = [
-    { id: "total", title: "Total Videos", value: 3, colorBg: "bg-blue-600/20" },
-    {
-      id: "analyzed",
-      title: "Analyzed",
-      value: 2,
-      colorBg: "bg-emerald-600/20",
-    },
-    {
-      id: "processing",
-      title: "Processing",
-      value: 1,
-      colorBg: "bg-yellow-600/20",
-    },
-    {
-      id: "confidence",
-      title: "Avg Confidence",
-      value: "91%",
-      colorBg: "bg-purple-600/20",
-    },
-  ];
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 py-10 flex flex-col items-center">
         <section className="w-full space-y-8">
-          {/* Stats cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
-            {stats.map((s) => (
-              <Card
-                key={s.id}
-                className="bg-slate-800/50 border-slate-700 overflow-hidden"
-              >
-                <CardContent className="flex items-center gap-4 py-6">
-                  <div className={`p-3 rounded-lg ${s.colorBg}`}>
-                    <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
-                      <circle cx="12" cy="12" r="8" fill="currentColor" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="text-sm text-slate-400">{s.title}</div>
-                    <div className="text-lg font-semibold text-white">
-                      {s.value}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
           {/* Toggle buttons */}
           <div className="flex">
             <div className="inline-flex rounded-md overflow-hidden border border-slate-700">
@@ -576,12 +530,10 @@ export const Dashboard: React.FC = () => {
               </CardContent>
             </Card>
           )}
-
-          {/* Analyze Results Panel */}
-          {/* Kiavash please read this line to add this component to the page */}
-          <AnalyzeResultsPanel />
         </section>
       </main>
+
+      <AnalyzePageV2 />
     </div>
   );
 };

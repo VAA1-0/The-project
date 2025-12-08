@@ -1,15 +1,22 @@
 import { MenuBar } from "./components/MenuBar";
 import PanelManager from "./components/PanelManager";
 import { Toolbar } from "./components/ToolBar";
-import PanelManagerOld from "./components/PanelManagerOld";
 
 export default function Main() {
   return (
-    <div className="h-full w-full flex flex-col bg-gray-100">
+    <div
+      className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100"
+      style={{
+        height: "100vh",
+        width: "100vw",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <MenuBar />
       <Toolbar />
 
-      <PanelManagerOld />
+      <PanelManager />
     </div>
   );
 }
