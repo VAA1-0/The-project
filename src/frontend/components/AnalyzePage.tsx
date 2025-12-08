@@ -146,54 +146,57 @@ export default function AnalyzePage() {
   async function openTask() {
     setIsPolling(true);
     setJobs([]);
-    if (metadata) {
-      console.log("Metadata found");
-      console.log(metadata);
+
+    // 1️⃣ Extract CVAT ID from metadata or fallback to existing taskID
+    const cvatID = metadata?.cvatID ?? taskID;
+
+    if (!cvatID) {
+      console.log("❌ No CVAT id found in metadata!");
+      return;
     }
-    setTaskId(metadata?.cvatID ?? null);
-    if (taskID) {
-      console.log(`📂 Opening task ${taskID}...`);
 
-      // Poll for jobs (they may not be ready immediately)
-      let attempts = 0;
-      const maxAttempts = 60; // 180 seconds total
+    console.log("Metadata found:", metadata);
+    console.log("Using CVAT ID:", cvatID);
 
-      async function pollJobs() {
-        try {
-          const result = await listJobs(taskID);
-          const jobList = Array.isArray(result) ? result : result.results || [];
+    // Update internal state (won’t be immediately available, but that's fine)
+    setTaskId(cvatID);
 
-          setJobs(jobList);
+    console.log(`📂 Opening CVAT task ${cvatID}...`);
 
-          if (jobList.length === 0 && attempts < maxAttempts) {
-            attempts++;
-            console.log(`⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`);
-            setTimeout(pollJobs, 3000);
-          } else if (jobList.length > 0) {
-            console.log(`✅ Found ${jobList.length} job(s)`);
-            setJobReady(true);
-            setIsPolling(false);
-            setSelectedJob(jobList[0]);
-          } else {
-            console.warn("⚠️ No jobs found after maximum attempts");
-            alert("Jobs are taking longer than expected. Try refreshing the task.");
-          }
-        } catch (err) {
-          console.error("Failed to load jobs:", err);
+    // 2️⃣ Poll for jobs
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    async function pollJobs() {
+      try {
+        const result = await listJobs(cvatID);
+        const jobList = Array.isArray(result) ? result : result.results || [];
+
+        setJobs(jobList);
+
+        if (jobList.length === 0 && attempts < maxAttempts) {
           attempts++;
-          if (attempts < maxAttempts) {
-            setTimeout(pollJobs, 3000);
-          }
+          console.log(`⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`);
+          setTimeout(pollJobs, 3000);
+        } else if (jobList.length > 0) {
+          console.log(`✅ Found ${jobList.length} job(s)`);
+          setJobReady(true);
+          setIsPolling(false);
+          setSelectedJob(jobList[0]);
+        } else {
+          console.warn("⚠️ No jobs found after maximum attempts");
+          alert("Jobs are taking longer than expected. Try refreshing the task.");
+        }
+      } catch (err) {
+        console.error("Failed to load jobs:", err);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(pollJobs, 3000);
         }
       }
-
-      pollJobs();
-    }
-    else {
-      console.log("No CVAT id found in metaData!");
     }
 
-
+    pollJobs();
   }
   //<============================================================>
 
@@ -501,15 +504,15 @@ export default function AnalyzePage() {
                     Jobs
                   </Button>
                 }
-                {isPolling || jobReady && 
-                <Button
-                  variant="default"
-                  className="bg-green-600/40 hover:bg-green-600/60 transition"
-                  onClick={handleJobClick}
-                  disabled={isAnalyzing || isPolling}
-                >
-                  {!jobReady ? 'Polling' : 'Annotate'}
-                </Button>
+                {isPolling || jobReady &&
+                  <Button
+                    variant="default"
+                    className="bg-green-600/40 hover:bg-green-600/60 transition"
+                    onClick={handleJobClick}
+                    disabled={isAnalyzing || isPolling}
+                  >
+                    {!jobReady ? 'Polling' : 'Annotate'}
+                  </Button>
                 }
               </div>
             </CardHeader>
