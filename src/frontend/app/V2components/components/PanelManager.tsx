@@ -8,7 +8,6 @@ import { createRoot } from "react-dom/client";
 
 // Import your panel components here
 import ProjectPanel from "./panels/ProjectPanel";
-import DownloadPanel from "./panels/DownloadPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
@@ -30,10 +29,6 @@ const panelConfigs: PanelConfig[] = [
     getProps: () => ({
       onVideoSelect: (id: string) => panelStateManager.setVideoId(id),
     }),
-  },
-  {
-    componentName: "AnalyzeResultsPanel",
-    Component: DownloadPanel,
   },
   {
     componentName: "VideoPanel",
@@ -119,19 +114,13 @@ export default function PanelManager() {
         content: [
           {
             type: "column",
-            width: 20,
+            width: 40,
             content: [
               {
                 type: "component",
                 componentType: "ProjectPanel",
                 title: "ProjectPanel",
-                height: 50,
-              },
-              {
-                type: "component",
-                componentType: "AnalyzeResultsPanel",
-                title: "AnalyzeResultsPanel",
-                height: 50,
+                height: 100,
               },
             ],
           },

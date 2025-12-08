@@ -7,8 +7,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VideoService } from "@/lib/video-service";
+import { getVideoBlob } from "@/lib/blob-store";
+import { listJobs, listTasks } from "@/cvat-api/client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 
 interface ToolsPanelProps {
   videoId?: string | null;
@@ -19,6 +21,66 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<any>(null);
+
+  const lastObjectUrl = React.useRef<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [metadata, setMetadata] = useState<any>(null);
+  const [blobMissing, setBlobMissing] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    async function load() {
+      if (!videoId) {
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+
+      try {
+        // Load metadata
+        const m = await VideoService.get(videoId);
+
+        console.log("Loaded metadata:", m);
+
+        setMetadata(m);
+
+        // Load video blob - hybrid approach
+        // 1. First try to get the original video from IndexedDB (instant preview)
+        let blob = await getVideoBlob(videoId);
+
+        if (!blob) {
+          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
+          blob = await VideoService.getBlob(videoId);
+        }
+        if (blob) {
+          if (lastObjectUrl.current) {
+            URL.revokeObjectURL(lastObjectUrl.current);
+          }
+          const url = URL.createObjectURL(blob);
+          lastObjectUrl.current = url;
+          setVideoUrl(url);
+          setBlobMissing(false);
+        } else {
+          setBlobMissing(true);
+          setVideoUrl(null);
+        }
+
+        // Load analysis data
+        const analysis = await VideoService.getAnalysis(videoId);
+
+        setAnalysisData(analysis);
+        setRawCsv(analysis.rawCsv || null);
+      } catch (err) {
+        console.error("Failed to load data:", err);
+        setBlobMissing(true);
+        setVideoUrl(null);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    load();
+  }, [videoId]);
 
   async function handleAnalyzeVideo() {
     if (!videoId) return;
@@ -66,9 +128,11 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   }
 
   async function handleExport() {
-    console.log("Exporting data for videoId:", videoId);
+    console.log("handleExport called", analysisData);
 
     if (!videoId || !analysisData) return;
+
+    console.log("Exporting data for videoId:", videoId);
 
     try {
       // Download the CSV file
@@ -90,6 +154,89 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     { icon: ChartScatter, label: "Quantity Detection" },
     { icon: ScanEye, label: "Annotations" },
   ];
+
+  //<================ OPEN TASK AND LOAD JOB========================>
+
+  // CVAT task/job state
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [taskID, setTaskId] = useState<any>();
+  const [jobReady, setJobReady] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
+  const [isPolling, setIsPolling] = useState(false);
+
+  async function openTask() {
+    setIsPolling(true);
+    setJobs([]);
+
+    // 1️⃣ Extract CVAT ID from metadata or fallback to existing taskID
+    const cvatID = metadata?.cvatID ?? taskID;
+
+    if (!cvatID) {
+      console.log("❌ No CVAT id found in metadata!");
+      return;
+    }
+
+    console.log("Metadata found:", metadata);
+    console.log("Using CVAT ID:", cvatID);
+
+    // Update internal state (won’t be immediately available, but that's fine)
+    setTaskId(cvatID);
+
+    console.log(`📂 Opening CVAT task ${cvatID}...`);
+
+    // 2️⃣ Poll for jobs
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    async function pollJobs() {
+      try {
+        const result = await listJobs(cvatID);
+        const jobList = Array.isArray(result) ? result : result.results || [];
+
+        setJobs(jobList);
+
+        if (jobList.length === 0 && attempts < maxAttempts) {
+          attempts++;
+          console.log(
+            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`
+          );
+          setTimeout(pollJobs, 3000);
+        } else if (jobList.length > 0) {
+          console.log(`✅ Found ${jobList.length} job(s)`);
+          setJobReady(true);
+          setIsPolling(false);
+          setSelectedJob(jobList[0]);
+        } else {
+          console.warn("⚠️ No jobs found after maximum attempts");
+          alert(
+            "Jobs are taking longer than expected. Try refreshing the task."
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load jobs:", err);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(pollJobs, 3000);
+        }
+      }
+    }
+
+    pollJobs();
+  }
+  //<============================================================>
+
+  //<================OPEN JOBS==================================>
+  const handleJobClick = async () => {
+    // Navigate to the annotation page
+
+    if (selectedJob) {
+      window.open(
+        `/annotate/${selectedJob.id}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    }
+  };
 
   return (
     <div className="flex h-full">
@@ -149,6 +296,29 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
         >
           Download
         </Button>
+
+        {/* Annotate Button */}
+        {!isPolling && !jobReady && (
+          <Button
+            variant="default"
+            className="bg-green-600/40 hover:bg-green-600/60 transition"
+            onClick={openTask}
+            disabled={isAnalyzing || isPolling}
+          >
+            Jobs
+          </Button>
+        )}
+        {isPolling ||
+          (jobReady && (
+            <Button
+              variant="default"
+              className="bg-green-600/40 hover:bg-green-600/60 transition"
+              onClick={handleJobClick}
+              disabled={isAnalyzing || isPolling}
+            >
+              {!jobReady ? "Polling" : "Annotate"}
+            </Button>
+          ))}
       </div>
     </div>
   );

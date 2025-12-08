@@ -82,9 +82,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
   return (
     <main className="flex-0 overflow-auto">
       <div>video Id: {videoId}</div>
-      <div>video Url: {videoUrl}</div>
-      <div>isLoading: {isLoading ? "true" : "false"}</div>
-      <div>blobMissing: {blobMissing ? "true" : "false"}</div>
       <div className="mt-4">
         {/* Header */}
         <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
@@ -132,8 +129,8 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         </div>
         {/* Detected Objects */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
-        <div className="max-h-50 overflow-y-auto space-y-2 pr-2">
-          Detected Objects:
+        Detected Objects:
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
           {detectedObjects.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No detected objects
@@ -148,8 +145,8 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
                   <span>{obj.class_name}</span>
                 </div>
                 <div className="text-xs text-slate-400">
-                  Seen at {obj.timestamp}
-                  {" • "}Confidence: {(obj.confidence * 100).toFixed(2)}%
+                  Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
+                  {(obj.confidence * 100).toFixed(2)}%
                 </div>
               </div>
             ))
