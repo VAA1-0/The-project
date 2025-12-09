@@ -94,7 +94,7 @@ NOTE: To run the whole project, you need all of this running at the same time. C
 **Engine**
 1. Navigate to cvat engine from project root
 ```bash
-cd src/cvat/src/cvat-engine
+cd src/cvat/cvat-engine
 ```
 2. Run the following command and start cvat docker. Make sure that your docker desktop is up and running:
 ```bash
@@ -125,7 +125,7 @@ NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8091
 
 3. Run the following command and replace the path with your own project path:
 ```bash
-docker run --rm -p 8091:80 -v C:/Users/Asus/VAA1_app/The-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
+docker run --rm -p 8091:80 -v D:/work/the-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
 ```
 ___
 ### Backend
@@ -139,7 +139,7 @@ docker-compose build
 
 3. Run the docker image container with teh following command, replace the name with the actual name of your container:
 ```bash
-docker run -p 8001:8000 video-analysis-app
+docker run -p 8000:8000 video-analysis-app
 ```
 ___
 

@@ -21,6 +21,7 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
+from src.backend.analysis.pos_analysis.py import POSAnalysis
 from fastapi import Form
 
 
@@ -265,6 +266,30 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 transcript_filename = f"{analysis_id}_transcript.json" 
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
                 organized_transcript_path.parent.mkdir(exist_ok=True, parents=True)
+
+                # Step 3: POS Analysis
+                logger.info("📝 Starting POS analysis on transcript...")
+                
+                # Opening and reading the JSON file
+                with open(organized_transcript_path, 'r') as f:
+                    text = ""
+                    # Parsing the JSON file into a Python dictionary
+                    data = json.load(f)
+                for segment in data['segments']:
+                    text += segment['text'] + ". "
+                pos_analyzer = POSAnalysis(text)
+                result = pos_analyzer.run()
+                logger.info("✅ POS analysis completed")
+                logger.info("\n=== POS COUNTS ===")
+                logger.info(result["pos_counts"])
+                logger.info("\n=== POS RATIOS ===")
+                logger.info(result["pos_ratios"])
+                logger.info("\n=== INTERROGATIVE LENS ===")
+                for k, v in result["interrogative_lens"].items():
+                    logger.info(f"{k}: {v}")
+                logger.info("\n=== POS WORDS ===")
+                for k, v in result["pos_words"].items():
+                    logger.info(f"{k}: {v}")  
                 
                 # Move files to organized locations
                 logger.info(f"📦 Moving audio file to: {organized_audio_path}")
