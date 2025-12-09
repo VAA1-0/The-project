@@ -22,7 +22,7 @@ logs/
 # Generated outputs / temp
 outputs/
 uploads/
-*.mp4
+
 
 # VS Code
 .vscode/
