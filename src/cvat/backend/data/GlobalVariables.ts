@@ -3,7 +3,7 @@ import fs from 'fs';
 
 export const GlobalConstants = {
     CVAT_BASE: 'http://localhost:8080/api',
-    AUTH_FILE: path.join(process.cwd(), "cvat_token.json"),
+    AUTH_FILE: path.join(process.cwd(), ".cvat_tokens", "cvat_token.json"),
 } as const
 
 export const GlobalState = {

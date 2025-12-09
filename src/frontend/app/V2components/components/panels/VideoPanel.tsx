@@ -74,7 +74,7 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
             Video blob not found — please re-upload the video.
           </div>
         ) : (
-          <div className="text-slate-400">Loading video...</div>
+          <div className="text-slate-400">No video selected...</div>
         )}
       </div>
     </main>

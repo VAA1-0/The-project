@@ -12,18 +12,24 @@ type Props = {
   onUpdateTag: (id: string, newTag: string) => Promise<void> | void;
 };
 
-
 // VideoItem component representing a single video entry with actions in Video Library
-const VideoItem: React.FC<Props> = ({ vid, onView, onDelete, onRename, onUpdateTag }) => {
+const VideoItem: React.FC<Props> = ({
+  vid,
+  onView,
+  onDelete,
+  onRename,
+  onUpdateTag,
+}) => {
   const [tagEdit, setTagEdit] = useState(false);
   const [tagValue, setTagValue] = useState<string>(vid.tag ?? "");
 
   const [renameMode, setRenameMode] = useState(false);
-  const [renameValue, setRenameValue] = useState<string>(vid.name.replace(/\.[^.]+$/, ""));
+  const [renameValue, setRenameValue] = useState<string>(
+    vid.name.replace(/\.[^.]+$/, "")
+  );
 
   return (
-    <div className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between">
-
+    <div className="p-0 bg-slate-900/30 rounded-md flex items-center justify-between">
       <div className="flex gap-2">
         {tagEdit ? (
           <div className="flex items-center gap-2">
@@ -100,7 +106,9 @@ const VideoItem: React.FC<Props> = ({ vid, onView, onDelete, onRename, onUpdateT
                 autoFocus
               />
               <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
-                {vid.name.match(/\.[^.]+$/) ? vid.name.match(/\.[^.]+$/)![0] : ""}
+                {vid.name.match(/\.[^.]+$/)
+                  ? vid.name.match(/\.[^.]+$/)![0]
+                  : ""}
               </div>
             </div>
 
@@ -140,11 +148,15 @@ const VideoItem: React.FC<Props> = ({ vid, onView, onDelete, onRename, onUpdateT
           </Button>
         )}
 
-        <Button className="cursor-pointer h-8 hover:bg-slate-700/40 transition" onClick={() => onView(vid.id)} variant="ghost">
+        {/*         <Button className="cursor-pointer h-8 hover:bg-slate-700/40 transition" onClick={() => onView(vid.id)} variant="ghost">
           View analysis
-        </Button>
+        </Button> */}
 
-        <Button className="cursor-pointer h-8 hover:bg-slate-700/40 transition" onClick={() => onDelete(vid.id)} variant="ghost">
+        <Button
+          className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+          onClick={() => onDelete(vid.id)}
+          variant="ghost"
+        >
           Delete
         </Button>
       </div>
