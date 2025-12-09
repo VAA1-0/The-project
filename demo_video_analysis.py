@@ -66,7 +66,7 @@ from pathlib import Path
 def main():
     """Main analysis function"""
     # Find video file
-    video_path = Path("./samples/Helsinki_short.mp4")
+    video_path = Path("./samples/finnish_news.mp4")
     
     if not video_path.exists():
         logger.error(f"Video file not found: {video_path}")
