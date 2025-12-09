@@ -9,3 +9,4 @@ src/cvat/src/
 wheels/
 Dockerfile
 logs/
+src/cvat/backend/.cvat_tokens/
