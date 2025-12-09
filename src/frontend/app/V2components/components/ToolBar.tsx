@@ -17,7 +17,7 @@ import {
 
 export function Toolbar() {
   return (
-    <div className="bg-[#2a2a2a] h-[48px] flex items-center px-3 gap-1 border-b border-[#1a1a1a]">
+    <div className="bg-[#2a2a2a] h-12 flex items-center px-3 gap-1 border-b border-[#1a1a1a]">
       <button className="p-2 hover:bg-[#3a3a3a] transition-colors text-[#b8b8b8]">
         <Home className="size-4" />
       </button>
