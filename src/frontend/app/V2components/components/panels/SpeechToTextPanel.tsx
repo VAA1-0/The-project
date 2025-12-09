@@ -95,9 +95,22 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             </button>
           </div>
         </div>
+        {/* SUMMARY */}
+        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+          Summary:
+          {summaryText.length === 0 ? (
+            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              No summary available
+            </div>
+          ) : (
+            <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className="text-sm text-slate-200">{summaryText}</div>
+            </div>
+          )}
+        </div>
         {/* Speech to text */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
           Speech to Text:
           {transcript.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -112,19 +125,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
                 <div className="text-sm text-slate-200">{row.text}</div>
               </div>
             ))
-          )}
-        </div>
-        {/* SUMMARY */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Summary:
-          {summaryText.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No summary available
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">{summaryText}</div>
-            </div>
           )}
         </div>
         {/* Detected Objects */}

@@ -1,3 +1,5 @@
+"use client";
+
 import {
   MessageSquareText,
   Brain,
@@ -224,18 +226,13 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     pollJobs();
   }
   //<============================================================>
-
   //<================OPEN JOBS==================================>
   const handleJobClick = async () => {
     // Navigate to the annotation page
-
-    if (selectedJob) {
-      window.open(
-        `/annotate/${selectedJob.id}`,
-        "_blank",
-        "noopener,noreferrer"
-      );
-    }
+    // router.push(`/annotate/${videoId}`);
+    // window.open(`/annotate/${videoId}`, "_blank");
+    console.log("Selected Job:", metadata.cvatID);
+    window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
   };
 
   return (
