@@ -293,6 +293,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             handleExport();
             console.log("Download button clicked");
           }}
+          disabled={!analysisData || !videoId}
         >
           Download
         </Button>
@@ -303,7 +304,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             variant="default"
             className="bg-green-600/40 hover:bg-green-600/60 transition"
             onClick={openTask}
-            disabled={isAnalyzing || isPolling}
+            disabled={isAnalyzing || isPolling || !videoId}
           >
             Jobs
           </Button>
@@ -314,7 +315,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
               variant="default"
               className="bg-green-600/40 hover:bg-green-600/60 transition"
               onClick={handleJobClick}
-              disabled={isAnalyzing || isPolling}
+              disabled={isAnalyzing || isPolling || !videoId}
             >
               {!jobReady ? "Polling" : "Annotate"}
             </Button>
