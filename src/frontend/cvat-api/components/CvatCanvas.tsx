@@ -1,27 +1,6 @@
-/*import React, { useState } from 'react';
-
-interface Props {
-  jobId: number;
-  taskId: number;
-}
-
-export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
-  const [loaded, setLoaded] = useState(false);
-  const src = `http://localhost:8080/tasks/${taskId}/jobs/${jobId}/`;
-
-  
-
-  return (
-    <iframe
-      src={src}
-      onLoad={() => setLoaded(true)}
-      style={{ width: "100%", height: "100%", border: "none" }}
-    />
-  );
-};*/
 
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 interface Props {
   jobId: number;
@@ -191,20 +170,43 @@ export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
   }, [loaded]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      src={src}
-      onLoad={handleLoad}
-      sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+    <div
       style={{
         width: "100%",
         height: "100%",
-        border: "none",
-        display: "block",
+        backgroundColor: "#d4e2f6",
         overflow: "hidden",
-        maxWidth: "100%"
+        position: "relative"
       }}
-      title="CVAT Annotation Canvas"
-    />
+    >
+      <iframe
+        ref={iframeRef}
+        src={src}
+        onLoad={handleLoad}
+        sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          display: "block"
+        }}
+        title="CVAT Annotation Canvas"
+      />
+      {!loaded && (
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            color: "#415A77",
+            fontSize: "16px",
+            fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+          }}
+        >
+          Loading CVAT...
+        </div>
+      )}
+    </div>
   );
 };

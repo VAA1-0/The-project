@@ -8,5 +8,21 @@ outputs/*
 src/cvat/src/
 wheels/
 Dockerfile
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
 logs/
-src/cvat/backend/.cvat_tokens/
+*.log
+
+# Generated outputs / temp
+outputs/
+uploads/
+*.mp4
+
+# VS Code
+.vscode/
