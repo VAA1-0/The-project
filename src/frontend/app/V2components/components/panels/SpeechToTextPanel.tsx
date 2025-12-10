@@ -1,3 +1,4 @@
+// src/frontend/app/V2components/components/panels/SpeechToTextPanel.tsx
 import React, { useState } from "react";
 
 import { VideoService } from "@/lib/video-service";

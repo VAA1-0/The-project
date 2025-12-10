@@ -1,3 +1,4 @@
+// src/frontend/app/V2components/components/panels/VideoPanel.tsx
 "use client";
 
 import React, { useState } from "react";

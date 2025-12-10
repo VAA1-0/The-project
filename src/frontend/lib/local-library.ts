@@ -1,3 +1,5 @@
+// src/frontend/lib/local-library.ts
+
 // Key used in localStorage
 const LIB_KEY = "local_video_library";
 

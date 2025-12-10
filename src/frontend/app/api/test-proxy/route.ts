@@ -1,4 +1,5 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+﻿// src/frontend/app/api/test-proxy/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 
 const DOCKER_API_URL = process.env.DOCKER_API_URL || 'http://host.docker.internal:8000';
 

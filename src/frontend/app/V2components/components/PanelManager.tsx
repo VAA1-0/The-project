@@ -1,3 +1,4 @@
+// src/frontend/app/V2components/components/PanelManager.tsx
 "use client";
 
 import { useState } from "react";

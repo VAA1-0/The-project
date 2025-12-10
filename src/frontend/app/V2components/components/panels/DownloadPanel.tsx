@@ -1,3 +1,5 @@
+// src/frontend/app/V2components/components/panels/DownloadPanel.tsx
+
 import { Download, RefreshCw, FileVideo, FileText, FileJson, AudioLines, FileSpreadsheet, CheckCircle, AlertCircle, Clock, Loader2, Bug } from "lucide-react";
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";

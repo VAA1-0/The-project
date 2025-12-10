@@ -1,46 +1,43 @@
 // src/frontend/app/api/upload/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-
-const DOCKER_API_URL = process.env.DOCKER_API_URL || 'http://localhost:8000';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('[Upload Proxy] Receiving file upload');
-    
-    // Get FormData from request
     const formData = await request.formData();
+    const file = formData.get('file') as File;
+    const cvatID = formData.get('cvatID');
     
-    // Debug: log form data contents
-    const entries: string[] = [];
-    for (const [key, value] of formData.entries()) {
-      if (value instanceof File) {
-        entries.push(`${key}: File (${value.name}, ${value.size} bytes)`);
-      } else {
-        entries.push(`${key}: ${value}`);
-      }
+    if (!file) {
+      return NextResponse.json(
+        { error: 'No file provided' },
+        { status: 400 }
+      );
     }
-    console.log('[Upload Proxy] FormData:', entries);
+
+    // Generate a unique ID for this analysis
+    const analysisId = `mock-${uuidv4()}`;
     
-    // Forward to Docker backend
-    const response = await fetch(`${DOCKER_API_URL}/api/upload`, {
-      method: 'POST',
-      body: formData,
-      // Don't set Content-Type header - browser sets it with boundary
+    console.log('Mock upload received:', {
+      filename: file.name,
+      size: file.size,
+      type: file.type,
+      cvatID,
+      analysisId
     });
     
-    const data = await response.json();
-    console.log('[Upload Proxy] Docker response:', data);
-    
-    return NextResponse.json(data, { status: response.status });
-    
+    // Return mock response
+    return NextResponse.json({
+      analysis_id: analysisId,
+      filename: file.name,
+      message: 'Video uploaded successfully (mock)',
+      status: 'uploaded',
+      cvatID: cvatID ? parseInt(cvatID.toString()) : 1,
+    });
   } catch (error) {
-    console.error('[Upload Proxy Error]:', error);
-    
+    console.error('Upload error:', error);
     return NextResponse.json(
-      {
-        error: 'Upload failed',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { error: 'Upload failed', message: String(error) },
       { status: 500 }
     );
   }

@@ -1,3 +1,5 @@
+// src/frontend/lib/panel-state-manager.ts
+
 import { EventEmitter } from "events";
 
 export type PanelType =
