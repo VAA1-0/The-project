@@ -117,6 +117,8 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
           setAnalysisData(updatedAnalysis);
           setRawCsv(updatedAnalysis.rawCsv || null);
 
+          // Force refresh the page
+          window.location.reload();
           alert("Analysis completed!");
         } else if (status.status === "error") {
           clearInterval(interval);
@@ -230,9 +232,9 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const handleJobClick = async () => {
     // Navigate to the annotation page
     // router.push(`/annotate/${videoId}`);
-    // window.open(`/annotate/${videoId}`, "_blank");
+    window.open(`/annotate/${videoId}`);
     console.log("Selected Job:", metadata.cvatID);
-    window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
+    //window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
   };
 
   return (
