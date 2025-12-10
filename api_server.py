@@ -289,6 +289,30 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 pos_analyzer = POSAnalysis(text)
                 pos_result = pos_analyzer.run()
 
+                # Step 3: POS Analysis
+                logger.info("📝 Starting POS analysis on transcript...")
+                
+                # Opening and reading the JSON file
+                with open(organized_transcript_path, 'r') as f:
+                    text = ""
+                    # Parsing the JSON file into a Python dictionary
+                    data = json.load(f)
+                for segment in data['segments']:
+                    text += segment['text'] + ". "
+                pos_analyzer = POSAnalysis(text)
+                result = pos_analyzer.run()
+                logger.info("✅ POS analysis completed")
+                logger.info("\n=== POS COUNTS ===")
+                logger.info(result["pos_counts"])
+                logger.info("\n=== POS RATIOS ===")
+                logger.info(result["pos_ratios"])
+                logger.info("\n=== INTERROGATIVE LENS ===")
+                for k, v in result["interrogative_lens"].items():
+                    logger.info(f"{k}: {v}")
+                logger.info("\n=== POS WORDS ===")
+                for k, v in result["pos_words"].items():
+                    logger.info(f"{k}: {v}")
+
                 # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),

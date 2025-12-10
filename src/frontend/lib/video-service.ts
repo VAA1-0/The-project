@@ -1,7 +1,8 @@
-// src/frontend/lib/video-service.ts
 import { apiService } from "./api-service";
-import { readFileSync } from "fs";
-import { parse } from "csv-parse/sync";
+import type { 
+  ExtendedAnalysisStatus, 
+  ExtendedUploadResponse 
+} from "./api-service";
 
 // Type Definitions
 export interface VideoMetadata {
@@ -19,11 +20,11 @@ export interface VideoMetadata {
 }
 
 export interface TranscriptSegment {
-  t: string; // Formatted timestamp like "12.5s"
+  t: string;
   text: string;
   speaker: string;
-  start: number; // Raw start time in seconds
-  end: number; // Raw end time in seconds
+  start: number;
+  end: number;
 }
 
 export interface DetectedObject {
@@ -61,30 +62,14 @@ export interface UploadResponse {
   cvatID: number;
 }
 
-// Updated AnalysisStatus with pipeline_type
-export interface AnalysisStatus {
-  analysis_id: string;
-  status: "uploaded" | "processing" | "completed" | "error";
-  progress: number;
-  filename: string;
-  error?: string;
-  processing_time?: number;
-  summary?: {
-    yolo_detections: number;
-    ocr_detections: number;
-    audio_segments?: number;
-    audio_language?: string;
-  };
-  download_links?: Record<string, string>;
-  pipeline_type?: string; // This was missing
-  cvatID?: number;
-}
+// Re-export extended types for compatibility
+export type AnalysisStatus = ExtendedAnalysisStatus;
 
 export class VideoService {
   private static readonly MAX_CSV_PREVIEW_LINES = 50;
 
   /**
-   * Upload a video file to the Docker API
+   * Upload a video file
    */
   static async upload(
     file: File,
@@ -92,10 +77,14 @@ export class VideoService {
     duration?: number
   ): Promise<UploadResponse> {
     try {
-      const response = await apiService.uploadVideo(file, cvatID);
+      console.log(`Uploading video: ${file.name}, cvatID: ${cvatID}`);
+      const response: ExtendedUploadResponse = await apiService.uploadVideo(file, cvatID);
       return {
-        ...response,
-        cvatID: cvatID || 0,
+        analysis_id: response.analysis_id,
+        filename: response.filename,
+        message: response.message,
+        status: response.status,
+        cvatID: response.cvatID || 0,
         duration: duration || 0,
         size: file.size,
       };
@@ -110,13 +99,12 @@ export class VideoService {
   }
 
   /**
-   * Get video metadata from Docker API
+   * Get video metadata
    */
   static async get(id: string): Promise<VideoMetadata> {
     try {
-      // Cast to our extended AnalysisStatus type
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
-
+      const status: ExtendedAnalysisStatus = await apiService.getStatus(id);
+      
       return {
         id: status.analysis_id,
         name: status.filename,
@@ -124,10 +112,7 @@ export class VideoService {
         progress: status.progress || 0,
         error: status.error,
         processingTime: status.processing_time,
-        pipelineType: status.pipeline_type as
-          | "full"
-          | "visual_only"
-          | "audio_only",
+        pipelineType: status.pipeline_type as "full" | "visual_only" | "audio_only",
         cvatID: status.cvatID,
       };
     } catch (error) {
@@ -146,11 +131,11 @@ export class VideoService {
   }
 
   /**
-   * Get video blob (annotated video) from Docker API
+   * Get video blob (annotated video)
    */
   static async getBlob(id: string): Promise<Blob | null> {
     try {
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status: ExtendedAnalysisStatus = await apiService.getStatus(id);
 
       if (status.status === "completed" && status.download_links?.video) {
         return await apiService.downloadFile(id, "video");
@@ -168,7 +153,7 @@ export class VideoService {
    */
   static async getAnalysis(id: string): Promise<AnalysisData> {
     try {
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status: ExtendedAnalysisStatus = await apiService.getStatus(id);
 
       // If analysis is not complete, return minimal data
       if (status.status !== "completed") {
@@ -199,7 +184,7 @@ export class VideoService {
           transcriptData.status === "fulfilled" ? transcriptData.value : [],
         detectedObjects: objects.status === "fulfilled" ? objects.value : [],
         quantityDetection: objects.status === "fulfilled" ? objects.value : [],
-        annotations: [], // Placeholder for future annotations
+        annotations: [],
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
         status: "completed",
@@ -213,7 +198,20 @@ export class VideoService {
       };
     } catch (error) {
       console.error("VideoService.getAnalysis failed:", error);
-      throw error;
+      // Return empty analysis instead of throwing
+      return {
+        transcript: [],
+        detectedObjects: [],
+        quantityDetection: [],
+        annotations: [],
+        summary: "Analysis failed to load",
+        rawCsv: "",
+        status: "error",
+        metadata: {
+          yoloDetections: 0,
+          ocrDetections: 0,
+        },
+      };
     }
   }
 
@@ -225,6 +223,7 @@ export class VideoService {
     pipelineType: "full" | "visual_only" | "audio_only" = "full"
   ): Promise<any> {
     try {
+      console.log(`Starting analysis for ${id}, pipeline: ${pipelineType}`);
       return await apiService.startAnalysis(id, pipelineType);
     } catch (error) {
       console.error("VideoService.startAnalysis failed:", error);
@@ -237,6 +236,7 @@ export class VideoService {
    */
   static async exportFile(id: string, fileType: string): Promise<void> {
     try {
+      console.log(`Exporting ${fileType} for ${id}`);
       await apiService.downloadAndSaveFile(id, fileType);
     } catch (error) {
       console.error("VideoService.exportFile failed:", error);
@@ -249,10 +249,11 @@ export class VideoService {
    */
   static async listVideos(limit: number = 20): Promise<VideoMetadata[]> {
     try {
+      console.log("Fetching video list...");
       const response = await apiService.listAnalyses(limit);
       const analyses = response.analyses || {};
 
-      return Object.entries(analyses).map(([id, info]: [string, any]) => ({
+      const videos = Object.entries(analyses).map(([id, info]: [string, any]) => ({
         id,
         name: info.filename || "Unknown",
         status: info.status || "unknown",
@@ -261,7 +262,11 @@ export class VideoService {
           ? new Date(info.start_time * 1000).toISOString()
           : new Date().toISOString(),
         pipelineType: info.pipeline_type,
+        cvatID: info.cvatID,
       }));
+
+      console.log(`Found ${videos.length} videos`);
+      return videos;
     } catch (error) {
       console.error("VideoService.listVideos failed:", error);
       return [];
@@ -273,43 +278,32 @@ export class VideoService {
    */
   static async pollStatus(
     id: string,
-    onProgress: (status: AnalysisStatus) => void,
+    onProgress: (status: ExtendedAnalysisStatus) => void,
     interval: number = 2000,
-    timeout: number = 300000 // 5 minutes
-  ): Promise<AnalysisStatus> {
+    timeout: number = 300000
+  ): Promise<ExtendedAnalysisStatus> {
     return apiService.pollStatus(id, onProgress, interval, timeout);
   }
 
   /**
-   * Delete a video analysis (alias for deleteAnalysis)
+   * Delete a video analysis
    */
   static async delete(id: string): Promise<void> {
-    return this.deleteAnalysis(id);
-  }
-
-  /**
-   * Delete an analysis and its files
-   */
-  static async deleteAnalysis(id: string): Promise<void> {
     try {
+      console.log(`Deleting video ${id}`);
       await apiService.deleteAnalysis(id);
     } catch (error) {
-      console.error("VideoService.deleteAnalysis failed:", error);
+      console.error("VideoService.delete failed:", error);
       throw error;
     }
   }
 
   /**
-   * Rename a video
-   * Note: This is a client-side operation since the API doesn't support rename
-   * The actual filename in the backend remains the same
+   * Rename a video (client-side only)
    */
   static async rename(id: string, newName: string): Promise<VideoMetadata> {
     try {
-      // Get current metadata
       const current = await this.get(id);
-
-      // Return updated metadata (client-side only)
       return {
         ...current,
         name: newName,
@@ -321,15 +315,11 @@ export class VideoService {
   }
 
   /**
-   * Update tags for a video
-   * Note: This is a client-side operation
+   * Update tags for a video (client-side only)
    */
   static async updateTag(id: string, tag: string): Promise<VideoMetadata> {
     try {
-      // Get current metadata
       const current = await this.get(id);
-
-      // Return metadata (tags would be stored separately in a real app)
       return current;
     } catch (error) {
       console.error("VideoService.updateTag failed:", error);
@@ -338,21 +328,54 @@ export class VideoService {
   }
 
   /**
-   * Get video by ID (alias for get)
+   * Get video by ID
    */
   static async getVideo(id: string): Promise<VideoMetadata> {
     return this.get(id);
   }
 
   /**
-   * List all videos (alias for listVideos)
+   * List all videos
    */
   static async list(): Promise<VideoMetadata[]> {
     return this.listVideos();
   }
 
-  // Private helper methods
+  /**
+   * Check if backend is healthy
+   */
+  static async healthCheck(): Promise<boolean> {
+    try {
+      const health = await apiService.healthCheck();
+      return health.status === "healthy";
+    } catch (error) {
+      console.warn("Backend health check failed:", error);
+      return false;
+    }
+  }
 
+  /**
+   * Get supported file types for download
+   */
+  static getSupportedFileTypes(): string[] {
+    return apiService.getSupportedFileTypes();
+  }
+
+  /**
+   * Get display name for a file type
+   */
+  static getFileTypeDisplayName(fileType: string): string {
+    return apiService.getFileTypeDisplayName(fileType);
+  }
+
+  /**
+   * Get file extension for a file type
+   */
+  static getFileExtension(fileType: string): string {
+    return apiService.getFileExtension(fileType);
+  }
+
+  // Private helper methods
   private static async loadCsvData(id: string): Promise<string> {
     try {
       const csvBlob = await apiService.downloadFile(id, "yolo_csv");
@@ -405,17 +428,25 @@ export class VideoService {
       const csvBlob = await apiService.downloadFile(id, "yolo_csv");
       const csvText = await csvBlob.text();
 
-      const records = parse(csvText, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      }) as any[];
+      // Simple CSV parsing without external library
+      const lines = csvText.split("\n").filter(line => line.trim());
+      if (lines.length < 2) return [];
 
-      return records.map((row) => ({
+      const headers = lines[0].split(',').map(h => h.trim());
+      const records = lines.slice(1).map(line => {
+        const values = line.split(',');
+        const record: any = {};
+        headers.forEach((header, index) => {
+          record[header] = values[index]?.trim() || '';
+        });
+        return record;
+      });
+
+      return records.map((row: any) => ({
         timestamp: row.timestamp ? Number(row.timestamp) : 0,
         class_id: row.class_id ? Number(row.class_id) : 0,
-        class_name: row.label || row.class_name || "",
-        confidence: Number(row.confidence) ? Number(row.confidence) : 0,
+        class_name: row.label || row.class_name || row.class || "Unknown",
+        confidence: row.confidence ? Number(row.confidence) : 0,
       }));
     } catch (error) {
       console.warn("Failed to parse detected objects:", error);
@@ -423,7 +454,7 @@ export class VideoService {
     }
   }
 
-  private static generateSummary(status: AnalysisStatus): string {
+  private static generateSummary(status: ExtendedAnalysisStatus): string {
     const summary = [];
 
     if (status.summary?.yolo_detections) {
@@ -445,38 +476,5 @@ export class VideoService {
     return summary.length > 0
       ? `Analysis complete. ${summary.join(", ")}.`
       : "Analysis complete.";
-  }
-
-  /**
-   * Get supported file types for download
-   */
-  static getSupportedFileTypes(): string[] {
-    return apiService.getSupportedFileTypes();
-  }
-
-  /**
-   * Get display name for a file type
-   */
-  static getFileTypeDisplayName(fileType: string): string {
-    return apiService.getFileTypeDisplayName(fileType);
-  }
-
-  /**
-   * Get file extension for a file type
-   */
-  static getFileExtension(fileType: string): string {
-    return apiService.getFileExtension(fileType);
-  }
-
-  /**
-   * Check if API is healthy
-   */
-  static async healthCheck(): Promise<boolean> {
-    try {
-      const health = await apiService.healthCheck();
-      return health.status === "healthy";
-    } catch (error) {
-      return false;
-    }
   }
 }

@@ -19,7 +19,7 @@ import {
 import { Separator } from "./ui/separator";
 import { Toggle } from "./ui/toggle";
 import { listJobs, listTasks } from "@/cvat-api/client";
-import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
+import AnalyzePageV2 from "@/app/V2components/components/AnalyzePageV2";
 
 export default function AnalyzePage() {
   const { id } = useParams() as { id: string };

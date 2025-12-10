@@ -7,16 +7,11 @@ export const metadata: Metadata = {
 };
 
 // Root layout component wrapping the application
-export default function RootLayout({
+export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <html lang="en">
-      <body className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-        {children}
-      </body>
-    </html>
-  );
+  // Nested layouts must not render <html> or <body> — only the root layout does.
+  return <>{children}</>;
 }

@@ -1,8 +1,5 @@
-import { LandingPage } from "@/components/LandingPage";
+import Main from './V2components/components/AnalyzePageV2';
 
-import { Main } from "./V2components/main";
-
-export default function Page() {
-  return <LandingPage />;
-  // return <Main />;
-  }
+export default function Home() {
+  return <Main />;
+}

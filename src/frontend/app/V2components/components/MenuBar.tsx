@@ -1,17 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
-import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import { saveVideoBlob } from "@/lib/blob-store";
+import { createVideoTask } from "@/cvat-api/client";
+import { Loader2 } from "lucide-react";
 
 export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [files, setFiles] = useState<File[] | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Read duration (in seconds) from a video File using a temporary HTMLVideoElement
+  // Read duration from video file
   async function getVideoDuration(file: File): Promise<number> {
     return new Promise((resolve) => {
       try {
@@ -34,9 +32,8 @@ export function MenuBar() {
     });
   }
 
-  // Upload handler: show file selector and upload video
+  // Upload handler
   const handleUpload = async () => {
-    // Create a hidden file input
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "video/*";
@@ -46,40 +43,70 @@ export function MenuBar() {
     input.onchange = async (e: any) => {
       const selectedFiles = Array.from(e.target.files) as File[];
       if (!selectedFiles || selectedFiles.length === 0) {
-        alert("Select a video first");
         return;
       }
+      
       setUploading(true);
+      let successCount = 0;
+      let errorCount = 0;
+      
       try {
         for (const f of selectedFiles) {
-          const length = await getVideoDuration(f);
-          const res = await VideoService.upload(f, 1, length);
-          console.log(res);
           try {
-            const videoBlob = new Blob([f], { type: f.type });
-            await saveVideoBlob(res.analysis_id, videoBlob);
-            console.log(
-              `Saved original video blob to IndexedDB for ${res.analysis_id}`
-            );
-          } catch (storageErr) {
-            console.warn(
-              "Failed to save video to IndexedDB (preview may be unavailable):",
-              storageErr
-            );
+            let cvatID = 1; // Default CVAT ID
+            
+            // Try to create CVAT task
+            try {
+              console.log("Creating CVAT task...");
+              let taskName = `Task-${Date.now()}`;
+              let result = await createVideoTask(taskName, f);
+              cvatID = result.taskId;
+              console.log(`✅ CVAT task created: ${cvatID}`);
+            } catch (cvatError) {
+              console.warn("CVAT task creation failed, using default ID:", cvatError);
+              // Continue with default ID
+            }
+
+            // Upload to backend
+            const length = await getVideoDuration(f);
+            console.log(`Uploading ${f.name} to backend...`);
+            
+            const res = await VideoService.upload(f, cvatID, length);
+            console.log("Backend upload response:", res);
+
+            // Save to IndexedDB for preview
+            try {
+              const videoBlob = new Blob([f], { type: f.type });
+              await saveVideoBlob(res.analysis_id, videoBlob);
+              console.log(`Saved to IndexedDB: ${res.analysis_id}`);
+            } catch (storageErr) {
+              console.warn("Failed to save to IndexedDB:", storageErr);
+            }
+            
+            successCount++;
+          } catch (err) {
+            console.error(`Failed to upload ${f.name}:`, err);
+            errorCount++;
           }
         }
-        // refresh local view
-        const list = await VideoService.list();
-        setLibraryVideos(list);
-        setFiles(null);
-        setFile(null);
-        setPreviewUrl(null);
-        // Dispatch a custom event to notify other components
+        
+        // Refresh video list
         window.dispatchEvent(new CustomEvent("video-uploaded"));
-        alert("Upload successful (saved in browser storage)");
+        
+        // Show result summary
+        if (successCount > 0) {
+          if (errorCount > 0) {
+            alert(`Uploaded ${successCount} video(s), ${errorCount} failed`);
+          } else {
+            alert(`Successfully uploaded ${successCount} video(s)!`);
+          }
+        } else {
+          alert("All uploads failed. Please try again.");
+        }
+        
       } catch (err) {
-        console.error(err);
-        alert("Upload failed: " + ((err as any)?.message ?? String(err)));
+        console.error("Upload process error:", err);
+        alert("Upload process failed: " + ((err as any)?.message ?? String(err)));
       } finally {
         setUploading(false);
       }
@@ -90,19 +117,31 @@ export function MenuBar() {
     document.body.removeChild(input);
   };
 
+  // Listen for trigger-upload event
+  useEffect(() => {
+    const handleTriggerUpload = () => {
+      handleUpload();
+    };
+    
+    window.addEventListener('trigger-upload', handleTriggerUpload);
+    return () => {
+      window.removeEventListener('trigger-upload', handleTriggerUpload);
+    };
+  }, []);
+
   const menuItems = [
     {
       label: "File",
       submenu: [
         {
-          label: "Upload New File",
-          onClick: () => {
-            handleUpload();
-          },
+          label: uploading ? "Uploading..." : "Upload New File",
+          onClick: uploading ? undefined : handleUpload,
+          disabled: uploading,
         },
         { label: "Open…", onClick: () => console.log("Open File Dialog") },
         { label: "Save", onClick: () => console.log("Saving...") },
         { label: "Save As…", onClick: () => console.log("Save As...") },
+        { type: "separator" as const },
         { label: "Exit", onClick: () => console.log("Exit App") },
       ],
     },
@@ -114,14 +153,50 @@ export function MenuBar() {
         { label: "Lens 3", onClick: () => alert("Lens 3!") },
       ],
     },
-    { label: "Analyze" },
-    { label: "Annotations" },
-    { label: "View" },
-    { label: "Window" },
-    { label: "Help" },
+    { 
+      label: "Analyze",
+      submenu: [
+        { label: "Start Analysis", onClick: () => alert("Starting analysis...") },
+        { label: "Batch Process", onClick: () => alert("Batch processing...") },
+        { label: "Settings", onClick: () => alert("Analysis settings...") },
+      ]
+    },
+    { 
+      label: "Annotations",
+      submenu: [
+        { label: "Add Annotation", onClick: () => alert("Adding annotation...") },
+        { label: "Import Annotations", onClick: () => alert("Importing annotations...") },
+        { label: "Export Annotations", onClick: () => alert("Exporting annotations...") },
+      ]
+    },
+    { 
+      label: "View",
+      submenu: [
+        { label: "Toggle Sidebar", onClick: () => alert("Toggling sidebar...") },
+        { label: "Full Screen", onClick: () => alert("Full screen...") },
+        { label: "Zoom In", onClick: () => alert("Zooming in...") },
+        { label: "Zoom Out", onClick: () => alert("Zooming out...") },
+      ]
+    },
+    { 
+      label: "Window",
+      submenu: [
+        { label: "Minimize", onClick: () => alert("Minimizing...") },
+        { label: "Maximize", onClick: () => alert("Maximizing...") },
+        { label: "Close", onClick: () => alert("Closing...") },
+      ]
+    },
+    { 
+      label: "Help",
+      submenu: [
+        { label: "Documentation", onClick: () => window.open("https://docs.example.com", "_blank") },
+        { label: "Keyboard Shortcuts", onClick: () => alert("Keyboard shortcuts...") },
+        { label: "About", onClick: () => alert("Video Analysis Tool v1.0") },
+      ]
+    },
   ];
 
-  // Click ourside to close menu
+  // Close menu when clicking outside
   useEffect(() => {
     const close = () => setOpenMenu(null);
     window.addEventListener("click", close);
@@ -134,7 +209,7 @@ export function MenuBar() {
     setOpenMenu(openMenu === index ? null : index);
   };
 
-  // 子菜单点击
+  // Submenu click
   const handleSubClick = (e: React.MouseEvent, fn?: () => void) => {
     e.stopPropagation();
     setOpenMenu(null);
@@ -148,33 +223,61 @@ export function MenuBar() {
           {/* Top Menu Bar */}
           <button
             onClick={(e) => handleMenuClick(e, index)}
-            className={`px-3 py-1 transition-colors ${
+            className={`px-3 py-1 transition-colors flex items-center gap-1 ${
               openMenu === index ? "bg-[#2f2f2f]" : "hover:bg-[#2f2f2f]"
-            }`}
+            } ${item.label === "File" && uploading ? "text-blue-300" : ""}`}
+            disabled={item.label === "File" && uploading}
           >
             {item.label}
+            {item.label === "File" && uploading && (
+              <Loader2 className="size-3 animate-spin" />
+            )}
           </button>
 
           {/* Sub Menu */}
           {item.submenu && openMenu === index && (
             <div
               className="absolute left-0 top-full bg-[#2a2a2a] 
-                          border border-[#0a0a0a] shadow-lg z-50 w-40"
-              onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the submenu
+                          border border-[#0a0a0a] shadow-lg z-50 w-48"
+              onClick={(e) => e.stopPropagation()}
             >
-              {item.submenu.map((sub, subIndex) => (
-                <button
-                  key={subIndex}
-                  onClick={(e) => handleSubClick(e, sub.onClick)}
-                  className="w-full text-left px-3 py-1 hover:bg-[#3a3a3a] transition-colors"
-                >
-                  {sub.label}
-                </button>
-              ))}
+              {item.submenu.map((sub, subIndex) => {
+                if (sub.type === "separator") {
+                  return (
+                    <div key={subIndex} className="border-t border-[#1a1a1a] my-1" />
+                  );
+                }
+                
+                const subLabel = sub.label || "";
+                
+                return (
+                  <button
+                    key={subIndex}
+                    onClick={(e) => handleSubClick(e, sub.onClick)}
+                    disabled={sub.disabled}
+                    className={`w-full text-left px-3 py-1.5 hover:bg-[#3a3a3a] transition-colors text-sm flex items-center justify-between ${
+                      sub.disabled ? "opacity-50 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    <span>{subLabel}</span>
+                    {subLabel.includes("Upload") && uploading && (
+                      <Loader2 className="size-3 animate-spin" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
       ))}
+      
+      {/* Upload progress indicator */}
+      {uploading && (
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          <Loader2 className="size-3 animate-spin text-blue-300" />
+          <span className="text-blue-300">Uploading...</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -19,7 +19,7 @@ import VideoItem from "./VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { AnalyzeResultsPanel } from "./AnalyzeResultsPanel";
 import { createVideoTask, getCvatHealth, listJobs } from "@/cvat-api/client";
-import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
+import AnalyzePageV2 from "@/app/V2components/components/AnalyzePageV2";
 
 export const Dashboard: React.FC = () => {
   const router = useRouter();
@@ -159,8 +159,8 @@ export const Dashboard: React.FC = () => {
     let cvatID = null;
     try {
       //=========Upload to CVAT==================
-
-      /*
+        
+      console.log("Uploading to CVAT");
       for (const video of selected) {
         let taskName = `Task-${Date.now()}`;
         console.log("🎬 Creating video task...");
@@ -169,8 +169,8 @@ export const Dashboard: React.FC = () => {
         alert(cvatID);
         alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
       }
-      */
-
+      
+       
       //<=============================================>
       try {
         const arr = Array.from(selected as any) as File[];
