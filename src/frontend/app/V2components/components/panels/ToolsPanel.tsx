@@ -1,16 +1,17 @@
+// src/frontend/app/V2components/components/panels/ToolsPanel.tsx
 "use client";
 
 import {
-  MessageSquareText,
-  Brain,
-  View,
-  ScanEye,
-  ChartScatter,
+  Download,
+  Play,
+  Pause,
+  Clock,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VideoService } from "@/lib/video-service";
-import { getVideoBlob } from "@/lib/blob-store";
-import { listJobs, listTasks } from "@/cvat-api/client";
+import { listJobs } from "@/cvat-api/client";
 
 import React, { useState } from "react";
 
@@ -21,64 +22,18 @@ interface ToolsPanelProps {
 export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [rawCsv, setRawCsv] = useState<string | null>(null);
-  const [analysisData, setAnalysisData] = useState<any>(null);
-
-  const lastObjectUrl = React.useRef<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
-  const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
   React.useEffect(() => {
     async function load() {
-      if (!videoId) {
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
+      if (!videoId) return;
 
       try {
-        // Load metadata
+        // Load metadata only - NO video blob loading
         const m = await VideoService.get(videoId);
-
-        console.log("Loaded metadata:", m);
-
         setMetadata(m);
-
-        // Load video blob - hybrid approach
-        // 1. First try to get the original video from IndexedDB (instant preview)
-        let blob = await getVideoBlob(videoId);
-
-        if (!blob) {
-          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
-          blob = await VideoService.getBlob(videoId);
-        }
-        if (blob) {
-          if (lastObjectUrl.current) {
-            URL.revokeObjectURL(lastObjectUrl.current);
-          }
-          const url = URL.createObjectURL(blob);
-          lastObjectUrl.current = url;
-          setVideoUrl(url);
-          setBlobMissing(false);
-        } else {
-          setBlobMissing(true);
-          setVideoUrl(null);
-        }
-
-        // Load analysis data
-        const analysis = await VideoService.getAnalysis(videoId);
-
-        setAnalysisData(analysis);
-        setRawCsv(analysis.rawCsv || null);
       } catch (err) {
-        console.error("Failed to load data:", err);
-        setBlobMissing(true);
-        setVideoUrl(null);
-      } finally {
-        setIsLoading(false);
+        console.error("ToolsPanel: Failed to load metadata:", err);
       }
     }
     load();
@@ -88,6 +43,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     if (!videoId) return;
 
     try {
+      setIsAnalyzing(true);
       setAnalysisProgress(0);
       const result = await VideoService.startAnalysis(videoId, "full");
       alert(`Analysis started! Status: ${result.status}`);
@@ -97,12 +53,11 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     } catch (error) {
       console.error("Failed to start analysis:", error);
       alert("Failed to start analysis.");
+      setIsAnalyzing(false);
     }
   }
 
   async function pollAnalysisProgress(analysisId: string) {
-    setIsAnalyzing(true);
-
     const interval = setInterval(async () => {
       try {
         const status = await VideoService.get(analysisId);
@@ -117,9 +72,13 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
           setAnalysisData(updatedAnalysis);
           setRawCsv(updatedAnalysis.rawCsv || null);
 
-          // Force refresh the page
-          window.location.reload();
           alert("Analysis completed!");
+          
+          // Refresh metadata
+          if (videoId) {
+            const m = await VideoService.get(videoId);
+            setMetadata(m);
+          }
         } else if (status.status === "error") {
           clearInterval(interval);
           setIsAnalyzing(false);
@@ -228,44 +187,79 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     pollJobs();
   }
   //<============================================================>
+
   //<================OPEN JOBS==================================>
   const handleJobClick = async () => {
     // Navigate to the annotation page
-    // router.push(`/annotate/${videoId}`);
-    window.open(`/annotate/${videoId}`);
-    console.log("Selected Job:", metadata.cvatID);
-    //window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
+
+    if (selectedJob) {
+      window.open(
+        `/annotate/${selectedJob.id}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    }
   };
 
   return (
-    <div className="flex h-full">
-      <div className="bg-[#232323] w-[52px] h-full border-r border-[#0a0a0a] flex flex-col items-center py-2 gap-0">
-        {tools.map((tool, index) => {
-          const Icon = tool.icon;
-          return (
-            <button
-              key={index}
-              className={`w-full h-11 flex items-center justify-center transition-colors hover:bg-white/10 ${
-                index === 0 ? "mt-2" : ""
-              }`}
-              title={tool.label}
-            >
-              <Icon className="size-5" strokeWidth={1.5} />
-            </button>
-          );
-        })}
+    <div className="h-full p-4 space-y-4 overflow-auto bg-[#1a1a1a]">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-300">Tools Panel</h2>
+        {metadata?.status && <StatusBadge status={metadata.status} />}
       </div>
 
-      <div>
-        <div>Video Id: {videoId}</div>
+      <div className="text-sm text-slate-300">
+        Video ID: <span className="font-mono text-xs bg-slate-800 px-2 py-1 rounded">{videoId || "None"}</span>
+      </div>
 
-        {/* Add progress indicator near Analyze button */}
+      {/* Analysis Controls */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium text-slate-300">Analysis Controls</h3>
+        
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="default"
+            className="bg-green-600 hover:bg-green-700 transition flex items-center gap-2"
+            onClick={handleAnalyzeVideo}
+            disabled={isAnalyzing || !videoId}
+          >
+            {isAnalyzing ? (
+              <>
+                <Pause className="size-4" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <Play className="size-4" />
+                Analyze Video
+              </>
+            )}
+          </Button>
+
+          <Button
+            variant="default"
+            className="bg-blue-600 hover:bg-blue-700 transition flex items-center gap-2"
+            onClick={() => {
+              if (!videoId) {
+                alert("Please select a video first");
+                return;
+              }
+              alert("Check the Download Results panel on the right");
+            }}
+            disabled={!videoId}
+          >
+            <Download className="size-4" />
+            View Downloads
+          </Button>
+        </div>
+
         {isAnalyzing && (
           <div className="mt-2">
-            <div className="text-sm text-slate-400">
-              Analysis in progress: {analysisProgress}%
+            <div className="flex justify-between text-sm text-slate-400 mb-1">
+              <span>Analysis in progress</span>
+              <span>{analysisProgress}%</span>
             </div>
-            <div className="w-full bg-slate-700 rounded-full h-2 mt-1">
+            <div className="w-full bg-slate-700 rounded-full h-2">
               <div
                 className="bg-green-500 h-2 rounded-full transition-all duration-300"
                 style={{ width: `${analysisProgress}%` }}
@@ -292,7 +286,6 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             handleExport();
             console.log("Download button clicked");
           }}
-          disabled={!analysisData || !videoId}
         >
           Download
         </Button>
@@ -303,7 +296,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             variant="default"
             className="bg-green-600/40 hover:bg-green-600/60 transition"
             onClick={openTask}
-            disabled={isAnalyzing || isPolling || !videoId}
+            disabled={isAnalyzing || isPolling}
           >
             Jobs
           </Button>
@@ -314,7 +307,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
               variant="default"
               className="bg-green-600/40 hover:bg-green-600/60 transition"
               onClick={handleJobClick}
-              disabled={isAnalyzing || isPolling || !videoId}
+              disabled={isAnalyzing || isPolling}
             >
               {!jobReady ? "Polling" : "Annotate"}
             </Button>

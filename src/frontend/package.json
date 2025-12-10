@@ -10,6 +10,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "uuid": "^10.0.0",
     "@radix-ui/react-separator": "^1.1.8",
     "axios": "^1.13.2",
     "class-variance-authority": "^0.7.1",
@@ -25,6 +26,7 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@types/uuid": "^10.0.0",
     "@tailwindcss/postcss": "^4",
     "@types/http-proxy": "^1.17.17",
     "@types/node": "^20",

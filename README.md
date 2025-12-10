@@ -139,7 +139,8 @@ docker-compose build
 
 3. Run the docker image container with teh following command, replace the name with the actual name of your container:
 ```bash
-docker run -p 8000:8000 video-analysis-app
+docker-compose up -d
+
 ```
 ___
 

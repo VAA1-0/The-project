@@ -1,0 +1,24 @@
+﻿{
+    "analysis_id":  "bf38c775-d35a-4bd7-aa91-d158da464777",
+    "status":  "completed",
+    "progress":  100,
+    "filename":  "Helsinki_short.mp4",
+    "error":  null,
+    "pipeline_type":  "full",
+    "cvatID":  1,
+    "processing_time":  1765315700.46,
+    "summary":  {
+                    "yolo_detections":  372,
+                    "ocr_detections":  0,
+                    "audio_segments":  0,
+                    "audio_language":  "unknown"
+                },
+    "download_links":  {
+                           "video":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/video",
+                           "yolo_csv":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/yolo_csv",
+                           "ocr_csv":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/ocr_csv",
+                           "summary_json":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/summary_json",
+                           "audio":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/audio",
+                           "transcript":  "/api/download/bf38c775-d35a-4bd7-aa91-d158da464777/transcript"
+                       }
+}

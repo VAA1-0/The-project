@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 from src.backend.utils.logger import get_logger
+import torch
+device = 'cpu' 
 
 logger = get_logger(__name__)
 

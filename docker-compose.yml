@@ -1,18 +1,22 @@
 services:
   video-analysis:
     build: .
+    container_name: video-analysis-app  # Add this for consistent naming
     ports:
       - "8000:8000"
     volumes:
-      # Mount outputs directory - CRITICAL!
       - ./outputs:/app/outputs
-      # Mount uploads directory  
       - ./uploads:/app/uploads
-      # Mount models directory
       - ./models:/app/models
-      # Optional: mount samples
       - ./samples:/app/samples:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - TRANSFORMERS_CACHE=/app/models/transformers
+      - TORCH_HOME=/app/models/torch
+      - ULTRAFYML_CACHE_DIR=/app/models/ultralytics
+      # Force CPU mode for PyTorch
+      - CUDA_VISIBLE_DEVICES=-1
     restart: unless-stopped
     working_dir: /app
+    shm_size: '2gb'
+    # REMOVE any GPU/deploy sections

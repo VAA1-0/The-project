@@ -1,180 +1,51 @@
+// src/frontend/app/V2components/components/PanelManager.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { GoldenLayout } from "golden-layout";
-import "golden-layout/dist/css/goldenlayout-base.css";
-import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
-import { createRoot } from "react-dom/client";
-
-// Import your panel components here
+import { useState } from "react";
 import ProjectPanel from "./panels/ProjectPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 
-// Import State manager and laytout factory if needed
-import { panelStateManager } from "@/lib/panel-state-manager";
-import { GoldenLayoutFactory } from "@/lib/golden-layout-factory";
-
-interface PanelConfig {
-  componentName: string;
-  Component: React.ComponentType<any>;
-  getProps?: (state?: any) => Record<string, any>;
-}
-
-const panelConfigs: PanelConfig[] = [
-  {
-    componentName: "ProjectPanel",
-    Component: ProjectPanel,
-    getProps: () => ({
-      onVideoSelect: (id: string) => panelStateManager.setVideoId(id),
-    }),
-  },
-  {
-    componentName: "VideoPanel",
-    Component: VideoPanel,
-    getProps: (state) => ({ videoId: state.videoId }),
-  },
-  {
-    componentName: "DownloadPanel",
-    Component: DownloadPanel,
-    getProps: (state) => ({ videoId: state.videoId }),
-  },
-  {
-    componentName: "ToolsPanel",
-    Component: ToolsPanel,
-    getProps: (state) => ({ videoId: state.videoId }),
-  },
-  {
-    componentName: "SpeechToTextPanel",
-    Component: SpeechToTextPanel,
-    getProps: (state) => ({ videoId: state.videoId }),
-  },
-];
-
-const layoutConfig = {
-  root: {
-    type: "row",
-    content: [
-      {
-        type: "column",
-        width: 15,
-        content: [
-          {
-            type: "component",
-            componentType: "ProjectPanel",
-            title: "ProjectPanel",
-            height: 50,
-          },
-          {
-            type: "component",
-            componentType: "DownloadPanel",
-            title: "DownloadPanel",
-            height: 50,
-          },
-        ],
-      },
-      {
-        type: "column",
-        content: [
-          {
-            type: "component",
-            componentType: "VideoPanel",
-            title: "VideoPanel",
-            height: 70,
-          },
-          {
-            type: "component",
-            componentType: "ToolsPanel",
-            title: "ToolsPanel",
-          },
-        ],
-      },
-      {
-        type: "component",
-        componentType: "SpeechToTextPanel",
-        title: "SpeechToTextPanel",
-        width: 20,
-      },
-    ],
-  },
-};
-
 export default function PanelManager() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const factoryRef = useRef<GoldenLayoutFactory | null>(null);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const layout = new GoldenLayout(containerRef.current);
-
-    const factory = new GoldenLayoutFactory(layout);
-    panelConfigs.forEach((config) => factory.registerFactory(config));
-    factoryRef.current = factory;
-
-    layout.loadLayout({
-      root: {
-        type: "row",
-        content: [
-          {
-            type: "column",
-            width: 15,
-            content: [
-              {
-                type: "component",
-                componentType: "ProjectPanel",
-                title: "ProjectPanel",
-                height: 50,
-              },
-              {
-                type: "component",
-                componentType: "DownloadPanel",
-                title: "DownloadPanel",
-                height: 50,
-              },
-            ],
-          },
-          {
-            type: "column",
-            content: [
-              {
-                type: "component",
-                componentType: "VideoPanel",
-                title: "VideoPanel",
-                height: 70,
-              },
-              {
-                type: "component",
-                componentType: "ToolsPanel",
-                title: "ToolsPanel",
-              },
-            ],
-          },
-          {
-            type: "component",
-            componentType: "SpeechToTextPanel",
-            title: "SpeechToTextPanel",
-            width: 20,
-          },
-        ],
-      },
-    });
-
-    return () => {
-      factory.destroy();
-      layout.destroy();
-    };
-  }, []);
+  const handleVideoSelect = (id: string) => {
+    setSelectedVideoId(id);
+  };
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        width: "100%",
-        height: "100%",
-      }}
-    />
+    <div className="flex-1 flex overflow-hidden">
+      {/* Left sidebar - Project Panel */}
+      <div className="w-80 border-r border-slate-700 flex flex-col">
+        <div className="h-1/2">
+          <ProjectPanel onVideoSelect={handleVideoSelect} />
+        </div>
+        <div className="h-1/2 border-t border-slate-700">
+          <DownloadPanel videoId={selectedVideoId} />
+        </div>
+      </div>
+
+      {/* Middle - Video and Tools Panels */}
+      <div className="flex-1 flex flex-col">
+        {/* Top - Video Panel */}
+        <div className="h-96 border-b border-slate-700">
+          <VideoPanel videoId={selectedVideoId} />
+        </div>
+
+        {/* Bottom - Tools Panel */}
+        <div className="flex-1">
+          <ToolsPanel videoId={selectedVideoId} />
+        </div>
+      </div>
+
+      {/* Right sidebar - Speech Panel */}
+      <div className="w-96 border-l border-slate-700 flex flex-col">
+        <div className="flex-1 overflow-auto">
+          <SpeechToTextPanel videoId={selectedVideoId} />
+        </div>
+      </div>
+    </div>
   );
 }
