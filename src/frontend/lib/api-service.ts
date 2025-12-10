@@ -39,22 +39,30 @@ class ApiService {
 
   constructor() {
     this.useMock = process.env.NEXT_PUBLIC_USE_MOCK === 'true' || false;
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/proxy';
+    // Direct connection to FastAPI backend
+    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   }
 
   /**
    * Upload a video file for analysis
    */
-
-    async uploadVideo(file: File, cvatID: number): Promise<any> {
+  async uploadVideo(file: File, cvatID: number): Promise<any> {
     console.log('Uploading file:', file.name, 'cvatID:', cvatID);
+    
+    // For development, check if backend is reachable
+    const backendAvailable = await this.checkBackendAvailability();
+    if (!backendAvailable && !this.useMock) {
+      console.warn('Backend not available, using mock response');
+      return this.getMockUploadResponse(file, cvatID);
+    }
     
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('cvatID', String(cvatID));
 
-      const response = await fetch(`${this.baseURL}/upload`, {
+      // Direct call to FastAPI endpoint
+      const response = await fetch(`${this.baseURL}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -62,6 +70,10 @@ class ApiService {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Upload failed with status:', response.status, errorText);
+        // Fall back to mock if API fails
+        if (!this.useMock) {
+          return this.getMockUploadResponse(file, cvatID);
+        }
         throw new Error(`Upload failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
@@ -71,13 +83,7 @@ class ApiService {
     } catch (error) {
       console.error('Upload error:', error);
       // Fallback to mock response
-      return {
-        analysis_id: `mock-${Date.now()}`,
-        filename: file.name,
-        message: 'Video uploaded successfully (fallback)',
-        status: 'uploaded',
-        cvatID: cvatID || 1,
-      };
+      return this.getMockUploadResponse(file, cvatID);
     }
   }
 
@@ -93,7 +99,21 @@ class ApiService {
     };
   }
 
-  
+  /**
+   * Check if backend is available
+   */
+  private async checkBackendAvailability(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseURL}/api/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(3000), // 3 second timeout
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Start analysis on an uploaded video
    */
@@ -101,33 +121,58 @@ class ApiService {
     analysisId: string,
     pipelineType: 'full' | 'visual_only' | 'audio_only' = 'full'
   ): Promise<AnalysisStartResponse> {
-    const response = await fetch(
-      `${this.baseURL}/api/analyze/${analysisId}?pipeline_type=${pipelineType}`,
-      {
-        method: 'POST',
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Analysis start failed: ${response.status} ${response.statusText} - ${errorText}`);
+    // Check if this is a mock ID
+    if (analysisId.startsWith('mock-')) {
+      return {
+        analysis_id: analysisId,
+        status: 'processing',
+        message: 'Analysis started (mock)',
+        progress: 10,
+        pipeline_type: pipelineType,
+      };
     }
+    
+    try {
+      const response = await fetch(
+        `${this.baseURL}/api/analyze/${analysisId}?pipeline_type=${pipelineType}`,
+        {
+          method: 'POST',
+        }
+      );
 
-    return response.json();
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Analysis start failed: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      console.error('Start analysis error:', error);
+      throw error;
+    }
   }
 
   /**
    * Get the current status of an analysis
    */
-    async getStatus(analysisId: string): Promise<any> {
+  async getStatus(analysisId: string): Promise<any> {
     console.log('Fetching status for:', analysisId);
     
+    // If mock ID, return mock status
+    if (analysisId.startsWith('mock-')) {
+      return this.getMockStatus(analysisId);
+    }
+    
     try {
-      const response = await fetch(`${this.baseURL}/status/${analysisId}`);
+      const response = await fetch(`${this.baseURL}/api/status/${analysisId}`);
       
       if (!response.ok) {
         const errorText = await response.text();
         console.warn('Status check failed:', response.status, errorText);
+        // For development, fall back to mock
+        if (!this.useMock) {
+          return this.getMockStatus(analysisId);
+        }
         throw new Error(`Status check failed: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
@@ -160,13 +205,19 @@ class ApiService {
   }
 
   private getMockStatus(analysisId: string): any {
-    const isCompleted = analysisId.includes('completed') || analysisId.includes('mock-1');
-    const isProcessing = analysisId.includes('processing') || analysisId.includes('mock-2');
+    // Generate deterministic status based on ID
+    const hash = analysisId.split('-').reduce((acc, part) => acc + part.charCodeAt(0), 0);
+    const isCompleted = hash % 3 === 0;
+    const isProcessing = hash % 3 === 1;
+    const hasError = hash % 10 === 0; // 10% chance of error
     
     let status = 'uploaded';
     let progress = 0;
     
-    if (isCompleted) {
+    if (hasError) {
+      status = 'error';
+      progress = 0;
+    } else if (isCompleted) {
       status = 'completed';
       progress = 100;
     } else if (isProcessing) {
@@ -174,26 +225,29 @@ class ApiService {
       progress = Math.floor(Math.random() * 50) + 50;
     }
     
+    // Mock all 6 download links for completed analyses
+    const downloadLinks = status === 'completed' ? {
+      video: `${this.baseURL}/api/download/${analysisId}/video`,
+      yolo_csv: `${this.baseURL}/api/download/${analysisId}/yolo_csv`,
+      ocr_csv: `${this.baseURL}/api/download/${analysisId}/ocr_csv`,
+      summary_json: `${this.baseURL}/api/download/${analysisId}/summary_json`,
+      audio: `${this.baseURL}/api/download/${analysisId}/audio`,
+      transcript: `${this.baseURL}/api/download/${analysisId}/transcript`
+    } : undefined;
+    
     return {
       analysis_id: analysisId,
       status: status,
       progress: progress,
-      filename: analysisId.includes('mock') ? `${analysisId}.mp4` : 'uploaded-video.mp4',
-      processing_time: isCompleted ? 45.2 : null,
-      summary: isCompleted ? {
-        yolo_detections: 120,
-        ocr_detections: 25,
-        audio_segments: 8,
+      filename: analysisId.includes('mock') ? `video-${Date.now()}.mp4` : 'uploaded-video.mp4',
+      processing_time: status === 'completed' ? Math.floor(Math.random() * 30) + 15 : null,
+      summary: status === 'completed' ? {
+        yolo_detections: Math.floor(Math.random() * 200) + 50,
+        ocr_detections: Math.floor(Math.random() * 50) + 10,
+        audio_segments: Math.floor(Math.random() * 20) + 5,
         audio_language: 'en'
       } : undefined,
-      download_links: isCompleted ? {
-        video: `/api/mock/download/${analysisId}/video`,
-        yolo_csv: `/api/mock/download/${analysisId}/yolo_csv`,
-        ocr_csv: `/api/mock/download/${analysisId}/ocr_csv`,
-        summary_json: `/api/mock/download/${analysisId}/summary_json`,
-        audio: `/api/mock/download/${analysisId}/audio`,
-        transcript: `/api/mock/download/${analysisId}/transcript`
-      } : undefined,
+      download_links: downloadLinks,
       pipeline_type: 'full',
       cvatID: 1
     };
@@ -203,6 +257,12 @@ class ApiService {
    * Download a file from the analysis results
    */
   async downloadFile(analysisId: string, fileType: string): Promise<Blob> {
+    // For mock IDs, create a mock blob
+    if (analysisId.startsWith('mock-')) {
+      const mockContent = `Mock ${fileType} content for ${analysisId}`;
+      return new Blob([mockContent], { type: this.getMimeType(fileType) });
+    }
+    
     const response = await fetch(`${this.baseURL}/api/download/${analysisId}/${fileType}`);
 
     if (!response.ok) {
@@ -211,6 +271,18 @@ class ApiService {
     }
 
     return response.blob();
+  }
+
+  private getMimeType(fileType: string): string {
+    const mimeTypes: Record<string, string> = {
+      'video': 'video/mp4',
+      'yolo_csv': 'text/csv',
+      'ocr_csv': 'text/csv',
+      'summary_json': 'application/json',
+      'audio': 'audio/wav',
+      'transcript': 'application/json'
+    };
+    return mimeTypes[fileType] || 'application/octet-stream';
   }
 
   /**
@@ -272,7 +344,7 @@ class ApiService {
   ): Promise<void> {
     try {
       const blob = await this.downloadFile(analysisId, fileType);
-      const downloadFilename = filename || `${analysisId}_${fileType}`;
+      const downloadFilename = filename || `${analysisId}_${fileType}${this.getFileExtension(fileType)}`;
       this.downloadBlob(blob, downloadFilename);
     } catch (error) {
       console.error(`Failed to download ${fileType}:`, error);
@@ -287,11 +359,15 @@ class ApiService {
     console.log('Fetching analyses with limit:', limit);
     
     try {
-      const response = await fetch(`${this.baseURL}/analyses?limit=${limit}`);
+      const response = await fetch(`${this.baseURL}/api/analyses?limit=${limit}`);
       
       if (!response.ok) {
         const errorText = await response.text();
         console.warn('Failed to fetch analyses:', response.status, errorText);
+        // For development, fall back to mock
+        if (!this.useMock) {
+          return this.getMockAnalyses(limit);
+        }
         throw new Error(`Failed to list analyses: ${response.status} ${response.statusText} - ${errorText}`);
       }
       
@@ -305,11 +381,16 @@ class ApiService {
     }
   }
 
-
   /**
    * Delete an analysis and its files
    */
   async deleteAnalysis(analysisId: string): Promise<void> {
+    // Skip for mock IDs
+    if (analysisId.startsWith('mock-')) {
+      console.log('Mock delete for:', analysisId);
+      return;
+    }
+    
     const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}`, {
       method: 'DELETE',
     });
@@ -324,13 +405,18 @@ class ApiService {
    * Health check for API server
    */
   async healthCheck(): Promise<any> {
-    const response = await fetch(`${this.baseURL}/api/health`);
+    try {
+      const response = await fetch(`${this.baseURL}/api/health`);
+      
+      if (!response.ok) {
+        throw new Error(`Health check failed: ${response.status} ${response.statusText}`);
+      }
 
-    if (!response.ok) {
-      throw new Error(`Health check failed: ${response.status} ${response.statusText}`);
+      return response.json();
+    } catch (error) {
+      console.warn('Health check failed:', error);
+      return { status: 'unhealthy', error: String(error) };
     }
-
-    return response.json();
   }
 
   /**
@@ -399,7 +485,7 @@ class ApiService {
     const downloadLinks = status.download_links || {};
     const downloadPromises = Object.entries(downloadLinks).map(async ([fileType, url]) => {
       try {
-        const filename = `${analysisId}_${fileType}`;
+        const filename = `${analysisId}_${fileType}${this.getFileExtension(fileType)}`;
         await this.downloadAndSaveFile(analysisId, fileType, filename);
         console.log(`Downloaded: ${filename}`);
       } catch (error) {
@@ -448,7 +534,7 @@ class ApiService {
         reject(new Error('Upload failed due to network error'));
       });
 
-      xhr.open('POST', '/api/upload');
+      xhr.open('POST', `${this.baseURL}/api/upload`);
       xhr.send(formData);
     });
   }

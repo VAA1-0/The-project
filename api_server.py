@@ -34,20 +34,16 @@ app = FastAPI(
 )
 
 # CORS middleware - configure for your frontend
+# Update the CORS middleware section to be more permissive for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000", 
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ],
+    allow_origins=["*"],  # For development only - be more specific in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"]  # Important for file downloads
 )
+
 
 # Create directories for API operations
 UPLOAD_DIR = Path("uploads")

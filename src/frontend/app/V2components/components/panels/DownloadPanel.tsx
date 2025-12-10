@@ -1,8 +1,12 @@
 // src/frontend/app/V2components/components/panels/DownloadPanel.tsx
 
-import { Download, RefreshCw, FileVideo, FileText, FileJson, AudioLines, FileSpreadsheet, CheckCircle, AlertCircle, Clock, Loader2, Bug } from "lucide-react";
+import { 
+  Download, RefreshCw, CheckCircle, AlertCircle, Clock, Loader2, Bug, Folder,
+  FileVideo, FileSpreadsheet, FileJson, AudioLines, FileText 
+} from "lucide-react";
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
+import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
 
 interface DownloadPanelProps {
   videoId?: string | null;
@@ -15,14 +19,31 @@ interface DownloadFile {
   icon: React.ReactNode;
   description: string;
   available: boolean;
+  size?: string;
 }
 
 const StatusBadge = ({ status }: { status: string }) => {
   const config = {
-    completed: { color: "bg-green-500/20 text-green-300 border-green-500/30", icon: CheckCircle, label: "Ready" },
-    processing: { color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30", icon: Clock, label: "Processing" },
-    uploaded: { color: "bg-blue-500/20 text-blue-300 border-blue-500/30", icon: Clock, label: "Uploaded" },
-    error: { color: "bg-red-500/20 text-red-300 border-red-500/30", icon: AlertCircle, label: "Error" },
+    completed: { 
+      color: "bg-green-500/20 text-green-300 border-green-500/30", 
+      icon: CheckCircle, 
+      label: "Ready" 
+    },
+    processing: { 
+      color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30", 
+      icon: Clock, 
+      label: "Processing" 
+    },
+    uploaded: { 
+      color: "bg-blue-500/20 text-blue-300 border-blue-500/30", 
+      icon: Clock, 
+      label: "Uploaded" 
+    },
+    error: { 
+      color: "bg-red-500/20 text-red-300 border-red-500/30", 
+      icon: AlertCircle, 
+      label: "Error" 
+    },
   };
 
   const cfg = config[status as keyof typeof config] || config.uploaded;
@@ -42,45 +63,34 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
   const [analysisStatus, setAnalysisStatus] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [showDebug, setShowDebug] = useState(false);
 
-  // All 6 file type configurations
-  const fileTypeConfigs = {
-    video: {
-      name: "Annotated Video",
-      icon: <FileVideo className="size-4 text-blue-400" />,
-      description: "Video with visual annotations (YOLO + OCR)",
-      extension: ".mp4"
-    },
-    yolo_csv: {
-      name: "Object Detections",
-      icon: <FileSpreadsheet className="size-4 text-green-400" />,
-      description: "CSV of all detected objects",
-      extension: ".csv"
-    },
-    ocr_csv: {
-      name: "OCR Text",
-      icon: <FileSpreadsheet className="size-4 text-purple-400" />,
-      description: "CSV of all text detected in video",
-      extension: ".csv"
-    },
-    summary_json: {
-      name: "Analysis Summary",
-      icon: <FileJson className="size-4 text-yellow-400" />,
-      description: "JSON summary of analysis results",
-      extension: ".json"
-    },
-    audio: {
-      name: "Extracted Audio",
-      icon: <AudioLines className="size-4 text-pink-400" />,
-      description: "WAV audio file extracted from video",
-      extension: ".wav"
-    },
-    transcript: {
-      name: "Speech Transcript",
-      icon: <FileText className="size-4 text-cyan-400" />,
-      description: "JSON transcript with timestamps and POS analysis",
-      extension: ".json"
-    }
+  // Helper function to get file icon
+  const getFileIcon = (fileType: string, className: string = "size-4") => {
+    const config = getFileTypeConfig(fileType);
+    const iconColors = {
+      video: 'text-blue-400',
+      yolo_csv: 'text-green-400',
+      ocr_csv: 'text-purple-400',
+      summary_json: 'text-yellow-400',
+      audio: 'text-pink-400',
+      transcript: 'text-cyan-400'
+    };
+    
+    const colorClass = iconColors[fileType as keyof typeof iconColors] || 'text-gray-400';
+    
+    // Map icon names to components
+    const iconMap = {
+      video: FileVideo,
+      spreadsheet: FileSpreadsheet,
+      json: FileJson,
+      audio: AudioLines,
+      text: FileText,
+    };
+    
+    const IconComponent = iconMap[config.icon as keyof typeof iconMap] || FileText;
+    
+    return <IconComponent className={`${className} ${colorClass}`} />;
   };
 
   const loadAnalysisData = async () => {
@@ -92,111 +102,136 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
     }
     
     setIsLoading(true);
-    let debugLog = `Loading data for video: ${videoId}\n`;
+    let debugLog = `=== DownloadPanel Debug Log ===\n`;
+    debugLog += `Timestamp: ${new Date().toISOString()}\n`;
+    debugLog += `Video ID: ${videoId}\n`;
     
     try {
-      // Get analysis status from backend
-      debugLog += "1. Fetching status from VideoService...\n";
-      const status = await VideoService.get(videoId);
-      debugLog += `   Status: ${status.status}, Progress: ${status.progress}%\n`;
+      // Try direct API call first (most reliable)
+      debugLog += `\n1. Direct API call to FastAPI...\n`;
+      debugLog += `   URL: http://localhost:8000/api/status/${videoId}\n`;
       
-      const analysisStatus = {
-        analysis_id: videoId,
-        status: status.status,
-        progress: status.progress,
-        filename: status.name,
-        error: status.error,
-        processing_time: status.processingTime,
-        pipeline_type: status.pipelineType,
-        cvatID: status.cvatID,
-      };
-
-      // Get download links from backend API
-      let downloadLinks: Record<string, string> = {};
-      let fullStatus = null;
-      
-      debugLog += "2. Fetching full status from backend API...\n";
+      let apiStatus = null;
       try {
-        const response = await fetch(`http://localhost:8000/api/status/${videoId}`);
-        debugLog += `   Response status: ${response.status} ${response.statusText}\n`;
+        const response = await fetch(`http://localhost:8000/api/status/${videoId}`, {
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
+        
+        debugLog += `   Response: ${response.status} ${response.statusText}\n`;
         
         if (response.ok) {
-          fullStatus = await response.json();
-          debugLog += `   Got full status: ${JSON.stringify(fullStatus, null, 2).substring(0, 500)}...\n`;
-          downloadLinks = fullStatus.download_links || {};
-          debugLog += `   Download links keys: ${Object.keys(downloadLinks).join(', ')}\n`;
+          apiStatus = await response.json();
+          debugLog += `   ✅ Success! Got status: ${apiStatus.status}\n`;
+          debugLog += `   Progress: ${apiStatus.progress || 0}%\n`;
           
-          // Check if visual analysis has errors
-          if (fullStatus.summary) {
-            debugLog += `   Summary: ${JSON.stringify(fullStatus.summary)}\n`;
+          if (apiStatus.download_links) {
+            const links = Object.keys(apiStatus.download_links);
+            debugLog += `   Download links (${links.length}): ${links.join(', ')}\n`;
           }
         } else {
-          debugLog += `   ERROR: Failed to fetch status\n`;
+          const errorText = await response.text();
+          debugLog += `   ❌ API Error: ${errorText}\n`;
         }
-      } catch (e) {
-        debugLog += `   ERROR fetching status: ${e}\n`;
+      } catch (apiError) {
+        debugLog += `   ❌ API Connection Error: ${apiError}\n`;
       }
-
-      setAnalysisStatus({
-        ...analysisStatus,
-        download_links: downloadLinks,
-        full_status: fullStatus
-      });
-
-      debugLog += "3. Building file list...\n";
-      // Build download files list for ALL 6 file types
-      const files: DownloadFile[] = [];
       
-      // Check each of the 6 file types
-      const expectedFileTypes = ['video', 'yolo_csv', 'ocr_csv', 'summary_json', 'audio', 'transcript'];
+      // If direct API failed, try VideoService
+      if (!apiStatus) {
+        debugLog += `\n2. Falling back to VideoService...\n`;
+        try {
+          const vsStatus = await VideoService.get(videoId);
+          debugLog += `   VideoService status: ${vsStatus.status}\n`;
+          
+          apiStatus = {
+            analysis_id: videoId,
+            status: vsStatus.status,
+            progress: vsStatus.progress || 0,
+            filename: vsStatus.name || 'Unknown',
+            pipeline_type: vsStatus.pipelineType || 'full',
+            cvatID: vsStatus.cvatID,
+            error: vsStatus.error,
+          };
+        } catch (vsError) {
+          debugLog += `   ❌ VideoService Error: ${vsError}\n`;
+        }
+      }
       
-      for (const fileType of expectedFileTypes) {
-        const config = fileTypeConfigs[fileType as keyof typeof fileTypeConfigs];
-        const originalName = analysisStatus.filename || "video";
-        const baseName = originalName.replace(/\.[^/.]+$/, "");
+      // Set the status
+      if (apiStatus) {
+        setAnalysisStatus(apiStatus);
+        debugLog += `\n3. Analysis Status Set:\n`;
+        debugLog += `   Status: ${apiStatus.status}\n`;
+        debugLog += `   Progress: ${apiStatus.progress}\n`;
+        debugLog += `   Filename: ${apiStatus.filename}\n`;
+        debugLog += `   Pipeline: ${apiStatus.pipeline_type}\n`;
         
-        if (downloadLinks[fileType]) {
-          debugLog += `   ✓ ${fileType}: AVAILABLE at ${downloadLinks[fileType]}\n`;
-          files.push({
-            name: `${baseName}_${config.name.replace(/\s+/g, "_")}${config.extension}`,
-            type: fileType,
-            downloadUrl: downloadLinks[fileType],
-            icon: config.icon,
-            description: config.description,
-            available: true
-          });
-        } else {
-          debugLog += `   ✗ ${fileType}: NOT AVAILABLE in download_links\n`;
-          files.push({
-            name: `${config.name} (Not Generated)`,
-            type: fileType,
-            downloadUrl: '',
-            icon: config.icon,
-            description: `${config.description} - File not generated by backend`,
-            available: false
-          });
+        // Build file list for ALL 6 expected file types
+        debugLog += `\n4. Building file list for all 6 file types...\n`;
+        const files: DownloadFile[] = [];
+        const downloadLinks = apiStatus.download_links || {};
+        
+        for (const fileType of API_CONFIG.EXPECTED_FILE_TYPES) {
+          const config = getFileTypeConfig(fileType);
+          const originalName = apiStatus.filename || "video";
+          const baseName = originalName.replace(/\.[^/.]+$/, "");
+          
+          const isAvailable = downloadLinks[fileType] || 
+                             (apiStatus.status === 'completed' && apiStatus.pipeline_type?.includes(fileType.includes('audio') ? 'audio' : 'visual'));
+          
+          if (isAvailable) {
+            debugLog += `   ✅ ${fileType}: AVAILABLE\n`;
+            const downloadUrl = downloadLinks[fileType] || getDownloadUrl(videoId, fileType);
+            
+            // Add file to the list with proper icon
+            files.push({
+              name: `${baseName}_${config.name.replace(/\s+/g, "_")}${config.extension}`,
+              type: fileType,
+              downloadUrl: downloadUrl,
+              icon: getFileIcon(fileType, "size-5"),
+              description: config.description,
+              available: true,
+              size: fileType === 'video' ? '~50MB' : fileType === 'audio' ? '~5MB' : '~1MB'
+            });
+          } else {
+            debugLog += `   ⚠️ ${fileType}: NOT AVAILABLE\n`;
+            files.push({
+              name: `${config.name} (Pending)`,
+              type: fileType,
+              downloadUrl: '',
+              icon: getFileIcon(fileType, "size-5"),
+              description: `${config.description} - ${apiStatus.status === 'processing' ? 'Will be generated when analysis completes' : 'Not generated in this analysis'}`,
+              available: false
+            });
+          }
         }
+        
+        setAvailableFiles(files);
+        debugLog += `\n5. File list built: ${files.filter(f => f.available).length} available, ${files.length} total\n`;
+      } else {
+        debugLog += `\n❌ FAILED: Could not get any status data\n`;
       }
-      
-      // Check for alternative file names
-      debugLog += "4. Checking for alternative file names...\n";
-      Object.entries(downloadLinks).forEach(([key, url]) => {
-        debugLog += `   Found: "${key}" -> ${url}\n`;
-      });
-      
-      setAvailableFiles(files);
-      debugLog += `5. Set ${files.length} files (${files.filter(f => f.available).length} available)\n`;
-      
-      setDebugInfo(debugLog);
-      console.log(debugLog);
       
     } catch (error) {
-      const errorMsg = `DownloadPanel: Failed to load analysis data: ${error}`;
+      const errorMsg = `DownloadPanel: Critical error: ${error}`;
       console.error(errorMsg);
-      setDebugInfo(debugLog + `ERROR: ${errorMsg}`);
+      debugLog += `\n❌ CRITICAL ERROR: ${errorMsg}\n`;
+      
+      // Last resort: set minimal status
+      setAnalysisStatus({
+        analysis_id: videoId,
+        status: 'error',
+        progress: 0,
+        filename: 'Unknown',
+        error: 'Failed to load analysis data'
+      });
     } finally {
       setIsLoading(false);
       setRefreshing(false);
+      setDebugInfo(debugLog);
+      console.log(debugLog);
     }
   };
 
@@ -207,14 +242,22 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
   };
 
   useEffect(() => {
-    if (!videoId) return;
+    if (!videoId) {
+      setAvailableFiles([]);
+      setAnalysisStatus(null);
+      return;
+    }
 
     loadAnalysisData();
 
-    // Auto-refresh every 5 seconds when processing
+    // Auto-refresh when processing
     let interval: NodeJS.Timeout;
     if (analysisStatus?.status === "processing") {
-      interval = setInterval(loadAnalysisData, 5000);
+      interval = setInterval(() => {
+        if (!refreshing) {
+          handleRefresh();
+        }
+      }, API_CONFIG.POLLING.PROGRESS);
     }
 
     return () => {
@@ -230,10 +273,28 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
     
     try {
       console.log(`Downloading ${fileType}: ${fileName}`);
-      await VideoService.exportFile(videoId, fileType);
+      
+      // Direct download
+      const response = await fetch(downloadUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      console.log(`Download completed: ${fileName}`);
     } catch (error) {
       console.error("Download failed:", error);
-      alert(`Failed to download ${fileName}. Please try again.`);
+      alert(`Failed to download ${fileName}. Please try again.\nError: ${error}`);
     }
   };
 
@@ -246,10 +307,13 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
       return;
     }
     
+    if (!confirm(`Download ${downloadableFiles.length} file(s)?`)) return;
+    
     try {
       for (const file of downloadableFiles) {
         await handleDownload(file.type, file.downloadUrl, file.name);
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Small delay between downloads
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
       alert(`Successfully downloaded ${downloadableFiles.length} file(s)!`);
     } catch (error) {
@@ -258,7 +322,13 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
     }
   };
 
-  const [showDebug, setShowDebug] = useState(false);
+  const getAvailableFileCount = () => {
+    return availableFiles.filter(f => f.available).length;
+  };
+
+  const getTotalFileCount = () => {
+    return API_CONFIG.EXPECTED_FILE_TYPES.length;
+  };
 
   return (
     <div className="h-full flex flex-col bg-[#1a1a1a]">
@@ -267,7 +337,7 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           <h2 className="text-lg font-semibold text-slate-300">Download Results</h2>
           {videoId && (
             <div className="text-xs text-slate-500 mt-1">
-              Video ID: <span className="font-mono">{videoId}</span>
+              Video ID: <span className="font-mono">{videoId.substring(0, 8)}...</span>
               {analysisStatus?.pipeline_type && (
                 <span className="ml-2">• Pipeline: {analysisStatus.pipeline_type}</span>
               )}
@@ -296,14 +366,15 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
               )}
             </button>
           )}
-          {availableFiles.filter(f => f.available).length > 0 && (
+          {getAvailableFileCount() > 0 && (
             <button
               onClick={handleDownloadAll}
-              className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors"
+              className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
               title="Download All Available Files"
+              disabled={getAvailableFileCount() === 0}
             >
               <Download className="size-4" />
-              Download All
+              Download All ({getAvailableFileCount()})
             </button>
           )}
         </div>
@@ -314,54 +385,79 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <StatusBadge status={analysisStatus.status} />
-              <span className="text-sm text-slate-300 truncate">
+              <span className="text-sm text-slate-300 truncate max-w-xs">
                 {analysisStatus.filename}
               </span>
             </div>
             {analysisStatus.progress !== undefined && (
-              <span className="text-sm text-slate-400">
+              <span className="text-sm font-medium text-slate-300">
                 {analysisStatus.progress}%
               </span>
             )}
           </div>
           
           {analysisStatus.status === 'processing' && (
-            <div className="w-full bg-slate-700 rounded-full h-2 mt-2">
-              <div
-                className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${analysisStatus.progress || 0}%` }}
-              />
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-slate-400 mb-1">
+                <span>Analysis in progress...</span>
+                <span>{analysisStatus.progress}%</span>
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2">
+                <div
+                  className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${analysisStatus.progress || 0}%` }}
+                />
+              </div>
             </div>
           )}
           
-          <div className="flex items-center justify-between mt-2 text-xs text-slate-500">
-            <div>
+          <div className="flex items-center justify-between mt-3 text-xs">
+            <div className="text-slate-400">
+              {getAvailableFileCount()} of {getTotalFileCount()} files ready
+            </div>
+            <div className="flex items-center gap-3 text-slate-500">
               {analysisStatus.pipeline_type && (
                 <span>Pipeline: {analysisStatus.pipeline_type}</span>
               )}
+              {analysisStatus.cvatID && (
+                <span>CVAT: {analysisStatus.cvatID}</span>
+              )}
             </div>
-            {analysisStatus.cvatID && (
-              <div>
-                CVAT ID: {analysisStatus.cvatID}
-              </div>
-            )}
           </div>
+          
+          {analysisStatus.error && (
+            <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
+              <div className="font-medium">Error:</div>
+              <div>{analysisStatus.error}</div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Debug Panel */}
       {showDebug && debugInfo && (
         <div className="border-b border-slate-700 bg-slate-900">
-          <div className="px-4 py-2 flex justify-between items-center">
+          <div className="px-4 py-2 flex justify-between items-center bg-slate-800">
             <h3 className="text-sm font-semibold text-slate-300">Debug Information</h3>
-            <button
-              onClick={() => setShowDebug(false)}
-              className="text-xs text-slate-400 hover:text-slate-300"
-            >
-              Hide
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(debugInfo);
+                  alert('Debug info copied to clipboard!');
+                }}
+                className="text-xs text-slate-400 hover:text-slate-300"
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => setShowDebug(false)}
+                className="text-xs text-slate-400 hover:text-slate-300"
+              >
+                Hide
+              </button>
+            </div>
           </div>
-          <pre className="text-xs text-slate-400 p-4 max-h-48 overflow-auto font-mono bg-black/30">
+          <pre className="text-xs text-slate-300 p-4 max-h-64 overflow-auto font-mono bg-black/30 whitespace-pre-wrap">
             {debugInfo}
           </pre>
         </div>
@@ -372,117 +468,178 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           <div className="flex flex-col items-center justify-center h-64">
             <Loader2 className="size-8 text-slate-400 animate-spin mb-4" />
             <div className="text-slate-400">Loading analysis data...</div>
+            <div className="text-xs text-slate-500 mt-2">Connecting to FastAPI backend...</div>
           </div>
         ) : !videoId ? (
           <div className="flex flex-col items-center justify-center h-64">
+            <Folder className="size-12 text-slate-400 mb-4" />
             <div className="text-slate-400 text-lg mb-2">No Video Selected</div>
-            <div className="text-slate-500 text-sm">Select a video to view analysis results</div>
+            <div className="text-slate-500 text-sm text-center max-w-xs">
+              Select a video from the Project Panel to view and download analysis results
+            </div>
           </div>
         ) : analysisStatus?.status === 'error' ? (
           <div className="flex flex-col items-center justify-center h-64 p-4">
             <AlertCircle className="size-12 text-red-400 mb-4" />
             <div className="text-slate-300 text-lg mb-2 text-center">Analysis Error</div>
-            <div className="text-sm text-slate-400 text-center">
+            <div className="text-sm text-slate-400 text-center mb-4">
               {analysisStatus.error || "An error occurred during analysis"}
             </div>
+            <button
+              onClick={handleRefresh}
+              className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded flex items-center gap-2"
+            >
+              <RefreshCw className="size-4" />
+              Try Again
+            </button>
           </div>
         ) : analysisStatus?.status !== 'completed' ? (
-          <div className="flex flex-col items-center justify-center h-64">
-            <Clock className="size-12 text-yellow-400 mb-4" />
+          <div className="flex flex-col items-center justify-center h-64 p-4">
+            <Clock className="size-12 text-yellow-400 mb-4 animate-pulse" />
             <div className="text-slate-300 text-lg mb-2">
               {analysisStatus?.status === 'processing' 
                 ? 'Analysis in Progress...' 
                 : 'Analysis Not Complete'}
             </div>
-            <div className="text-sm text-slate-500 text-center">
+            <div className="text-sm text-slate-500 text-center max-w-sm">
               {analysisStatus?.progress !== undefined && (
-                <div className="mb-2">{analysisStatus.progress}% complete</div>
+                <div className="mb-3">
+                  <div className="text-slate-300 font-medium mb-1">{analysisStatus.progress}% complete</div>
+                  <div className="w-48 bg-slate-700 rounded-full h-2">
+                    <div
+                      className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${analysisStatus.progress}%` }}
+                    />
+                  </div>
+                </div>
               )}
-              All 6 file types will be generated when analysis completes
+              <p className="mb-2">All {getTotalFileCount()} file types will be generated when analysis completes:</p>
+              <div className="grid grid-cols-2 gap-1 text-xs">
+                {API_CONFIG.EXPECTED_FILE_TYPES.map((type, idx) => (
+                  <div key={idx} className="text-slate-400 flex items-center gap-1">
+                    <div className="size-2 rounded-full bg-blue-500/50"></div>
+                    {getFileTypeConfig(type).name}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="text-sm text-slate-400 mb-4">
-              {availableFiles.filter(f => f.available).length} of 6 files generated
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-300">
+                <span className="text-green-400">{getAvailableFileCount()}</span> of{" "}
+                <span>{getTotalFileCount()}</span> files generated
+              </div>
+              {analysisStatus.processing_time && (
+                <div className="text-xs text-slate-500">
+                  Processed in {analysisStatus.processing_time}s
+                </div>
+              )}
             </div>
             
             {availableFiles.map((file, index) => (
               <div
                 key={index}
-                className={`flex items-center gap-4 p-4 rounded-lg border ${
+                className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
                   file.available 
-                    ? "border-slate-700 hover:bg-slate-800/50 cursor-pointer" 
+                    ? "border-slate-700 hover:bg-slate-800/50 hover:border-slate-600 cursor-pointer group" 
                     : "border-slate-800 opacity-60 cursor-not-allowed"
-                } transition-colors`}
+                }`}
                 onClick={() => file.available && handleDownload(file.type, file.downloadUrl, file.name)}
               >
-                <div className="flex-shrink-0">
+                <div className={`flex-shrink-0 p-3 rounded-lg ${
+                  file.available ? 'bg-slate-800 group-hover:bg-slate-700' : 'bg-slate-900'
+                }`}>
                   {file.icon}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <div className={`font-medium truncate ${
-                      file.available ? "text-slate-300" : "text-slate-500"
+                      file.available ? "text-slate-300 group-hover:text-white" : "text-slate-500"
                     }`}>
                       {file.name}
                     </div>
                     <span className={`text-xs px-2 py-1 rounded ${
                       file.available 
-                        ? "text-slate-500 bg-slate-800/70" 
+                        ? "text-green-400 bg-green-500/10" 
                         : "text-slate-600 bg-slate-900/50"
                     }`}>
-                      {file.type}
+                      {file.available ? 'Ready' : 'Pending'}
                     </span>
                   </div>
-                  <div className="text-sm text-slate-500">
+                  <div className="text-sm text-slate-500 mb-1">
                     {file.description}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-slate-600">
+                    <span className="font-mono">{file.type}</span>
+                    {file.size && <span>• {file.size}</span>}
                   </div>
                 </div>
                 {file.available ? (
                   <button
-                    className="p-2 hover:bg-slate-700 rounded transition-all flex-shrink-0"
+                    className="p-3 hover:bg-slate-700 rounded-lg transition-all flex-shrink-0 group-hover:bg-blue-600/20"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDownload(file.type, file.downloadUrl, file.name);
                     }}
                     title={`Download ${file.name}`}
                   >
-                    <Download className="size-5 text-blue-400" />
+                    <Download className="size-5 text-blue-400 group-hover:text-blue-300" />
                   </button>
                 ) : (
-                  <div className="text-xs text-slate-500 italic px-2">
+                  <div className="text-xs text-slate-500 italic px-3 py-2 border border-slate-700 rounded">
                     Not generated
                   </div>
                 )}
               </div>
             ))}
             
-            {availableFiles.filter(f => !f.available).length > 0 && (
+            {getAvailableFileCount() < getTotalFileCount() && (
               <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-                <h4 className="text-sm font-medium text-slate-300 mb-2">⚠️ Some files not generated</h4>
-                <p className="text-xs text-slate-400">
-                  The visual analysis pipeline (YOLO + OCR) might have failed. Check:
+                <h4 className="text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                  <AlertCircle className="size-4 text-yellow-500" />
+                  Some files not generated
+                </h4>
+                <p className="text-xs text-slate-400 mb-3">
+                  Not all expected files were generated. This could be because:
                 </p>
-                <ul className="text-xs text-slate-500 mt-2 space-y-1">
-                  <li>• Docker backend logs for errors</li>
-                  <li>• Visual analysis dependencies are installed</li>
-                  <li>• Video file is compatible with analysis tools</li>
+                <ul className="text-xs text-slate-500 space-y-1">
+                  <li>• The analysis pipeline type didn't include all modules</li>
+                  <li>• Certain analysis steps failed (check backend logs)</li>
+                  <li>• The video didn't contain content for all analysis types</li>
+                  <li>• Backend processing is still in progress</li>
                 </ul>
+                <div className="mt-3 pt-3 border-t border-slate-700">
+                  <button
+                    onClick={() => window.open('http://localhost:8000/docs', '_blank')}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Check FastAPI Docs →
+                  </button>
+                </div>
               </div>
             )}
             
-            <div className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-700">
+            <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
               <div className="flex items-center justify-between">
-                <div>
-                  Backend: <span className="font-mono">localhost:8000</span>
+                <div className="flex items-center gap-2">
+                  <div className="size-2 rounded-full bg-green-500"></div>
+                  <span>Backend: <span className="font-mono">localhost:8000</span></span>
                 </div>
-                <div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={handleRefresh}
+                    className="text-slate-400 hover:text-slate-300 flex items-center gap-1"
+                  >
+                    <RefreshCw className="size-3" />
+                    Refresh
+                  </button>
                   <button 
                     onClick={() => setShowDebug(!showDebug)}
                     className="text-blue-400 hover:text-blue-300"
                   >
-                    {showDebug ? "Hide" : "Show"} Debug Info
+                    {showDebug ? "Hide Debug" : "Show Debug"}
                   </button>
                 </div>
               </div>
