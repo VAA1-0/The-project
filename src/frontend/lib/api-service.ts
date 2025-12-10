@@ -1,14 +1,44 @@
-import {
-  UploadResponse,
-  AnalysisStatus,
-  AnalysisStartResponse
-} from '../frontend_types';
+// src/frontend/lib/api-service.ts
+export interface UploadResponse {
+  analysis_id: string;
+  filename: string;
+  message: string;
+  status: string;
+  cvatID: number;
+}
+
+export interface AnalysisStatus {
+  analysis_id: string;
+  status: "uploaded" | "processing" | "completed" | "error";
+  progress: number;
+  filename: string;
+  error?: string;
+  processing_time?: number;
+  summary?: {
+    yolo_detections: number;
+    ocr_detections: number;
+    audio_segments?: number;
+    audio_language?: string;
+  };
+  download_links?: Record<string, string>;
+  pipeline_type?: string;
+  cvatID?: number;
+}
+
+export interface AnalysisStartResponse {
+  analysis_id: string;
+  status: string;
+  message: string;
+  progress: number;
+  pipeline_type: string;
+}
 
 class ApiService {
   private baseURL: string;
 
-  constructor(baseURL: string = 'http://localhost:8000') {
-    this.baseURL = baseURL;
+  constructor() {
+    // Use proxy endpoint for all API calls
+    this.baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/proxy';
   }
 
   /**
@@ -17,9 +47,9 @@ class ApiService {
   async uploadVideo(file: File, cvatID: number): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append("cvatID", String(cvatID));
+    formData.append('cvatID', String(cvatID));
 
-    const response = await fetch(`${this.baseURL}/api/upload`, {
+    const response = await fetch('/api/upload', {
       method: 'POST',
       body: formData,
     });
@@ -141,10 +171,7 @@ class ApiService {
   ): Promise<void> {
     try {
       const blob = await this.downloadFile(analysisId, fileType);
-
-      // Use provided filename or generate one
       const downloadFilename = filename || `${analysisId}_${fileType}`;
-
       this.downloadBlob(blob, downloadFilename);
     } catch (error) {
       console.error(`Failed to download ${fileType}:`, error);
@@ -207,66 +234,6 @@ class ApiService {
   }
 
   /**
-   * Batch download all available files from analysis
-   */
-  async downloadAllFiles(analysisId: string, status: AnalysisStatus): Promise<void> {
-    const downloadLinks = status.download_links || {};
-    const downloadPromises = Object.entries(downloadLinks).map(async ([fileType, url]) => {
-      try {
-        // Extract filename from URL or use default
-        const filename = `${analysisId}_${fileType}`;
-        await this.downloadAndSaveFile(analysisId, fileType, filename);
-        console.log(`Downloaded: ${filename}`);
-      } catch (error) {
-        console.error(`Failed to download ${fileType}:`, error);
-      }
-    });
-
-    await Promise.allSettled(downloadPromises);
-  }
-
-  /**
-   * Enhanced upload with progress tracking
-   */
-  async uploadVideoWithProgress(
-    file: File,
-    onProgress?: (progress: number) => void
-  ): Promise<UploadResponse> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const formData = new FormData();
-      formData.append('file', file);
-
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable && onProgress) {
-          const progress = (event.loaded / event.total) * 100;
-          onProgress(progress);
-        }
-      });
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            resolve(response);
-          } catch (error) {
-            reject(new Error('Failed to parse response'));
-          }
-        } else {
-          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        reject(new Error('Upload failed due to network error'));
-      });
-
-      xhr.open('POST', `${this.baseURL}/api/upload`);
-      xhr.send(formData);
-    });
-  }
-
-  /**
    * Get supported file types for download
    */
   getSupportedFileTypes(): string[] {
@@ -310,6 +277,67 @@ class ApiService {
     };
 
     return extensions[fileType] || '';
+  }
+
+  /**
+   * Batch download all available files from analysis
+   */
+  async downloadAllFiles(analysisId: string, status: AnalysisStatus): Promise<void> {
+    const downloadLinks = status.download_links || {};
+    const downloadPromises = Object.entries(downloadLinks).map(async ([fileType, url]) => {
+      try {
+        const filename = `${analysisId}_${fileType}`;
+        await this.downloadAndSaveFile(analysisId, fileType, filename);
+        console.log(`Downloaded: ${filename}`);
+      } catch (error) {
+        console.error(`Failed to download ${fileType}:`, error);
+      }
+    });
+
+    await Promise.allSettled(downloadPromises);
+  }
+
+  /**
+   * Enhanced upload with progress tracking
+   */
+  async uploadVideoWithProgress(
+    file: File,
+    cvatID: number,
+    onProgress?: (progress: number) => void
+  ): Promise<UploadResponse> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('cvatID', String(cvatID));
+
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          const progress = (event.loaded / event.total) * 100;
+          onProgress(progress);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve(response);
+          } catch (error) {
+            reject(new Error('Failed to parse response'));
+          }
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        reject(new Error('Upload failed due to network error'));
+      });
+
+      xhr.open('POST', '/api/upload');
+      xhr.send(formData);
+    });
   }
 }
 
