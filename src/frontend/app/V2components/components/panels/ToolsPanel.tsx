@@ -1,3 +1,5 @@
+"use client";
+
 import {
   MessageSquareText,
   Brain,
@@ -115,6 +117,8 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
           setAnalysisData(updatedAnalysis);
           setRawCsv(updatedAnalysis.rawCsv || null);
 
+          // Force refresh the page
+          window.location.reload();
           alert("Analysis completed!");
         } else if (status.status === "error") {
           clearInterval(interval);
@@ -224,18 +228,13 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     pollJobs();
   }
   //<============================================================>
-
   //<================OPEN JOBS==================================>
   const handleJobClick = async () => {
     // Navigate to the annotation page
-
-    if (selectedJob) {
-      window.open(
-        `/annotate/${selectedJob.id}`,
-        "_blank",
-        "noopener,noreferrer"
-      );
-    }
+    // router.push(`/annotate/${videoId}`);
+    window.open(`/annotate/${videoId}`);
+    console.log("Selected Job:", metadata.cvatID);
+    //window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
   };
 
   return (
@@ -293,6 +292,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             handleExport();
             console.log("Download button clicked");
           }}
+          disabled={!analysisData || !videoId}
         >
           Download
         </Button>
@@ -303,7 +303,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             variant="default"
             className="bg-green-600/40 hover:bg-green-600/60 transition"
             onClick={openTask}
-            disabled={isAnalyzing || isPolling}
+            disabled={isAnalyzing || isPolling || !videoId}
           >
             Jobs
           </Button>
@@ -314,7 +314,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
               variant="default"
               className="bg-green-600/40 hover:bg-green-600/60 transition"
               onClick={handleJobClick}
-              disabled={isAnalyzing || isPolling}
+              disabled={isAnalyzing || isPolling || !videoId}
             >
               {!jobReady ? "Polling" : "Annotate"}
             </Button>

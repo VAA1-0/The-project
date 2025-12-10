@@ -11,6 +11,7 @@ import ProjectPanel from "./panels/ProjectPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
+import DownloadPanel from "./panels/DownloadPanel";
 
 // Import State manager and laytout factory if needed
 import { panelStateManager } from "@/lib/panel-state-manager";
@@ -33,6 +34,11 @@ const panelConfigs: PanelConfig[] = [
   {
     componentName: "VideoPanel",
     Component: VideoPanel,
+    getProps: (state) => ({ videoId: state.videoId }),
+  },
+  {
+    componentName: "DownloadPanel",
+    Component: DownloadPanel,
     getProps: (state) => ({ videoId: state.videoId }),
   },
   {
@@ -114,13 +120,19 @@ export default function PanelManager() {
         content: [
           {
             type: "column",
-            width: 40,
+            width: 15,
             content: [
               {
                 type: "component",
                 componentType: "ProjectPanel",
                 title: "ProjectPanel",
-                height: 100,
+                height: 50,
+              },
+              {
+                type: "component",
+                componentType: "DownloadPanel",
+                title: "DownloadPanel",
+                height: 50,
               },
             ],
           },

@@ -71,7 +71,7 @@ export function MenuBar() {
         try {
           for (const f of selectedFiles) {
             const length = await getVideoDuration(f);
-            const res = await VideoService.upload(f, 1, length);
+            const res = await VideoService.upload(f, cvatID, length);
             console.log(res);
 
             try {
@@ -93,12 +93,10 @@ export function MenuBar() {
           window.dispatchEvent(new CustomEvent("video-uploaded"));
 
           alert("Upload successful (saved in browser storage)");
-
         } catch (err) {
           console.error(err);
           alert("Upload failed: " + ((err as any)?.message ?? String(err)));
         }
-
       } catch (err) {
         console.log("Video uploading to CVAT failed. Try again!");
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
@@ -157,7 +155,6 @@ export function MenuBar() {
     setOpenMenu(openMenu === index ? null : index);
   };
 
-  // 子菜单点击
   const handleSubClick = (e: React.MouseEvent, fn?: () => void) => {
     e.stopPropagation();
     setOpenMenu(null);
@@ -171,8 +168,9 @@ export function MenuBar() {
           {/* Top Menu Bar */}
           <button
             onClick={(e) => handleMenuClick(e, index)}
-            className={`px-3 py-1 transition-colors ${openMenu === index ? "bg-[#2f2f2f]" : "hover:bg-[#2f2f2f]"
-              }`}
+            className={`px-3 py-1 transition-colors ${
+              openMenu === index ? "bg-[#2f2f2f]" : "hover:bg-[#2f2f2f]"
+            }`}
           >
             {item.label}
           </button>
