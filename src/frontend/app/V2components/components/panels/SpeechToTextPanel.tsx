@@ -110,7 +110,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         </div>
         {/* Speech to text */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
-        <div className="max-h-70 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
           Speech to Text:
           {transcript.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -130,7 +130,7 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         {/* Detected Objects */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         Detected Objects:
-        <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-50 overflow-y-auto space-y-2 pr-2">
           {detectedObjects.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No detected objects
