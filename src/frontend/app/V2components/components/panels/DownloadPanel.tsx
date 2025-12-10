@@ -4,10 +4,6 @@ export default function DownloadPanel() {
   const results = [
     { name: "Video-name_Speech_to_text.csv" },
     { name: "Video-name_Summary.json" },
-    { name: "Video-name_Annotated_video.mp4" },
-    { name: "Video-name_Annotatedsdsdsdsdsd" },
-    { name: "Video-name_Annotatedsdsdsdsdsd" },
-    { name: "Video-name_Annotatedsdsdsdsdsd" },
   ];
 
   return (

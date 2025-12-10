@@ -120,19 +120,19 @@ export default function PanelManager() {
         content: [
           {
             type: "column",
-            width: 15,
+            width: 30,
             content: [
               {
                 type: "component",
                 componentType: "ProjectPanel",
                 title: "ProjectPanel",
-                height: 50,
+                height: 80,
               },
               {
                 type: "component",
                 componentType: "DownloadPanel",
-                title: "DownloadPanel",
-                height: 50,
+                title: "DownloadPanel((Not yet implemented))",
+                height: 25,
               },
             ],
           },

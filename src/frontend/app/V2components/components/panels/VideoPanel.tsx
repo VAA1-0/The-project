@@ -15,6 +15,8 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
+  const [metadata, setMetadata] = useState<any>(null);
+
   React.useEffect(() => {
     async function load() {
       if (!videoId) {
@@ -40,15 +42,19 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
           const url = URL.createObjectURL(blob);
           lastObjectUrl.current = url;
           setVideoUrl(url);
+          const m = await VideoService.get(videoId);
+          setMetadata(m);
           setBlobMissing(false);
         } else {
           setBlobMissing(true);
           setVideoUrl(null);
+          setMetadata(null);
         }
       } catch (err) {
         console.error("Failed to load data:", err);
         setBlobMissing(true);
         setVideoUrl(null);
+        setMetadata(null);
       } finally {
         setIsLoading(false);
       }
@@ -58,10 +64,15 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
 
   return (
     <main className="flex-0 overflow-auto">
-      <div>video Id: {videoId}</div>
-      <div>video Url: {videoUrl}</div>
-      <div>isLoading: {isLoading ? "true" : "false"}</div>
-      <div>blobMissing: {blobMissing ? "true" : "false"}</div>
+      <div className="text-xs text-slate-400">video name: {metadata.name}</div>
+      <div className="text-xs text-slate-400">video Id: {videoId}</div>
+      <div className="text-xs text-slate-400">video Url: {videoUrl}</div>
+      <div className="text-xs text-slate-400">
+        isLoading: {isLoading ? "true" : "false"}
+      </div>
+      <div className="text-xs text-slate-400">
+        blobMissing: {blobMissing ? "true" : "false"}
+      </div>
       <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
         {videoUrl ? (
           <video

@@ -143,8 +143,8 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
       await VideoService.exportFile(videoId, "yolo_csv");
 
       // Optionally download other files
-      // await VideoService.exportFile(id, 'ocr_csv');
-      // await VideoService.exportFile(id, 'summary_json');
+      await VideoService.exportFile(videoId, "ocr_csv");
+      await VideoService.exportFile(videoId, "summary_json");
     } catch (error) {
       console.error("Failed to export:", error);
       alert("Failed to export data. Check console for details.");
@@ -292,7 +292,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
             handleExport();
             console.log("Download button clicked");
           }}
-          disabled={!analysisData || !videoId}
+          disabled={!analysisData || !videoId || isAnalyzing}
         >
           Download
         </Button>
