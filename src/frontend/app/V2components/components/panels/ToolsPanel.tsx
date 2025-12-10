@@ -232,7 +232,7 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
     // router.push(`/annotate/${videoId}`);
     // window.open(`/annotate/${videoId}`, "_blank");
     console.log("Selected Job:", metadata.cvatID);
-    window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
+    window.open(`http://localhost:8080/tasks/${metadata.cvatID}/jobs/${selectedJob.id}`, "_blank");
   };
 
   return (
