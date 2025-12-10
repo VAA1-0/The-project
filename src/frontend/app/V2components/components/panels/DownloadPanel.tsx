@@ -181,20 +181,20 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           const isAvailable = downloadLinks[fileType] || 
                              (apiStatus.status === 'completed' && apiStatus.pipeline_type?.includes(fileType.includes('audio') ? 'audio' : 'visual'));
           
-          if (isAvailable) {
-            debugLog += `   ✅ ${fileType}: AVAILABLE\n`;
-            const downloadUrl = downloadLinks[fileType] || getDownloadUrl(videoId, fileType);
-            
-            // Add file to the list with proper icon
-            files.push({
-              name: `${baseName}_${config.name.replace(/\s+/g, "_")}${config.extension}`,
-              type: fileType,
-              downloadUrl: downloadUrl,
-              icon: getFileIcon(fileType, "size-5"),
-              description: config.description,
-              available: true,
-              size: fileType === 'video' ? '~50MB' : fileType === 'audio' ? '~5MB' : '~1MB'
-            });
+        if (isAvailable) {
+        debugLog += `   ✅ ${fileType}: AVAILABLE\n`;
+        const downloadUrl = downloadLinks[fileType] || `/api/download/${videoId}/${fileType}`;
+  
+          // Add file to the list with proper icon
+          files.push({
+            name: `${baseName}_${config.name.replace(/\s+/g, "_")}${config.extension}`,
+            type: fileType,
+            downloadUrl: downloadUrl,
+            icon: getFileIcon(fileType, "size-5"),
+            description: config.description,
+            available: true,
+            size: fileType === 'video' ? '~50MB' : fileType === 'audio' ? '~5MB' : '~1MB'
+          });
           } else {
             debugLog += `   ⚠️ ${fileType}: NOT AVAILABLE\n`;
             files.push({
@@ -265,38 +265,54 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
     };
   }, [videoId]);
 
-  const handleDownload = async (fileType: string, downloadUrl: string, fileName: string) => {
-    if (!videoId || !downloadUrl) {
-      alert("File not available for download");
-      return;
+const handleDownload = async (fileType: string, downloadUrl: string, fileName: string) => {
+  if (!videoId || !downloadUrl) {
+    alert("File not available for download");
+    return;
+  }
+  
+  try {
+    console.log(`Downloading ${fileType}: ${fileName}`);
+    console.log(`Download URL: ${downloadUrl}`);
+    
+    // Check if downloadUrl is a relative path or full URL
+    let finalDownloadUrl = downloadUrl;
+    
+    // If it's a relative path (starts with /api/), prepend the FastAPI backend URL
+    if (downloadUrl.startsWith('/api/')) {
+      finalDownloadUrl = `http://localhost:8000${downloadUrl}`;
+    }
+    // If it doesn't start with http:// or https://, prepend the backend URL
+    else if (!downloadUrl.startsWith('http://') && !downloadUrl.startsWith('https://')) {
+      finalDownloadUrl = `http://localhost:8000${downloadUrl}`;
     }
     
-    try {
-      console.log(`Downloading ${fileType}: ${fileName}`);
-      
-      // Direct download
-      const response = await fetch(downloadUrl);
-      
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-      }
-      
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      
-      console.log(`Download completed: ${fileName}`);
-    } catch (error) {
-      console.error("Download failed:", error);
-      alert(`Failed to download ${fileName}. Please try again.\nError: ${error}`);
+    console.log(`Final download URL: ${finalDownloadUrl}`);
+    
+    const response = await fetch(finalDownloadUrl);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Download response error:', response.status, response.statusText, errorText);
+      throw new Error(`Download failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
-  };
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    
+    console.log(`Download completed: ${fileName}`);
+  } catch (error) {
+    console.error("Download failed:", error);
+    alert(`Failed to download ${fileName}. Please try again.\nError: ${error}`);
+  }
+};
 
   const handleDownloadAll = async () => {
     if (!videoId || availableFiles.length === 0) return;
