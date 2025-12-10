@@ -139,10 +139,16 @@ export async function loginForIframe(username: string, password: string) {
 }
 
 export async function listExportFormats() {
-  const res = await fetch("http://localhost:8080/api/server/annotation/formats");
+  const res = await fetch("http://localhost:3001/api/formats");
+
+  if (!res.ok) {
+    throw new Error("Failed to load formats");
+  }
+
   const data = await res.json();
-  return data.exporters.map((f: any) => f.name);
+  return data.exporters.map((e: any) => e.name);
 }
+
 
 let pollingIntervals: NodeJS.Timeout[] = [];
 
