@@ -59,11 +59,12 @@ const VideoItem: React.FC<Props> = ({
 
           <Button
             size="sm"
-            className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+            className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             onClick={() => {
               onRename(vid.id, renameValue);
               setRenameMode(false);
             }}
+            aria-label="Save new name"
           >
             Save
           </Button>
@@ -71,11 +72,12 @@ const VideoItem: React.FC<Props> = ({
           <Button
             size="sm"
             variant="ghost"
-            className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+            className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             onClick={() => {
               setRenameMode(false);
               setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
             }}
+            aria-label="Cancel rename"
           >
             Cancel
           </Button>
@@ -116,15 +118,17 @@ const VideoItem: React.FC<Props> = ({
               }}
               className="h-8 w-40"
               autoFocus
+              aria-label="Edit tag"
             />
 
             <Button
               size="sm"
-              className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+              className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 onUpdateTag(vid.id, tagValue);
                 setTagEdit(false);
               }}
+              aria-label="Save tag"
             >
               Save
             </Button>
@@ -132,11 +136,12 @@ const VideoItem: React.FC<Props> = ({
             <Button
               size="sm"
               variant="ghost"
-              className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+              className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 setTagEdit(false);
                 setTagValue(vid.tag ?? "");
               }}
+              aria-label="Cancel tag edit"
             >
               Cancel
             </Button>
@@ -144,11 +149,12 @@ const VideoItem: React.FC<Props> = ({
         ) : (
           <Button
             variant="ghost"
-            className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+            className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             onClick={() => {
               setTagEdit(true);
               setTagValue(vid.tag ?? "");
             }}
+            aria-label="Edit tag"
           >
             Edit Tag
           </Button>
@@ -156,12 +162,13 @@ const VideoItem: React.FC<Props> = ({
 
         <Button
           variant="ghost"
-          className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+          className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           onClick={() => {
             setRenameMode(true);
             setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
           }}
           disabled={renameMode}
+          aria-label="Rename video"
         >
           Rename
         </Button>
@@ -171,9 +178,10 @@ const VideoItem: React.FC<Props> = ({
         </Button> */}
 
         <Button
-          className="cursor-pointer h-8 hover:bg-slate-700/40 transition"
+          className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
           onClick={() => onDelete(vid.id)}
           variant="ghost"
+          aria-label="Delete video"
         >
           Delete
         </Button>

@@ -246,7 +246,11 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex h-full">
-        <div className="bg-[#232323] w-[52px] h-full border-r border-[#0a0a0a] flex flex-col items-center py-2 gap-0">
+        <div
+          role="toolbar"
+          aria-label="Analysis tools"
+          className="bg-[#232323] w-[52px] h-full border-r border-[#0a0a0a] flex flex-col items-center py-2 gap-0"
+        >
           {tools.map((tool, index) => {
             const Icon = tool.icon;
             return (
@@ -255,7 +259,21 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
                   <button
                     className={`w-full h-11 flex items-center justify-center transition-colors hover:bg-white/10 ${
                       index === 0 ? "mt-2" : ""
-                    }`}
+                    } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                    type="button"
+                    aria-label={tool.label}
+                    tabIndex={index === 0 ? 0 : -1}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowDown") {
+                        const next = (index + 1) % tools.length;
+                        (e.currentTarget.parentElement?.parentElement?.querySelectorAll('button')[next] as HTMLButtonElement)?.focus();
+                        e.preventDefault();
+                      } else if (e.key === "ArrowUp") {
+                        const prev = (index - 1 + tools.length) % tools.length;
+                        (e.currentTarget.parentElement?.parentElement?.querySelectorAll('button')[prev] as HTMLButtonElement)?.focus();
+                        e.preventDefault();
+                      }
+                    }}
                   >
                     <Icon className="size-5" strokeWidth={1.5} />
                   </button>

@@ -163,7 +163,11 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
           <div className="flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                <button
+                  type="button"
+                  aria-label="Search library"
+                  className="p-1 hover:bg-[#2a2a2a] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
                   <Search className="size-3.5 text-[#b8b8b8]" />
                 </button>
               </TooltipTrigger>
@@ -173,7 +177,11 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  className="p-1 hover:bg-[#2a2a2a] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
                   <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
                 </button>
               </TooltipTrigger>
@@ -197,13 +205,32 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
             </div>
           )}
 
-          {libraryVideos.map((vid: any) => (
+          {libraryVideos.map((vid: any, idx: number) => (
             <div
               key={vid.id}
-              className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50"
+              role="button"
+              aria-label={`Select video ${vid.name}`}
+              tabIndex={0}
+              className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 onVideoSelect?.(vid.id);
                 console.log("Selected video ID:", vid.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  onVideoSelect?.(vid.id);
+                  e.preventDefault();
+                } else if (e.key === "ArrowDown") {
+                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
+                  const next = Math.min(idx + 1, items.length - 1);
+                  items[next]?.focus();
+                  e.preventDefault();
+                } else if (e.key === "ArrowUp") {
+                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
+                  const prev = Math.max(idx - 1, 0);
+                  items[prev]?.focus();
+                  e.preventDefault();
+                }
               }}
             >
               <div onClick={(e) => e.stopPropagation()}>
