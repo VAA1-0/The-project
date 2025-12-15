@@ -69,8 +69,7 @@ export function MenuBar() {
           console.log("🎬 Creating video task...");
           let result = await createVideoTask(taskName, video);
           cvatID = result.taskId;
-          alert(cvatID);
-          alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
+          console.log(`✅Task ID: ${result.taskId}`);
         }
 
         // Upload & save locally
@@ -98,7 +97,7 @@ export function MenuBar() {
           setPreviewUrl(null);
           window.dispatchEvent(new CustomEvent("video-uploaded"));
 
-          alert("Upload successful (saved in browser storage)");
+          alert("✅Upload successful!");
         } catch (err) {
           console.error(err);
           alert("Upload failed: " + ((err as any)?.message ?? String(err)));
@@ -110,6 +109,7 @@ export function MenuBar() {
         setUploading(false);
       }
     };
+
 
     // ⬇️ This MUST be outside input.onchange
     document.body.appendChild(input);
