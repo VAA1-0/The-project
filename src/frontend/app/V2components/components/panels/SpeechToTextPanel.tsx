@@ -4,6 +4,12 @@ import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
 import { Download, Search, MoreHorizontal } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface SpeechToTextPanelProps {
   videoId?: string | null;
@@ -80,21 +86,36 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
   const summaryText = analysisData?.summary ?? "…";
 
   return (
-    <main className="flex-0 overflow-auto">
-      <div>video Id: {videoId}</div>
-      <div className="mt-4">
-        {/* Header */}
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
-          <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
-          <div className="flex items-center gap-1">
-            <button className="p-1 hover:bg-[#2a2a2a] rounded">
-              <Search className="size-3.5 text-[#b8b8b8]" />
-            </button>
-            <button className="p-1 hover:bg-[#2a2a2a] rounded">
-              <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
-            </button>
+    <TooltipProvider delayDuration={200}>
+      <main className="flex-0 overflow-auto">
+        <div>video Id: {videoId}</div>
+        <div className="mt-4">
+          {/* Header */}
+          <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
+            <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                    <Search className="size-3.5 text-[#b8b8b8]" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Search transcript</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                    <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>More actions</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
-        </div>
         {/* SUMMARY */}
         <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
           Summary:
@@ -190,5 +211,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
         */}
       </div>
     </main>
+    </TooltipProvider>
   );
 }

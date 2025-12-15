@@ -3,6 +3,12 @@ import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { createVideoTask } from "@/cvat-api/client";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<number | null>(null);

@@ -7,6 +7,12 @@ import {
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface DownloadPanelProps {
   videoId?: string | null;
@@ -347,7 +353,8 @@ const handleDownload = async (fileType: string, downloadUrl: string, fileName: s
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#1a1a1a]">
+    <TooltipProvider delayDuration={200}>
+      <div className="h-full flex flex-col bg-[#1a1a1a]">
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-300">Download Results</h2>
@@ -361,37 +368,55 @@ const handleDownload = async (fileType: string, downloadUrl: string, fileName: s
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowDebug(!showDebug)}
-            className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 transition-colors"
-            title="Show Debug Info"
-          >
-            <Bug className="size-4" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <Bug className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Show debug info</p>
+            </TooltipContent>
+          </Tooltip>
           {videoId && (
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 disabled:opacity-50 transition-colors"
-              title="Refresh"
-            >
-              {refreshing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 disabled:opacity-50 transition-colors"
+                >
+                  {refreshing ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-4" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Refresh status</p>
+              </TooltipContent>
+            </Tooltip>
           )}
           {getAvailableFileCount() > 0 && (
-            <button
-              onClick={handleDownloadAll}
-              className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
-              title="Download All Available Files"
-              disabled={getAvailableFileCount() === 0}
-            >
-              <Download className="size-4" />
-              Download All ({getAvailableFileCount()})
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleDownloadAll}
+                  className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
+                  disabled={getAvailableFileCount() === 0}
+                >
+                  <Download className="size-4" />
+                  Download All ({getAvailableFileCount()})
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Download all available files</p>
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -663,6 +688,7 @@ const handleDownload = async (fileType: string, downloadUrl: string, fileName: s
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

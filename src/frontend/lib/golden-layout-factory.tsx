@@ -53,7 +53,10 @@ export class GoldenLayoutFactory {
   }
 
   destroy() {
-    this.roots.forEach((root) => root.unmount());
-    this.roots.clear();
+    // Defer unmounting to avoid race condition with React rendering
+    setTimeout(() => {
+      this.roots.forEach((root) => root.unmount());
+      this.roots.clear();
+    }, 0);
   }
 }

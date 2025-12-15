@@ -13,6 +13,12 @@ import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "@/components/VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ProjectPanelProps {
   onVideoSelect?: (id: string) => void;
@@ -150,18 +156,33 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
   };
 
   return (
-    <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden h-full">
-      <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
-        <span className="text-[#b8b8b8] text-[12px]">Project</span>
-        <div className="flex items-center gap-1">
-          <button className="p-1 hover:bg-[#2a2a2a] rounded">
-            <Search className="size-3.5 text-[#b8b8b8]" />
-          </button>
-          <button className="p-1 hover:bg-[#2a2a2a] rounded">
-            <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
-          </button>
+    <TooltipProvider delayDuration={200}>
+      <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden h-full">
+        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
+          <span className="text-[#b8b8b8] text-[12px]">Project</span>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                  <Search className="size-3.5 text-[#b8b8b8]" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Search library</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="p-1 hover:bg-[#2a2a2a] rounded">
+                  <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>More actions</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-      </div>
       <div className="px-2 py-1.5 border-b border-[#1a1a1a] flex items-center text-[10px] text-[#6a6a6a] bg-[#1e1e1e]">
         <span className="flex-1">Name</span>
         <span className="text-[9px]">Media End</span>
@@ -179,29 +200,13 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
           {libraryVideos.map((vid: any) => (
             <div
               key={vid.id}
-              className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-slate-900/50"
+              className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50"
               onClick={() => {
                 onVideoSelect?.(vid.id);
                 console.log("Selected video ID:", vid.id);
               }}
             >
-              <div>
-                <div className="font-medium">{vid.name}</div>
-                <div className="text-xs text-slate-400">
-                  {vid.analysis ? "Analyzed" : "Uploaded"}
-                  {vid.status === "pending" && (
-                    <span className="ml-2 text-yellow-300">• Pending</span>
-                  )}
-                  {vid.status === "synced" && (
-                    <span className="ml-2 text-emerald-300">• Synced</span>
-                  )}
-                  {vid.status === "failed" && (
-                    <span className="ml-2 text-red-400">• Failed</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-2">
+              <div onClick={(e) => e.stopPropagation()}>
                 <VideoItem
                   vid={vid}
                   onView={() => {}}
@@ -215,5 +220,6 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }

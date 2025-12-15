@@ -120,18 +120,18 @@ export default function PanelManager() {
         content: [
           {
             type: "column",
-            width: 15,
+            width: 20,
             content: [
               {
                 type: "component",
                 componentType: "ProjectPanel",
-                title: "ProjectPanel",
+                title: "Project Library",
                 height: 50,
               },
               {
                 type: "component",
                 componentType: "DownloadPanel",
-                title: "DownloadPanel",
+                title: "Download Results",
                 height: 50,
               },
             ],
@@ -142,20 +142,20 @@ export default function PanelManager() {
               {
                 type: "component",
                 componentType: "VideoPanel",
-                title: "VideoPanel",
+                title: "Video Player",
                 height: 70,
               },
               {
                 type: "component",
                 componentType: "ToolsPanel",
-                title: "ToolsPanel",
+                title: "Analysis Tools",
               },
             ],
           },
           {
             type: "component",
             componentType: "SpeechToTextPanel",
-            title: "SpeechToTextPanel",
+            title: "Analysis Results",
             width: 20,
           },
         ],
