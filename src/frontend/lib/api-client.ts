@@ -1,3 +1,4 @@
+// src/frontend/lib/api-client.ts
 import axios from 'axios';
 
 // Create an Axios instance with default settings

@@ -1,3 +1,4 @@
+// src/frontend/lib/golden-layout-factory.tsx
 import { createRoot, Root } from "react-dom/client";
 import { panelStateManager, PanelState } from "./panel-state-manager";
 
