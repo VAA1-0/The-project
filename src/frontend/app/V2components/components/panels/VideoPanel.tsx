@@ -1,7 +1,7 @@
+// src/frontend/app/V2components/components/panels/VideoPanel.tsx
 "use client";
 
 import React, { useState } from "react";
-
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
@@ -25,58 +25,86 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
       setIsLoading(true);
 
       try {
-        // Load video blob - hybrid approach
-        // 1. First try to get the original video from IndexedDB (instant preview)
+        // Load video blob - ONLY VideoPanel handles this
         let blob = await getVideoBlob(videoId);
-
         if (!blob) {
-          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
           blob = await VideoService.getBlob(videoId);
         }
+        
         if (blob) {
+          // Clean up previous URL if exists
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
+            lastObjectUrl.current = null;
           }
+          
           const url = URL.createObjectURL(blob);
           lastObjectUrl.current = url;
           setVideoUrl(url);
           setBlobMissing(false);
+          console.log("VideoPanel: Created object URL for video blob");
         } else {
           setBlobMissing(true);
           setVideoUrl(null);
         }
       } catch (err) {
-        console.error("Failed to load data:", err);
+        console.error("VideoPanel: Failed to load video:", err);
         setBlobMissing(true);
         setVideoUrl(null);
       } finally {
         setIsLoading(false);
       }
     }
+
     load();
+
+    // Cleanup function to revoke object URL when component unmounts or videoId changes
+    return () => {
+      if (lastObjectUrl.current) {
+        URL.revokeObjectURL(lastObjectUrl.current);
+        lastObjectUrl.current = null;
+        console.log("VideoPanel: Cleaned up object URL");
+      }
+    };
   }, [videoId]);
 
   return (
-    <main className="flex-0 overflow-auto">
-      <div>video Id: {videoId}</div>
-      <div>video Url: {videoUrl}</div>
-      <div>isLoading: {isLoading ? "true" : "false"}</div>
-      <div>blobMissing: {blobMissing ? "true" : "false"}</div>
-      <div className="h-[350px] flex items-center justify-center bg-black rounded-t-lg">
-        {videoUrl ? (
-          <video
-            src={videoUrl}
-            controls
-            className="w-full h-full object-contain rounded-lg"
-          />
-        ) : blobMissing ? (
-          <div className="text-slate-400">
-            Video blob not found — please re-upload the video.
+    <div className="h-full flex flex-col">
+      <div className="px-4 py-3 border-b border-slate-700">
+        <h2 className="text-lg font-semibold text-slate-300">Video Panel</h2>
+        {videoId && (
+          <div className="text-sm text-slate-400 mt-1">
+            Video ID: <span className="font-mono">{videoId}</span>
           </div>
-        ) : (
-          <div className="text-slate-400">No video selected...</div>
         )}
       </div>
-    </main>
+
+      <div className="flex-1 flex items-center justify-center bg-black m-4 rounded-lg overflow-hidden">
+        {isLoading ? (
+          <div className="text-slate-400">Loading video...</div>
+        ) : videoUrl ? (
+          <video
+            key={videoUrl} // Force re-render when URL changes
+            src={videoUrl}
+            controls
+            className="w-full h-full object-contain"
+            onError={() => {
+              console.error("VideoPanel: Video failed to load");
+              setBlobMissing(true);
+            }}
+          />
+        ) : blobMissing ? (
+          <div className="text-slate-400 p-4 text-center">
+            <div className="text-lg mb-2">Video Not Available</div>
+            <div className="text-sm">The video could not be loaded.</div>
+          </div>
+        ) : (
+          <div className="text-slate-400 p-4 text-center">
+            <div className="text-lg mb-2">No Video Selected</div>
+            <div className="text-sm">Select a video from the Project Panel</div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
