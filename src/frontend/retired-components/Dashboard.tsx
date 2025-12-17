@@ -4,18 +4,18 @@
 
 import { useRouter } from "next/navigation";
 import React, { use, useCallback, useEffect, useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "./ui/card";
-import { Separator } from "./ui/separator";
+} from "../components/ui/card";
+import { Separator } from "../components/ui/separator";
 import { VideoService } from "@/lib/video-service";
-import VideoItem from "./VideoItem";
+import VideoItem from "../components/VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { AnalyzeResultsPanel } from "./AnalyzeResultsPanel";
 import { createVideoTask, getCvatHealth, listJobs } from "@/cvat-api/client";

@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 
-import { Button } from "./ui/button";
-import { GameRunLogo } from "./ProjectLogo";
-import Divider from "./ui/Divider";
+import { Button } from "../components/ui/button";
+import { GameRunLogo } from "../components/ProjectLogo";
+import Divider from "../components/ui/Divider";
 
 // Header component with navigation and sign-out functionality
 export default function Header() {

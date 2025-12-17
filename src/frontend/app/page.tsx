@@ -1,5 +1,5 @@
 import { LoadingPage } from "@/components/LoadingPage";
-import { LandingPage } from "@/components/LandingPage";
+import { LandingPage } from "@/retired-components/LandingPage";
 
 import { Main } from "./V2components/main";
 
