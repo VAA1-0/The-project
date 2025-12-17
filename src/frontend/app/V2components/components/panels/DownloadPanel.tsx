@@ -643,7 +643,7 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
                 }
               >
                 <div
-                  className={`flex-shrink-0 p-3 rounded-lg ${
+                  className={`shrink-0 p-3 rounded-lg ${
                     file.available
                       ? "bg-slate-800 group-hover:bg-slate-700"
                       : "bg-slate-900"
@@ -682,7 +682,7 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
                 </div>
                 {file.available ? (
                   <button
-                    className="p-3 hover:bg-slate-700 rounded-lg transition-all flex-shrink-0 group-hover:bg-blue-600/20"
+                    className="p-3 hover:bg-slate-700 rounded-lg transition-all shrink-0 group-hover:bg-blue-600/20"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDownload(file.type, file.downloadUrl, file.name);
