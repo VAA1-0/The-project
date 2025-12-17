@@ -21,7 +21,8 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
-from src.backend.analysis.pos_analysis.py import POSAnalysis
+from src.backend.analysis.pos_analysis import POSAnalysis
+from src.backend.analysis.quantitative_analysis import QuantitativeAnalysis
 from fastapi import Form
 
 
@@ -278,19 +279,27 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 for segment in data['segments']:
                     text += segment['text'] + ". "
                 pos_analyzer = POSAnalysis(text)
-                result = pos_analyzer.run()
+                pos_result = pos_analyzer.run()
                 logger.info("✅ POS analysis completed")
                 logger.info("\n=== POS COUNTS ===")
-                logger.info(result["pos_counts"])
+                logger.info(pos_result["pos_counts"])
                 logger.info("\n=== POS RATIOS ===")
-                logger.info(result["pos_ratios"])
+                logger.info(pos_result["pos_ratios"])
                 logger.info("\n=== INTERROGATIVE LENS ===")
-                for k, v in result["interrogative_lens"].items():
+                for k, v in pos_result["interrogative_lens"].items():
                     logger.info(f"{k}: {v}")
                 logger.info("\n=== POS WORDS ===")
-                for k, v in result["pos_words"].items():
+                for k, v in pos_result["pos_words"].items():
                     logger.info(f"{k}: {v}")  
                 
+
+                #Step 4: Quantitative analysis
+                logger.info("📊 Starting quantitative analysis on transcript...")
+                
+                qa = QuantitativeAnalysis(zip_path="path/to/your/corpus.zip")
+                qa_results = qa.run()
+                print(qa_results)
+
                 # Move files to organized locations
                 logger.info(f"📦 Moving audio file to: {organized_audio_path}")
                 shutil.move(audio_path, organized_audio_path)
