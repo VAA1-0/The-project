@@ -291,14 +291,23 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 logger.info("\n=== POS WORDS ===")
                 for k, v in pos_result["pos_words"].items():
                     logger.info(f"{k}: {v}")  
-                
 
-                #Step 4: Quantitative analysis
-                logger.info("📊 Starting quantitative analysis on transcript...")
+                pos_path_init = f"{analysis_id}_pos.json" 
+                pos_path = TRANSCRIPTS_DIR / pos_path_init
+                pos_path.parent.mkdir(exist_ok=True, parents=True)
+
+                with open(pos_path, "w", encoding="utf-8") as f:
+                    json.dump(pos_result, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"POS Results saved: {pos_path}")
+
+                # #Step 4: Quantitative analysis
+                # logger.info("📊 Starting quantitative analysis on transcript...")
                 
-                qa = QuantitativeAnalysis(zip_path="path/to/your/corpus.zip")
-                qa_results = qa.run()
-                print(qa_results)
+                # qa = QuantitativeAnalysis(zip_path="path/to/your/corpus.zip")
+                # qa_results = qa.run()
+                # logger.info(qa_results)
+
 
                 # Move files to organized locations
                 logger.info(f"📦 Moving audio file to: {organized_audio_path}")
@@ -327,11 +336,13 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
                     "transcript": transcript,
-                    "metadata": ingestion_result.get("metadata", {})
+                    "metadata": ingestion_result.get("metadata", {}),
+                    "qualitative_analysis": pos_path,
                 }
                 
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                output_files["pos_analysis"] = str(pos_path)
                 
                 logger.info("✅ Audio pipeline completed successfully")
                 
