@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { GoldenLayout, JsonValue } from "golden-layout";
 import { ReactComponentWrapper } from "@/lib/golden-layout-lib/ReactComponentWrapper";
-
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
 
@@ -14,9 +13,31 @@ import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 import POSAnalyzePanel from "./panels/POSAnalyzePanel";
-import { PanelManager } from "@/lib/golden-layout-lib/PanelManager";
+import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
+import { MenuBar } from "./MenuBar";
 
-export default function LayoutHost() {
+// --- Context Setup ---
+type LayoutHostContextType = {
+  openPanel: (panelType: string, panelProps?: JsonValue) => void;
+};
+
+const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
+  undefined
+);
+
+export function useLayoutHost() {
+  const ctx = useContext(LayoutHostContext);
+  if (!ctx)
+    throw new Error("useLayoutHost must be used within LayoutHostProvider");
+  return ctx;
+}
+// --- End Context Setup ---
+
+export default function LayoutHost({
+  children,
+}: {
+  children?: React.ReactNode;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<GoldenLayout | null>(null);
 
@@ -65,13 +86,18 @@ export default function LayoutHost() {
           content: [
             {
               type: "component",
-              componentType: "SpeechToTextPanel",
-              title: "SpeechToTextPanel",
+              componentType: "Transcript",
+              title: "Transcript",
             },
             {
               type: "component",
-              componentType: "POSAnalyzePanel",
-              title: "POSAnalyzePanel",
+              componentType: "POS",
+              title: "POS",
+            },
+            {
+              type: "component",
+              componentType: "Quant",
+              title: "Quant",
             },
           ],
         },
@@ -79,19 +105,22 @@ export default function LayoutHost() {
     },
   };
 
+  // --- openPanel function ---
+  const openPanel = (panelType: string, panelProps?: JsonValue) => {
+    if (!layoutRef.current) return;
+    layoutRef.current.addComponent(panelType, panelProps || {});
+  };
+  // --- End openPanel function ---
+
   useEffect(() => {
     if (!hostRef.current) return;
 
     const layout = new GoldenLayout(hostRef.current);
 
-    // Initialize panelManager with the layout instance
-    const panelManager = new PanelManager(layout);
-
     // Register the component factories
     layout.registerComponentFactoryFunction(
       "ProjectPanel",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("ProjectPanel", container);
         new ReactComponentWrapper(container, ProjectPanel);
       }
     );
@@ -99,7 +128,6 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "VideoPanel",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("VideoPanel", container);
         new ReactComponentWrapper(container, VideoPanel);
       }
     );
@@ -107,7 +135,6 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "DownloadPanel",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("DownloadPanel", container);
         new ReactComponentWrapper(container, DownloadPanel);
       }
     );
@@ -115,24 +142,28 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "ToolsPanel",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("ToolsPanel", container);
         new ReactComponentWrapper(container, ToolsPanel);
       }
     );
 
     layout.registerComponentFactoryFunction(
-      "SpeechToTextPanel",
+      "Transcript",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("SpeechToTextPanel", container);
         new ReactComponentWrapper(container, SpeechToTextPanel);
       }
     );
 
     layout.registerComponentFactoryFunction(
-      "POSAnalyzePanel",
+      "POS",
       (container, state: JsonValue | undefined) => {
-        panelManager.register("POSAnalyzePanel", container);
         new ReactComponentWrapper(container, POSAnalyzePanel);
+      }
+    );
+
+    layout.registerComponentFactoryFunction(
+      "Quant",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(container, QuantitativeAnalysisPanel);
       }
     );
 
@@ -144,5 +175,11 @@ export default function LayoutHost() {
     return () => layout.destroy();
   }, []);
 
-  return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <LayoutHostContext.Provider value={{ openPanel }}>
+      <MenuBar />
+      <div ref={hostRef} style={{ width: "100%", height: "100%" }} />
+      {children}
+    </LayoutHostContext.Provider>
+  );
 }

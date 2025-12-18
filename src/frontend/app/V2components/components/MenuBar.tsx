@@ -3,9 +3,11 @@ import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { createVideoTask } from "@/cvat-api/client";
-import { PanelManager } from "@/lib/golden-layout-lib/PanelManager";
+import { useLayoutHost } from "./LayoutHost";
 
 export function MenuBar() {
+  const { openPanel } = useLayoutHost();
+
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [files, setFiles] = useState<File[] | null>(null);
@@ -122,41 +124,90 @@ export function MenuBar() {
             handleUpload();
           },
         },
-        { label: "Open…", onClick: () => console.log("Open File Dialog") },
-        { label: "Save", onClick: () => console.log("Saving...") },
-        { label: "Save As…", onClick: () => console.log("Save As...") },
-        { label: "Exit", onClick: () => console.log("Exit App") },
       ],
     },
     {
       label: "Lenses",
       submenu: [
         {
-          label: "Lens 1",
+          label: "Transcript Lens",
           onClick: () => {
-            console.log("Lens 1!");
-            // Open the ToolsPanel using PanelManager instance
-            // TODO: Replace `yourGoldenLayoutInstance` with the actual GoldenLayout instance in your app
-            const goldenLayout = (window as any).goldenLayoutInstance; // Example: get from global or context
-            const pm = PanelManager.getInstance(goldenLayout);
-            if (pm && typeof pm.open === "function") {
-              pm.open("ToolsPanel");
-            } else {
-              console.warn(
-                "PanelManager instance is not available or does not have an open method."
-              );
-            }
+            openPanel("Transcript");
           },
         },
-        { label: "Lens 2", onClick: () => alert("Lens 2!") },
-        { label: "Lens 3", onClick: () => alert("Lens 3!") },
+        {
+          label: "POS analysis Lens",
+          onClick: () => {
+            openPanel("POS");
+          },
+        },
+        {
+          label: "Quantitative Analysis",
+          onClick: () => {
+            openPanel("Quant");
+          },
+        },
       ],
     },
-    { label: "Analyze" },
-    { label: "Annotations" },
-    { label: "View" },
-    { label: "Window" },
-    { label: "Help" },
+    {
+      label: "Window",
+      submenu: [
+        {
+          label: "Project Explorer",
+          onClick: () => {
+            openPanel("ProjectPanel");
+          },
+        },
+        {
+          label: "Download Manager",
+          onClick: () => {
+            openPanel("DownloadPanel");
+          },
+        },
+        {
+          label: "Video Player",
+          onClick: () => {
+            openPanel("VideoPanel");
+          },
+        },
+        {
+          label: "Toolbox",
+          onClick: () => {
+            openPanel("ToolsPanel");
+          },
+        },
+        {
+          label: "Transcript Lens",
+          onClick: () => {
+            openPanel("Transcript");
+          },
+        },
+        {
+          label: "POS analysis Lens",
+          onClick: () => {
+            openPanel("POS");
+          },
+        },
+        {
+          label: "Quantitative Analysis",
+          onClick: () => {
+            openPanel("Quant");
+          },
+        },
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "Go to our GitHub",
+          onClick: () => {
+            // Open GitHub in a new tab
+            window.open("https://github.com/VAA1-0/The-project", "_blank");
+          },
+        },
+      ],
+    },
   ];
 
   // Click ourside to close menu

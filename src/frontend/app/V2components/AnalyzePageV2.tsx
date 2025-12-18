@@ -1,6 +1,5 @@
 import LayoutHost from "./components/LayoutHost";
 import { MenuBar } from "./components/MenuBar";
-import PanelManager from "./components/PanelManager";
 import { Toolbar } from "./components/ToolBar";
 
 export default function Main() {
@@ -14,8 +13,6 @@ export default function Main() {
         flexDirection: "column",
       }}
     >
-      <MenuBar />
-
       <LayoutHost />
     </div>
   );
