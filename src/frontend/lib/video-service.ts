@@ -248,25 +248,26 @@ export class VideoService {
    * Get list of recent analyses
    */
   static async listVideos(limit: number = 20): Promise<VideoMetadata[]> {
-    try {
-      const response = await apiService.listAnalyses(limit);
-      const analyses = response.analyses || {};
-
-      return Object.entries(analyses).map(([id, info]: [string, any]) => ({
-        id,
-        name: info.filename || "Unknown",
-        status: info.status || "unknown",
-        progress: info.progress || 0,
-        uploadedAt: info.start_time
-          ? new Date(info.start_time * 1000).toISOString()
-          : new Date().toISOString(),
-        pipelineType: info.pipeline_type,
-      }));
-    } catch (error) {
-      console.error("VideoService.listVideos failed:", error);
-      return [];
-    }
+  try {
+    const response = await apiService.listAnalyses(limit);
+    const analyses = response.analyses || {};
+    
+    return Object.entries(analyses).map(([id, info]: [string, any]) => ({
+      id,
+      name: info.filename || "Unknown",
+      status: info.status || "unknown",
+      progress: info.progress || 0,
+      uploadedAt: info.start_time
+        ? new Date(info.start_time * 1000).toISOString()
+        : new Date().toISOString(),
+      pipelineType: info.pipeline_type,
+      cvatID: info.cvatID,
+    }));
+  } catch (error) {
+    console.warn("VideoService.listVideos failed, returning empty array:", error);
+    return [];
   }
+}
 
   /**
    * Poll for analysis status updates

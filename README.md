@@ -1,125 +1,88 @@
-# README
+# VAA1 — Video Analysis Automation 1.0
 
-This file explains how to create and activate a Python virtual environment and run `demo_video_analysis.py`.
+VAA1 is an open-source pipeline designed to automate the first stages of video analysis, transforming raw footage into structured, research-ready data. Its goal is simple: make video a practical, accessible, and analyzable resource for everyone.
 
-## Prerequisites
-- Python 3.8+ installed and on PATH
-- A terminal opened at the project root:
-    ```
-    cd /c/Users/Amaan/Vaa/The-project
-    ```
+## Why VAA1?
 
-## Activate the virtual environment
+1. The explosion of video data
+ More video is produced today than any human could ever watch. Researchers and creators need automated, scalable tools to keep up.
 
-- PowerShell (Windows):
-```
-virtenvir\Scripts\Activate.ps1
-```
+2. The rise of open science and FAIR principles
+ Transparency, accessibility, and reproducibility are now required across global research communities.
 
-- Command Prompt (cmd.exe, Windows):
-```
-virtenvir\Scripts\activate
-```
+3. A missing piece in the ecosystem
+Despite the need, there is still no widely adopted, open, and affordable pipeline for video analysis. Most researchers rely on closed, fragmented, or costly tools.
 
-- Git Bash / WSL / macOS / Linux:
-```
-source virtenvir/bin/activate
-```
+## What VAA1 Provides
+A unified open-source pipeline for:
 
-After activation the prompt typically shows `(.venv)`.
-
-## Run the demo script
-Execute the demo script from the project root:
-```
-python demo_video_analysis.py
-```
-If the script accepts arguments (e.g., input file, output path), pass them:
+- Metadata extraction
+- Transcription
+- Object and expression recognition
+- Audio & visual intelligence
+- Quantitative text features
+- Research-ready structured outputs
 
 
-## Deactivate the virtual environment
-When finished:
-```
-deactivate
-```
+## Deployment
 
-## Troubleshooting
-- "python" not found: ensure correct Python version is installed and added to PATH.
-- Permission errors in PowerShell: run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force` (Windows admin rights may be required).
+**Prerequisites**
+- Python 3.8+ installed and added to PATH
+- Docker Desktop running
+- Node.js and npm installed
 
-That's it — activate `.venv`, then run `demo_video_analysis.py` and all the dependencies should be installed.
-
-# vaa1_compatible — Development Environment Setup  
-Python version: **3.10.19**
-
-This guide explains how to recreate the `vaa1_compatible` Conda environment on any machine.  
-Follow these steps if you need to reinstall the environment, move it to another computer, or share it with collaborators.
-
----
-
-## 1. Install Miniconda or Anaconda
-Download and install either:
-
-- **Miniconda** (recommended)  
-- **Anaconda**
-
-You can confirm installation with:
-
+### Install dependencies
+From the project root:
 ```bash
-conda --version
+pip install -e .
+```
+```bash
+npm install
 ```
 
+If dependencies are not recognized, also run npm install in:
+`src/frontend` and `src/cvat/backend`
 
-## 📘 Installing spaCy Language Model
 
-The spaCy English model **cannot be installed through `environment.yml`**, because spaCy model packages are no longer distributed on PyPI.  
-Therefore, after creating or updating the Conda environment, you must install the model manually.
 
-Run the following command **after activating the environment**:
+### Running the Project
+Note: To run the whole project, you need all components running simultaneously. The backend does not communicate with the frontend without CVAT running.
 
-```
-python -m spacy download en_core_web_sm
-```
 
-# Remember to npm install
+#### CVAT - engine and backend
 
-If dependencies/packages are not recognized, run npm install in the folder. For example in `project root folder`, `src/frontend`, `src/cvat/backend`
-
-___
-
-# Commands for the whole project
-NOTE: To run the whole project, you need all of this running at the same time. Currently backend does not communicate with frontend without cvat running.
-
-### CVAT - engine and backend
-
-**Engine**
+*Engine*
 1. Navigate to cvat engine from project root
 ```bash
 cd src/cvat/cvat-engine
 ```
+
 2. Run the following command and start cvat docker. Make sure that your docker desktop is up and running:
 ```bash
 docker compose up -d
 ```
 
-**Cvat backend**
+
+*Cvat backend*
 
 1. Navigate to cvat backend folder from project root
 ```bash
 cd src/cvat/backend
 ```
+
 2. Run the backend:
 ```bash
 npm run dev
 ```
 
-___
-
-### Proxy
+_________
+#### Proxy
 
 1. Make sure that you have created `.env.local` file in `src/frontend` with the following line:
 ```bash
 NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8091
 ```
+
 
 2. Navigate to the root of the project.
 
@@ -127,8 +90,9 @@ NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8091
 ```bash
 docker run --rm -p 8091:80 -v D:/work/the-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
 ```
-___
-### Backend
+
+_________
+#### Backend
 
 1. Navigate to the root of the project
 
@@ -137,24 +101,33 @@ ___
 docker-compose build
 ```
 
+
 3. Run the docker image container with teh following command, replace the name with the actual name of your container:
 ```bash
-docker run -p 8000:8000 video-analysis-app
+docker-compose up -d
 ```
-___
 
-### Frontend
+__________
+
+#### Frontend
 1. Navigate to the frontend folder from the root of your project:
-
 ```bash
 cd src/frontend
 ```
+
 2. Run the frontend with the following command:
 ```bash
 npm run dev
 ```
-or for electron app
 
+or for electron app
 ```bash
 npm run start:electron
 ```
+## License
+This project is licensed under the *GNU Affero General Public License v3.0 (AGPL‑3.0)*.
+
+You may copy, distribute, and modify the software as long as you comply with the terms of the AGPL‑3.0.  
+In particular, if you run or modify this program on a server and allow users to interact with it remotely, you must make the source code available to those users.
+
+See the full license text at: [https://www.gnu.org/licenses/agpl-3.0.html](https://www.gnu.org/licenses/agpl-3.0.html)

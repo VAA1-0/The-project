@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import { createVideoTask } from "@/cvat-api/client";
 
 export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -49,42 +50,62 @@ export function MenuBar() {
         alert("Select a video first");
         return;
       }
+
       setUploading(true);
+      let cvatID = null;
+
       try {
-        for (const f of selectedFiles) {
-          const length = await getVideoDuration(f);
-          const res = await VideoService.upload(f, 1, length);
-          console.log(res);
-          try {
-            const videoBlob = new Blob([f], { type: f.type });
-            await saveVideoBlob(res.analysis_id, videoBlob);
-            console.log(
-              `Saved original video blob to IndexedDB for ${res.analysis_id}`
-            );
-          } catch (storageErr) {
-            console.warn(
-              "Failed to save video to IndexedDB (preview may be unavailable):",
-              storageErr
-            );
-          }
+        console.log("Uploading to CVAT");
+
+        // Create CVAT tasks
+        for (const video of selectedFiles) {
+          let taskName = `Task-${Date.now()}`;
+          console.log("🎬 Creating video task...");
+          let result = await createVideoTask(taskName, video);
+          cvatID = result.taskId;
+          alert(cvatID);
+          alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
         }
-        // refresh local view
-        const list = await VideoService.list();
-        setLibraryVideos(list);
-        setFiles(null);
-        setFile(null);
-        setPreviewUrl(null);
-        // Dispatch a custom event to notify other components
-        window.dispatchEvent(new CustomEvent("video-uploaded"));
-        alert("Upload successful (saved in browser storage)");
+
+        // Upload & save locally
+        try {
+          for (const f of selectedFiles) {
+            const length = await getVideoDuration(f);
+            const res = await VideoService.upload(f, cvatID, length);
+            console.log(res);
+
+            try {
+              const videoBlob = new Blob([f], { type: f.type });
+              await saveVideoBlob(res.analysis_id, videoBlob);
+              console.log(
+                `Saved original video blob to IndexedDB for ${res.analysis_id}`
+              );
+            } catch (storageErr) {
+              console.warn("Failed to save video to IndexedDB:", storageErr);
+            }
+          }
+
+          const list = await VideoService.list();
+          setLibraryVideos(list);
+          setFiles(null);
+          setFile(null);
+          setPreviewUrl(null);
+          window.dispatchEvent(new CustomEvent("video-uploaded"));
+
+          alert("Upload successful (saved in browser storage)");
+        } catch (err) {
+          console.error(err);
+          alert("Upload failed: " + ((err as any)?.message ?? String(err)));
+        }
       } catch (err) {
-        console.error(err);
+        console.log("Video uploading to CVAT failed. Try again!");
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
       } finally {
         setUploading(false);
       }
     };
 
+    // ⬇️ This MUST be outside input.onchange
     document.body.appendChild(input);
     input.click();
     document.body.removeChild(input);
@@ -134,7 +155,6 @@ export function MenuBar() {
     setOpenMenu(openMenu === index ? null : index);
   };
 
-  // 子菜单点击
   const handleSubClick = (e: React.MouseEvent, fn?: () => void) => {
     e.stopPropagation();
     setOpenMenu(null);

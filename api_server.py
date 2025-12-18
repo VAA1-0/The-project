@@ -22,7 +22,6 @@ from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
 from src.backend.analysis.pos_analysis import POSAnalysis
-from src.backend.analysis.quantitative_analysis import QuantitativeAnalysis
 from fastapi import Form
 
 
@@ -237,120 +236,76 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
         if pipeline_type in ["full", "audio_only"]:
             try:
                 logger.info("🎵 Starting audio pipeline...")
-                
-                # Step 1: Extract audio from video
-                logger.info("🔊 Extracting audio from video...")
+
+                # Step 1: Extract audio
                 ingestion_result = run_ingestion_pipeline(video_path)
                 audio_path = ingestion_result["audio_path"]
-                logger.info(f"✅ Audio extracted: {audio_path}")
-                
-                # Verify audio was extracted
+
                 if not Path(audio_path).exists():
-                    error_msg = f"Audio extraction failed: {audio_path} not found"
-                    logger.error(error_msg)
-                    raise FileNotFoundError(error_msg)
-                
-                logger.info("🎤 Starting audio transcription...")
-                
-                # Step 2: Transcribe audio
+                    raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+                # Step 2: Transcribe
                 audio_pipeline = AudioTranscriptionPipeline(str(audio_path))
                 transcript = audio_pipeline.run()
-                logger.info(f"✅ Audio transcribed: {len(transcript.get('segments', []))} segments")
-                
-                logger.info("📁 Organizing output files...")
-                
-                # Create organized file paths
+
+                # Step 3: Prepare organized paths
                 audio_filename = f"{analysis_id}_audio.wav"
+                transcript_filename = f"{analysis_id}_transcript.json"
+
                 organized_audio_path = AUDIO_DIR / audio_filename
-                organized_audio_path.parent.mkdir(exist_ok=True, parents=True)
-                
-                transcript_filename = f"{analysis_id}_transcript.json" 
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
-                organized_transcript_path.parent.mkdir(exist_ok=True, parents=True)
 
-                # Step 3: POS Analysis
-                logger.info("📝 Starting POS analysis on transcript...")
-                
-                # Opening and reading the JSON file
-                with open(organized_transcript_path, 'r') as f:
-                    text = ""
-                    # Parsing the JSON file into a Python dictionary
-                    data = json.load(f)
-                for segment in data['segments']:
-                    text += segment['text'] + ". "
-                pos_analyzer = POSAnalysis(text)
-                pos_result = pos_analyzer.run()
-                logger.info("✅ POS analysis completed")
-                logger.info("\n=== POS COUNTS ===")
-                logger.info(pos_result["pos_counts"])
-                logger.info("\n=== POS RATIOS ===")
-                logger.info(pos_result["pos_ratios"])
-                logger.info("\n=== INTERROGATIVE LENS ===")
-                for k, v in pos_result["interrogative_lens"].items():
-                    logger.info(f"{k}: {v}")
-                logger.info("\n=== POS WORDS ===")
-                for k, v in pos_result["pos_words"].items():
-                    logger.info(f"{k}: {v}")  
+                # Ensure dirs exist
+                AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+                TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
-                pos_path_init = f"{analysis_id}_pos.json" 
-                pos_path = TRANSCRIPTS_DIR / pos_path_init
-                pos_path.parent.mkdir(exist_ok=True, parents=True)
-
-                with open(pos_path, "w", encoding="utf-8") as f:
-                    json.dump(pos_result, f, indent=2, ensure_ascii=False)
-
-                logger.info(f"POS Results saved: {pos_path}")
-
-                # #Step 4: Quantitative analysis
-                # logger.info("📊 Starting quantitative analysis on transcript...")
-                
-                # qa = QuantitativeAnalysis(zip_path="path/to/your/corpus.zip")
-                # qa_results = qa.run()
-                # logger.info(qa_results)
-
-
-                # Move files to organized locations
-                logger.info(f"📦 Moving audio file to: {organized_audio_path}")
+                # Step 4: Move audio
                 shutil.move(audio_path, organized_audio_path)
-                
-                # Find and move transcript
+
+                # Step 5: Locate transcript file
                 original_transcript_dir = Path(audio_path).parent / "transcripts"
                 original_transcript_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript.json"
-                
-                logger.info(f"🔍 Looking for transcript at: {original_transcript_path}")
-                
-                if original_transcript_path.exists():
-                    logger.info(f"📦 Moving transcript to: {organized_transcript_path}")
-                    shutil.move(str(original_transcript_path), organized_transcript_path)
-                else:
-                    # Try alternative location
+
+                if not original_transcript_path.exists():
                     alternative_path = audio_pipeline.output_dir / f"{Path(audio_path).stem}_transcript.json"
-                    logger.info(f"🔍 Trying alternative transcript path: {alternative_path}")
-                    if alternative_path.exists():
-                        shutil.move(str(alternative_path), organized_transcript_path)
-                    else:
-                        logger.warning("❌ Transcript file not found in expected locations")
-                
-                # Store results
+                    original_transcript_path = alternative_path
+
+                if not original_transcript_path.exists():
+                    raise FileNotFoundError("Transcript file not found")
+
+                # Step 6: Move transcript
+                shutil.move(str(original_transcript_path), organized_transcript_path)
+
+                # Step 7: POS analysis (AFTER transcript exists in final place)
+                with open(organized_transcript_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                text = " ".join(
+                    seg["text"] for seg in data.get("segments", [])
+                )
+
+                pos_analyzer = POSAnalysis(text)
+                pos_result = pos_analyzer.run()
+
+                # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
-                    "transcript": transcript,
+                    "pos_analysis": pos_result,
                     "metadata": ingestion_result.get("metadata", {}),
-                    "qualitative_analysis": pos_path,
                 }
-                
+
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
-                output_files["pos_analysis"] = str(pos_path)
-                
+
                 logger.info("✅ Audio pipeline completed successfully")
-                
+
             except Exception as audio_error:
                 logger.error(f"❌ Audio pipeline failed: {str(audio_error)}")
                 import traceback
-                logger.error(f"📝 Traceback: {traceback.format_exc()}")
+                logger.error(traceback.format_exc())
                 results["audio_error"] = str(audio_error)
+
         
         # MARK AS COMPLETED
         import time
@@ -409,22 +364,24 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["processing_time"] = round(processing_time, 2)
         
         # Add analysis summary
-        response_data["summary"] = {
-            "yolo_detections": len(results.get("yolo_results", [])),
-            "ocr_detections": len(results.get("ocr_results", [])),
-        }
-        
-        # Add audio summary if available
+        response_data["summary"] = {}
+
+        if "visual_analysis" in results:
+            va = results["visual_analysis"]
+            response_data["summary"]["yolo_detections"] = len(va.get("yolo_results", []))
+            response_data["summary"]["ocr_detections"] = len(va.get("ocr_results", []))
+
         if "audio_analysis" in results:
-            audio_data = results["audio_analysis"]
-            response_data["summary"]["audio_segments"] = len(audio_data.get("transcript", {}).get("segments", []))
-            response_data["summary"]["audio_language"] = audio_data.get("transcript", {}).get("language", "unknown")
+            aa = results["audio_analysis"]
+            response_data["summary"]["audio_segments"] = len(
+                aa.get("transcript", {}).get("segments", [])
+            )
+            response_data["summary"]["audio_language"] = aa.get("transcript", {}).get("language", "unknown")
         
         # Add download links
         response_data["download_links"] = {}
         for file_type, file_path in output_files.items():
             response_data["download_links"][file_type] = f"/api/download/{analysis_id}/{file_type}"
-    
     return response_data
 
 @app.get("/api/download/{analysis_id}/{file_type}")

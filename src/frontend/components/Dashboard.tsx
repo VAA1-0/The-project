@@ -159,8 +159,8 @@ export const Dashboard: React.FC = () => {
     let cvatID = null;
     try {
       //=========Upload to CVAT==================
-
-      /*
+        
+      console.log("Uploading to CVAT");
       for (const video of selected) {
         let taskName = `Task-${Date.now()}`;
         console.log("🎬 Creating video task...");
@@ -169,8 +169,8 @@ export const Dashboard: React.FC = () => {
         alert(cvatID);
         alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
       }
-      */
-
+      
+       
       //<=============================================>
       try {
         const arr = Array.from(selected as any) as File[];

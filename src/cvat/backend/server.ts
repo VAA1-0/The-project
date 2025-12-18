@@ -12,6 +12,7 @@ import { postCvatData } from './cvatRoutes/cvat-uploadData';
 import { getCvatJobs } from './cvatRoutes/cvat-jobs';
 import { getAnnotations } from './cvatRoutes/cvat-getAnnotation';
 import { putAnnotation } from './cvatRoutes/cvat-postAnnotation';
+import { getAnnotationFormats } from './cvatRoutes/cvat-annotationFormats';
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -55,6 +56,9 @@ app.get("/api/jobs/:id/annotations", getAnnotations);
 
 // Save/update annotations
 app.put("/api/jobs/:id/annotations", putAnnotation);
+
+// Get Annotation Formats
+app.get("/api/formats", getAnnotationFormats);
 
 
 // Start server
