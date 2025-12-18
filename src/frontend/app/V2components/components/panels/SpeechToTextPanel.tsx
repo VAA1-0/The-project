@@ -1,15 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
 import { Download, Search, MoreHorizontal } from "lucide-react";
 
-interface SpeechToTextPanelProps {
-  videoId?: string | null;
-}
+export default function SpeechToTextPanel() {
+  const [videoId, setVideoId] = useState("");
 
-export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -18,7 +17,19 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
 
-  React.useEffect(() => {
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("textChanged", handler);
+
+    return () => {
+      eventBus.off("textChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -75,8 +86,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
-  const quantityInfo = analysisData?.quantityDetection ?? [];
-  const annotations = analysisData?.annotations ?? [];
   const summaryText = analysisData?.summary ?? "…";
 
   return (
@@ -152,42 +161,6 @@ export default function SpeechToTextPanel({ videoId }: SpeechToTextPanelProps) {
             ))
           )}
         </div>
-        {/*
-        Quantity Detection
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Quantity Detection:
-          {quantityInfo.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No speech to text detected
-            </div>
-          ) : (
-            quantityInfo.map((row: any) => (
-              <div key={row.label} className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-white font-medium">{row.label}</div>
-                <div className="text-xs text-slate-400">
-                  {row.desc ?? JSON.stringify(row)}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-        Annotations
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Annotations:
-          {annotations.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No annotations available
-            </div>
-          ) : (
-            annotations.map((a: any, idx: number) => (
-              <div key={idx} className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-sm text-slate-200">{a.note}</div>
-                <div className="text-xs text-slate-400">{a.time}</div>
-              </div>
-            ))
-          )}
-        </div>
-        */}
       </div>
     </main>
   );

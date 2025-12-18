@@ -12,13 +12,12 @@ import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { listJobs, listTasks } from "@/cvat-api/client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-interface ToolsPanelProps {
-  videoId?: string | null;
-}
+export default function ToolsPanel() {
+  const [videoId, setVideoId] = useState("");
 
-export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
@@ -30,7 +29,19 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [metadata, setMetadata] = useState<any>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
-  React.useEffect(() => {
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("textChanged", handler);
+
+    return () => {
+      eventBus.off("textChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -282,19 +293,6 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
           disabled={isAnalyzing || !videoId}
         >
           {isAnalyzing ? "Analyzing..." : "Analyze"}
-        </Button>
-
-        {/* Download CSV button */}
-        <Button
-          variant="default"
-          className="bg-blue-600/40 hover:bg-blue-600/60 transition"
-          onClick={() => {
-            handleExport();
-            console.log("Download button clicked");
-          }}
-          disabled={!analysisData || !videoId || isAnalyzing}
-        >
-          Download
         </Button>
 
         {/* Annotate Button */}

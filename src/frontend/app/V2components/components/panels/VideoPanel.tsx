@@ -1,21 +1,32 @@
 // src/frontend/app/V2components/components/panels/VideoPanel.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
-interface VideoPanelProps {
-  videoId?: string | null;
-}
+export default function VideoPanel() {
+  const [videoId, setVideoId] = useState("");
 
-export default function VideoPanel({ videoId }: VideoPanelProps) {
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
-  React.useEffect(() => {
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("textChanged", handler);
+
+    return () => {
+      eventBus.off("textChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -76,6 +87,7 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
         {videoId && (
           <div className="text-sm text-slate-400 mt-1">
             Video ID: <span className="font-mono">{videoId}</span>
+            video url is {videoUrl}
           </div>
         )}
       </div>

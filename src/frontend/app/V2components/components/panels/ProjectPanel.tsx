@@ -10,17 +10,17 @@ import {
 } from "lucide-react";
 
 import { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "@/components/VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 
-interface ProjectPanelProps {
-  onVideoSelect?: (id: string) => void;
-}
-
-export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
+export default function ProjectPanel() {
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
   const [metadata, setMetadata] = useState<any>(null);
+
+  // Event bus video id state
+  const [videoId, setVideoId] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -181,8 +181,10 @@ export default function ProjectPanel({ onVideoSelect }: ProjectPanelProps) {
               key={vid.id}
               className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-slate-900/50"
               onClick={() => {
-                onVideoSelect?.(vid.id);
-                console.log("Selected video ID:", vid.id);
+                // use eventBus to notify other panels
+                const v = vid.id;
+                setVideoId(v);
+                eventBus.emit("textChanged", v);
               }}
             >
               <div>
