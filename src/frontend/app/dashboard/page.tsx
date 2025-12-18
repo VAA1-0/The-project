@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "../../styles/globals.css";
-import { Dashboard } from "@/components/Dashboard";
+import { Dashboard } from "@/retired-components/Dashboard";
 import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
 
 export const metadata: Metadata = {

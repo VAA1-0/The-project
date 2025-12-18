@@ -8,17 +8,22 @@ import {
   ChartScatter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { listJobs, listTasks } from "@/cvat-api/client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-interface ToolsPanelProps {
-  videoId?: string | null;
-}
+export default function ToolsPanel() {
+  const [videoId, setVideoId] = useState("");
 
-export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
@@ -30,7 +35,19 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   const [metadata, setMetadata] = useState<any>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
-  React.useEffect(() => {
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("textChanged", handler);
+
+    return () => {
+      eventBus.off("textChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -143,8 +160,8 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
       await VideoService.exportFile(videoId, "yolo_csv");
 
       // Optionally download other files
-      // await VideoService.exportFile(id, 'ocr_csv');
-      // await VideoService.exportFile(id, 'summary_json');
+      await VideoService.exportFile(videoId, "ocr_csv");
+      await VideoService.exportFile(videoId, "summary_json");
     } catch (error) {
       console.error("Failed to export:", error);
       alert("Failed to export data. Check console for details.");
@@ -238,88 +255,108 @@ export default function ToolsPanel({ videoId }: ToolsPanelProps) {
   };
 
   return (
-    <div className="flex h-full">
-      <div className="bg-[#232323] w-[52px] h-full border-r border-[#0a0a0a] flex flex-col items-center py-2 gap-0">
-        {tools.map((tool, index) => {
-          const Icon = tool.icon;
-          return (
-            <button
-              key={index}
-              className={`w-full h-11 flex items-center justify-center transition-colors hover:bg-white/10 ${
-                index === 0 ? "mt-2" : ""
-              }`}
-              title={tool.label}
-            >
-              <Icon className="size-5" strokeWidth={1.5} />
-            </button>
-          );
-        })}
-      </div>
-
-      <div>
-        <div>Video Id: {videoId}</div>
-
-        {/* Add progress indicator near Analyze button */}
-        {isAnalyzing && (
-          <div className="mt-2">
-            <div className="text-sm text-slate-400">
-              Analysis in progress: {analysisProgress}%
-            </div>
-            <div className="w-full bg-slate-700 rounded-full h-2 mt-1">
-              <div
-                className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${analysisProgress}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Update Analyze button */}
-        <Button
-          variant="default"
-          className="bg-green-600/40 hover:bg-green-600/60 transition"
-          onClick={handleAnalyzeVideo}
-          disabled={isAnalyzing || !videoId}
+    <TooltipProvider delayDuration={200}>
+      <div className="flex h-full">
+        <div
+          role="toolbar"
+          aria-label="Analysis tools"
+          className="bg-[#232323] w-[52px] h-full border-r border-[#0a0a0a] flex flex-col items-center py-2 gap-0"
         >
-          {isAnalyzing ? "Analyzing..." : "Analyze"}
-        </Button>
+          {tools.map((tool, index) => {
+            const Icon = tool.icon;
+            return (
+              <Tooltip key={index}>
+                <TooltipTrigger asChild>
+                  <button
+                    className={`w-full h-11 flex items-center justify-center transition-colors hover:bg-white/10 ${
+                      index === 0 ? "mt-2" : ""
+                    } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                    type="button"
+                    aria-label={tool.label}
+                    tabIndex={index === 0 ? 0 : -1}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowDown") {
+                        const next = (index + 1) % tools.length;
+                        (
+                          e.currentTarget.parentElement?.parentElement?.querySelectorAll(
+                            "button"
+                          )[next] as HTMLButtonElement
+                        )?.focus();
+                        e.preventDefault();
+                      } else if (e.key === "ArrowUp") {
+                        const prev = (index - 1 + tools.length) % tools.length;
+                        (
+                          e.currentTarget.parentElement?.parentElement?.querySelectorAll(
+                            "button"
+                          )[prev] as HTMLButtonElement
+                        )?.focus();
+                        e.preventDefault();
+                      }
+                    }}
+                  >
+                    <Icon className="size-5" strokeWidth={1.5} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{tool.label}</p>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
 
-        {/* Download CSV button */}
-        <Button
-          variant="default"
-          className="bg-blue-600/40 hover:bg-blue-600/60 transition"
-          onClick={() => {
-            handleExport();
-            console.log("Download button clicked");
-          }}
-          disabled={!analysisData || !videoId}
-        >
-          Download
-        </Button>
+        <div>
+          <div>Video Id: {videoId}</div>
 
-        {/* Annotate Button */}
-        {!isPolling && !jobReady && (
+          {/* Add progress indicator near Analyze button */}
+          {isAnalyzing && (
+            <div className="mt-2">
+              <div className="text-sm text-slate-400">
+                Analysis in progress: {analysisProgress}%
+              </div>
+              <div className="w-full bg-slate-700 rounded-full h-2 mt-1">
+                <div
+                  className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${analysisProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Update Analyze button */}
           <Button
             variant="default"
             className="bg-green-600/40 hover:bg-green-600/60 transition"
-            onClick={openTask}
-            disabled={isAnalyzing || isPolling || !videoId}
+            onClick={handleAnalyzeVideo}
+            disabled={isAnalyzing || !videoId}
           >
-            Jobs
+            {isAnalyzing ? "Analyzing..." : "Analyze"}
           </Button>
-        )}
-        {isPolling ||
-          (jobReady && (
+
+          {/* Annotate Button */}
+          {!isPolling && !jobReady && (
             <Button
               variant="default"
               className="bg-green-600/40 hover:bg-green-600/60 transition"
-              onClick={handleJobClick}
+              onClick={openTask}
               disabled={isAnalyzing || isPolling || !videoId}
             >
-              {!jobReady ? "Polling" : "Annotate"}
+              Jobs
             </Button>
-          ))}
+          )}
+          {isPolling ||
+            (jobReady && (
+              <Button
+                variant="default"
+                className="bg-green-600/40 hover:bg-green-600/60 transition"
+                onClick={handleJobClick}
+                disabled={isAnalyzing || isPolling || !videoId}
+              >
+                {!jobReady ? "Polling" : "Annotate"}
+              </Button>
+            ))}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

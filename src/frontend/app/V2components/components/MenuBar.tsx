@@ -3,8 +3,17 @@ import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { createVideoTask } from "@/cvat-api/client";
+import { useLayoutHost } from "./LayoutHost";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export function MenuBar() {
+  const { openPanel } = useLayoutHost();
+
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [files, setFiles] = useState<File[] | null>(null);
@@ -63,8 +72,7 @@ export function MenuBar() {
           console.log("🎬 Creating video task...");
           let result = await createVideoTask(taskName, video);
           cvatID = result.taskId;
-          alert(cvatID);
-          alert(`✅ Task created successfully!\nTask ID: ${result.taskId}`);
+          console.log(`✅Task ID: ${result.taskId}`);
         }
 
         // Upload & save locally
@@ -92,7 +100,7 @@ export function MenuBar() {
           setPreviewUrl(null);
           window.dispatchEvent(new CustomEvent("video-uploaded"));
 
-          alert("Upload successful (saved in browser storage)");
+          alert("✅Upload successful!");
         } catch (err) {
           console.error(err);
           alert("Upload failed: " + ((err as any)?.message ?? String(err)));
@@ -121,25 +129,90 @@ export function MenuBar() {
             handleUpload();
           },
         },
-        { label: "Open…", onClick: () => console.log("Open File Dialog") },
-        { label: "Save", onClick: () => console.log("Saving...") },
-        { label: "Save As…", onClick: () => console.log("Save As...") },
-        { label: "Exit", onClick: () => console.log("Exit App") },
       ],
     },
     {
       label: "Lenses",
       submenu: [
-        { label: "Lens 1", onClick: () => alert("Lens 1!") },
-        { label: "Lens 2", onClick: () => alert("Lens 2!") },
-        { label: "Lens 3", onClick: () => alert("Lens 3!") },
+        {
+          label: "Transcript Lens",
+          onClick: () => {
+            openPanel("Transcript");
+          },
+        },
+        {
+          label: "POS analysis Lens",
+          onClick: () => {
+            openPanel("POS");
+          },
+        },
+        {
+          label: "Quantitative Analysis",
+          onClick: () => {
+            openPanel("Quant");
+          },
+        },
       ],
     },
-    { label: "Analyze" },
-    { label: "Annotations" },
-    { label: "View" },
-    { label: "Window" },
-    { label: "Help" },
+    {
+      label: "Window",
+      submenu: [
+        {
+          label: "Project Explorer",
+          onClick: () => {
+            openPanel("ProjectPanel");
+          },
+        },
+        {
+          label: "Download Manager",
+          onClick: () => {
+            openPanel("DownloadPanel");
+          },
+        },
+        {
+          label: "Video Player",
+          onClick: () => {
+            openPanel("VideoPanel");
+          },
+        },
+        {
+          label: "Toolbox",
+          onClick: () => {
+            openPanel("ToolsPanel");
+          },
+        },
+        {
+          label: "Transcript Lens",
+          onClick: () => {
+            openPanel("Transcript");
+          },
+        },
+        {
+          label: "POS analysis Lens",
+          onClick: () => {
+            openPanel("POS");
+          },
+        },
+        {
+          label: "Quantitative Analysis",
+          onClick: () => {
+            openPanel("Quant");
+          },
+        },
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "Go to our GitHub",
+          onClick: () => {
+            // Open GitHub in a new tab
+            window.open("https://github.com/VAA1-0/The-project", "_blank");
+          },
+        },
+      ],
+    },
   ];
 
   // Click ourside to close menu

@@ -48,12 +48,12 @@ export function LandingPage() {
 
   useEffect(() => {
     loginToCvat("admin", "admin123")
-    .then(auth=> {
-      if (auth.ok) {
+      .then((auth) => {
+        if (auth.ok) {
           console.log("✅ Logged In");
         }
-    })
-      .catch(err => {
+      })
+      .catch((err) => {
         console.warn("Log in failed:", err);
       });
   }, []);
@@ -73,9 +73,8 @@ export function LandingPage() {
     router.push("/dashboard");
   };
 
-
   return (
-    <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+    <div className="min-h-screen bg-white dark:bg-linear-to-br dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
       <header className="p-6 flex items-center justify-between">
         <GameRunLogo size="lg" />
@@ -84,11 +83,11 @@ export function LandingPage() {
       <div className="container mx-auto px-6 py-12">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           {/* Left side - Hero content */}
-          <div className="text-white dark:text-white text-slate-900 space-y-8">
-            <h1 className="text-5xl text-white dark:text-white text-slate-900">
+          <div className="text-white dark:text-white space-y-8">
+            <h1 className="text-5xl text-white dark:text-white">
               AI-Powered Video Analysis
             </h1>
-            <p className="text-xl text-slate-300 dark:text-slate-300 text-slate-600">
+            <p className="text-xl text-slate-300 dark:text-slate-300">
               Upload your videos and get instant AI-powered insights,
               descriptions, and analysis. Transform your content with
               intelligent video understanding.
@@ -97,13 +96,11 @@ export function LandingPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="flex items-center gap-3">
                 <div className="bg-blue-600/20 p-3 rounded-lg">
-                  <Play className="w-6 h-6 text-blue-400 dark:text-blue-400 text-blue-600" />
+                  <Play className="w-6 h-6 text-blue-400 dark:text-blue-400" />
                 </div>
                 <div>
-                  <h3 className="text-white dark:text-white text-slate-900">
-                    Smart Analysis
-                  </h3>
-                  <p className="text-slate-400 dark:text-slate-400 text-slate-600">
+                  <h3 className="text-white dark:text-white">Smart Analysis</h3>
+                  <p className="text-slate-400 dark:text-slate-400">
                     Advanced AI insights
                   </p>
                 </div>
@@ -111,13 +108,13 @@ export function LandingPage() {
 
               <div className="flex items-center gap-3">
                 <div className="bg-purple-600/20 p-3 rounded-lg">
-                  <Zap className="w-6 h-6 text-purple-400 dark:text-purple-400 text-purple-600" />
+                  <Zap className="w-6 h-6 text-purple-400 dark:text-purple-400" />
                 </div>
                 <div>
-                  <h3 className="text-white dark:text-white text-slate-900">
+                  <h3 className="text-white dark:text-white">
                     Fast Processing
                   </h3>
-                  <p className="text-slate-400 dark:text-slate-400 text-slate-600">
+                  <p className="text-slate-400 dark:text-slate-400">
                     Instant results
                   </p>
                 </div>
@@ -125,13 +122,11 @@ export function LandingPage() {
 
               <div className="flex items-center gap-3">
                 <div className="bg-green-600/20 p-3 rounded-lg">
-                  <Brain className="w-6 h-6 text-green-400 dark:text-green-400 text-green-600" />
+                  <Brain className="w-6 h-6 text-green-400 dark:text-green-400" />
                 </div>
                 <div>
-                  <h3 className="text-white dark:text-white text-slate-900">
-                    Deep Insights
-                  </h3>
-                  <p className="text-slate-400 dark:text-slate-400 text-slate-600 text-nowrap">
+                  <h3 className="text-white dark:text-white">Deep Insights</h3>
+                  <p className="text-slate-400 dark:text-slate-400 text-nowrap">
                     Comprehensive analysis
                   </p>
                 </div>
@@ -141,12 +136,12 @@ export function LandingPage() {
 
           {/* Right side - Auth form */}
           <div className="flex justify-center">
-            <Card className="w-full max-w-md bg-slate-800/50 border-slate-700 dark:bg-slate-800/50 dark:border-slate-700 bg-white border-slate-200">
+            <Card className="w-full max-w-md bg-slate-800/50 border-slate-700 dark:bg-slate-800/50 dark:border-slate-700">
               <CardHeader className="text-center">
-                <CardTitle className="text-white dark:text-white text-slate-900">
+                <CardTitle className="text-white dark:text-white">
                   {isSignUp ? "Create Account" : "Welcome Back"}
                 </CardTitle>
-                <CardDescription className="text-slate-300 dark:text-slate-300 text-slate-600">
+                <CardDescription className="text-slate-300 dark:text-slate-300">
                   {isSignUp
                     ? "Sign up to start analyzing your videos"
                     : "Sign in to your GameRun account"}
@@ -154,12 +149,11 @@ export function LandingPage() {
               </CardHeader>
 
               <CardContent className="space-y-4">
-
                 {/* Google Sign-In Button */}
                 <Button
                   onClick={handleGoogleSignIn}
                   variant="outline"
-                  className="w-full border-slate-600 text-white hover:bg-slate-700 hover:text-white dark:border-slate-600 dark:text-white dark:hover:bg-slate-700 dark:hover:text-white border-slate-300 text-slate-900 hover:bg-slate-100"
+                  className="w-full border-slate-600 text-white hover:bg-slate-700 hover:text-white dark:border-slate-600 dark:text-white dark:hover:bg-slate-700 dark:hover:text-white"
                 >
                   <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                     <path
@@ -183,8 +177,8 @@ export function LandingPage() {
                 </Button>
 
                 <div className="relative">
-                  <Separator className="bg-slate-600 dark:bg-slate-600 bg-slate-300" />
-                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-800 px-2 text-slate-400 dark:bg-slate-800 dark:text-slate-400 bg-white text-slate-500">
+                  <Separator className="bg-slate-600 dark:bg-slate-600" />
+                  <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-800 px-2 text-slate-400 dark:bg-slate-800 dark:text-slate-400">
                     or
                   </span>
                 </div>
@@ -196,7 +190,7 @@ export function LandingPage() {
                     placeholder="Email address"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400 bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-500"
+                    className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400"
                     required
                   />
 
@@ -205,7 +199,7 @@ export function LandingPage() {
                     placeholder="Password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400 bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-500"
+                    className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400"
                     required
                   />
 
@@ -220,7 +214,7 @@ export function LandingPage() {
                 <div className="text-center">
                   <button
                     onClick={() => setIsSignUp(!isSignUp)}
-                    className="text-blue-400 hover:text-blue-300 underline dark:text-blue-400 dark:hover:text-blue-300 text-blue-600 hover:text-blue-700"
+                    className="text-blue-400 hover:text-blue-300 underline dark:text-blue-400 dark:hover:text-blue-300"
                   >
                     {isSignUp
                       ? "Already have an account? Sign in"
