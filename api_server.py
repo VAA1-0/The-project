@@ -277,6 +277,7 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 shutil.move(str(original_transcript_path), organized_transcript_path)
 
                 # Step 7: POS analysis (AFTER transcript exists in final place)
+                logger.info("📝 Starting POS analysis on transcript...")
                 with open(organized_transcript_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
@@ -287,11 +288,20 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 pos_analyzer = POSAnalysis(text)
                 pos_result = pos_analyzer.run()
 
+                pos_path_init = f"{analysis_id}_pos.json" 
+                pos_path = TRANSCRIPTS_DIR / pos_path_init
+                pos_path.parent.mkdir(exist_ok=True, parents=True)
+
+                with open(pos_path, "w", encoding="utf-8") as f:
+                    json.dump(pos_result, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"POS Results saved: {pos_path}")
+
                 # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
-                    "pos_analysis": pos_result,
+                    "pos_analysis": str(pos_path),
                     "metadata": ingestion_result.get("metadata", {}),
                 }
 
