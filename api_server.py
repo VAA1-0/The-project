@@ -307,6 +307,7 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
 
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                output_files["pos_analysis"] = str(pos_path)
 
                 logger.info("✅ Audio pipeline completed successfully")
 
@@ -417,7 +418,8 @@ async def download_file(analysis_id: str, file_type: str):
         "ocr_csv": ("ocr_text.csv", "text/csv"),
         "summary_json": ("analysis_summary.json", "application/json"),
         "audio": ("extracted_audio.wav", "audio/wav"),
-        "transcript": ("transcript.json", "application/json")
+        "transcript": ("transcript.json", "application/json"),
+        "pos_analysis": ("pos_analysis.json", "application/json")
     }
     
     if file_type not in file_mapping:
