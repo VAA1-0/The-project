@@ -33,7 +33,86 @@ export interface DetectedObject {
   confidence: number;
 }
 
+export interface POSAnalysis {
+  text: string;
+  pos_counts: {
+    NOUN: number;
+    VERB: number;
+    ADP: number;
+    ADV: number;
+  };
+  pos_ratios: {
+    verb_noun_ratio: number;
+    modal_density: number;
+    pronoun_share: number;
+    adj_adv_ratio: number;
+    nominalization_density: number;
+  };
+  interrogative_lens: {
+    who: [];
+    what: [];
+    when: [];
+    where: [];
+    why: [];
+    how: [];
+    by_what_means: [];
+    towards_what_end: [];
+    whence: [];
+    by_what_consequence: [];
+  };
+  pos_words: {
+    NOUN: [];
+    VERB: [];
+    ADV: [];
+    ADP: [];
+  };
+}
+
+export interface QuantAnalysis {
+  // Placeholder structure for future quantitative analysis
+  text: string;
+  build_token_stream: {
+    NOUN: number;
+    VERB: number;
+    ADP: number;
+    ADV: number;
+  };
+  corpus_sentence_word_stats: {
+    verb_noun_ratio: number;
+    modal_density: number;
+    pronoun_share: number;
+    adj_adv_ratio: number;
+    nominalization_density: number;
+  };
+  tfidf_top_terms: {
+    who: [];
+    what: [];
+    when: [];
+    where: [];
+    why: [];
+    how: [];
+    by_what_means: [];
+    towards_what_end: [];
+    whence: [];
+    by_what_consequence: [];
+  };
+  bigrams: {
+    NOUN: [];
+    VERB: [];
+    ADV: [];
+    ADP: [];
+  };
+  sentencetagging: {
+    NOUN: [];
+    VERB: [];
+    ADV: [];
+    ADP: [];
+  };
+}
+
 export interface AnalysisData {
+  quantAnalysis: QuantAnalysis[];
+  posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
   detectedObjects: DetectedObject[];
   quantityDetection: DetectedObject[];
@@ -173,6 +252,8 @@ export class VideoService {
       // If analysis is not complete, return minimal data
       if (status.status !== "completed") {
         return {
+          quantAnalysis: [],
+          posAnalysis: [],
           transcript: [],
           detectedObjects: [],
           quantityDetection: [],
@@ -188,13 +269,26 @@ export class VideoService {
       }
 
       // Load all data in parallel
-      const [csvData, transcriptData, objects] = await Promise.allSettled([
+      const [
+        csvData,
+        transcriptData,
+        objects,
+        posAnalysisData,
+        // quantAnalysisData,
+      ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
         this.loadDetectedObjects(id),
+        this.loadPosAnalysis(id),
+        // this.loadQuantAnalysis(id),
       ]);
 
       return {
+        quantAnalysis:
+          // quantAnalysisData.status === "fulfilled" ? quantAnalysisData.value : [],
+          [], // Placeholder until implemented
+        posAnalysis:
+          posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
         transcript:
           transcriptData.status === "fulfilled" ? transcriptData.value : [],
         detectedObjects: objects.status === "fulfilled" ? objects.value : [],
@@ -248,26 +342,29 @@ export class VideoService {
    * Get list of recent analyses
    */
   static async listVideos(limit: number = 20): Promise<VideoMetadata[]> {
-  try {
-    const response = await apiService.listAnalyses(limit);
-    const analyses = response.analyses || {};
-    
-    return Object.entries(analyses).map(([id, info]: [string, any]) => ({
-      id,
-      name: info.filename || "Unknown",
-      status: info.status || "unknown",
-      progress: info.progress || 0,
-      uploadedAt: info.start_time
-        ? new Date(info.start_time * 1000).toISOString()
-        : new Date().toISOString(),
-      pipelineType: info.pipeline_type,
-      cvatID: info.cvatID,
-    }));
-  } catch (error) {
-    console.warn("VideoService.listVideos failed, returning empty array:", error);
-    return [];
+    try {
+      const response = await apiService.listAnalyses(limit);
+      const analyses = response.analyses || {};
+
+      return Object.entries(analyses).map(([id, info]: [string, any]) => ({
+        id,
+        name: info.filename || "Unknown",
+        status: info.status || "unknown",
+        progress: info.progress || 0,
+        uploadedAt: info.start_time
+          ? new Date(info.start_time * 1000).toISOString()
+          : new Date().toISOString(),
+        pipelineType: info.pipeline_type,
+        cvatID: info.cvatID,
+      }));
+    } catch (error) {
+      console.warn(
+        "VideoService.listVideos failed, returning empty array:",
+        error
+      );
+      return [];
+    }
   }
-}
 
   /**
    * Poll for analysis status updates
@@ -420,6 +517,177 @@ export class VideoService {
       }));
     } catch (error) {
       console.warn("Failed to parse detected objects:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Load POS Analysis data
+   */
+  private static async loadPosAnalysis(id: string): Promise<POSAnalysis[]> {
+    try {
+      const posBlob = await apiService.downloadFile(id, "pos_analysis");
+      const posText = await posBlob.text();
+      const posData = JSON.parse(posText);
+
+      // Helper to normalize a single POSAnalysis object
+      const normalize = (data: any): POSAnalysis => ({
+        text: data.text || "",
+        pos_counts: {
+          NOUN: Number(data.pos_counts?.NOUN) || 0,
+          VERB: Number(data.pos_counts?.VERB) || 0,
+          ADP: Number(data.pos_counts?.ADP) || 0,
+          ADV: Number(data.pos_counts?.ADV) || 0,
+        },
+        pos_ratios: {
+          verb_noun_ratio: Number(data.pos_ratios?.verb_noun_ratio) || 0,
+          modal_density: Number(data.pos_ratios?.modal_density) || 0,
+          pronoun_share: Number(data.pos_ratios?.pronoun_share) || 0,
+          adj_adv_ratio: Number(data.pos_ratios?.adj_adv_ratio) || 0,
+          nominalization_density:
+            Number(data.pos_ratios?.nominalization_density) || 0,
+        },
+        interrogative_lens: {
+          who: Array.isArray(data.interrogative_lens?.who)
+            ? data.interrogative_lens.who
+            : [],
+          what: Array.isArray(data.interrogative_lens?.what)
+            ? data.interrogative_lens.what
+            : [],
+          when: Array.isArray(data.interrogative_lens?.when)
+            ? data.interrogative_lens.when
+            : [],
+          where: Array.isArray(data.interrogative_lens?.where)
+            ? data.interrogative_lens.where
+            : [],
+          why: Array.isArray(data.interrogative_lens?.why)
+            ? data.interrogative_lens.why
+            : [],
+          how: Array.isArray(data.interrogative_lens?.how)
+            ? data.interrogative_lens.how
+            : [],
+          by_what_means: Array.isArray(data.interrogative_lens?.by_what_means)
+            ? data.interrogative_lens.by_what_means
+            : [],
+          towards_what_end: Array.isArray(
+            data.interrogative_lens?.towards_what_end
+          )
+            ? data.interrogative_lens.towards_what_end
+            : [],
+          whence: Array.isArray(data.interrogative_lens?.whence)
+            ? data.interrogative_lens.whence
+            : [],
+          by_what_consequence: Array.isArray(
+            data.interrogative_lens?.by_what_consequence
+          )
+            ? data.interrogative_lens.by_what_consequence
+            : [],
+        },
+        pos_words: {
+          NOUN: Array.isArray(data.pos_words?.NOUN) ? data.pos_words.NOUN : [],
+          VERB: Array.isArray(data.pos_words?.VERB) ? data.pos_words.VERB : [],
+          ADV: Array.isArray(data.pos_words?.ADV) ? data.pos_words.ADV : [],
+          ADP: Array.isArray(data.pos_words?.ADP) ? data.pos_words.ADP : [],
+        },
+      });
+
+      if (Array.isArray(posData)) {
+        return posData.map(normalize);
+      } else {
+        return [normalize(posData)];
+      }
+    } catch (error) {
+      console.warn("Failed to load POS analysis:", error);
+      return [];
+    }
+  }
+
+  private static async loadQuantAnalysis(id: string): Promise<QuantAnalysis[]> {
+    // Placeholder for future quantitative analysis loading
+    try {
+      const quantBlob = await apiService.downloadFile(id, "quant_analysis");
+      const quantText = await quantBlob.text();
+      const quantData = JSON.parse(quantText);
+
+      // Helper to normalize a single POSAnalysis object
+      const normalize = (data: any): QuantAnalysis => ({
+        text: data.text || "",
+        build_token_stream: {
+          NOUN: Number(data.build_token_stream?.NOUN) || 0,
+          VERB: Number(data.build_token_stream?.VERB) || 0,
+          ADP: Number(data.build_token_stream?.ADP) || 0,
+          ADV: Number(data.build_token_stream?.ADV) || 0,
+        },
+        corpus_sentence_word_stats: {
+          verb_noun_ratio:
+            Number(data.corpus_sentence_word_stats?.verb_noun_ratio) || 0,
+          modal_density:
+            Number(data.corpus_sentence_word_stats?.modal_density) || 0,
+          pronoun_share:
+            Number(data.corpus_sentence_word_stats?.pronoun_share) || 0,
+          adj_adv_ratio:
+            Number(data.corpus_sentence_word_stats?.adj_adv_ratio) || 0,
+          nominalization_density:
+            Number(data.corpus_sentence_word_stats?.nominalization_density) ||
+            0,
+        },
+        tfidf_top_terms: {
+          who: Array.isArray(data.tfidf_top_terms?.who)
+            ? data.tfidf_top_terms.who
+            : [],
+          what: Array.isArray(data.tfidf_top_terms?.what)
+            ? data.tfidf_top_terms.what
+            : [],
+          when: Array.isArray(data.tfidf_top_terms?.when)
+            ? data.tfidf_top_terms.when
+            : [],
+          where: Array.isArray(data.tfidf_top_terms?.where)
+            ? data.tfidf_top_terms.where
+            : [],
+          why: Array.isArray(data.tfidf_top_terms?.why)
+            ? data.tfidf_top_terms.why
+            : [],
+          how: Array.isArray(data.tfidf_top_terms?.how)
+            ? data.tfidf_top_terms.how
+            : [],
+          by_what_means: Array.isArray(data.tfidf_top_terms?.by_what_means)
+            ? data.tfidf_top_terms.by_what_means
+            : [],
+          towards_what_end: Array.isArray(
+            data.tfidf_top_terms?.towards_what_end
+          )
+            ? data.tfidf_top_terms.towards_what_end
+            : [],
+          whence: Array.isArray(data.tfidf_top_terms?.whence)
+            ? data.tfidf_top_terms.whence
+            : [],
+          by_what_consequence: Array.isArray(
+            data.tfidf_top_terms?.by_what_consequence
+          )
+            ? data.tfidf_top_terms.by_what_consequence
+            : [],
+        },
+        bigrams: {
+          NOUN: Array.isArray(data.bigrams?.NOUN) ? data.bigrams.NOUN : [],
+          VERB: Array.isArray(data.bigrams?.VERB) ? data.bigrams.VERB : [],
+          ADV: Array.isArray(data.bigrams?.ADV) ? data.bigrams.ADV : [],
+          ADP: Array.isArray(data.bigrams?.ADP) ? data.bigrams.ADP : [],
+        },
+        sentencetagging: {
+          NOUN: Array.isArray(data.bigrams?.NOUN) ? data.bigrams.NOUN : [],
+          VERB: Array.isArray(data.bigrams?.VERB) ? data.bigrams.VERB : [],
+          ADV: Array.isArray(data.bigrams?.ADV) ? data.bigrams.ADV : [],
+          ADP: Array.isArray(data.bigrams?.ADP) ? data.bigrams.ADP : [],
+        },
+      });
+
+      if (Array.isArray(quantData)) {
+        return quantData.map(normalize);
+      } else {
+        return [normalize(quantData)];
+      }
+    } catch (error) {
+      console.warn("Failed to load Quantitative analysis:", error);
       return [];
     }
   }

@@ -84,58 +84,57 @@ export default function QuantitativeAnalysisPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const CorpusSentenceWordStats = {
-    nouns: analysisData?.posCounts?.nouns ?? 0,
-    verbs: analysisData?.posCounts?.verbs ?? 0,
-    adjectives: analysisData?.posCounts?.adjectives ?? 0,
-    adverbs: analysisData?.posCounts?.adverbs ?? 0,
-  };
-
-  const BuildTokenStream = {
-    verbNounRatio: analysisData?.posRatios?.VerbNounRatio ?? 0,
-    modalDensity: analysisData?.posRatios?.ModalDensity ?? 0,
-    pronounShare: analysisData?.posRatios?.PronounShare ?? 0,
-    adjectiveAdverbRatio: analysisData?.posRatios?.AdjectiveAdverbRatio ?? 0,
-  };
-
-  const TFIDFTopTerms = {
-    who: analysisData?.interrogatives?.who ?? 0,
-    what: analysisData?.interrogatives?.what ?? 0,
-    when: analysisData?.interrogatives?.when ?? 0,
-    where: analysisData?.interrogatives?.where ?? 0,
-    why: analysisData?.interrogatives?.why ?? 0,
-    how: analysisData?.interrogatives?.how ?? 0,
-    by_what_means: analysisData?.interrogatives?.by_what_means ?? 0,
-    towards_what_end: analysisData?.interrogatives?.towards_what_end ?? 0,
-    whence: analysisData?.interrogatives?.whence ?? 0,
-    by_what_consequence: analysisData?.interrogatives?.by_what_consequence ?? 0,
-  };
-
-  const Bigrams = {
-    NOUN: analysisData?.posWords?.NOUN ?? [],
-    VERB: analysisData?.posWords?.VERB ?? [],
-    ADJ: analysisData?.posWords?.ADJ ?? [],
-    ADV: analysisData?.posWords?.ADV ?? [],
-    PRON: analysisData?.posWords?.PRON ?? [],
-    AUX_MODAL: analysisData?.posWords?.AUX_MODAL ?? [],
-    ADP: analysisData?.posWords?.ADP ?? [],
-    CONJ: analysisData?.posWords?.CONJ ?? [],
-  };
-
-  const SentenceTagging = {
-    NOUN: analysisData?.posWords?.NOUN ?? [],
-    VERB: analysisData?.posWords?.VERB ?? [],
-    ADJ: analysisData?.posWords?.ADJ ?? [],
-    ADV: analysisData?.posWords?.ADV ?? [],
-    PRON: analysisData?.posWords?.PRON ?? [],
-    AUX_MODAL: analysisData?.posWords?.AUX_MODAL ?? [],
-    ADP: analysisData?.posWords?.ADP ?? [],
-    CONJ: analysisData?.posWords?.CONJ ?? [],
-  };
+  const analysisDataquantAnalysis = [
+    {
+      text: "This one is being held in a city right on the edge of the Amerson jungle. Now the problem is...",
+      build_token_stream: {
+        NOUN: 6,
+        VERB: 1,
+        ADP: 3,
+        ADV: 2,
+      },
+      corpus_sentence_word_stats: {
+        verb_noun_ratio: 0.16666666666666666,
+        modal_density: 0.0,
+        pronoun_share: 0.0,
+        adj_adv_ratio: 0.0,
+        nominalization_density: 0.05,
+      },
+      tfidf_top_terms: {
+        who: ["This one", "the problem"],
+        what: [
+          "This one is being held in a city right on the edge of the Amerson jungle.",
+        ],
+        when: ["Now"],
+        where: ["in a city"],
+        why: [],
+        how: [],
+        by_what_means: [],
+        towards_what_end: [],
+        whence: [],
+        by_what_consequence: [],
+      },
+      bigrams: {
+        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
+        VERB: ["held"],
+        ADV: ["right", "Now"],
+        ADP: ["in", "on", "of"],
+      },
+      sentencetagging: {
+        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
+        VERB: ["held"],
+        ADV: ["right", "Now"],
+        ADP: ["in", "on", "of"],
+      },
+    },
+  ];
 
   return (
     <main className="flex-0 overflow-auto">
       <div className="text-xs text-slate-400">video Id: {videoId}</div>
+      <div className="text-xs text-slate-400">
+        text: {analysisDataquantAnalysis[0].text}
+      </div>
       <div className="mt-4">
         {/* Header */}
         <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
@@ -152,23 +151,28 @@ export default function QuantitativeAnalysisPanel() {
         {/* Build Token Stream */}
         Build Token Stream:
         <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(BuildTokenStream).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
+            .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content available
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"nouns: " + BuildTokenStream.verbNounRatio}
+                {"nouns: " +
+                  analysisDataquantAnalysis[0].build_token_stream.NOUN}
               </div>
               <div className="text-sm text-slate-200">
-                {"verbs: " + BuildTokenStream.modalDensity}
+                {"verbs: " +
+                  analysisDataquantAnalysis[0].build_token_stream.VERB}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjectives: " + BuildTokenStream.adjectiveAdverbRatio}
+                {"adjectives: " +
+                  analysisDataquantAnalysis[0].build_token_stream.ADP}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverbs: " + BuildTokenStream.pronounShare}
+                {"adverbs: " +
+                  analysisDataquantAnalysis[0].build_token_stream.ADV}
               </div>
             </div>
           )}
@@ -176,23 +180,32 @@ export default function QuantitativeAnalysisPanel() {
         {/* Corpus Sentence Word Stats */}
         Corpus Sentence Word Stats:
         <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(CorpusSentenceWordStats).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0].corpus_sentence_word_stats)
+            .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"nouns: " + CorpusSentenceWordStats.nouns}
+                {"nouns: " +
+                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    .verb_noun_ratio}
               </div>
               <div className="text-sm text-slate-200">
-                {"verbs: " + CorpusSentenceWordStats.verbs}
+                {"verbs: " +
+                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    .modal_density}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjectives: " + CorpusSentenceWordStats.adjectives}
+                {"adjectives: " +
+                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    .pronoun_share}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverbs: " + CorpusSentenceWordStats.adverbs}
+                {"adverbs: " +
+                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    .adj_adv_ratio}
               </div>
             </div>
           )}
@@ -201,41 +214,47 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         TFIDF Top Terms:
         <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(TFIDFTopTerms).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No TFIDF Top Terms detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"who: " + TFIDFTopTerms.who}
+                {"who: " + analysisDataquantAnalysis[0].tfidf_top_terms.who}
               </div>
               <div className="text-sm text-slate-200">
-                {"what: " + TFIDFTopTerms.what}
+                {"what: " + analysisDataquantAnalysis[0].tfidf_top_terms.what}
               </div>
               <div className="text-sm text-slate-200">
-                {"when: " + TFIDFTopTerms.when}
+                {"when: " + analysisDataquantAnalysis[0].tfidf_top_terms.when}
               </div>
               <div className="text-sm text-slate-200">
-                {"where: " + TFIDFTopTerms.where}
+                {"where: " + analysisDataquantAnalysis[0].tfidf_top_terms.where}
               </div>
               <div className="text-sm text-slate-200">
-                {"why: " + TFIDFTopTerms.why}
+                {"why: " + analysisDataquantAnalysis[0].tfidf_top_terms.why}
               </div>
               <div className="text-sm text-slate-200">
-                {"how: " + TFIDFTopTerms.how}
+                {"how: " + analysisDataquantAnalysis[0].tfidf_top_terms.how}
               </div>
               <div className="text-sm text-slate-200">
-                {"by what means: " + TFIDFTopTerms.by_what_means}
+                {"by what means: " +
+                  analysisDataquantAnalysis[0].tfidf_top_terms.by_what_means}
               </div>
               <div className="text-sm text-slate-200">
-                {"towards what end: " + TFIDFTopTerms.towards_what_end}
+                {"towards what end: " +
+                  analysisDataquantAnalysis[0].tfidf_top_terms.towards_what_end}
               </div>
               <div className="text-sm text-slate-200">
-                {"whence: " + TFIDFTopTerms.whence}
+                {"whence: " +
+                  analysisDataquantAnalysis[0].tfidf_top_terms.whence}
               </div>
               <div className="text-sm text-slate-200">
-                {"by what consequence: " + TFIDFTopTerms.by_what_consequence}
+                {"by what consequence: " +
+                  analysisDataquantAnalysis[0].tfidf_top_terms
+                    .by_what_consequence}
               </div>
             </div>
           )}
@@ -244,35 +263,27 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         Bigrams:
         <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(Bigrams).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No Bigrams detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"noun: " + Bigrams.NOUN.join(", ")}
+                {"noun: " +
+                  analysisDataquantAnalysis[0].bigrams.NOUN.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"verb: " + Bigrams.VERB.join(", ")}
+                {"verb: " +
+                  analysisDataquantAnalysis[0].bigrams.VERB.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjective: " + Bigrams.ADJ.join(", ")}
+                {"adjective: " +
+                  analysisDataquantAnalysis[0].bigrams.ADP.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverb: " + Bigrams.ADV.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"pronoun: " + Bigrams.PRON.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"aux/modal: " + Bigrams.AUX_MODAL.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adposition: " + Bigrams.ADP.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"conjunction: " + Bigrams.CONJ.join(", ")}
+                {"adverb: " +
+                  analysisDataquantAnalysis[0].bigrams.ADV.join(", ")}
               </div>
             </div>
           )}
@@ -281,35 +292,28 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         SentenceTagging:
         <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(SentenceTagging).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0].sentencetagging).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No SentenceTagging detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"noun: " + SentenceTagging.NOUN.join(", ")}
+                {"noun: " +
+                  analysisDataquantAnalysis[0].sentencetagging.NOUN.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"verb: " + SentenceTagging.VERB.join(", ")}
+                {"verb: " +
+                  analysisDataquantAnalysis[0].sentencetagging.VERB.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjective: " + SentenceTagging.ADJ.join(", ")}
+                {"adjective: " +
+                  analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverb: " + SentenceTagging.ADV.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"pronoun: " + SentenceTagging.PRON.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"aux/modal: " + SentenceTagging.AUX_MODAL.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adposition: " + SentenceTagging.ADP.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"conjunction: " + SentenceTagging.CONJ.join(", ")}
+                {"adverb: " +
+                  analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
               </div>
             </div>
           )}

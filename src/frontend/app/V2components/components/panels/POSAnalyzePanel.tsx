@@ -83,48 +83,12 @@ export default function POSAnalyzePanel() {
     load();
   }, [videoId]);
 
-  // Use analysisData (fallback to empty arrays if not available)
-  const POSCounts = {
-    nouns: analysisData?.posCounts?.nouns ?? 0,
-    verbs: analysisData?.posCounts?.verbs ?? 0,
-    adjectives: analysisData?.posCounts?.adjectives ?? 0,
-    adverbs: analysisData?.posCounts?.adverbs ?? 0,
-  };
-
-  const POSRatios = {
-    verbNounRatio: analysisData?.posRatios?.VerbNounRatio ?? 0,
-    modalDensity: analysisData?.posRatios?.ModalDensity ?? 0,
-    pronounShare: analysisData?.posRatios?.PronounShare ?? 0,
-    adjectiveAdverbRatio: analysisData?.posRatios?.AdjectiveAdverbRatio ?? 0,
-  };
-
-  const Interrogatives = {
-    who: analysisData?.interrogatives?.who ?? 0,
-    what: analysisData?.interrogatives?.what ?? 0,
-    when: analysisData?.interrogatives?.when ?? 0,
-    where: analysisData?.interrogatives?.where ?? 0,
-    why: analysisData?.interrogatives?.why ?? 0,
-    how: analysisData?.interrogatives?.how ?? 0,
-    by_what_means: analysisData?.interrogatives?.by_what_means ?? 0,
-    towards_what_end: analysisData?.interrogatives?.towards_what_end ?? 0,
-    whence: analysisData?.interrogatives?.whence ?? 0,
-    by_what_consequence: analysisData?.interrogatives?.by_what_consequence ?? 0,
-  };
-
-  const POSWORDS = {
-    NOUN: analysisData?.posWords?.NOUN ?? [],
-    VERB: analysisData?.posWords?.VERB ?? [],
-    ADJ: analysisData?.posWords?.ADJ ?? [],
-    ADV: analysisData?.posWords?.ADV ?? [],
-    PRON: analysisData?.posWords?.PRON ?? [],
-    AUX_MODAL: analysisData?.posWords?.AUX_MODAL ?? [],
-    ADP: analysisData?.posWords?.ADP ?? [],
-    CONJ: analysisData?.posWords?.CONJ ?? [],
-  };
-
   return (
     <main className="flex-0 overflow-auto">
       <div className="text-xs text-slate-400">video Id: {videoId}</div>
+      <div className="text-xs text-slate-400">
+        text: {analysisData?.posAnalysis[0].text}
+      </div>
       <div className="mt-4">
         {/* Header */}
         <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
@@ -141,23 +105,24 @@ export default function POSAnalyzePanel() {
         {/* POS COUNTS */}
         POS COUNTS:
         <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(POSRatios).length === 0 ? (
+          {Object.keys(analysisData?.posAnalysis[0].pos_counts || {}).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content available
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"nouns: " + POSRatios.verbNounRatio}
+                {"nouns: " + analysisData?.posAnalysis[0].pos_counts?.NOUN}
               </div>
               <div className="text-sm text-slate-200">
-                {"verbs: " + POSRatios.modalDensity}
+                {"verbs: " + analysisData?.posAnalysis[0].pos_counts?.VERB}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjectives: " + POSRatios.adjectiveAdverbRatio}
+                {"adjectives: " + analysisData?.posAnalysis[0].pos_counts?.ADP}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverbs: " + POSRatios.pronounShare}
+                {"adverbs: " + analysisData?.posAnalysis[0].pos_counts?.ADV}
               </div>
             </div>
           )}
@@ -165,23 +130,33 @@ export default function POSAnalyzePanel() {
         {/* POS RATIOS */}
         POS RATIOS:
         <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(POSCounts).length === 0 ? (
+          {Object.keys(analysisData?.posAnalysis[0].pos_ratios || {}).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"nouns: " + POSCounts.nouns}
+                {"verb noun ratio: " +
+                  analysisData?.posAnalysis[0].pos_ratios?.verb_noun_ratio}
               </div>
               <div className="text-sm text-slate-200">
-                {"verbs: " + POSCounts.verbs}
+                {"modal density: " +
+                  analysisData?.posAnalysis[0].pos_ratios?.modal_density}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjectives: " + POSCounts.adjectives}
+                {"pronoun share: " +
+                  analysisData?.posAnalysis[0].pos_ratios?.pronoun_share}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverbs: " + POSCounts.adverbs}
+                {"adj adv ratio: " +
+                  analysisData?.posAnalysis[0].pos_ratios?.adj_adv_ratio}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"nominalization density: " +
+                  analysisData?.posAnalysis[0].pos_ratios
+                    ?.nominalization_density}
               </div>
             </div>
           )}
@@ -190,41 +165,54 @@ export default function POSAnalyzePanel() {
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         Interrogatives:
         <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(Interrogatives).length === 0 ? (
+          {Object.keys(analysisData?.posAnalysis[0].interrogative_lens || {})
+            .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No interrogatives detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"who: " + Interrogatives.who}
+                {"who: " + analysisData?.posAnalysis[0].interrogative_lens.who}
               </div>
               <div className="text-sm text-slate-200">
-                {"what: " + Interrogatives.what}
+                {"who: " + analysisData?.posAnalysis[0].interrogative_lens.who}
               </div>
               <div className="text-sm text-slate-200">
-                {"when: " + Interrogatives.when}
+                {"what: " +
+                  analysisData?.posAnalysis[0].interrogative_lens.what}
               </div>
               <div className="text-sm text-slate-200">
-                {"where: " + Interrogatives.where}
+                {"when: " +
+                  analysisData?.posAnalysis[0].interrogative_lens.when}
               </div>
               <div className="text-sm text-slate-200">
-                {"why: " + Interrogatives.why}
+                {"where: " +
+                  analysisData?.posAnalysis[0].interrogative_lens.where}
               </div>
               <div className="text-sm text-slate-200">
-                {"how: " + Interrogatives.how}
+                {"why: " + analysisData?.posAnalysis[0].interrogative_lens.why}
               </div>
               <div className="text-sm text-slate-200">
-                {"by what means: " + Interrogatives.by_what_means}
+                {"how: " + analysisData?.posAnalysis[0].interrogative_lens.how}
               </div>
               <div className="text-sm text-slate-200">
-                {"towards what end: " + Interrogatives.towards_what_end}
+                {"by what means: " +
+                  analysisData?.posAnalysis[0].interrogative_lens.by_what_means}
               </div>
               <div className="text-sm text-slate-200">
-                {"whence: " + Interrogatives.whence}
+                {"towards what end: " +
+                  analysisData?.posAnalysis[0].interrogative_lens
+                    .towards_what_end}
               </div>
               <div className="text-sm text-slate-200">
-                {"by what consequence: " + Interrogatives.by_what_consequence}
+                {"whence: " +
+                  analysisData?.posAnalysis[0].interrogative_lens.whence}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"by what consequence: " +
+                  analysisData?.posAnalysis[0].interrogative_lens
+                    .by_what_consequence}
               </div>
             </div>
           )}
@@ -233,35 +221,28 @@ export default function POSAnalyzePanel() {
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         POSWORDS:
         <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
-          {Object.keys(POSWORDS).length === 0 ? (
+          {Object.keys(analysisData?.posAnalysis[0].pos_words || {}).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No POS words detected
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
-                {"noun: " + POSWORDS.NOUN.join(", ")}
+                {"noun: " +
+                  analysisData?.posAnalysis[0].pos_words?.NOUN.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"verb: " + POSWORDS.VERB.join(", ")}
+                {"verb: " +
+                  analysisData?.posAnalysis[0].pos_words?.VERB.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adjective: " + POSWORDS.ADJ.join(", ")}
+                {"adjective: " +
+                  analysisData?.posAnalysis[0].pos_words?.ADV.join(", ")}
               </div>
               <div className="text-sm text-slate-200">
-                {"adverb: " + POSWORDS.ADV.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"pronoun: " + POSWORDS.PRON.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"aux/modal: " + POSWORDS.AUX_MODAL.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adposition: " + POSWORDS.ADP.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"conjunction: " + POSWORDS.CONJ.join(", ")}
+                {"preposition: " +
+                  analysisData?.posAnalysis[0].pos_words?.ADP.join(", ")}
               </div>
             </div>
           )}
