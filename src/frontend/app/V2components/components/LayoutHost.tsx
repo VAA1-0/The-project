@@ -14,6 +14,7 @@ import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 import POSAnalyzePanel from "./panels/POSAnalyzePanel";
+import { PanelManager } from "@/lib/golden-layout-lib/PanelManager";
 
 export default function LayoutHost() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -25,7 +26,7 @@ export default function LayoutHost() {
       content: [
         {
           type: "column",
-          width: 30,
+          width: 40,
           content: [
             {
               type: "component",
@@ -59,7 +60,8 @@ export default function LayoutHost() {
         },
         {
           type: "stack",
-          width: 20,
+          id: "rightStack",
+          width: 30,
           content: [
             {
               type: "component",
@@ -82,10 +84,14 @@ export default function LayoutHost() {
 
     const layout = new GoldenLayout(hostRef.current);
 
+    // Initialize panelManager with the layout instance
+    const panelManager = new PanelManager(layout);
+
     // Register the component factories
     layout.registerComponentFactoryFunction(
       "ProjectPanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("ProjectPanel", container);
         new ReactComponentWrapper(container, ProjectPanel);
       }
     );
@@ -93,6 +99,7 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "VideoPanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("VideoPanel", container);
         new ReactComponentWrapper(container, VideoPanel);
       }
     );
@@ -100,6 +107,7 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "DownloadPanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("DownloadPanel", container);
         new ReactComponentWrapper(container, DownloadPanel);
       }
     );
@@ -107,6 +115,7 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "ToolsPanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("ToolsPanel", container);
         new ReactComponentWrapper(container, ToolsPanel);
       }
     );
@@ -114,6 +123,7 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "SpeechToTextPanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("SpeechToTextPanel", container);
         new ReactComponentWrapper(container, SpeechToTextPanel);
       }
     );
@@ -121,6 +131,7 @@ export default function LayoutHost() {
     layout.registerComponentFactoryFunction(
       "POSAnalyzePanel",
       (container, state: JsonValue | undefined) => {
+        panelManager.register("POSAnalyzePanel", container);
         new ReactComponentWrapper(container, POSAnalyzePanel);
       }
     );

@@ -84,9 +84,6 @@ export default function POSAnalyzePanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const transcript = analysisData?.transcript ?? [];
-  const detectedObjects = analysisData?.detectedObjects ?? [];
-
   const POSCounts = {
     nouns: analysisData?.posCounts?.nouns ?? 0,
     verbs: analysisData?.posCounts?.verbs ?? 0,
@@ -99,6 +96,30 @@ export default function POSAnalyzePanel() {
     modalDensity: analysisData?.posRatios?.ModalDensity ?? 0,
     pronounShare: analysisData?.posRatios?.PronounShare ?? 0,
     adjectiveAdverbRatio: analysisData?.posRatios?.AdjectiveAdverbRatio ?? 0,
+  };
+
+  const Interrogatives = {
+    who: analysisData?.interrogatives?.who ?? 0,
+    what: analysisData?.interrogatives?.what ?? 0,
+    when: analysisData?.interrogatives?.when ?? 0,
+    where: analysisData?.interrogatives?.where ?? 0,
+    why: analysisData?.interrogatives?.why ?? 0,
+    how: analysisData?.interrogatives?.how ?? 0,
+    by_what_means: analysisData?.interrogatives?.by_what_means ?? 0,
+    towards_what_end: analysisData?.interrogatives?.towards_what_end ?? 0,
+    whence: analysisData?.interrogatives?.whence ?? 0,
+    by_what_consequence: analysisData?.interrogatives?.by_what_consequence ?? 0,
+  };
+
+  const POSWORDS = {
+    NOUN: analysisData?.posWords?.NOUN ?? [],
+    VERB: analysisData?.posWords?.VERB ?? [],
+    ADJ: analysisData?.posWords?.ADJ ?? [],
+    ADV: analysisData?.posWords?.ADV ?? [],
+    PRON: analysisData?.posWords?.PRON ?? [],
+    AUX_MODAL: analysisData?.posWords?.AUX_MODAL ?? [],
+    ADP: analysisData?.posWords?.ADP ?? [],
+    CONJ: analysisData?.posWords?.CONJ ?? [],
   };
 
   return (
@@ -144,7 +165,7 @@ export default function POSAnalyzePanel() {
         {/* POS RATIOS */}
         <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
           POS RATIOS:
-          {transcript.length === 0 ? (
+          {Object.keys(POSCounts).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
             </div>
@@ -165,29 +186,84 @@ export default function POSAnalyzePanel() {
             </div>
           )}
         </div>
-        {/* Detected Objects */}
+        {/* Interrogatives */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
-        Detected Objects:
-        <div className="max-h-50 overflow-y-auto space-y-2 pr-2">
-          {detectedObjects.length === 0 ? (
+        Interrogatives:
+        <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
+          {Object.keys(Interrogatives).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No detected objects
+              No interrogatives detected
             </div>
           ) : (
-            detectedObjects.map((obj: any, idx: number) => (
-              <div
-                key={`${obj.class_name}-${idx}`}
-                className="p-3 rounded-lg bg-slate-700/30"
-              >
-                <div className="flex justify-between text-white">
-                  <span>{obj.class_name}</span>
-                </div>
-                <div className="text-xs text-slate-400">
-                  Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
-                  {(obj.confidence * 100).toFixed(2)}%
-                </div>
+            <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className="text-sm text-slate-200">
+                {"who: " + Interrogatives.who}
               </div>
-            ))
+              <div className="text-sm text-slate-200">
+                {"what: " + Interrogatives.what}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"when: " + Interrogatives.when}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"where: " + Interrogatives.where}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"why: " + Interrogatives.why}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"how: " + Interrogatives.how}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"by what means: " + Interrogatives.by_what_means}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"towards what end: " + Interrogatives.towards_what_end}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"whence: " + Interrogatives.whence}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"by what consequence: " + Interrogatives.by_what_consequence}
+              </div>
+            </div>
+          )}
+        </div>
+        {/* POSWORDS */}
+        {/* Scrollable list container: fixed max height with vertical scrolling */}
+        POSWORDS:
+        <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
+          {Object.keys(POSWORDS).length === 0 ? (
+            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              No POS words detected
+            </div>
+          ) : (
+            <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className="text-sm text-slate-200">
+                {"noun: " + POSWORDS.NOUN.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"verb: " + POSWORDS.VERB.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adjective: " + POSWORDS.ADJ.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adverb: " + POSWORDS.ADV.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"pronoun: " + POSWORDS.PRON.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"aux/modal: " + POSWORDS.AUX_MODAL.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adposition: " + POSWORDS.ADP.join(", ")}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"conjunction: " + POSWORDS.CONJ.join(", ")}
+              </div>
+            </div>
           )}
         </div>
       </div>

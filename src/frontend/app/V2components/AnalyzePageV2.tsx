@@ -15,7 +15,6 @@ export default function Main() {
       }}
     >
       <MenuBar />
-      <Toolbar />
 
       <LayoutHost />
     </div>

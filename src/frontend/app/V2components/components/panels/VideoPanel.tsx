@@ -87,6 +87,7 @@ export default function VideoPanel() {
         {videoId && (
           <div className="text-sm text-slate-400 mt-1">
             Video ID: <span className="font-mono">{videoId}</span>
+            video url is {videoUrl}
           </div>
         )}
       </div>

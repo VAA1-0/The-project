@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { VideoService } from "@/lib/video-service";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
 import { createVideoTask } from "@/cvat-api/client";
+import { PanelManager } from "@/lib/golden-layout-lib/PanelManager";
 
 export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -130,7 +131,23 @@ export function MenuBar() {
     {
       label: "Lenses",
       submenu: [
-        { label: "Lens 1", onClick: () => alert("Lens 1!") },
+        {
+          label: "Lens 1",
+          onClick: () => {
+            console.log("Lens 1!");
+            // Open the ToolsPanel using PanelManager instance
+            // TODO: Replace `yourGoldenLayoutInstance` with the actual GoldenLayout instance in your app
+            const goldenLayout = (window as any).goldenLayoutInstance; // Example: get from global or context
+            const pm = PanelManager.getInstance(goldenLayout);
+            if (pm && typeof pm.open === "function") {
+              pm.open("ToolsPanel");
+            } else {
+              console.warn(
+                "PanelManager instance is not available or does not have an open method."
+              );
+            }
+          },
+        },
         { label: "Lens 2", onClick: () => alert("Lens 2!") },
         { label: "Lens 3", onClick: () => alert("Lens 3!") },
       ],
