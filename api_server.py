@@ -277,6 +277,7 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 shutil.move(str(original_transcript_path), organized_transcript_path)
 
                 # Step 7: POS analysis (AFTER transcript exists in final place)
+                logger.info("📝 Starting POS analysis on transcript...")
                 with open(organized_transcript_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
@@ -287,16 +288,26 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 pos_analyzer = POSAnalysis(text)
                 pos_result = pos_analyzer.run()
 
+                pos_path_init = f"{analysis_id}_pos.json" 
+                pos_path = TRANSCRIPTS_DIR / pos_path_init
+                pos_path.parent.mkdir(exist_ok=True, parents=True)
+
+                with open(pos_path, "w", encoding="utf-8") as f:
+                    json.dump(pos_result, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"POS Results saved: {pos_path}")
+
                 # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
-                    "pos_analysis": pos_result,
+                    "pos_analysis": str(pos_path),
                     "metadata": ingestion_result.get("metadata", {}),
                 }
 
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                output_files["pos_analysis"] = str(pos_path)
 
                 logger.info("✅ Audio pipeline completed successfully")
 
@@ -407,7 +418,8 @@ async def download_file(analysis_id: str, file_type: str):
         "ocr_csv": ("ocr_text.csv", "text/csv"),
         "summary_json": ("analysis_summary.json", "application/json"),
         "audio": ("extracted_audio.wav", "audio/wav"),
-        "transcript": ("transcript.json", "application/json")
+        "transcript": ("transcript.json", "application/json"),
+        "pos_analysis": ("pos_analysis.json", "application/json")
     }
     
     if file_type not in file_mapping:
