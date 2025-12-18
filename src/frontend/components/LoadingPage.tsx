@@ -52,7 +52,7 @@ export function LoadingPage() {
     setErrorMessage("");
 
     try {
-      const auth = await loginToCvat("admin", "admin123");
+      const auth = await loginToCvat("runzhouzhu", "CCCKUi6.478m-hb");
       if (auth.ok) {
         console.log("✅ Logged In");
         setState("success");
