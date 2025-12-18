@@ -14,8 +14,8 @@ import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 
 // Import State manager and laytout factory if needed
-import { panelStateManager } from "@/lib/panel-state-manager";
-import { GoldenLayoutFactory } from "@/lib/golden-layout-factory";
+import { panelStateManager } from "@/lib/golden-layout-lib/panel-state-manager";
+import { GoldenLayoutFactory } from "@/lib/golden-layout-lib/golden-layout-factory";
 
 interface PanelConfig {
   componentName: string;

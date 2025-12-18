@@ -6,7 +6,7 @@ import { getVideoBlob } from "@/lib/blob-store";
 
 import { Download, Search, MoreHorizontal } from "lucide-react";
 
-export default function SpeechToTextPanel() {
+export default function POSAnalyzePanel() {
   const [videoId, setVideoId] = useState("");
 
   const lastObjectUrl = React.useRef<string | null>(null);
@@ -86,7 +86,20 @@ export default function SpeechToTextPanel() {
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
-  const summaryText = analysisData?.summary ?? "…";
+
+  const POSCounts = {
+    nouns: analysisData?.posCounts?.nouns ?? 0,
+    verbs: analysisData?.posCounts?.verbs ?? 0,
+    adjectives: analysisData?.posCounts?.adjectives ?? 0,
+    adverbs: analysisData?.posCounts?.adverbs ?? 0,
+  };
+
+  const POSRatios = {
+    verbNounRatio: analysisData?.posRatios?.VerbNounRatio ?? 0,
+    modalDensity: analysisData?.posRatios?.ModalDensity ?? 0,
+    pronounShare: analysisData?.posRatios?.PronounShare ?? 0,
+    adjectiveAdverbRatio: analysisData?.posRatios?.AdjectiveAdverbRatio ?? 0,
+  };
 
   return (
     <main className="flex-0 overflow-auto">
@@ -104,36 +117,52 @@ export default function SpeechToTextPanel() {
             </button>
           </div>
         </div>
-        {/* SUMMARY */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Summary:
-          {summaryText.length === 0 ? (
+        {/* POS COUNTS */}
+        <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
+          POS COUNTS:
+          {Object.keys(POSRatios).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No summary available
+              No content available
             </div>
           ) : (
             <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">{summaryText}</div>
+              <div className="text-sm text-slate-200">
+                {"nouns: " + POSRatios.verbNounRatio}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"verbs: " + POSRatios.modalDensity}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adjectives: " + POSRatios.adjectiveAdverbRatio}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adverbs: " + POSRatios.pronounShare}
+              </div>
             </div>
           )}
         </div>
-        {/* Speech to text */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
+        {/* POS RATIOS */}
         <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
-          Speech to Text:
+          POS RATIOS:
           {transcript.length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No speech to text detected
+              No content detected
             </div>
           ) : (
-            transcript.map((row: any) => (
-              <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-xs text-cyan-300">
-                  {row.t} • {row.speaker}
-                </div>
-                <div className="text-sm text-slate-200">{row.text}</div>
+            <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className="text-sm text-slate-200">
+                {"nouns: " + POSCounts.nouns}
               </div>
-            ))
+              <div className="text-sm text-slate-200">
+                {"verbs: " + POSCounts.verbs}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adjectives: " + POSCounts.adjectives}
+              </div>
+              <div className="text-sm text-slate-200">
+                {"adverbs: " + POSCounts.adverbs}
+              </div>
+            </div>
           )}
         </div>
         {/* Detected Objects */}

@@ -16,12 +16,9 @@ import {
   FileText,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
-
-interface DownloadPanelProps {
-  videoId?: string | null;
-}
 
 interface DownloadFile {
   name: string;
@@ -70,13 +67,41 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-export default function DownloadPanel({ videoId }: DownloadPanelProps) {
+// Helper function to format seconds into h/m/s display
+const formatTime = (seconds: number): string => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+  return parts.join(" ");
+};
+
+export default function DownloadPanel() {
+  const [videoId, setVideoId] = useState("");
+
   const [availableFiles, setAvailableFiles] = useState<DownloadFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [analysisStatus, setAnalysisStatus] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [showDebug, setShowDebug] = useState(false);
+
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("textChanged", handler);
+
+    return () => {
+      eventBus.off("textChanged", handler);
+    };
+  }, []);
 
   // Helper function to get file icon
   const getFileIcon = (fileType: string, className: string = "size-4") => {
@@ -403,18 +428,13 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
     <div className="h-full flex flex-col bg-[#1a1a1a]">
       <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-300">
+          <h2 className="text-m font-semibold text-slate-300">
             Download Results
           </h2>
           {videoId && (
             <div className="text-xs text-slate-500 mt-1">
               Video ID:{" "}
               <span className="font-mono">{videoId.substring(0, 8)}...</span>
-              {analysisStatus?.pipeline_type && (
-                <span className="ml-2">
-                  • Pipeline: {analysisStatus.pipeline_type}
-                </span>
-              )}
             </div>
           )}
         </div>
@@ -459,12 +479,12 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <StatusBadge status={analysisStatus.status} />
-              <span className="text-sm text-slate-300 truncate max-w-xs">
+              <span className="text-xs text-slate-300 truncate max-w-xs">
                 {analysisStatus.filename}
               </span>
             </div>
             {analysisStatus.progress !== undefined && (
-              <span className="text-sm font-medium text-slate-300">
+              <span className="text-xs font-medium text-slate-300">
                 {analysisStatus.progress}%
               </span>
             )}
@@ -488,6 +508,14 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           <div className="flex items-center justify-between mt-3 text-xs">
             <div className="text-slate-400">
               {getAvailableFileCount()} of {getTotalFileCount()} files ready
+            </div>
+            <div className="flex items-center justify-between">
+              {analysisStatus.processing_time && (
+                <div className="text-xs text-slate-500">
+                  Processed in{" "}
+                  {formatTime(analysisStatus.processing_time / 1000000)}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-3 text-slate-500">
               {analysisStatus.pipeline_type && (
@@ -615,20 +643,6 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-slate-300">
-                <span className="text-green-400">
-                  {getAvailableFileCount()}
-                </span>{" "}
-                of <span>{getTotalFileCount()}</span> files generated
-              </div>
-              {analysisStatus.processing_time && (
-                <div className="text-xs text-slate-500">
-                  Processed in {analysisStatus.processing_time}s
-                </div>
-              )}
-            </div>
-
             {availableFiles.map((file, index) => (
               <div
                 key={index}
@@ -652,7 +666,7 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
                   {file.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1 text-xs flex-wrap">
                     <div
                       className={`font-medium truncate ${
                         file.available
@@ -672,7 +686,7 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
                       {file.available ? "Ready" : "Pending"}
                     </span>
                   </div>
-                  <div className="text-sm text-slate-500 mb-1">
+                  <div className="text-xs text-slate-500 mb-1">
                     {file.description}
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-600">
@@ -730,34 +744,33 @@ export default function DownloadPanel({ videoId }: DownloadPanelProps) {
                 </div>
               </div>
             )}
-
-            <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="size-2 rounded-full bg-green-500"></div>
-                  <span>
-                    Backend: <span className="font-mono">localhost:8000</span>
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleRefresh}
-                    className="text-slate-400 hover:text-slate-300 flex items-center gap-1"
-                  >
-                    <RefreshCw className="size-3" />
-                    Refresh
-                  </button>
-                  <button
-                    onClick={() => setShowDebug(!showDebug)}
-                    className="text-blue-400 hover:text-blue-300"
-                  >
-                    {showDebug ? "Hide Debug" : "Show Debug"}
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
         )}
+      </div>
+      <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="size-2 rounded-full bg-green-500"></div>
+            <span>
+              Backend: <span className="font-mono">localhost:8000</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleRefresh}
+              className="text-slate-400 hover:text-slate-300 flex items-center gap-1"
+            >
+              <RefreshCw className="size-3" />
+              Refresh
+            </button>
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              className="text-blue-400 hover:text-blue-300"
+            >
+              {showDebug ? "Hide Debug" : "Show Debug"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
