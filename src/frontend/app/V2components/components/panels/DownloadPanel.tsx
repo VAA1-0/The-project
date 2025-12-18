@@ -19,6 +19,12 @@ import { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface DownloadFile {
   name: string;
@@ -425,353 +431,379 @@ export default function DownloadPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#1a1a1a]">
-      <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-        <div>
-          <h2 className="text-m font-semibold text-slate-300">
-            Download Results
-          </h2>
-          {videoId && (
-            <div className="text-xs text-slate-500 mt-1">
-              Video ID:{" "}
-              <span className="font-mono">{videoId.substring(0, 8)}...</span>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowDebug(!showDebug)}
-            className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 transition-colors"
-            title="Show Debug Info"
-          >
-            <Bug className="size-4" />
-          </button>
-          {videoId && (
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 disabled:opacity-50 transition-colors"
-              title="Refresh"
-            >
-              {refreshing ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-            </button>
-          )}
-          {getAvailableFileCount() > 0 && (
-            <button
-              onClick={handleDownloadAll}
-              className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
-              title="Download All Available Files"
-              disabled={getAvailableFileCount() === 0}
-            >
-              <Download className="size-4" />
-              Download All ({getAvailableFileCount()})
-            </button>
-          )}
-        </div>
-      </div>
-
-      {analysisStatus && (
-        <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/50">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <StatusBadge status={analysisStatus.status} />
-              <span className="text-xs text-slate-300 truncate max-w-xs">
-                {analysisStatus.filename}
-              </span>
-            </div>
-            {analysisStatus.progress !== undefined && (
-              <span className="text-xs font-medium text-slate-300">
-                {analysisStatus.progress}%
-              </span>
+    <TooltipProvider delayDuration={200}>
+      <div className="h-full flex flex-col bg-[#1a1a1a]">
+        <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+          <div>
+            <h2 className="text-m font-semibold text-slate-300">
+              Download Results
+            </h2>
+            {videoId && (
+              <div className="text-xs text-slate-500 mt-1">
+                Video ID:{" "}
+                <span className="font-mono">{videoId.substring(0, 8)}...</span>
+              </div>
             )}
           </div>
-
-          {analysisStatus.status === "processing" && (
-            <div className="mt-2">
-              <div className="flex justify-between text-xs text-slate-400 mb-1">
-                <span>Analysis in progress...</span>
-                <span>{analysisStatus.progress}%</span>
-              </div>
-              <div className="w-full bg-slate-700 rounded-full h-2">
-                <div
-                  className="bg-green-500 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${analysisStatus.progress || 0}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between mt-3 text-xs">
-            <div className="text-slate-400">
-              {getAvailableFileCount()} of {getTotalFileCount()} files ready
-            </div>
-            <div className="flex items-center justify-between">
-              {analysisStatus.processing_time && (
-                <div className="text-xs text-slate-500">
-                  Processed in{" "}
-                  {formatTime(analysisStatus.processing_time / 1000000)}
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-3 text-slate-500">
-              {analysisStatus.pipeline_type && (
-                <span>Pipeline: {analysisStatus.pipeline_type}</span>
-              )}
-              {analysisStatus.cvatID && (
-                <span>CVAT: {analysisStatus.cvatID}</span>
-              )}
-            </div>
-          </div>
-
-          {analysisStatus.error && (
-            <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
-              <div className="font-medium">Error:</div>
-              <div>{analysisStatus.error}</div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Debug Panel */}
-      {showDebug && debugInfo && (
-        <div className="border-b border-slate-700 bg-slate-900">
-          <div className="px-4 py-2 flex justify-between items-center bg-slate-800">
-            <h3 className="text-sm font-semibold text-slate-300">
-              Debug Information
-            </h3>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(debugInfo);
-                  alert("Debug info copied to clipboard!");
-                }}
-                className="text-xs text-slate-400 hover:text-slate-300"
-              >
-                Copy
-              </button>
-              <button
-                onClick={() => setShowDebug(false)}
-                className="text-xs text-slate-400 hover:text-slate-300"
-              >
-                Hide
-              </button>
-            </div>
-          </div>
-          <pre className="text-xs text-slate-300 p-4 max-h-64 overflow-auto font-mono bg-black/30 whitespace-pre-wrap">
-            {debugInfo}
-          </pre>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-64">
-            <Loader2 className="size-8 text-slate-400 animate-spin mb-4" />
-            <div className="text-slate-400">Loading analysis data...</div>
-            <div className="text-xs text-slate-500 mt-2">
-              Connecting to FastAPI backend...
-            </div>
-          </div>
-        ) : !videoId ? (
-          <div className="flex flex-col items-center justify-center h-64">
-            <Folder className="size-12 text-slate-400 mb-4" />
-            <div className="text-slate-400 text-lg mb-2">No Video Selected</div>
-            <div className="text-slate-500 text-sm text-center max-w-xs">
-              Select a video from the Project Panel to view and download
-              analysis results
-            </div>
-          </div>
-        ) : analysisStatus?.status === "error" ? (
-          <div className="flex flex-col items-center justify-center h-64 p-4">
-            <AlertCircle className="size-12 text-red-400 mb-4" />
-            <div className="text-slate-300 text-lg mb-2 text-center">
-              Analysis Error
-            </div>
-            <div className="text-sm text-slate-400 text-center mb-4">
-              {analysisStatus.error || "An error occurred during analysis"}
-            </div>
-            <button
-              onClick={handleRefresh}
-              className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded flex items-center gap-2"
-            >
-              <RefreshCw className="size-4" />
-              Try Again
-            </button>
-          </div>
-        ) : analysisStatus?.status !== "completed" ? (
-          <div className="flex flex-col items-center justify-center h-64 p-4">
-            <Clock className="size-12 text-yellow-400 mb-4 animate-pulse" />
-            <div className="text-slate-300 text-lg mb-2">
-              {analysisStatus?.status === "processing"
-                ? "Analysis in Progress..."
-                : "Analysis Not Complete"}
-            </div>
-            <div className="text-sm text-slate-500 text-center max-w-sm">
-              {analysisStatus?.progress !== undefined && (
-                <div className="mb-3">
-                  <div className="text-slate-300 font-medium mb-1">
-                    {analysisStatus.progress}% complete
-                  </div>
-                  <div className="w-48 bg-slate-700 rounded-full h-2">
-                    <div
-                      className="bg-green-500 h-2 rounded-full transition-all duration-500"
-                      style={{ width: `${analysisStatus.progress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              <p className="mb-2">
-                All {getTotalFileCount()} file types will be generated when
-                analysis completes:
-              </p>
-              <div className="grid grid-cols-2 gap-1 text-xs">
-                {API_CONFIG.EXPECTED_FILE_TYPES.map((type, idx) => (
-                  <div
-                    key={idx}
-                    className="text-slate-400 flex items-center gap-1"
-                  >
-                    <div className="size-2 rounded-full bg-blue-500/50"></div>
-                    {getFileTypeConfig(type).name}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {availableFiles.map((file, index) => (
-              <div
-                key={index}
-                className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
-                  file.available
-                    ? "border-slate-700 hover:bg-slate-800/50 hover:border-slate-600 cursor-pointer group"
-                    : "border-slate-800 opacity-60 cursor-not-allowed"
-                }`}
-                onClick={() =>
-                  file.available &&
-                  handleDownload(file.type, file.downloadUrl, file.name)
-                }
-              >
-                <div
-                  className={`shrink-0 p-3 rounded-lg ${
-                    file.available
-                      ? "bg-slate-800 group-hover:bg-slate-700"
-                      : "bg-slate-900"
-                  }`}
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowDebug(!showDebug)}
+                  className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 transition-colors"
                 >
-                  {file.icon}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1 text-xs flex-wrap">
-                    <div
-                      className={`font-medium truncate ${
-                        file.available
-                          ? "text-slate-300 group-hover:text-white"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      {file.name}
-                    </div>
-                    <span
-                      className={`text-xs px-2 py-1 rounded ${
-                        file.available
-                          ? "text-green-400 bg-green-500/10"
-                          : "text-slate-600 bg-slate-900/50"
-                      }`}
-                    >
-                      {file.available ? "Ready" : "Pending"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500 mb-1">
-                    {file.description}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-600">
-                    <span className="font-mono">{file.type}</span>
-                    {file.size && <span>• {file.size}</span>}
-                  </div>
-                </div>
-                {file.available ? (
+                  <Bug className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Show debug info</p>
+              </TooltipContent>
+            </Tooltip>
+            {videoId && (
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <button
-                    className="p-3 hover:bg-slate-700 rounded-lg transition-all shrink-0 group-hover:bg-blue-600/20"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDownload(file.type, file.downloadUrl, file.name);
-                    }}
-                    title={`Download ${file.name}`}
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="p-2 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 disabled:opacity-50 transition-colors"
                   >
-                    <Download className="size-5 text-blue-400 group-hover:text-blue-300" />
+                    {refreshing ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
                   </button>
-                ) : (
-                  <div className="text-xs text-slate-500 italic px-3 py-2 border border-slate-700 rounded">
-                    Not generated
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Refresh status</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {getAvailableFileCount() > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleDownloadAll}
+                    className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
+                    disabled={getAvailableFileCount() === 0}
+                  >
+                    <Download className="size-4" />
+                    Download All ({getAvailableFileCount()})
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Download all available files</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+
+        {analysisStatus && (
+          <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/50">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={analysisStatus.status} />
+                <span className="text-xs text-slate-300 truncate max-w-xs">
+                  {analysisStatus.filename}
+                </span>
+              </div>
+              {analysisStatus.progress !== undefined && (
+                <span className="text-xs font-medium text-slate-300">
+                  {analysisStatus.progress}%
+                </span>
+              )}
+            </div>
+
+            {analysisStatus.status === "processing" && (
+              <div className="mt-2">
+                <div className="flex justify-between text-xs text-slate-400 mb-1">
+                  <span>Analysis in progress...</span>
+                  <span>{analysisStatus.progress}%</span>
+                </div>
+                <div className="w-full bg-slate-700 rounded-full h-2">
+                  <div
+                    className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${analysisStatus.progress || 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between mt-3 text-xs">
+              <div className="text-slate-400">
+                {getAvailableFileCount()} of {getTotalFileCount()} files ready
+              </div>
+              <div className="flex items-center justify-between">
+                {analysisStatus.processing_time && (
+                  <div className="text-xs text-slate-500">
+                    Processed in{" "}
+                    {formatTime(analysisStatus.processing_time / 1000000)}
                   </div>
                 )}
               </div>
-            ))}
+              <div className="flex items-center gap-3 text-slate-500">
+                {analysisStatus.pipeline_type && (
+                  <span>Pipeline: {analysisStatus.pipeline_type}</span>
+                )}
+                {analysisStatus.cvatID && (
+                  <span>CVAT: {analysisStatus.cvatID}</span>
+                )}
+              </div>
+            </div>
 
-            {getAvailableFileCount() < getTotalFileCount() && (
-              <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-                <h4 className="text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
-                  <AlertCircle className="size-4 text-yellow-500" />
-                  Some files not generated
-                </h4>
-                <p className="text-xs text-slate-400 mb-3">
-                  Not all expected files were generated. This could be because:
-                </p>
-                <ul className="text-xs text-slate-500 space-y-1">
-                  <li>
-                    • The analysis pipeline type didn't include all modules
-                  </li>
-                  <li>• Certain analysis steps failed (check backend logs)</li>
-                  <li>
-                    • The video didn't contain content for all analysis types
-                  </li>
-                  <li>• Backend processing is still in progress</li>
-                </ul>
-                <div className="mt-3 pt-3 border-t border-slate-700">
-                  <button
-                    onClick={() =>
-                      window.open("http://localhost:8000/docs", "_blank")
-                    }
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                  >
-                    Check FastAPI Docs →
-                  </button>
-                </div>
+            {analysisStatus.error && (
+              <div className="mt-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs text-red-300">
+                <div className="font-medium">Error:</div>
+                <div>{analysisStatus.error}</div>
               </div>
             )}
           </div>
         )}
-      </div>
-      <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="size-2 rounded-full bg-green-500"></div>
-            <span>
-              Backend: <span className="font-mono">localhost:8000</span>
-            </span>
+
+        {/* Debug Panel */}
+        {showDebug && debugInfo && (
+          <div className="border-b border-slate-700 bg-slate-900">
+            <div className="px-4 py-2 flex justify-between items-center bg-slate-800">
+              <h3 className="text-sm font-semibold text-slate-300">
+                Debug Information
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(debugInfo);
+                    alert("Debug info copied to clipboard!");
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-300"
+                >
+                  Copy
+                </button>
+                <button
+                  onClick={() => setShowDebug(false)}
+                  className="text-xs text-slate-400 hover:text-slate-300"
+                >
+                  Hide
+                </button>
+              </div>
+            </div>
+            <pre className="text-xs text-slate-300 p-4 max-h-64 overflow-auto font-mono bg-black/30 whitespace-pre-wrap">
+              {debugInfo}
+            </pre>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleRefresh}
-              className="text-slate-400 hover:text-slate-300 flex items-center gap-1"
-            >
-              <RefreshCw className="size-3" />
-              Refresh
-            </button>
-            <button
-              onClick={() => setShowDebug(!showDebug)}
-              className="text-blue-400 hover:text-blue-300"
-            >
-              {showDebug ? "Hide Debug" : "Show Debug"}
-            </button>
-          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <Loader2 className="size-8 text-slate-400 animate-spin mb-4" />
+              <div className="text-slate-400">Loading analysis data...</div>
+              <div className="text-xs text-slate-500 mt-2">
+                Connecting to FastAPI backend...
+              </div>
+            </div>
+          ) : !videoId ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <Folder className="size-12 text-slate-400 mb-4" />
+              <div className="text-slate-400 text-lg mb-2">
+                No Video Selected
+              </div>
+              <div className="text-slate-500 text-sm text-center max-w-xs">
+                Select a video from the Project Panel to view and download
+                analysis results
+              </div>
+            </div>
+          ) : analysisStatus?.status === "error" ? (
+            <div className="flex flex-col items-center justify-center h-64 p-4">
+              <AlertCircle className="size-12 text-red-400 mb-4" />
+              <div className="text-slate-300 text-lg mb-2 text-center">
+                Analysis Error
+              </div>
+              <div className="text-sm text-slate-400 text-center mb-4">
+                {analysisStatus.error || "An error occurred during analysis"}
+              </div>
+              <button
+                onClick={handleRefresh}
+                className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded flex items-center gap-2"
+              >
+                <RefreshCw className="size-4" />
+                Try Again
+              </button>
+            </div>
+          ) : analysisStatus?.status !== "completed" ? (
+            <div className="flex flex-col items-center justify-center h-64 p-4">
+              <Clock className="size-12 text-yellow-400 mb-4 animate-pulse" />
+              <div className="text-slate-300 text-lg mb-2">
+                {analysisStatus?.status === "processing"
+                  ? "Analysis in Progress..."
+                  : "Analysis Not Complete"}
+              </div>
+              <div className="text-sm text-slate-500 text-center max-w-sm">
+                {analysisStatus?.progress !== undefined && (
+                  <div className="mb-3">
+                    <div className="text-slate-300 font-medium mb-1">
+                      {analysisStatus.progress}% complete
+                    </div>
+                    <div className="w-48 bg-slate-700 rounded-full h-2">
+                      <div
+                        className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${analysisStatus.progress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="mb-2">
+                  All {getTotalFileCount()} file types will be generated when
+                  analysis completes:
+                </p>
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  {API_CONFIG.EXPECTED_FILE_TYPES.map((type, idx) => (
+                    <div
+                      key={idx}
+                      className="text-slate-400 flex items-center gap-1"
+                    >
+                      <div className="size-2 rounded-full bg-blue-500/50"></div>
+                      {getFileTypeConfig(type).name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {availableFiles.map((file, index) => (
+                <div
+                  key={index}
+                  className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
+                    file.available
+                      ? "border-slate-700 hover:bg-slate-800/50 hover:border-slate-600 cursor-pointer group"
+                      : "border-slate-800 opacity-60 cursor-not-allowed"
+                  }`}
+                  onClick={() =>
+                    file.available &&
+                    handleDownload(file.type, file.downloadUrl, file.name)
+                  }
+                >
+                  <div
+                    className={`shrink-0 p-3 rounded-lg ${
+                      file.available
+                        ? "bg-slate-800 group-hover:bg-slate-700"
+                        : "bg-slate-900"
+                    }`}
+                  >
+                    {file.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1 text-xs flex-wrap">
+                      <div
+                        className={`font-medium truncate ${
+                          file.available
+                            ? "text-slate-300 group-hover:text-white"
+                            : "text-slate-500"
+                        }`}
+                      >
+                        {file.name}
+                      </div>
+                      <span
+                        className={`text-xs px-2 py-1 rounded ${
+                          file.available
+                            ? "text-green-400 bg-green-500/10"
+                            : "text-slate-600 bg-slate-900/50"
+                        }`}
+                      >
+                        {file.available ? "Ready" : "Pending"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 mb-1">
+                      {file.description}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-600">
+                      <span className="font-mono">{file.type}</span>
+                      {file.size && <span>• {file.size}</span>}
+                    </div>
+                  </div>
+                  {file.available ? (
+                    <button
+                      className="p-3 hover:bg-slate-700 rounded-lg transition-all shrink-0 group-hover:bg-blue-600/20"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownload(file.type, file.downloadUrl, file.name);
+                      }}
+                      title={`Download ${file.name}`}
+                    >
+                      <Download className="size-5 text-blue-400 group-hover:text-blue-300" />
+                    </button>
+                  ) : (
+                    <div className="text-xs text-slate-500 italic px-3 py-2 border border-slate-700 rounded">
+                      Not generated
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {getAvailableFileCount() < getTotalFileCount() && (
+                <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+                  <h4 className="text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
+                    <AlertCircle className="size-4 text-yellow-500" />
+                    Some files not generated
+                  </h4>
+                  <p className="text-xs text-slate-400 mb-3">
+                    Not all expected files were generated. This could be
+                    because:
+                  </p>
+                  <ul className="text-xs text-slate-500 space-y-1">
+                    <li>
+                      • The analysis pipeline type didn't include all modules
+                    </li>
+                    <li>
+                      • Certain analysis steps failed (check backend logs)
+                    </li>
+                    <li>
+                      • The video didn't contain content for all analysis types
+                    </li>
+                    <li>• Backend processing is still in progress</li>
+                  </ul>
+                  <div className="mt-3 pt-3 border-t border-slate-700">
+                    <button
+                      onClick={() =>
+                        window.open("http://localhost:8000/docs", "_blank")
+                      }
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      Check FastAPI Docs →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="size-2 rounded-full bg-green-500"></div>
+                    <span>
+                      Backend: <span className="font-mono">localhost:8000</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleRefresh}
+                      className="text-slate-400 hover:text-slate-300 flex items-center gap-1"
+                    >
+                      <RefreshCw className="size-3" />
+                      Refresh
+                    </button>
+                    <button
+                      onClick={() => setShowDebug(!showDebug)}
+                      className="text-blue-400 hover:text-blue-300"
+                    >
+                      {showDebug ? "Hide Debug" : "Show Debug"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

@@ -14,6 +14,12 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "@/components/VideoItem";
 import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export default function ProjectPanel() {
   const [libraryVideos, setLibraryVideos] = useState<any[]>([]);
@@ -150,18 +156,41 @@ export default function ProjectPanel() {
   };
 
   return (
-    <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden h-full">
-      <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
-        <span className="text-[#b8b8b8] text-[12px]">Project</span>
-        <div className="flex items-center gap-1">
-          <button className="p-1 hover:bg-[#2a2a2a] rounded">
-            <Search className="size-3.5 text-[#b8b8b8]" />
-          </button>
-          <button className="p-1 hover:bg-[#2a2a2a] rounded">
-            <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
-          </button>
+    <TooltipProvider delayDuration={200}>
+      <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden h-full">
+        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
+          <span className="text-[#b8b8b8] text-[12px]">Project</span>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Search library"
+                  className="p-1 hover:bg-[#2a2a2a] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <Search className="size-3.5 text-[#b8b8b8]" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Search library</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  className="p-1 hover:bg-[#2a2a2a] rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>More actions</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-      </div>
       <div className="px-2 py-1.5 border-b border-[#1a1a1a] flex items-center text-[10px] text-[#6a6a6a] bg-[#1e1e1e]">
         <span className="flex-1">Name</span>
         <span className="text-[9px]">Media End</span>
@@ -176,34 +205,37 @@ export default function ProjectPanel() {
             </div>
           )}
 
-          {libraryVideos.map((vid: any) => (
+          {libraryVideos.map((vid: any, idx: number) => (
             <div
               key={vid.id}
-              className="p-3 bg-slate-900/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-slate-900/50"
+              role="button"
+              aria-label={`Select video ${vid.name}`}
+              tabIndex={0}
+              className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 // use eventBus to notify other panels
                 const v = vid.id;
                 setVideoId(v);
                 eventBus.emit("textChanged", v);
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  onVideoSelect?.(vid.id);
+                  e.preventDefault();
+                } else if (e.key === "ArrowDown") {
+                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
+                  const next = Math.min(idx + 1, items.length - 1);
+                  items[next]?.focus();
+                  e.preventDefault();
+                } else if (e.key === "ArrowUp") {
+                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
+                  const prev = Math.max(idx - 1, 0);
+                  items[prev]?.focus();
+                  e.preventDefault();
+                }
+              }}
             >
-              <div>
-                <div className="font-medium">{vid.name}</div>
-                <div className="text-xs text-slate-400">
-                  {vid.analysis ? "Analyzed" : "Uploaded"}
-                  {vid.status === "pending" && (
-                    <span className="ml-2 text-yellow-300">• Pending</span>
-                  )}
-                  {vid.status === "synced" && (
-                    <span className="ml-2 text-emerald-300">• Synced</span>
-                  )}
-                  {vid.status === "failed" && (
-                    <span className="ml-2 text-red-400">• Failed</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-2">
+              <div onClick={(e) => e.stopPropagation()}>
                 <VideoItem
                   vid={vid}
                   onView={() => {}}
@@ -217,5 +249,6 @@ export default function ProjectPanel() {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
