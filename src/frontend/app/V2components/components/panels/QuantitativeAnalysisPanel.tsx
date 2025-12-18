@@ -150,8 +150,8 @@ export default function QuantitativeAnalysisPanel() {
           </div>
         </div>
         {/* Build Token Stream */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Build Token Stream:
+        Build Token Stream:
+        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
           {Object.keys(BuildTokenStream).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content available
@@ -174,8 +174,8 @@ export default function QuantitativeAnalysisPanel() {
           )}
         </div>
         {/* Corpus Sentence Word Stats */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Corpus Sentence Word Stats:
+        Corpus Sentence Word Stats:
+        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
           {Object.keys(CorpusSentenceWordStats).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
@@ -200,7 +200,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* TFIDF Top Terms */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         TFIDF Top Terms:
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
           {Object.keys(TFIDFTopTerms).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No TFIDF Top Terms detected
@@ -243,7 +243,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* Bigrams */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         Bigrams:
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
           {Object.keys(Bigrams).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No Bigrams detected
@@ -280,7 +280,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* SentenceTagging */}
         {/* Scrollable list container: fixed max height with vertical scrolling */}
         SentenceTagging:
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
           {Object.keys(SentenceTagging).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No SentenceTagging detected

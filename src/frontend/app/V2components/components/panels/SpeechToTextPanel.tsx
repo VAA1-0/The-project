@@ -6,8 +6,12 @@ import { getVideoBlob } from "@/lib/blob-store";
 
 import { Download, Search, MoreHorizontal } from "lucide-react";
 
-export default function SpeechToTextPanel() {
-  const [videoId, setVideoId] = useState("");
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export default function SpeechToTextPanel() {
   const [videoId, setVideoId] = useState("");
@@ -122,65 +126,65 @@ export default function SpeechToTextPanel() {
               </Tooltip>
             </div>
           </div>
-        {/* SUMMARY */}
-        <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
-          Summary:
-          {summaryText.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No summary available
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">{summaryText}</div>
-            </div>
-          )}
-        </div>
-        {/* Speech to text */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
-        <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+          {/* SUMMARY */}
+          <div className="max-h-30 overflow-y-auto space-y-2 pr-2">
+            Summary:
+            {summaryText.length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No summary available
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">{summaryText}</div>
+              </div>
+            )}
+          </div>
+          {/* Speech to text */}
+          {/* Scrollable list container: fixed max height with vertical scrolling */}
           Speech to Text:
-          {transcript.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No speech to text detected
-            </div>
-          ) : (
-            transcript.map((row: any) => (
-              <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-xs text-cyan-300">
-                  {row.t} • {row.speaker}
-                </div>
-                <div className="text-sm text-slate-200">{row.text}</div>
+          <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+            {transcript.length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No speech to text detected
               </div>
-            ))
-          )}
-        </div>
-        {/* Detected Objects */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
-        Detected Objects:
-        <div className="max-h-50 overflow-y-auto space-y-2 pr-2">
-          {detectedObjects.length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No detected objects
-            </div>
-          ) : (
-            detectedObjects.map((obj: any, idx: number) => (
-              <div
-                key={`${obj.class_name}-${idx}`}
-                className="p-3 rounded-lg bg-slate-700/30"
-              >
-                <div className="flex justify-between text-white">
-                  <span>{obj.class_name}</span>
+            ) : (
+              transcript.map((row: any) => (
+                <div key={row.t} className="p-3 bg-slate-700/30 rounded-lg">
+                  <div className="text-xs text-cyan-300">
+                    {row.t} • {row.speaker}
+                  </div>
+                  <div className="text-sm text-slate-200">{row.text}</div>
                 </div>
-                <div className="text-xs text-slate-400">
-                  Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
-                  {(obj.confidence * 100).toFixed(2)}%
-                </div>
+              ))
+            )}
+          </div>
+          {/* Detected Objects */}
+          {/* Scrollable list container: fixed max height with vertical scrolling */}
+          Detected Objects:
+          <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+            {detectedObjects.length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No detected objects
               </div>
-            ))
-          )}
+            ) : (
+              detectedObjects.map((obj: any, idx: number) => (
+                <div
+                  key={`${obj.class_name}-${idx}`}
+                  className="p-3 rounded-lg bg-slate-700/30"
+                >
+                  <div className="flex justify-between text-white">
+                    <span>{obj.class_name}</span>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
+                    {(obj.confidence * 100).toFixed(2)}%
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
     </TooltipProvider>
   );
 }

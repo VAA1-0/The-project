@@ -191,64 +191,83 @@ export default function ProjectPanel() {
             </Tooltip>
           </div>
         </div>
-      <div className="px-2 py-1.5 border-b border-[#1a1a1a] flex items-center text-[10px] text-[#6a6a6a] bg-[#1e1e1e]">
-        <span className="flex-1">Name</span>
-        <span className="text-[9px]">Media End</span>
-      </div>
-      <div className="flex-1 min-h-0">
-        {/* Scrollable Video list */}
-        <div className="space-y-2 flex-1 overflow-y-auto p-2 h-full max-h-full">
-          {/* Real mapped videos */}
-          {libraryVideos.length === 0 && (
-            <div className="text-sm text-slate-400 p-3">
-              No videos uploaded yet.
-            </div>
-          )}
-
-          {libraryVideos.map((vid: any, idx: number) => (
-            <div
-              key={vid.id}
-              role="button"
-              aria-label={`Select video ${vid.name}`}
-              tabIndex={0}
-              className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              onClick={() => {
-                // use eventBus to notify other panels
-                const v = vid.id;
-                setVideoId(v);
-                eventBus.emit("textChanged", v);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  onVideoSelect?.(vid.id);
-                  e.preventDefault();
-                } else if (e.key === "ArrowDown") {
-                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
-                  const next = Math.min(idx + 1, items.length - 1);
-                  items[next]?.focus();
-                  e.preventDefault();
-                } else if (e.key === "ArrowUp") {
-                  const items = Array.from((e.currentTarget.parentElement as HTMLElement).children) as HTMLElement[];
-                  const prev = Math.max(idx - 1, 0);
-                  items[prev]?.focus();
-                  e.preventDefault();
-                }
-              }}
-            >
-              <div onClick={(e) => e.stopPropagation()}>
-                <VideoItem
-                  vid={vid}
-                  onView={() => {}}
-                  onDelete={handleDeleteVideo}
-                  onRename={handleRenameVideo}
-                  onUpdateTag={handleUpdateVideoTag}
-                />
+        <div className="px-2 py-1.5 border-b border-[#1a1a1a] flex items-center text-[10px] text-[#6a6a6a] bg-[#1e1e1e]">
+          <span className="flex-1">Name</span>
+          <span className="text-[9px]">Media End</span>
+        </div>
+        <div className="flex-1 min-h-0">
+          {/* Scrollable Video list */}
+          <div className="space-y-2 flex-1 overflow-y-auto p-2 h-full max-h-full">
+            {/* Real mapped videos */}
+            {libraryVideos.length === 0 && (
+              <div className="text-sm text-slate-400 p-3">
+                No videos uploaded yet.
               </div>
-            </div>
-          ))}
+            )}
+
+            {libraryVideos.map((vid: any, idx: number) => (
+              <div
+                key={vid.id}
+                role="button"
+                aria-label={`Select video ${vid.name}`}
+                tabIndex={0}
+                className="p-3 bg-slate-900/30 rounded-md cursor-pointer hover:bg-slate-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                onClick={() => {
+                  // use eventBus to notify other panels
+                  console.log("ProjectPanel: video selected", vid.id);
+
+                  const v = vid.id;
+                  setVideoId(v);
+                  eventBus.emit("textChanged", v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    // use eventBus to notify other panels
+                    const v = vid.id;
+                    setVideoId(v);
+                    eventBus.emit("textChanged", v);
+
+                    e.preventDefault();
+                  } else if (e.key === "ArrowDown") {
+                    const items = Array.from(
+                      (e.currentTarget.parentElement as HTMLElement).children
+                    ) as HTMLElement[];
+                    const next = Math.min(idx + 1, items.length - 1);
+                    items[next]?.focus();
+                    e.preventDefault();
+                  } else if (e.key === "ArrowUp") {
+                    const items = Array.from(
+                      (e.currentTarget.parentElement as HTMLElement).children
+                    ) as HTMLElement[];
+                    const prev = Math.max(idx - 1, 0);
+                    items[prev]?.focus();
+                    e.preventDefault();
+                  }
+                }}
+              >
+                <div
+                  className="flex gap-2"
+                  onClick={(e) => {
+                    // use eventBus to notify other panels
+                    const v = vid.id;
+                    setVideoId(v);
+                    eventBus.emit("textChanged", v);
+                    e.stopPropagation();
+                  }}
+                >
+                  <VideoItem
+                    vid={vid}
+                    onView={() => {}}
+                    onDelete={handleDeleteVideo}
+                    onRename={handleRenameVideo}
+                    onUpdateTag={handleUpdateVideoTag}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
     </TooltipProvider>
   );
 }

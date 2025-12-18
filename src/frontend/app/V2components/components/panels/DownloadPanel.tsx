@@ -534,6 +534,9 @@ export default function DownloadPanel() {
               <div className="text-slate-400">
                 {getAvailableFileCount()} of {getTotalFileCount()} files ready
               </div>
+
+              {/* Process time,  */}
+              {/*
               <div className="flex items-center justify-between">
                 {analysisStatus.processing_time && (
                   <div className="text-xs text-slate-500">
@@ -542,6 +545,7 @@ export default function DownloadPanel() {
                   </div>
                 )}
               </div>
+              */}
               <div className="flex items-center gap-3 text-slate-500">
                 {analysisStatus.pipeline_type && (
                   <span>Pipeline: {analysisStatus.pipeline_type}</span>

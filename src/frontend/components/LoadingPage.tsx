@@ -78,7 +78,7 @@ export function LoadingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-6">
       {/* Header */}
       <div className="absolute top-6 left-6">
         <GameRunLogo size="lg" />
@@ -138,7 +138,9 @@ export function LoadingPage() {
             </div>
             <div className="text-center space-y-4">
               <div className="space-y-2">
-                <h1 className="text-2xl font-bold text-white">Connection Failed</h1>
+                <h1 className="text-2xl font-bold text-white">
+                  Connection Failed
+                </h1>
                 <p className="text-slate-400">{errorMessage}</p>
               </div>
               <Button

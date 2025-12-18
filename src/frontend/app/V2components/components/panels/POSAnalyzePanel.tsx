@@ -139,8 +139,8 @@ export default function POSAnalyzePanel() {
           </div>
         </div>
         {/* POS COUNTS */}
+        POS COUNTS:
         <div className="max-h-35 overflow-y-auto space-y-2 pr-2">
-          POS COUNTS:
           {Object.keys(POSRatios).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content available
@@ -163,8 +163,8 @@ export default function POSAnalyzePanel() {
           )}
         </div>
         {/* POS RATIOS */}
+        POS RATIOS:
         <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
-          POS RATIOS:
           {Object.keys(POSCounts).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
