@@ -124,6 +124,10 @@ or for electron app
 ```bash
 npm run start:electron
 ```
+
+## User guide
+To understand how the app user interface works, see USER_GUIDE.md.
+
 ## Licensing
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
