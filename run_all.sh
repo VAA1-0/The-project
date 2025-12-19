@@ -2,7 +2,7 @@
 set +o histexpand
 
 LOG_FILE="task_timing.log"
-TASK_COUNT=5
+TASK_COUNT=2
 
 echo "===== Start: $(date '+%F %T.%3N') =====" | tee -a "$LOG_FILE"
 
@@ -17,12 +17,13 @@ do
 
     echo "[$(date '+%T.%3N')] Task $i started" | tee -a "$LOG_FILE"
 
-    powershell -Command "python test_video_upload.py ./samples/finnish_news.mp4" &
+    powershell -Command "python3 test_video_upload.py ./samples/finnish_news.mp4" &
+    # gnome-terminal -- bash -c "python3 test_video_upload.py ./samples/finnish_news.mp4" &
 
     PID_MAP[$i]=$!
 done
 
-# 等待每个任务并统计单独耗时
+# Wait for all tasks to complete
 for i in "${!PID_MAP[@]}"
 do
     pid=${PID_MAP[$i]}
@@ -37,6 +38,9 @@ done
 
 global_end=$(date +%s%3N)
 total_elapsed=$((global_end - global_start))
+
+unset PID_MAP
+unset START_TIME
 
 echo "===== All tasks completed =====" | tee -a "$LOG_FILE"
 echo "Total elapsed: ${total_elapsed} ms" | tee -a "$LOG_FILE"
