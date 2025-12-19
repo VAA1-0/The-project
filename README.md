@@ -102,7 +102,7 @@ docker-compose build
 ```
 
 
-3. Run the docker image container with teh following command, replace the name with the actual name of your container:
+3. Run the docker image container with the following command:
 ```bash
 docker-compose up -d
 ```
@@ -124,10 +124,15 @@ or for electron app
 ```bash
 npm run start:electron
 ```
-## License
-This project is licensed under the *GNU Affero General Public License v3.0 (AGPL‑3.0)*.
 
-You may copy, distribute, and modify the software as long as you comply with the terms of the AGPL‑3.0.  
-In particular, if you run or modify this program on a server and allow users to interact with it remotely, you must make the source code available to those users.
+## User guide
+To understand how the app user interface works, see USER_GUIDE.md.
 
-See the full license text at: [https://www.gnu.org/licenses/agpl-3.0.html](https://www.gnu.org/licenses/agpl-3.0.html)
+## Licensing
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+This is required due to the use of AGPL-licensed components (YOLOv8).
+All source code for this application is publicly available in this repository.
+
+Third-party dependencies are listed in THIRD_PARTY_LICENSES.md.
