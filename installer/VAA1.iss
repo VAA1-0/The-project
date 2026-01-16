@@ -1,7 +1,7 @@
 [Setup]
 AppName=VAA1
 AppVersion=1.0
-DefaultDirName={pf}\VAA1
+DefaultDirName={autopf}\VAA1
 DefaultGroupName=VAA1
 OutputDir=.
 OutputBaseFilename=VAA1_Setup
