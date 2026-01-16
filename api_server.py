@@ -22,6 +22,7 @@ from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.utils.logger import get_logger
 from src.backend.analysis.pos_analysis import POSAnalysis
+from src.backend.analysis.quantitative_analysis import QuantitativeAnalysis
 from fastapi import Form
 
 
@@ -296,6 +297,16 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     json.dump(pos_result, f, indent=2, ensure_ascii=False)
 
                 logger.info(f"POS Results saved: {pos_path}")
+
+                # Additional Quantitative Analysis
+
+                data_dir = Path("src/backend/analysis/analysis/analysis")  # <- change this to the output files directory
+                files = sorted(data_dir.rglob("*.txt"))
+                docs = [p.read_text(encoding="utf-8", errors="ignore") for p in files]
+
+                qa = QuantitativeAnalysis(docs=docs, file_paths=files)
+                results = qa.run()
+                print(results["stats_df"].head(20))
 
                 # Step 8: Store results
                 results["audio_analysis"] = {
