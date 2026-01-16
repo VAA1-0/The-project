@@ -8,10 +8,14 @@ if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 echo =============================== >> "%LOGFILE%"
 echo VAA1 LAUNCH STARTED %DATE% %TIME% >> "%LOGFILE%"
 
-call scripts\check_docker.bat || goto :error
-call scripts\check_ports.bat || goto :error
-call scripts\check_backend_health.bat || goto :error
-call scripts\start_services.bat || goto :error
+set BASEDIR=%~dp0
+cd /d "%BASEDIR%"
+
+call "%BASEDIR%scripts\check_docker.bat" || goto :error
+call "%BASEDIR%scripts\check_ports.bat" || goto :error
+call "%BASEDIR%scripts\start_services.bat" || goto :error
+call "%BASEDIR%scripts\check_backend_health.bat" || goto :error
+
 
 
 
