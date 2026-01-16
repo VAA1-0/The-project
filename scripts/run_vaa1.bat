@@ -5,6 +5,7 @@ set LOGFILE=%LOGDIR%\vaa1-launch.log
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
+echo BASEDIR=%BASEDIR% >> "%LOGFILE%"
 echo =============================== >> "%LOGFILE%"
 echo VAA1 LAUNCH STARTED %DATE% %TIME% >> "%LOGFILE%"
 
