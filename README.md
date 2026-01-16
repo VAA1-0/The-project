@@ -98,14 +98,12 @@ _________
 
 2. If you don't have a docker image container built yet, build it with the following command. Note that it might take a while if it's the first time:
 ```bash
-docker-compose build
 docker build --no-cache -t video-analysis-app .
 ```
 
 
 3. Run the docker image container with the following command:
 ```bash
-docker-compose up -d
 docker run -p 8000:8000 video-analysis-app
 ```
 
