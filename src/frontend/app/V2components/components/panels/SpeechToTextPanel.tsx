@@ -16,6 +16,9 @@ import {
 export default function SpeechToTextPanel() {
   const [videoId, setVideoId] = useState("");
 
+  // Event bus video time line state
+  const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
+
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -29,10 +32,10 @@ export default function SpeechToTextPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
     };
   }, []);
 
@@ -171,6 +174,11 @@ export default function SpeechToTextPanel() {
                 <div
                   key={`${obj.class_name}-${idx}`}
                   className="p-3 rounded-lg bg-slate-700/30"
+                  // Click to seek video to object timestamp
+                  onClick={() => {
+                    eventBus.emit("videoTimeLineChanged", obj.timestamp);
+                    console.log("Seeking video to", obj.timestamp);
+                  }}
                 >
                   <div className="flex justify-between text-white">
                     <span>{obj.class_name}</span>

@@ -100,20 +100,20 @@ export default function ProjectPanel() {
       const prev = libraryVideos.find((v) => v.id === id)?.name;
       setLibraryVideos((prevList) =>
         prevList.map((v) =>
-          v.id === id ? { ...v, name: finalName, status: "pending" } : v
-        )
+          v.id === id ? { ...v, name: finalName, status: "pending" } : v,
+        ),
       );
       try {
         await VideoService.rename(id, finalName);
         setLibraryVideos((prevList) =>
-          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v)),
         );
       } catch (err) {
         // rollback
         setLibraryVideos((prevList) =>
           prevList.map((v) =>
-            v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v
-          )
+            v.id === id ? { ...v, name: prev ?? v.name, status: "failed" } : v,
+          ),
         );
         console.error(err);
         alert("Failed to rename video: " + String(err));
@@ -132,20 +132,20 @@ export default function ProjectPanel() {
       const prev = libraryVideos.find((v) => v.id === id)?.tag ?? null;
       setLibraryVideos((prevList) =>
         prevList.map((v) =>
-          v.id === id ? { ...v, tag: newTag, status: "pending" } : v
-        )
+          v.id === id ? { ...v, tag: newTag, status: "pending" } : v,
+        ),
       );
       try {
         await VideoService.updateTag(id, newTag);
         setLibraryVideos((prevList) =>
-          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v))
+          prevList.map((v) => (v.id === id ? { ...v, status: "synced" } : v)),
         );
       } catch (err) {
         // rollback
         setLibraryVideos((prevList) =>
           prevList.map((v) =>
-            v.id === id ? { ...v, tag: prev, status: "failed" } : v
-          )
+            v.id === id ? { ...v, tag: prev, status: "failed" } : v,
+          ),
         );
         throw err;
       }
@@ -218,26 +218,26 @@ export default function ProjectPanel() {
 
                   const v = vid.id;
                   setVideoId(v);
-                  eventBus.emit("textChanged", v);
+                  eventBus.emit("videoIdChanged", v);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     // use eventBus to notify other panels
                     const v = vid.id;
                     setVideoId(v);
-                    eventBus.emit("textChanged", v);
+                    eventBus.emit("videoIdChanged", v);
 
                     e.preventDefault();
                   } else if (e.key === "ArrowDown") {
                     const items = Array.from(
-                      (e.currentTarget.parentElement as HTMLElement).children
+                      (e.currentTarget.parentElement as HTMLElement).children,
                     ) as HTMLElement[];
                     const next = Math.min(idx + 1, items.length - 1);
                     items[next]?.focus();
                     e.preventDefault();
                   } else if (e.key === "ArrowUp") {
                     const items = Array.from(
-                      (e.currentTarget.parentElement as HTMLElement).children
+                      (e.currentTarget.parentElement as HTMLElement).children,
                     ) as HTMLElement[];
                     const prev = Math.max(idx - 1, 0);
                     items[prev]?.focus();
@@ -251,7 +251,7 @@ export default function ProjectPanel() {
                     // use eventBus to notify other panels
                     const v = vid.id;
                     setVideoId(v);
-                    eventBus.emit("textChanged", v);
+                    eventBus.emit("videoIdChanged", v);
                     e.stopPropagation();
                   }}
                 >
