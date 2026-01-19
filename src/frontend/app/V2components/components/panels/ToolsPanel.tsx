@@ -40,10 +40,10 @@ export default function ToolsPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
     };
   }, []);
 
@@ -219,7 +219,7 @@ export default function ToolsPanel() {
         if (jobList.length === 0 && attempts < maxAttempts) {
           attempts++;
           console.log(
-            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`
+            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`,
           );
           setTimeout(pollJobs, 3000);
         } else if (jobList.length > 0) {
@@ -230,7 +230,7 @@ export default function ToolsPanel() {
         } else {
           console.warn("⚠️ No jobs found after maximum attempts");
           alert(
-            "Jobs are taking longer than expected. Try refreshing the task."
+            "Jobs are taking longer than expected. Try refreshing the task.",
           );
         }
       } catch (err) {
@@ -279,7 +279,7 @@ export default function ToolsPanel() {
                         const next = (index + 1) % tools.length;
                         (
                           e.currentTarget.parentElement?.parentElement?.querySelectorAll(
-                            "button"
+                            "button",
                           )[next] as HTMLButtonElement
                         )?.focus();
                         e.preventDefault();
@@ -287,7 +287,7 @@ export default function ToolsPanel() {
                         const prev = (index - 1 + tools.length) % tools.length;
                         (
                           e.currentTarget.parentElement?.parentElement?.querySelectorAll(
-                            "button"
+                            "button",
                           )[prev] as HTMLButtonElement
                         )?.focus();
                         e.preventDefault();

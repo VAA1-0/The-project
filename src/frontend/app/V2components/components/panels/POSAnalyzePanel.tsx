@@ -91,11 +91,13 @@ export default function POSAnalyzePanel() {
   const pos_words = analysisData?.posAnalysis[0]?.pos_words || {};
 
   return (
-    <main className="flex-0 overflow-auto">
-      <div className="text-xs text-slate-400">video Id: {videoId}</div>
-      <div className="mt-4">
+    <main className="h-full flex flex-col overflow-hidden">
+      <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
+        video Id: {videoId}
+      </div>
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
+        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
           <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
           <div className="flex items-center gap-1">
             <button className="p-1 hover:bg-[#2a2a2a] rounded">

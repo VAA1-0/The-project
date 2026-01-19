@@ -100,7 +100,12 @@ export default function VideoPanel() {
 
   // Set video currentTime when videoUrl or videoTimeLine changes
   useEffect(() => {
-    if (videoRef.current && typeof videoTimeLine === "number" && !isLoading && videoUrl) {
+    if (
+      videoRef.current &&
+      typeof videoTimeLine === "number" &&
+      !isLoading &&
+      videoUrl
+    ) {
       // Only set if different to avoid unnecessary seek
       if (Math.abs(videoRef.current.currentTime - videoTimeLine) > 0.1) {
         videoRef.current.currentTime = videoTimeLine;
@@ -116,7 +121,6 @@ export default function VideoPanel() {
           <div className="text-sm text-slate-400 mt-1">
             Video ID: <span className="font-mono">{videoId}</span>
             video url is {videoUrl}
-            video time line: {videoTimeLine}
           </div>
         )}
       </div>
