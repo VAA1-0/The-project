@@ -9,7 +9,8 @@ export class ReactComponentWrapper {
   constructor(
     container: ComponentContainer,
     Component: React.FC<any>,
-    props?: any
+    props?: any,
+    WrapperComponent?: React.FC<{ children: React.ReactNode }>,
   ) {
     this.el = document.createElement("div");
     this.el.style.height = "100%";
@@ -18,7 +19,16 @@ export class ReactComponentWrapper {
     container.element.appendChild(this.el);
 
     this.root = createRoot(this.el);
-    this.root.render(<Component {...props} />);
+
+    const element = WrapperComponent ? (
+      <WrapperComponent>
+        <Component {...props} />
+      </WrapperComponent>
+    ) : (
+      <Component {...props} />
+    );
+
+    this.root.render(element);
 
     // Clean up when the container is destroyed
     container.on("destroy", () => {

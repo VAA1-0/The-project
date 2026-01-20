@@ -94,10 +94,10 @@ export default function SpeechToTextPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const transcript = analysisData?.transcript ?? [];
+  // const transcript = analysisData?.transcript ?? [];
 
   /* Mock transcript data for demonstration */
-  /*
+
   const transcript = [
     {
       start: 0.0,
@@ -410,7 +410,6 @@ export default function SpeechToTextPanel() {
       text: "So getting everyone together in room.",
     },
   ];
-  */
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
   const summaryText = analysisData?.summary ?? "…";
@@ -467,7 +466,7 @@ export default function SpeechToTextPanel() {
             <div className="text-sm font-semibold mb-2 shrink-0">
               Speech to Text:
             </div>
-            <div className="max-h-[30vh] flex-1 overflow-y-auto space-y-2 pr-2">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
               {transcript.length === 0 ? (
                 <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                   No speech to text detected
@@ -487,40 +486,6 @@ export default function SpeechToTextPanel() {
                       {row.start}s ~ {row.end}s
                     </div>
                     <div className="text-sm text-slate-200">{row.text}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          {/* Detected Objects */}
-          {/* Scrollable list container: flexible height with vertical scrolling */}
-          <div className="flex-1 min-h-0 px-3 pb-3 flex flex-col">
-            <div className="text-sm font-semibold mb-2 shrink-0">
-              Detected Objects:
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-              {detectedObjects.length === 0 ? (
-                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-                  No detected objects
-                </div>
-              ) : (
-                detectedObjects.map((obj: any, idx: number) => (
-                  <div
-                    key={`${obj.class_name}-${idx}`}
-                    className="p-3 rounded-lg bg-slate-700/30 cursor-pointer hover:bg-slate-700/50"
-                    // Click to seek video to object timestamp
-                    onClick={() => {
-                      eventBus.emit("videoTimeLineChanged", obj.timestamp);
-                      console.log("Seeking video to", obj.timestamp);
-                    }}
-                  >
-                    <div className="flex justify-between text-white">
-                      <span>{obj.class_name}</span>
-                    </div>
-                    <div className="text-xs text-slate-400">
-                      Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
-                      {(obj.confidence * 100).toFixed(2)}%
-                    </div>
                   </div>
                 ))
               )}

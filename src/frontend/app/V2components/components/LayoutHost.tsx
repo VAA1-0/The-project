@@ -11,6 +11,7 @@ import ProjectPanel from "./panels/ProjectPanel";
 import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
+import OBJDetectionPanel from "./panels/OBJDetectionPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 import POSAnalyzePanel from "./panels/POSAnalyzePanel";
 import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
@@ -22,7 +23,7 @@ type LayoutHostContextType = {
 };
 
 const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
-  undefined
+  undefined,
 );
 
 export function useLayoutHost() {
@@ -91,6 +92,11 @@ export default function LayoutHost({
             },
             {
               type: "component",
+              componentType: "OBJDetection",
+              title: "OBJDetection",
+            },
+            {
+              type: "component",
               componentType: "POS",
               title: "POS",
             },
@@ -117,54 +123,90 @@ export default function LayoutHost({
 
     const layout = new GoldenLayout(hostRef.current);
 
+    // Create a wrapper component that provides the context
+    const ContextWrapper: React.FC<{ children: React.ReactNode }> = ({
+      children,
+    }) => (
+      <LayoutHostContext.Provider value={{ openPanel }}>
+        {children}
+      </LayoutHostContext.Provider>
+    );
+
     // Register the component factories
     layout.registerComponentFactoryFunction(
       "ProjectPanel",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, ProjectPanel);
-      }
+        new ReactComponentWrapper(container, ProjectPanel, {}, ContextWrapper);
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "VideoPanel",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, VideoPanel);
-      }
+        new ReactComponentWrapper(container, VideoPanel, {}, ContextWrapper);
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "DownloadPanel",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, DownloadPanel);
-      }
+        new ReactComponentWrapper(container, DownloadPanel, {}, ContextWrapper);
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "ToolsPanel",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, ToolsPanel);
-      }
+        new ReactComponentWrapper(container, ToolsPanel, {}, ContextWrapper);
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "Transcript",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, SpeechToTextPanel);
-      }
+        new ReactComponentWrapper(
+          container,
+          SpeechToTextPanel,
+          {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "OBJDetection",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          OBJDetectionPanel,
+          {},
+          ContextWrapper,
+        );
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "POS",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, POSAnalyzePanel);
-      }
+        new ReactComponentWrapper(
+          container,
+          POSAnalyzePanel,
+          {},
+          ContextWrapper,
+        );
+      },
     );
 
     layout.registerComponentFactoryFunction(
       "Quant",
       (container, state: JsonValue | undefined) => {
-        new ReactComponentWrapper(container, QuantitativeAnalysisPanel);
-      }
+        new ReactComponentWrapper(
+          container,
+          QuantitativeAnalysisPanel,
+          {},
+          ContextWrapper,
+        );
+      },
     );
 
     // Define the initial layout configuration
