@@ -68,7 +68,7 @@ export function LoadingPage() {
       console.error("Login error:", err);
       setState("error");
       setErrorMessage(
-        err instanceof Error ? err.message : "An unexpected error occurred"
+        err instanceof Error ? err.message : "An unexpected error occurred",
       );
     }
   };

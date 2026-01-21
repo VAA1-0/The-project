@@ -9,6 +9,9 @@ import { getVideoBlob } from "@/lib/blob-store";
 export default function VideoPanel() {
   const [videoId, setVideoId] = useState("");
 
+  // Set video time line
+  const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
+
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -19,10 +22,22 @@ export default function VideoPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
+    };
+  }, []);
+
+  // Listen for video time line changes via event bus
+  useEffect(() => {
+    const handler = (videoTimeLine: number) => {
+      setVideoTimeLine(videoTimeLine);
+    };
+    eventBus.on("videoTimeLineChanged", handler);
+
+    return () => {
+      eventBus.off("videoTimeLineChanged", handler);
     };
   }, []);
 
@@ -80,6 +95,24 @@ export default function VideoPanel() {
     };
   }, [videoId]);
 
+  // Ref for video element
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  // Set video currentTime when videoUrl or videoTimeLine changes
+  useEffect(() => {
+    if (
+      videoRef.current &&
+      typeof videoTimeLine === "number" &&
+      !isLoading &&
+      videoUrl
+    ) {
+      // Only set if different to avoid unnecessary seek
+      if (Math.abs(videoRef.current.currentTime - videoTimeLine) > 0.1) {
+        videoRef.current.currentTime = videoTimeLine;
+      }
+    }
+  }, [videoUrl, videoTimeLine, isLoading]);
+
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-slate-700">
@@ -98,6 +131,7 @@ export default function VideoPanel() {
         ) : videoUrl ? (
           <video
             key={videoUrl} // Force re-render when URL changes
+            ref={videoRef}
             src={videoUrl}
             controls
             className="w-full h-full object-contain"
