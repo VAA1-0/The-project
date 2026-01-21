@@ -130,14 +130,16 @@ export default function QuantitativeAnalysisPanel() {
   ];
 
   return (
-    <main className="flex-0 overflow-auto">
-      <div className="text-xs text-slate-400">video Id: {videoId}</div>
-      <div className="text-xs text-slate-400">
+    <main className="h-full flex flex-col overflow-hidden">
+      <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
+        video Id: {videoId}
+      </div>
+      <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         text: {analysisDataquantAnalysis[0].text}
       </div>
-      <div className="mt-4">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between">
+        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
           <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
           <div className="flex items-center gap-1">
             <button className="p-1 hover:bg-[#2a2a2a] rounded">
@@ -149,8 +151,10 @@ export default function QuantitativeAnalysisPanel() {
           </div>
         </div>
         {/* Build Token Stream */}
-        Build Token Stream:
-        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
+        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
+          Build Token Stream:
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
           {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
             .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -178,8 +182,10 @@ export default function QuantitativeAnalysisPanel() {
           )}
         </div>
         {/* Corpus Sentence Word Stats */}
-        Corpus Sentence Word Stats:
-        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
+        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
+          Corpus Sentence Word Stats:
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
           {Object.keys(analysisDataquantAnalysis[0].corpus_sentence_word_stats)
             .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -211,9 +217,11 @@ export default function QuantitativeAnalysisPanel() {
           )}
         </div>
         {/* TFIDF Top Terms */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
-        TFIDF Top Terms:
-        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
+        {/* Scrollable list container: responsive height with vertical scrolling */}
+        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
+          TFIDF Top Terms:
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
           {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms).length ===
           0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
@@ -260,9 +268,11 @@ export default function QuantitativeAnalysisPanel() {
           )}
         </div>
         {/* Bigrams */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
-        Bigrams:
-        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
+        {/* Scrollable list container: responsive height with vertical scrolling */}
+        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
+          Bigrams:
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
           {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No Bigrams detected
@@ -289,9 +299,11 @@ export default function QuantitativeAnalysisPanel() {
           )}
         </div>
         {/* SentenceTagging */}
-        {/* Scrollable list container: fixed max height with vertical scrolling */}
-        SentenceTagging:
-        <div className="max-h-25 overflow-y-auto space-y-2 pr-2">
+        {/* Scrollable list container: responsive height with vertical scrolling */}
+        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
+          SentenceTagging:
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
           {Object.keys(analysisDataquantAnalysis[0].sentencetagging).length ===
           0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">

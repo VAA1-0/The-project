@@ -6,6 +6,7 @@ import {
   View,
   ScanEye,
   ChartScatter,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +22,11 @@ import { listJobs, listTasks } from "@/cvat-api/client";
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
+import { useLayoutHost } from "../LayoutHost";
+
 export default function ToolsPanel() {
+  const { openPanel } = useLayoutHost();
+
   const [videoId, setVideoId] = useState("");
 
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -35,15 +40,22 @@ export default function ToolsPanel() {
   const [metadata, setMetadata] = useState<any>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
+  // CVAT task/job state
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [taskID, setTaskId] = useState<any>();
+  const [jobReady, setJobReady] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<any>(null);
+  const [isPolling, setIsPolling] = useState(false);
+
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
     };
   }, []);
 
@@ -168,22 +180,66 @@ export default function ToolsPanel() {
     }
   }
 
-  const tools = [
-    { icon: MessageSquareText, label: "Speech to text Tool" },
-    { icon: Brain, label: "Summary" },
-    { icon: View, label: "Object detection" },
-    { icon: ChartScatter, label: "Quantity Detection" },
-    { icon: ScanEye, label: "Annotations" },
+  type ToolButton = {
+    icon: LucideIcon;
+    label: string;
+    onClick?: () => void;
+    disabled?: boolean;
+  };
+
+  const tools: ToolButton[] = [
+    {
+      icon: MessageSquareText,
+      label: "Speech to text Tool",
+      onClick: () => {
+        console.log("Speech to text clicked");
+        openPanel("Transcript");
+      },
+      disabled: !videoId,
+    },
+    {
+      icon: Brain,
+      label: "POS Analysis Tool",
+      onClick: () => {
+        console.log("POS Analysis clicked");
+        openPanel("POS");
+      },
+      disabled: !videoId || !analysisData,
+    },
+    {
+      icon: View,
+      label: "Object detection",
+      onClick: () => {
+        console.log("Object detection clicked");
+        openPanel("OBJDetection");
+      },
+      disabled: !videoId,
+    },
+    {
+      icon: ChartScatter,
+      label: "Quantity Detection",
+      onClick: () => {
+        console.log("Quantity Detection clicked");
+        openPanel("Quant");
+      },
+      disabled: !videoId,
+    },
+    {
+      icon: ScanEye,
+      label: "Annotations",
+      onClick: () => {
+        if (!videoId) return;
+        if (jobReady) {
+          handleJobClick();
+        } else {
+          openTask();
+        }
+      },
+      disabled: !videoId || isPolling || isAnalyzing,
+    },
   ];
 
   //<================ OPEN TASK AND LOAD JOB========================>
-
-  // CVAT task/job state
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [taskID, setTaskId] = useState<any>();
-  const [jobReady, setJobReady] = useState(false);
-  const [selectedJob, setSelectedJob] = useState<any>(null);
-  const [isPolling, setIsPolling] = useState(false);
 
   async function openTask() {
     setIsPolling(true);
@@ -219,7 +275,7 @@ export default function ToolsPanel() {
         if (jobList.length === 0 && attempts < maxAttempts) {
           attempts++;
           console.log(
-            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`
+            `⏳ Jobs not ready yet (attempt ${attempts}/${maxAttempts})`,
           );
           setTimeout(pollJobs, 3000);
         } else if (jobList.length > 0) {
@@ -230,7 +286,7 @@ export default function ToolsPanel() {
         } else {
           console.warn("⚠️ No jobs found after maximum attempts");
           alert(
-            "Jobs are taking longer than expected. Try refreshing the task."
+            "Jobs are taking longer than expected. Try refreshing the task.",
           );
         }
       } catch (err) {
@@ -264,22 +320,27 @@ export default function ToolsPanel() {
         >
           {tools.map((tool, index) => {
             const Icon = tool.icon;
+            const isDisabled = Boolean(tool.disabled);
             return (
               <Tooltip key={index}>
                 <TooltipTrigger asChild>
                   <button
-                    className={`w-full h-11 flex items-center justify-center transition-colors hover:bg-white/10 ${
-                      index === 0 ? "mt-2" : ""
-                    } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                    className={`w-full h-11 flex items-center justify-center transition-colors ${
+                      isDisabled
+                        ? "opacity-40 cursor-not-allowed"
+                        : "hover:bg-white/10"
+                    } ${index === 0 ? "mt-2" : ""} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
                     type="button"
                     aria-label={tool.label}
+                    aria-disabled={isDisabled}
+                    disabled={isDisabled}
                     tabIndex={index === 0 ? 0 : -1}
                     onKeyDown={(e) => {
                       if (e.key === "ArrowDown") {
                         const next = (index + 1) % tools.length;
                         (
                           e.currentTarget.parentElement?.parentElement?.querySelectorAll(
-                            "button"
+                            "button",
                           )[next] as HTMLButtonElement
                         )?.focus();
                         e.preventDefault();
@@ -287,10 +348,15 @@ export default function ToolsPanel() {
                         const prev = (index - 1 + tools.length) % tools.length;
                         (
                           e.currentTarget.parentElement?.parentElement?.querySelectorAll(
-                            "button"
+                            "button",
                           )[prev] as HTMLButtonElement
                         )?.focus();
                         e.preventDefault();
+                      }
+                    }}
+                    onClick={() => {
+                      if (!isDisabled) {
+                        tool.onClick?.();
                       }
                     }}
                   >

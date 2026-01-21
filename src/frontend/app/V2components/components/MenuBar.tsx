@@ -86,7 +86,7 @@ export function MenuBar() {
               const videoBlob = new Blob([f], { type: f.type });
               await saveVideoBlob(res.analysis_id, videoBlob);
               console.log(
-                `Saved original video blob to IndexedDB for ${res.analysis_id}`
+                `Saved original video blob to IndexedDB for ${res.analysis_id}`,
               );
             } catch (storageErr) {
               console.warn("Failed to save video to IndexedDB:", storageErr);
@@ -141,6 +141,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "OBJ Detection Lens",
+          onClick: () => {
+            openPanel("OBJDetection");
+          },
+        },
+        {
           label: "POS analysis Lens",
           onClick: () => {
             openPanel("POS");
@@ -185,6 +191,12 @@ export function MenuBar() {
           label: "Transcript Lens",
           onClick: () => {
             openPanel("Transcript");
+          },
+        },
+        {
+          label: "OBJ Detection Lens",
+          onClick: () => {
+            openPanel("OBJDetection");
           },
         },
         {

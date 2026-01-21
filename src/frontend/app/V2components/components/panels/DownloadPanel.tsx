@@ -102,10 +102,10 @@ export default function DownloadPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
     };
   }, []);
 
@@ -165,7 +165,7 @@ export default function DownloadPanel() {
             headers: {
               Accept: "application/json",
             },
-          }
+          },
         );
 
         debugLog += `   Response: ${response.status} ${response.statusText}\n`;
@@ -178,7 +178,7 @@ export default function DownloadPanel() {
           if (apiStatus.download_links) {
             const links = Object.keys(apiStatus.download_links);
             debugLog += `   Download links (${links.length}): ${links.join(
-              ", "
+              ", ",
             )}\n`;
           }
         } else {
@@ -233,7 +233,7 @@ export default function DownloadPanel() {
             downloadLinks[fileType] ||
             (apiStatus.status === "completed" &&
               apiStatus.pipeline_type?.includes(
-                fileType.includes("audio") ? "audio" : "visual"
+                fileType.includes("audio") ? "audio" : "visual",
               ));
 
           if (isAvailable) {
@@ -255,8 +255,8 @@ export default function DownloadPanel() {
                 fileType === "video"
                   ? "~50MB"
                   : fileType === "audio"
-                  ? "~5MB"
-                  : "~1MB",
+                    ? "~5MB"
+                    : "~1MB",
             });
           } else {
             debugLog += `   ⚠️ ${fileType}: NOT AVAILABLE\n`;
@@ -336,7 +336,7 @@ export default function DownloadPanel() {
   const handleDownload = async (
     fileType: string,
     downloadUrl: string,
-    fileName: string
+    fileName: string,
   ) => {
     if (!videoId || !downloadUrl) {
       alert("File not available for download");
@@ -372,10 +372,10 @@ export default function DownloadPanel() {
           "Download response error:",
           response.status,
           response.statusText,
-          errorText
+          errorText,
         );
         throw new Error(
-          `Download failed: ${response.status} ${response.statusText} - ${errorText}`
+          `Download failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -393,7 +393,7 @@ export default function DownloadPanel() {
     } catch (error) {
       console.error("Download failed:", error);
       alert(
-        `Failed to download ${fileName}. Please try again.\nError: ${error}`
+        `Failed to download ${fileName}. Please try again.\nError: ${error}`,
       );
     }
   };
