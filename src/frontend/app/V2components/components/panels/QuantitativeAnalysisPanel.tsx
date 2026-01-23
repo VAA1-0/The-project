@@ -4,7 +4,13 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
-import { Download, Search, MoreHorizontal } from "lucide-react";
+import {
+  Download,
+  Search,
+  MoreHorizontal,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 
 export default function QuantitativeAnalysisPanel() {
   const [videoId, setVideoId] = useState("");
@@ -16,6 +22,14 @@ export default function QuantitativeAnalysisPanel() {
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
+
+  // State for show/hide sections
+  const [showBuildTokenStream, setShowBuildTokenStream] = useState(true);
+  const [showCorpusSentenceWordStats, setShowCorpusSentenceWordStats] =
+    useState(true);
+  const [showTfidfTopTerms, setShowTfidfTopTerms] = useState(true);
+  const [showBigrams, setShowBigrams] = useState(true);
+  const [showSentenceTagging, setShowSentenceTagging] = useState(true);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
@@ -84,6 +98,9 @@ export default function QuantitativeAnalysisPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
+  // const analysisDataquantAnalysis = analysisData?.quantAnalysis ?? [];
+
+  /* Mock transcript data for demonstration */
   const analysisDataquantAnalysis = [
     {
       text: "This one is being held in a city right on the edge of the Amerson jungle. Now the problem is...",
@@ -151,185 +168,265 @@ export default function QuantitativeAnalysisPanel() {
           </div>
         </div>
         {/* Build Token Stream */}
-        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
-          Build Token Stream:
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() => setShowBuildTokenStream(!showBuildTokenStream)}
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              Build Token Stream
+            </span>
+            {showBuildTokenStream ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
-            .length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No content available
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">
-                {"nouns: " +
-                  analysisDataquantAnalysis[0].build_token_stream.NOUN}
+        {showBuildTokenStream && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
+              .length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No Build Token Stream detected
               </div>
-              <div className="text-sm text-slate-200">
-                {"verbs: " +
-                  analysisDataquantAnalysis[0].build_token_stream.VERB}
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">
+                  {"nouns: " +
+                    analysisDataquantAnalysis[0].build_token_stream.NOUN}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"verbs: " +
+                    analysisDataquantAnalysis[0].build_token_stream.VERB}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adjectives: " +
+                    analysisDataquantAnalysis[0].build_token_stream.ADP}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adverbs: " +
+                    analysisDataquantAnalysis[0].build_token_stream.ADV}
+                </div>
               </div>
-              <div className="text-sm text-slate-200">
-                {"adjectives: " +
-                  analysisDataquantAnalysis[0].build_token_stream.ADP}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adverbs: " +
-                  analysisDataquantAnalysis[0].build_token_stream.ADV}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+
         {/* Corpus Sentence Word Stats */}
-        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
-          Corpus Sentence Word Stats:
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() =>
+              setShowCorpusSentenceWordStats(!showCorpusSentenceWordStats)
+            }
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              Corpus Sentence Word Stats
+            </span>
+            {showCorpusSentenceWordStats ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].corpus_sentence_word_stats)
-            .length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No content detected
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">
-                {"nouns: " +
-                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                    .verb_noun_ratio}
+        {showCorpusSentenceWordStats && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {Object.keys(
+              analysisDataquantAnalysis[0].corpus_sentence_word_stats,
+            ).length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No content detected
               </div>
-              <div className="text-sm text-slate-200">
-                {"verbs: " +
-                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                    .modal_density}
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">
+                  {"nouns: " +
+                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                      .verb_noun_ratio}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"verbs: " +
+                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                      .modal_density}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adjectives: " +
+                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                      .pronoun_share}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adverbs: " +
+                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                      .adj_adv_ratio}
+                </div>
               </div>
-              <div className="text-sm text-slate-200">
-                {"adjectives: " +
-                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                    .pronoun_share}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adverbs: " +
-                  analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                    .adj_adv_ratio}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
         {/* TFIDF Top Terms */}
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() => setShowTfidfTopTerms(!showTfidfTopTerms)}
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              TFIDF Top Terms
+            </span>
+            {showTfidfTopTerms ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
+        </div>
         {/* Scrollable list container: responsive height with vertical scrolling */}
-        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
-          TFIDF Top Terms:
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms).length ===
-          0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No TFIDF Top Terms detected
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">
-                {"who: " + analysisDataquantAnalysis[0].tfidf_top_terms.who}
+        {showTfidfTopTerms && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms)
+              .length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No TFIDF Top Terms detected
               </div>
-              <div className="text-sm text-slate-200">
-                {"what: " + analysisDataquantAnalysis[0].tfidf_top_terms.what}
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">
+                  {"who: " + analysisDataquantAnalysis[0].tfidf_top_terms.who}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"what: " + analysisDataquantAnalysis[0].tfidf_top_terms.what}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"when: " + analysisDataquantAnalysis[0].tfidf_top_terms.when}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"where: " +
+                    analysisDataquantAnalysis[0].tfidf_top_terms.where}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"why: " + analysisDataquantAnalysis[0].tfidf_top_terms.why}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"how: " + analysisDataquantAnalysis[0].tfidf_top_terms.how}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"by what means: " +
+                    analysisDataquantAnalysis[0].tfidf_top_terms.by_what_means}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"towards what end: " +
+                    analysisDataquantAnalysis[0].tfidf_top_terms
+                      .towards_what_end}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"whence: " +
+                    analysisDataquantAnalysis[0].tfidf_top_terms.whence}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"by what consequence: " +
+                    analysisDataquantAnalysis[0].tfidf_top_terms
+                      .by_what_consequence}
+                </div>
               </div>
-              <div className="text-sm text-slate-200">
-                {"when: " + analysisDataquantAnalysis[0].tfidf_top_terms.when}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"where: " + analysisDataquantAnalysis[0].tfidf_top_terms.where}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"why: " + analysisDataquantAnalysis[0].tfidf_top_terms.why}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"how: " + analysisDataquantAnalysis[0].tfidf_top_terms.how}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"by what means: " +
-                  analysisDataquantAnalysis[0].tfidf_top_terms.by_what_means}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"towards what end: " +
-                  analysisDataquantAnalysis[0].tfidf_top_terms.towards_what_end}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"whence: " +
-                  analysisDataquantAnalysis[0].tfidf_top_terms.whence}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"by what consequence: " +
-                  analysisDataquantAnalysis[0].tfidf_top_terms
-                    .by_what_consequence}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
         {/* Bigrams */}
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() => setShowBigrams(!showBigrams)}
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              Bigrams
+            </span>
+            {showBigrams ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
+        </div>
         {/* Scrollable list container: responsive height with vertical scrolling */}
-        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
-          Bigrams:
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No Bigrams detected
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">
-                {"noun: " +
-                  analysisDataquantAnalysis[0].bigrams.NOUN.join(", ")}
+        {showBigrams && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No Bigrams detected
               </div>
-              <div className="text-sm text-slate-200">
-                {"verb: " +
-                  analysisDataquantAnalysis[0].bigrams.VERB.join(", ")}
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">
+                  {"noun: " +
+                    analysisDataquantAnalysis[0].bigrams.NOUN.join(", ")}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"verb: " +
+                    analysisDataquantAnalysis[0].bigrams.VERB.join(", ")}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adjective: " +
+                    analysisDataquantAnalysis[0].bigrams.ADP.join(", ")}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adverb: " +
+                    analysisDataquantAnalysis[0].bigrams.ADV.join(", ")}
+                </div>
               </div>
-              <div className="text-sm text-slate-200">
-                {"adjective: " +
-                  analysisDataquantAnalysis[0].bigrams.ADP.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adverb: " +
-                  analysisDataquantAnalysis[0].bigrams.ADV.join(", ")}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
         {/* SentenceTagging */}
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() => setShowSentenceTagging(!showSentenceTagging)}
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              Sentence Tagging
+            </span>
+            {showSentenceTagging ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
+        </div>
         {/* Scrollable list container: responsive height with vertical scrolling */}
-        <div className="text-sm font-medium text-slate-300 px-3 py-2 shrink-0">
-          SentenceTagging:
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].sentencetagging).length ===
-          0 ? (
-            <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-              No SentenceTagging detected
-            </div>
-          ) : (
-            <div className="p-3 bg-slate-700/30 rounded-lg">
-              <div className="text-sm text-slate-200">
-                {"noun: " +
-                  analysisDataquantAnalysis[0].sentencetagging.NOUN.join(", ")}
+        {showSentenceTagging && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {Object.keys(analysisDataquantAnalysis[0].sentencetagging)
+              .length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No SentenceTagging detected
               </div>
-              <div className="text-sm text-slate-200">
-                {"verb: " +
-                  analysisDataquantAnalysis[0].sentencetagging.VERB.join(", ")}
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="text-sm text-slate-200">
+                  {"noun: " +
+                    analysisDataquantAnalysis[0].sentencetagging.NOUN.join(
+                      ", ",
+                    )}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"verb: " +
+                    analysisDataquantAnalysis[0].sentencetagging.VERB.join(
+                      ", ",
+                    )}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adjective: " +
+                    analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
+                </div>
+                <div className="text-sm text-slate-200">
+                  {"adverb: " +
+                    analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
+                </div>
               </div>
-              <div className="text-sm text-slate-200">
-                {"adjective: " +
-                  analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
-              </div>
-              <div className="text-sm text-slate-200">
-                {"adverb: " +
-                  analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </main>
   );
