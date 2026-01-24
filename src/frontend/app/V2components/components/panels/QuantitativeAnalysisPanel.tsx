@@ -22,10 +22,10 @@ export default function QuantitativeAnalysisPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    eventBus.on("textChanged", handler);
+    eventBus.on("videoIdChanged", handler);
 
     return () => {
-      eventBus.off("textChanged", handler);
+      eventBus.off("videoIdChanged", handler);
     };
   }, []);
 
@@ -84,6 +84,9 @@ export default function QuantitativeAnalysisPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
+  // const analysisDataquantAnalysis = analysisData?.quan_analysis ?? [];
+
+  // Use analysisData (fallback to empty arrays if not available)
   const analysisDataquantAnalysis = [
     {
       text: "This one is being held in a city right on the edge of the Amerson jungle. Now the problem is...",
@@ -135,7 +138,10 @@ export default function QuantitativeAnalysisPanel() {
         video Id: {videoId}
       </div>
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
-        text: {analysisDataquantAnalysis[0].text}
+        text:{" "}
+        {analysisDataquantAnalysis[0] === undefined
+          ? "N/A"
+          : analysisDataquantAnalysis[0].text}
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -155,7 +161,7 @@ export default function QuantitativeAnalysisPanel() {
           Build Token Stream:
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
+          {Object.keys(analysisDataquantAnalysis[0]?.build_token_stream ?? {})
             .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content available
@@ -186,8 +192,9 @@ export default function QuantitativeAnalysisPanel() {
           Corpus Sentence Word Stats:
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].corpus_sentence_word_stats)
-            .length === 0 ? (
+          {Object.keys(
+            analysisDataquantAnalysis[0]?.corpus_sentence_word_stats ?? {},
+          ).length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No content detected
             </div>
@@ -222,8 +229,8 @@ export default function QuantitativeAnalysisPanel() {
           TFIDF Top Terms:
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms).length ===
-          0 ? (
+          {Object.keys(analysisDataquantAnalysis[0]?.tfidf_top_terms ?? {})
+            .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No TFIDF Top Terms detected
             </div>
@@ -273,7 +280,8 @@ export default function QuantitativeAnalysisPanel() {
           Bigrams:
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
+          {Object.keys(analysisDataquantAnalysis[0]?.bigrams ?? {}).length ===
+          0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No Bigrams detected
             </div>
@@ -304,8 +312,8 @@ export default function QuantitativeAnalysisPanel() {
           SentenceTagging:
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3">
-          {Object.keys(analysisDataquantAnalysis[0].sentencetagging).length ===
-          0 ? (
+          {Object.keys(analysisDataquantAnalysis[0]?.sentencetagging ?? {})
+            .length === 0 ? (
             <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
               No SentenceTagging detected
             </div>
@@ -313,19 +321,27 @@ export default function QuantitativeAnalysisPanel() {
             <div className="p-3 bg-slate-700/30 rounded-lg">
               <div className="text-sm text-slate-200">
                 {"noun: " +
-                  analysisDataquantAnalysis[0].sentencetagging.NOUN.join(", ")}
+                  analysisDataquantAnalysis[0]?.sentencetagging?.NOUN?.join(
+                    ", ",
+                  )}
               </div>
               <div className="text-sm text-slate-200">
                 {"verb: " +
-                  analysisDataquantAnalysis[0].sentencetagging.VERB.join(", ")}
+                  analysisDataquantAnalysis[0]?.sentencetagging?.VERB?.join(
+                    ", ",
+                  )}
               </div>
               <div className="text-sm text-slate-200">
                 {"adjective: " +
-                  analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
+                  analysisDataquantAnalysis[0]?.sentencetagging?.ADP?.join(
+                    ", ",
+                  )}
               </div>
               <div className="text-sm text-slate-200">
                 {"adverb: " +
-                  analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
+                  analysisDataquantAnalysis[0]?.sentencetagging?.ADV?.join(
+                    ", ",
+                  )}
               </div>
             </div>
           )}

@@ -168,7 +168,7 @@ export class VideoService {
   static async upload(
     file: File,
     cvatID: number,
-    duration?: number
+    duration?: number,
   ): Promise<UploadResponse> {
     try {
       const response = await apiService.uploadVideo(file, cvatID);
@@ -183,7 +183,7 @@ export class VideoService {
       throw new Error(
         `Upload failed: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
       );
     }
   }
@@ -274,19 +274,20 @@ export class VideoService {
         transcriptData,
         objects,
         posAnalysisData,
-        // quantAnalysisData,
+        quantAnalysisData,
       ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
         this.loadDetectedObjects(id),
         this.loadPosAnalysis(id),
-        // this.loadQuantAnalysis(id),
+        this.loadQuantAnalysis(id),
       ]);
 
       return {
         quantAnalysis:
-          // quantAnalysisData.status === "fulfilled" ? quantAnalysisData.value : [],
-          [], // Placeholder until implemented
+          quantAnalysisData.status === "fulfilled"
+            ? quantAnalysisData.value
+            : [],
         posAnalysis:
           posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
         transcript:
@@ -316,7 +317,7 @@ export class VideoService {
    */
   static async startAnalysis(
     id: string,
-    pipelineType: "full" | "visual_only" | "audio_only" = "full"
+    pipelineType: "full" | "visual_only" | "audio_only" = "full",
   ): Promise<any> {
     try {
       return await apiService.startAnalysis(id, pipelineType);
@@ -360,7 +361,7 @@ export class VideoService {
     } catch (error) {
       console.warn(
         "VideoService.listVideos failed, returning empty array:",
-        error
+        error,
       );
       return [];
     }
@@ -373,7 +374,7 @@ export class VideoService {
     id: string,
     onProgress: (status: AnalysisStatus) => void,
     interval: number = 2000,
-    timeout: number = 300000 // 5 minutes
+    timeout: number = 300000, // 5 minutes
   ): Promise<AnalysisStatus> {
     return apiService.pollStatus(id, onProgress, interval, timeout);
   }
@@ -476,7 +477,7 @@ export class VideoService {
   }
 
   private static async loadTranscriptData(
-    id: string
+    id: string,
   ): Promise<TranscriptSegment[]> {
     try {
       const transcriptBlob = await apiService.downloadFile(id, "transcript");
@@ -497,7 +498,7 @@ export class VideoService {
   }
 
   private static async loadDetectedObjects(
-    id: string
+    id: string,
   ): Promise<DetectedObject[]> {
     try {
       const csvBlob = await apiService.downloadFile(id, "yolo_csv");
@@ -570,7 +571,7 @@ export class VideoService {
             ? data.interrogative_lens.by_what_means
             : [],
           towards_what_end: Array.isArray(
-            data.interrogative_lens?.towards_what_end
+            data.interrogative_lens?.towards_what_end,
           )
             ? data.interrogative_lens.towards_what_end
             : [],
@@ -578,7 +579,7 @@ export class VideoService {
             ? data.interrogative_lens.whence
             : [],
           by_what_consequence: Array.isArray(
-            data.interrogative_lens?.by_what_consequence
+            data.interrogative_lens?.by_what_consequence,
           )
             ? data.interrogative_lens.by_what_consequence
             : [],
@@ -654,7 +655,7 @@ export class VideoService {
             ? data.tfidf_top_terms.by_what_means
             : [],
           towards_what_end: Array.isArray(
-            data.tfidf_top_terms?.towards_what_end
+            data.tfidf_top_terms?.towards_what_end,
           )
             ? data.tfidf_top_terms.towards_what_end
             : [],
@@ -662,7 +663,7 @@ export class VideoService {
             ? data.tfidf_top_terms.whence
             : [],
           by_what_consequence: Array.isArray(
-            data.tfidf_top_terms?.by_what_consequence
+            data.tfidf_top_terms?.by_what_consequence,
           )
             ? data.tfidf_top_terms.by_what_consequence
             : [],

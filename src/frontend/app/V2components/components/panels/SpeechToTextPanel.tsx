@@ -94,10 +94,9 @@ export default function SpeechToTextPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const transcript = analysisData?.transcript ?? [];
+  // const transcript = analysisData?.transcript ?? [];
 
   /* Mock transcript data for demonstration */
-  /*
   const transcript = [
     {
       start: 0.0,
@@ -410,7 +409,6 @@ export default function SpeechToTextPanel() {
       text: "So getting everyone together in room.",
     },
   ];
-  */
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
   const summaryText = analysisData?.summary ?? "…";
