@@ -74,9 +74,20 @@ export default function LayoutHost({
               height: 70,
             },
             {
-              type: "component",
-              componentType: "ToolsPanel",
-              title: "ToolsPanel",
+              type: "row",
+              content: [
+                {
+                  type: "component",
+                  width: 30,
+                  componentType: "ToolsPanel",
+                  title: "ToolsPanel",
+                },
+                {
+                  type: "component",
+                  componentType: "Transcript",
+                  title: "Transcript",
+                },
+              ],
             },
           ],
         },
@@ -85,11 +96,6 @@ export default function LayoutHost({
           id: "rightStack",
           width: 30,
           content: [
-            {
-              type: "component",
-              componentType: "Transcript",
-              title: "Transcript",
-            },
             {
               type: "component",
               componentType: "OBJDetection",
