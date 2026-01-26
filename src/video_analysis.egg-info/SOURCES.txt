@@ -1,4 +1,5 @@
-LICENSE
+LICENSE.md
+NOTICE.md
 README.md
 setup.py
 src/backend/__init__.py
@@ -10,6 +11,9 @@ src/backend/analysis/pipeline_manager.py
 src/backend/analysis/pipeline_nlp.py
 src/backend/analysis/pipeline_summary.py
 src/backend/analysis/pipeline_video_frames.py
+src/backend/analysis/pos_analysis.py
+src/backend/analysis/pos_analysis_original.py
+src/backend/analysis/quantitative_analysis.py
 src/backend/api/__init__.py
 src/backend/api/routs_video.py
 src/backend/core/__init__.py
