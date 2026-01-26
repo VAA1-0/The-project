@@ -61,52 +61,60 @@ export function MenuBar() {
       }
 
       setUploading(true);
-      let cvatID = null;
+      let cvatID: number | null = null;
 
       try {
         console.log("Uploading to CVAT");
 
-        // Create CVAT tasks
+        // Create CVAT tasks (best-effort: alert on failure but continue upload)
         for (const video of selectedFiles) {
-          let taskName = `Task-${Date.now()}`;
-          console.log("🎬 Creating video task...");
-          let result = await createVideoTask(taskName, video);
-          cvatID = result.taskId;
-          console.log(`✅Task ID: ${result.taskId}`);
-        }
-
-        // Upload & save locally
-        try {
-          for (const f of selectedFiles) {
-            const length = await getVideoDuration(f);
-            const res = await VideoService.upload(f, cvatID, length);
-            console.log(res);
-
-            try {
-              const videoBlob = new Blob([f], { type: f.type });
-              await saveVideoBlob(res.analysis_id, videoBlob);
-              console.log(
-                `Saved original video blob to IndexedDB for ${res.analysis_id}`,
-              );
-            } catch (storageErr) {
-              console.warn("Failed to save video to IndexedDB:", storageErr);
-            }
+          const taskName = `Task-${Date.now()}`;
+          try {
+            console.log("🎬 Creating video task...");
+            const result = await createVideoTask(taskName, video);
+            cvatID = result.taskId;
+            console.log(`✅Task ID: ${result.taskId}`);
+          } catch (err) {
+            console.warn("Create CVAT task failed:", err);
+            alert(
+              "Could not create CVAT task. Continuing without CVAT linkage.",
+            );
+            break;
           }
-
-          const list = await VideoService.list();
-          setLibraryVideos(list);
-          setFiles(null);
-          setFile(null);
-          setPreviewUrl(null);
-          window.dispatchEvent(new CustomEvent("video-uploaded"));
-
-          alert("✅Upload successful!");
-        } catch (err) {
-          console.error(err);
-          alert("Upload failed: " + ((err as any)?.message ?? String(err)));
         }
       } catch (err) {
-        console.log("Video uploading to CVAT failed. Try again!");
+        console.warn("CVAT task creation encountered an error:", err);
+        alert("Could not create CVAT task. Continuing without CVAT linkage.");
+      }
+
+      try {
+        // Upload & save locally (uses cvatID=0 when unavailable)
+        for (const f of selectedFiles) {
+          const length = await getVideoDuration(f);
+          const res = await VideoService.upload(f, cvatID ?? 0, length);
+          console.log(res);
+
+          try {
+            const videoBlob = new Blob([f], { type: f.type });
+            await saveVideoBlob(res.analysis_id, videoBlob);
+            console.log(
+              `Saved original video blob to IndexedDB for ${res.analysis_id}`,
+            );
+          } catch (storageErr) {
+            console.warn("Failed to save video to IndexedDB:", storageErr);
+          }
+        }
+
+        const list = await VideoService.list();
+        setLibraryVideos(list);
+        setFiles(null);
+        setFile(null);
+        setPreviewUrl(null);
+        window.dispatchEvent(new CustomEvent("video-uploaded"));
+
+        alert("✅Upload successful!");
+      } catch (err) {
+        console.error(err);
         alert("Upload failed: " + ((err as any)?.message ?? String(err)));
       } finally {
         setUploading(false);
