@@ -4,7 +4,13 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
-import { Download, Search, MoreHorizontal } from "lucide-react";
+import {
+  Download,
+  Search,
+  MoreHorizontal,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 
 import {
   Tooltip,
@@ -26,6 +32,9 @@ export default function SpeechToTextPanel() {
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
+
+  // State for show/hide summary
+  const [showSummary, setShowSummary] = useState(true);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
@@ -422,45 +431,36 @@ export default function SpeechToTextPanel() {
           video Id: {videoId}
         </div>
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
-            <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
-            <div className="flex items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button className="p-1 hover:bg-[#2a2a2a] rounded">
-                    <Search className="size-3.5 text-[#b8b8b8]" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Search transcript</p>
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button className="p-1 hover:bg-[#2a2a2a] rounded">
-                    <MoreHorizontal className="size-3.5 text-[#b8b8b8]" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>More actions</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
           {/* SUMMARY */}
-          <div className="px-3 py-2 shrink-0">
-            <div className="text-sm font-semibold mb-2">Summary:</div>
-            {summaryText.length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-                No summary available
-              </div>
-            ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-sm text-slate-200">{summaryText}</div>
-              </div>
-            )}
+          <div className="border-b border-[#0a0a0a] shrink-0">
+            <button
+              onClick={() => setShowSummary(!showSummary)}
+              className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+            >
+              <span className="text-[#b8b8b8] text-[12px] font-medium">
+                Summary
+              </span>
+              {showSummary ? (
+                <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+              ) : (
+                <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+              )}
+            </button>
           </div>
+          {showSummary && (
+            <div className="flex-1 min-h-20 overflow-y-auto space-y-2 px-3 py-2">
+              {summaryText.length === 0 ? (
+                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300 py-2">
+                  No summary available
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-700/30 rounded-lg py-2">
+                  <div className="text-sm text-slate-200">{summaryText}</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Speech to text */}
           {/* Scrollable list container: flexible height with vertical scrolling */}
           <div className="min-h-0 px-3 flex flex-col">
