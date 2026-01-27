@@ -40,19 +40,21 @@ const Loader: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   </svg>
 );
 
-type LoadingState = "loading" | "success" | "error";
+type LoadingState = "loading" | "success" | "FailConnectToCVAT" | "error";
 
 export function LoadingPage() {
   const router = useRouter();
   const [state, setState] = useState<LoadingState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
 
+  const continueWithoutCvat = () => router.push("/dashboard");
+
   const attemptLogin = async () => {
     setState("loading");
     setErrorMessage("");
 
     try {
-      const auth = await loginToCvat("runzhouzhu", "CCCKUi6.478m-hb");
+      const auth = await loginToCvat("admin", "admin123");
       if (auth.ok) {
         console.log("✅ Logged In");
         setState("success");
@@ -61,7 +63,7 @@ export function LoadingPage() {
           router.push("/dashboard");
         }, 400);
       } else {
-        setState("error");
+        setState("FailConnectToCVAT");
         setErrorMessage("Login failed. Please try again.");
       }
     } catch (err) {
@@ -148,6 +150,52 @@ export function LoadingPage() {
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
               >
                 Retry
+              </Button>
+              <Button
+                onClick={continueWithoutCvat}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Continue without CVAT
+              </Button>
+            </div>
+          </>
+        )}
+
+        {state === "FailConnectToCVAT" && (
+          <>
+            <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-amber-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-.01-12a9 9 0 100 18 9 9 0 000-18z"
+                />
+              </svg>
+            </div>
+            <div className="text-center space-y-4">
+              <div className="space-y-2">
+                <h1 className="text-2xl font-bold text-white">
+                  Unable to connect to CVAT
+                </h1>
+                <p className="text-slate-400">{errorMessage}</p>
+              </div>
+              <Button
+                onClick={attemptLogin}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Retry
+              </Button>
+              <Button
+                onClick={continueWithoutCvat}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Continue without CVAT
               </Button>
             </div>
           </>
