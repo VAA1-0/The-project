@@ -101,50 +101,241 @@ export default function QuantitativeAnalysisPanel() {
   // const analysisDataquantAnalysis = analysisData?.quantAnalysis ?? [];
 
   /* Mock transcript data for demonstration */
-  const analysisDataquantAnalysis = [
+  const analysisDataquantAnalysis = {
+  "stats_df": [
     {
-      text: "This one is being held in a city right on the edge of the Amerson jungle. Now the problem is...",
-      build_token_stream: {
-        NOUN: 6,
-        VERB: 1,
-        ADP: 3,
-        ADV: 2,
-      },
-      corpus_sentence_word_stats: {
-        verb_noun_ratio: 0.16666666666666666,
-        modal_density: 0.0,
-        pronoun_share: 0.0,
-        adj_adv_ratio: 0.0,
-        nominalization_density: 0.05,
-      },
-      tfidf_top_terms: {
-        who: ["This one", "the problem"],
-        what: [
-          "This one is being held in a city right on the edge of the Amerson jungle.",
-        ],
-        when: ["Now"],
-        where: ["in a city"],
-        why: [],
-        how: [],
-        by_what_means: [],
-        towards_what_end: [],
-        whence: [],
-        by_what_consequence: [],
-      },
-      bigrams: {
-        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
-        VERB: ["held"],
-        ADV: ["right", "Now"],
-        ADP: ["in", "on", "of"],
-      },
-      sentencetagging: {
-        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
-        VERB: ["held"],
-        ADV: ["right", "Now"],
-        ADP: ["in", "on", "of"],
-      },
+      "Document": "analyze.txt",
+      "Sentences": 6,
+      "Words": 115
+    }
+  ],
+  "token_info": {
+    "tokens": [
+      "the", "early", "development", "of", "communication", "systems", "has", "always",
+      "been", "shaped", "by", "the", "needs", "of", "the", "societies", "that", "use",
+      "them", "as", "populations", "expanded", "people", "created", "more", "efficient",
+      "methods", "for", "sharing", "information", "across", "greater", "distances",
+      "written", "language", "emerged", "as", "a", "way", "to", "preserve", "knowledge",
+      "beyond", "the", "limits", "of", "memory", "allowing", "ideas", "to", "be",
+      "transmitted", "across", "generations", "over", "time", "improvements", "in",
+      "materials", "such", "as", "paper", "and", "ink", "made", "writing",
+      "more",
+      "accessible",
+      "eventually",
+      "digital",
+      "technologies",
+      "accelerated",
+      "this",
+      "trend",
+      "enabling",
+      "rapid",
+      "exchange",
+      "of",
+      "information",
+      "on",
+      "a",
+      "global",
+      "scale",
+      "despite",
+      "these",
+      "changes",
+      "the",
+      "fundamental",
+      "purpose",
+      "of",
+      "communication",
+      "has",
+      "remained",
+      "constant",
+      "to",
+      "connect",
+      "individuals",
+      "through",
+      "shared",
+      "meaning"
+    ],
+    "tokens_filtered": [
+      "early",
+      "development",
+      "communication",
+      "systems",
+      "always",
+      "shaped",
+      "needs",
+      "societies",
+      "use",
+      "populations",
+      "expanded",
+      "people",
+      "created",
+      "efficient",
+      "methods",
+      "sharing",
+      "information",
+      "across",
+      "greater",
+      "distances",
+      "written",
+      "language",
+      "emerged",
+      "way",
+      "preserve",
+      "knowledge",
+      "beyond",
+      "limits",
+      "memory",
+      "allowing",
+      "ideas",
+      "transmitted",
+      "across",
+      "generations",
+      "time",
+      "improvements",
+      "materials",
+      "paper",
+      "ink",
+      "made",
+      "writing",
+      "accessible",
+      "eventually",
+      "digital",
+      "technologies",
+      "accelerated",
+      "trend",
+      "enabling",
+      "rapid",
+      "exchange",
+      "information",
+      "global",
+      "scale",
+      "despite",
+      "changes",
+      "fundamental",
+      "purpose",
+      "communication",
+      "remained",
+      "constant",
+      "connect",
+      "individuals",
+      "shared",
+      "meaning"
+    ],
+    "ttr": 0.82,
+    "freq_dist": {
+      "early": 1,
+      "development": 1,
+      "communication": 2,
+      "systems": 1,
+      "always": 1,
+      "shaped": 1,
+      "needs": 1,
+      "societies": 1,
+      "use": 1,
+      "populations": 1,
+      "expanded": 1,
+      "people": 1,
+      "created": 1,
+      "efficient": 1,
+      "methods": 1,
+      "sharing": 1,
+      "information": 2,
+      "across": 2,
+      "greater": 1,
+      "distances": 1,
+      "written": 1,
+      "language": 1,
+      "emerged": 1,
+      "way": 1,
+      "preserve": 1,
+      "knowledge": 1,
+      "beyond": 1,
+      "limits": 1,
+      "memory": 1,
+      "allowing": 1,
+      "ideas": 1,
+      "transmitted": 1,
+      "generations": 1,
+      "time": 1,
+      "improvements": 1,
+      "materials": 1,
+      "paper": 1,
+      "ink": 1,
+      "made": 1,
+      "writing": 1,
+      "accessible": 1,
+      "eventually": 1,
+      "digital": 1,
+      "technologies": 1,
+      "accelerated": 1,
+      "trend": 1,
+      "enabling": 1,
+      "rapid": 1,
+      "exchange": 1,
+      "global": 1,
+      "scale": 1,
+      "despite": 1,
+      "changes": 1,
+      "fundamental": 1,
+      "purpose": 1,
+      "remained": 1,
+      "constant": 1,
+      "connect": 1,
+      "individuals": 1,
+      "shared": 1,
+      "meaning": 1
+    }
+  },
+  "tfidf_df": [
+    {
+      "Document": "analyze.txt",
+      "TopTerms": [
+        "information",
+        "communication",
+        "way",
+        "writing",
+        "trend",
+        "transmitted",
+        "time",
+        "use",
+        "written",
+        "societies"
+      ]
+    }
+  ],
+  "bigrams": [],
+  "sentence_tags": [
+    {
+      "sentence": "The early development of communication systems has always been shaped by the needs of the societies that use them.",
+      "WHO": false,
+      "WHY": false
     },
-  ];
+    {
+      "sentence": "As populations expanded, people created more efficient methods for sharing information across greater distances.",
+      "WHO": false,
+      "WHY": false
+    },
+    {
+      "sentence": "Written language emerged as a way to preserve knowledge beyond the limits of memory, allowing ideas to be transmitted across generations.",
+      "WHO": false,
+      "WHY": false
+    },
+    {
+      "sentence": "Over time, improvements in materials, such as paper and ink, made writing more accessible.",
+      "WHO": false,
+      "WHY": false
+    },
+    {
+      "sentence": "Eventually, digital technologies accelerated this trend, enabling rapid exchange of information on a global scale.",
+      "WHO": false,
+      "WHY": false
+    },
+    {
+      "sentence": "Despite these changes, the fundamental purpose of communication has remained constant: to connect individuals through shared meaning.",
+      "WHO": false,
+      "WHY": false
+    }
+  ]
+};
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
@@ -153,9 +344,9 @@ export default function QuantitativeAnalysisPanel() {
       </div>
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         text:{" "}
-        {analysisDataquantAnalysis[0] === undefined
+        {analysisDataquantAnalysis === undefined
           ? "N/A"
-          : analysisDataquantAnalysis[0].text}
+          : analysisDataquantAnalysis.text}
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -237,7 +428,7 @@ export default function QuantitativeAnalysisPanel() {
         {showCorpusSentenceWordStats && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
             {Object.keys(
-              analysisDataquantAnalysis[0].corpus_sentence_word_stats,
+              analysisDataquantAnalysis.corpus_sentence_word_stats,
             ).length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No content detected
@@ -246,22 +437,22 @@ export default function QuantitativeAnalysisPanel() {
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
                   {"nouns: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    analysisDataquantAnalysis.corpus_sentence_word_stats
                       .verb_noun_ratio}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"verbs: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    analysisDataquantAnalysis.corpus_sentence_word_stats
                       .modal_density}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adjectives: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    analysisDataquantAnalysis.corpus_sentence_word_stats
                       .pronoun_share}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adverbs: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
+                    analysisDataquantAnalysis.corpus_sentence_word_stats
                       .adj_adv_ratio}
                 </div>
               </div>
@@ -287,7 +478,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: responsive height with vertical scrolling */}
         {showTfidfTopTerms && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms)
+            {Object.keys(analysisDataquantAnalysis.tfidf_top_terms)
               .length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No TFIDF Top Terms detected
@@ -295,40 +486,40 @@ export default function QuantitativeAnalysisPanel() {
             ) : (
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
-                  {"who: " + analysisDataquantAnalysis[0].tfidf_top_terms.who}
+                  {"who: " + analysisDataquantAnalysis.tfidf_top_terms.who}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"what: " + analysisDataquantAnalysis[0].tfidf_top_terms.what}
+                  {"what: " + analysisDataquantAnalysis.tfidf_top_terms.what}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"when: " + analysisDataquantAnalysis[0].tfidf_top_terms.when}
+                  {"when: " + analysisDataquantAnalysis.tfidf_top_terms.when}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"where: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.where}
+                    analysisDataquantAnalysis.tfidf_top_terms.where}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"why: " + analysisDataquantAnalysis[0].tfidf_top_terms.why}
+                  {"why: " + analysisDataquantAnalysis.tfidf_top_terms.why}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"how: " + analysisDataquantAnalysis[0].tfidf_top_terms.how}
+                  {"how: " + analysisDataquantAnalysis.tfidf_top_terms.how}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"by what means: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.by_what_means}
+                    analysisDataquantAnalysis.tfidf_top_terms.by_what_means}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"towards what end: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms
+                    analysisDataquantAnalysis.tfidf_top_terms
                       .towards_what_end}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"whence: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.whence}
+                    analysisDataquantAnalysis.tfidf_top_terms.whence}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"by what consequence: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms
+                    analysisDataquantAnalysis.tfidf_top_terms
                       .by_what_consequence}
                 </div>
               </div>
@@ -354,7 +545,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: responsive height with vertical scrolling */}
         {showBigrams && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
+            {Object.keys(analysisDataquantAnalysis.bigrams).length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No Bigrams detected
               </div>
@@ -362,19 +553,19 @@ export default function QuantitativeAnalysisPanel() {
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
                   {"noun: " +
-                    analysisDataquantAnalysis[0].bigrams.NOUN.join(", ")}
+                    analysisDataquantAnalysis.bigrams.NOUN.join(", ")}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"verb: " +
-                    analysisDataquantAnalysis[0].bigrams.VERB.join(", ")}
+                    analysisDataquantAnalysis.bigrams.VERB.join(", ")}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adjective: " +
-                    analysisDataquantAnalysis[0].bigrams.ADP.join(", ")}
+                    analysisDataquantAnalysis.bigrams.ADP.join(", ")}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adverb: " +
-                    analysisDataquantAnalysis[0].bigrams.ADV.join(", ")}
+                    analysisDataquantAnalysis.bigrams.ADV.join(", ")}
                 </div>
               </div>
             )}
@@ -399,7 +590,7 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: responsive height with vertical scrolling */}
         {showSentenceTagging && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].sentencetagging)
+            {Object.keys(analysisDataquantAnalysis.sentencetagging)
               .length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No SentenceTagging detected
@@ -408,23 +599,23 @@ export default function QuantitativeAnalysisPanel() {
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
                   {"noun: " +
-                    analysisDataquantAnalysis[0].sentencetagging.NOUN.join(
+                    analysisDataquantAnalysis.sentencetagging.NOUN.join(
                       ", ",
                     )}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"verb: " +
-                    analysisDataquantAnalysis[0].sentencetagging.VERB.join(
+                    analysisDataquantAnalysis.sentencetagging.VERB.join(
                       ", ",
                     )}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adjective: " +
-                    analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
+                    analysisDataquantAnalysis.sentencetagging.ADP.join(", ")}
                 </div>
                 <div className="text-sm text-slate-200">
                   {"adverb: " +
-                    analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
+                    analysisDataquantAnalysis.sentencetagging.ADV.join(", ")}
                 </div>
               </div>
             )}

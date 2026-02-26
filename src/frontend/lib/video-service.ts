@@ -606,7 +606,7 @@ export class VideoService {
   private static async loadQuantAnalysis(id: string): Promise<QuantAnalysis[]> {
     // Placeholder for future quantitative analysis loading
     try {
-      const quantBlob = await apiService.downloadFile(id, "quant_analysis");
+      const quantBlob = await apiService.downloadFile(id, "quan_analysis");
       const quantText = await quantBlob.text();
       const quantData = JSON.parse(quantText);
 

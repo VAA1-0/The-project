@@ -318,22 +318,43 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     qa = QuantitativeAnalysis(docs=docs, file_paths=files)
                     quan_result = qa.run()
 
-                    """
-                    with open(quan_path, "w", encoding="utf-8") as f:
-                        if hasattr(quan_result, 'to_json'):  # DataFrame
-                            f.write(quan_result.to_json(orient='records', force_ascii=False, indent=2))
-                        else:  # dict or other serializable object
-                            json.dump(quan_result, f, indent=2, ensure_ascii=False)
-                    """
+                    print("1111111111111111111111111111111111111")
+                    print("1111111111111111111111111111111111111")
+                    print(quan_result["stats_df"])
+                    print(type(quan_result["stats_df"]))
+                    print("1111111111111111111111111111111111111")
+                    print(quan_result["token_info"])
+                    print(type(quan_result["token_info"]))
+                    print("1111111111111111111111111111111111111")
+                    print(quan_result["tfidf_df"])
+                    print(type(quan_result["tfidf_df"]))
+                    print("1111111111111111111111111111111111111")
+                    print(quan_result["bigrams"])
+                    print(type(quan_result["bigrams"]))
+                    print("1111111111111111111111111111111111111")
+                    print(quan_result["sentence_tags"])
+                    print(type(quan_result["sentence_tags"]))
+                    print("1111111111111111111111111111111111111")
+                    print("1111111111111111111111111111111111111")
 
-                    print("1111111111111111111111111111111111111")
-                    print("1111111111111111111111111111111111111")
-                    print(type(quan_result))
-                    print("1111111111111111111111111111111111111")
-                    print("1111111111111111111111111111111111111")
+                    def normalize_for_json(value):
+                        try:
+                            import pandas as pd
+                            if isinstance(value, pd.DataFrame):
+                                return value.to_dict(orient="records")
+                        except Exception:
+                            pass
+
+                        if isinstance(value, dict):
+                            return {k: normalize_for_json(v) for k, v in value.items()}
+                        if isinstance(value, list):
+                            return [normalize_for_json(v) for v in value]
+                        return value
+
+                    normalized_quan = normalize_for_json(quan_result)
 
                     with open(quan_path, "w", encoding="utf-8") as f:
-                        f.write(quan_result.to_json(orient='records', exclude_index=True, force_ascii=False, indent=2))
+                        json.dump(normalized_quan, f, indent=2, ensure_ascii=False)
 
                     logger.info(f"QuantitativeAnalysis Results saved: {quan_path}")
                 except Exception as quan_error:
@@ -468,7 +489,9 @@ async def download_file(analysis_id: str, file_type: str):
         "summary_json": ("analysis_summary.json", "application/json"),
         "audio": ("extracted_audio.wav", "audio/wav"),
         "transcript": ("transcript.json", "application/json"),
-        "pos_analysis": ("pos_analysis.json", "application/json")
+        "pos_analysis": ("pos_analysis.json", "application/json"),
+
+        "quan_analysis": ("quan_analysis.json", "application/json")
     }
     
     if file_type not in file_mapping:
