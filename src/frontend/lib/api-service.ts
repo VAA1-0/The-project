@@ -75,7 +75,7 @@ class ApiService {
           return this.getMockUploadResponse(file, cvatID);
         }
         throw new Error(
-          `Upload failed: ${response.status} ${response.statusText} - ${errorText}`
+          `Upload failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -123,7 +123,7 @@ class ApiService {
    */
   async startAnalysis(
     analysisId: string,
-    pipelineType: "full" | "visual_only" | "audio_only" = "full"
+    pipelineType: "full" | "visual_only" | "audio_only" = "full",
   ): Promise<AnalysisStartResponse> {
     // Check if this is a mock ID
     if (analysisId.startsWith("mock-")) {
@@ -141,13 +141,13 @@ class ApiService {
         `${this.baseURL}/api/analyze/${analysisId}?pipeline_type=${pipelineType}`,
         {
           method: "POST",
-        }
+        },
       );
 
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `Analysis start failed: ${response.status} ${response.statusText} - ${errorText}`
+          `Analysis start failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -180,7 +180,7 @@ class ApiService {
           return this.getMockStatus(analysisId);
         }
         throw new Error(
-          `Status check failed: ${response.status} ${response.statusText} - ${errorText}`
+          `Status check failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -236,7 +236,7 @@ class ApiService {
       progress = Math.floor(Math.random() * 50) + 50;
     }
 
-    // Mock all 6 download links for completed analyses
+    // Mock all 7 download links for completed analyses
     const downloadLinks =
       status === "completed"
         ? {
@@ -248,6 +248,8 @@ class ApiService {
             transcript: `${this.baseURL}/api/download/${analysisId}/transcript`,
             // Edit By Runzhou: add pos_analysis link
             pos_analysis: `${this.baseURL}/api/download/${analysisId}/pos_analysis`,
+            // Edit By Runzhou: add quan_analysis link
+            quan_analysis: `${this.baseURL}/api/download/${analysisId}/quan_analysis`,
           }
         : undefined;
 
@@ -286,13 +288,13 @@ class ApiService {
     }
 
     const response = await fetch(
-      `${this.baseURL}/api/download/${analysisId}/${fileType}`
+      `${this.baseURL}/api/download/${analysisId}/${fileType}`,
     );
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Download failed: ${response.status} ${response.statusText} - ${errorText}`
+        `Download failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 
@@ -309,6 +311,8 @@ class ApiService {
       transcript: "application/json",
       // Edit By Runzhou: add pos_analysis mime type
       pos_analysis: "application/json",
+      // Edit By Runzhou: add quan_analysis mime type
+      quan_analysis: "application/json",
     };
     return mimeTypes[fileType] || "application/octet-stream";
   }
@@ -320,7 +324,7 @@ class ApiService {
     analysisId: string,
     onProgress: (status: AnalysisStatus) => void,
     interval: number = 2000,
-    timeout: number = 300000 // 5 minutes
+    timeout: number = 300000, // 5 minutes
   ): Promise<AnalysisStatus> {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
@@ -368,7 +372,7 @@ class ApiService {
   async downloadAndSaveFile(
     analysisId: string,
     fileType: string,
-    filename?: string
+    filename?: string,
   ): Promise<void> {
     try {
       const blob = await this.downloadFile(analysisId, fileType);
@@ -390,7 +394,7 @@ class ApiService {
 
     try {
       const response = await fetch(
-        `${this.baseURL}/api/analyses?limit=${limit}`
+        `${this.baseURL}/api/analyses?limit=${limit}`,
       );
 
       if (!response.ok) {
@@ -401,7 +405,7 @@ class ApiService {
           return this.getMockAnalyses(limit);
         }
         throw new Error(
-          `Failed to list analyses: ${response.status} ${response.statusText} - ${errorText}`
+          `Failed to list analyses: ${response.status} ${response.statusText} - ${errorText}`,
         );
       }
 
@@ -411,7 +415,7 @@ class ApiService {
     } catch (error) {
       console.warn("List analyses failed, using fallback:", error);
       // Fallback to mock data
-      return this.getMockAnalyses(limit);
+      // return this.getMockAnalyses(limit);
     }
   }
 
@@ -432,7 +436,7 @@ class ApiService {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Delete failed: ${response.status} ${response.statusText} - ${errorText}`
+        `Delete failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
   }
@@ -446,7 +450,7 @@ class ApiService {
 
       if (!response.ok) {
         throw new Error(
-          `Health check failed: ${response.status} ${response.statusText}`
+          `Health check failed: ${response.status} ${response.statusText}`,
         );
       }
 
@@ -465,7 +469,7 @@ class ApiService {
 
     if (!response.ok) {
       throw new Error(
-        `API info failed: ${response.status} ${response.statusText}`
+        `API info failed: ${response.status} ${response.statusText}`,
       );
     }
 
@@ -485,6 +489,8 @@ class ApiService {
       "transcript",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
+      // Edit By Runzhou: add quan_analysis file type
+      "quan_analysis",
     ];
   }
 
@@ -501,6 +507,8 @@ class ApiService {
       transcript: "Transcript (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
+      // Edit By Runzhou: add quan_analysis display name
+      quan_analysis: "Quantity Analysis (JSON)",
     };
 
     return displayNames[fileType] || fileType;
@@ -519,6 +527,8 @@ class ApiService {
       transcript: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",
+      // Edit By Runzhou: add quan_analysis file extension
+      quan_analysis: ".json",
     };
 
     return extensions[fileType] || "";
@@ -529,21 +539,21 @@ class ApiService {
    */
   async downloadAllFiles(
     analysisId: string,
-    status: AnalysisStatus
+    status: AnalysisStatus,
   ): Promise<void> {
     const downloadLinks = status.download_links || {};
     const downloadPromises = Object.entries(downloadLinks).map(
       async ([fileType, url]) => {
         try {
           const filename = `${analysisId}_${fileType}${this.getFileExtension(
-            fileType
+            fileType,
           )}`;
           await this.downloadAndSaveFile(analysisId, fileType, filename);
           console.log(`Downloaded: ${filename}`);
         } catch (error) {
           console.error(`Failed to download ${fileType}:`, error);
         }
-      }
+      },
     );
 
     await Promise.allSettled(downloadPromises);
@@ -555,7 +565,7 @@ class ApiService {
   async uploadVideoWithProgress(
     file: File,
     cvatID: number,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
   ): Promise<UploadResponse> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
