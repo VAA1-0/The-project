@@ -318,25 +318,6 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     qa = QuantitativeAnalysis(docs=docs, file_paths=files)
                     quan_result = qa.run()
 
-                    print("1111111111111111111111111111111111111")
-                    print("1111111111111111111111111111111111111")
-                    print(quan_result["stats_df"])
-                    print(type(quan_result["stats_df"]))
-                    print("1111111111111111111111111111111111111")
-                    print(quan_result["token_info"])
-                    print(type(quan_result["token_info"]))
-                    print("1111111111111111111111111111111111111")
-                    print(quan_result["tfidf_df"])
-                    print(type(quan_result["tfidf_df"]))
-                    print("1111111111111111111111111111111111111")
-                    print(quan_result["bigrams"])
-                    print(type(quan_result["bigrams"]))
-                    print("1111111111111111111111111111111111111")
-                    print(quan_result["sentence_tags"])
-                    print(type(quan_result["sentence_tags"]))
-                    print("1111111111111111111111111111111111111")
-                    print("1111111111111111111111111111111111111")
-
                     def normalize_for_json(value):
                         try:
                             import pandas as pd
