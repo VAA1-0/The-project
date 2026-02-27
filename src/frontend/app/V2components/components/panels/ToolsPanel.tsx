@@ -35,6 +35,7 @@ export default function ToolsPanel() {
   const [analysisData, setAnalysisData] = useState<any>(null);
 
   const lastObjectUrl = React.useRef<string | null>(null);
+  const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<any>(null);
@@ -66,6 +67,12 @@ export default function ToolsPanel() {
         return;
       }
 
+      // Clear any existing polling interval when switching videos
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+
       setIsLoading(true);
 
       try {
@@ -75,6 +82,17 @@ export default function ToolsPanel() {
         console.log("Loaded metadata:", m);
 
         setMetadata(m);
+
+        // Check and update isAnalyzing status based on video status
+        if (m.status === "processing") {
+          setIsAnalyzing(true);
+          setAnalysisProgress(m.progress || 0);
+          // Start polling for this video's analysis progress
+          pollAnalysisProgress(videoId);
+        } else {
+          setIsAnalyzing(false);
+          setAnalysisProgress(m.progress || 0);
+        }
 
         // Load video blob - hybrid approach
         // 1. First try to get the original video from IndexedDB (instant preview)
@@ -111,6 +129,14 @@ export default function ToolsPanel() {
       }
     }
     load();
+
+    // Cleanup function: clear polling interval when component unmounts or videoId changes
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
   }, [videoId]);
 
   async function handleAnalyzeVideo() {
@@ -130,6 +156,12 @@ export default function ToolsPanel() {
   }
 
   async function pollAnalysisProgress(analysisId: string) {
+    // Clear any existing polling interval before starting a new one
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
     setIsAnalyzing(true);
 
     const interval = setInterval(async () => {
@@ -139,6 +171,7 @@ export default function ToolsPanel() {
 
         if (status.status === "completed") {
           clearInterval(interval);
+          pollingIntervalRef.current = null;
           setIsAnalyzing(false);
 
           // Refresh analysis data
@@ -151,6 +184,7 @@ export default function ToolsPanel() {
           alert("Analysis completed!");
         } else if (status.status === "error") {
           clearInterval(interval);
+          pollingIntervalRef.current = null;
           setIsAnalyzing(false);
           alert(`Analysis failed: ${status.error}`);
         }
@@ -158,6 +192,9 @@ export default function ToolsPanel() {
         console.error("Polling error:", error);
       }
     }, 2000);
+
+    // Store the interval in the ref
+    pollingIntervalRef.current = interval;
   }
 
   async function handleExport() {

@@ -229,8 +229,6 @@ export default function DownloadPanel() {
           const originalName = apiStatus.filename || "video";
           const baseName = originalName.replace(/\.[^/.]+$/, "");
 
-          console.log("aaaaaaaaaaaaa" + fileType + apiStatus.pipeline_type)
-
           const isAvailable =
             downloadLinks[fileType] ||
             (apiStatus.status === "completed" &&

@@ -98,7 +98,11 @@ export default function QuantitativeAnalysisPanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to mock data if not available)
-  const analysisDataquantAnalysis = analysisData?.quantAnalysis ?? {
+
+  const analysisDataquantAnalysis = analysisData?.quantAnalysis?.[0] ?? {}
+
+  /*
+  const analysisDataquantAnalysis = analysisData?.quantAnalysis.[0] ?? {
     stats_df: [
       {
         Document: "analyze.txt",
@@ -397,6 +401,9 @@ export default function QuantitativeAnalysisPanel() {
       },
     ],
   };
+  */
+
+  // console.log(analysisDataquantAnalysis.token_info.tokens[1])
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
@@ -416,6 +423,7 @@ export default function QuantitativeAnalysisPanel() {
             </button>
           </div>
         </div>
+
         {/* Build Token Stream (uses token_info from mock/analysis) */}
         <div className="border-b border-[#0a0a0a] shrink-0">
           <button
@@ -423,7 +431,7 @@ export default function QuantitativeAnalysisPanel() {
             className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
           >
             <span className="text-[#b8b8b8] text-[12px] font-medium">
-              Build Token Stream
+              Token Info
             </span>
             {showBuildTokenStream ? (
               <ChevronDown className="size-3.5 text-[#b8b8b8]" />
