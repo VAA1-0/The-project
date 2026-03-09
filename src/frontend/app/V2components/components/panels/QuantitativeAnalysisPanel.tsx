@@ -97,65 +97,318 @@ export default function QuantitativeAnalysisPanel() {
     load();
   }, [videoId]);
 
-  // Use analysisData (fallback to empty arrays if not available)
-  // const analysisDataquantAnalysis = analysisData?.quantAnalysis ?? [];
+  // Use analysisData (fallback to mock data if not available)
 
-  /* Mock transcript data for demonstration */
-  const analysisDataquantAnalysis = [
-    {
-      text: "This one is being held in a city right on the edge of the Amerson jungle. Now the problem is...",
-      build_token_stream: {
-        NOUN: 6,
-        VERB: 1,
-        ADP: 3,
-        ADV: 2,
+  const analysisDataquantAnalysis = analysisData?.quantAnalysis?.[0] ?? {}
+
+  /*
+  const analysisDataquantAnalysis = analysisData?.quantAnalysis.[0] ?? {
+    stats_df: [
+      {
+        Document: "analyze.txt",
+        Sentences: 6,
+        Words: 115,
       },
-      corpus_sentence_word_stats: {
-        verb_noun_ratio: 0.16666666666666666,
-        modal_density: 0.0,
-        pronoun_share: 0.0,
-        adj_adv_ratio: 0.0,
-        nominalization_density: 0.05,
-      },
-      tfidf_top_terms: {
-        who: ["This one", "the problem"],
-        what: [
-          "This one is being held in a city right on the edge of the Amerson jungle.",
-        ],
-        when: ["Now"],
-        where: ["in a city"],
-        why: [],
-        how: [],
-        by_what_means: [],
-        towards_what_end: [],
-        whence: [],
-        by_what_consequence: [],
-      },
-      bigrams: {
-        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
-        VERB: ["held"],
-        ADV: ["right", "Now"],
-        ADP: ["in", "on", "of"],
-      },
-      sentencetagging: {
-        NOUN: ["one", "city", "edge", "Amerson", "jungle", "problem"],
-        VERB: ["held"],
-        ADV: ["right", "Now"],
-        ADP: ["in", "on", "of"],
+    ],
+    token_info: {
+      tokens: [
+        "the",
+        "early",
+        "development",
+        "of",
+        "communication",
+        "systems",
+        "has",
+        "always",
+        "been",
+        "shaped",
+        "by",
+        "the",
+        "needs",
+        "of",
+        "the",
+        "societies",
+        "that",
+        "use",
+        "them",
+        "as",
+        "populations",
+        "expanded",
+        "people",
+        "created",
+        "more",
+        "efficient",
+        "methods",
+        "for",
+        "sharing",
+        "information",
+        "across",
+        "greater",
+        "distances",
+        "written",
+        "language",
+        "emerged",
+        "as",
+        "a",
+        "way",
+        "to",
+        "preserve",
+        "knowledge",
+        "beyond",
+        "the",
+        "limits",
+        "of",
+        "memory",
+        "allowing",
+        "ideas",
+        "to",
+        "be",
+        "transmitted",
+        "across",
+        "generations",
+        "over",
+        "time",
+        "improvements",
+        "in",
+        "materials",
+        "such",
+        "as",
+        "paper",
+        "and",
+        "ink",
+        "made",
+        "writing",
+        "more",
+        "accessible",
+        "eventually",
+        "digital",
+        "technologies",
+        "accelerated",
+        "this",
+        "trend",
+        "enabling",
+        "rapid",
+        "exchange",
+        "of",
+        "information",
+        "on",
+        "a",
+        "global",
+        "scale",
+        "despite",
+        "these",
+        "changes",
+        "the",
+        "fundamental",
+        "purpose",
+        "of",
+        "communication",
+        "has",
+        "remained",
+        "constant",
+        "to",
+        "connect",
+        "individuals",
+        "through",
+        "shared",
+        "meaning",
+      ],
+      tokens_filtered: [
+        "early",
+        "development",
+        "communication",
+        "systems",
+        "always",
+        "shaped",
+        "needs",
+        "societies",
+        "use",
+        "populations",
+        "expanded",
+        "people",
+        "created",
+        "efficient",
+        "methods",
+        "sharing",
+        "information",
+        "across",
+        "greater",
+        "distances",
+        "written",
+        "language",
+        "emerged",
+        "way",
+        "preserve",
+        "knowledge",
+        "beyond",
+        "limits",
+        "memory",
+        "allowing",
+        "ideas",
+        "transmitted",
+        "across",
+        "generations",
+        "time",
+        "improvements",
+        "materials",
+        "paper",
+        "ink",
+        "made",
+        "writing",
+        "accessible",
+        "eventually",
+        "digital",
+        "technologies",
+        "accelerated",
+        "trend",
+        "enabling",
+        "rapid",
+        "exchange",
+        "information",
+        "global",
+        "scale",
+        "despite",
+        "changes",
+        "fundamental",
+        "purpose",
+        "communication",
+        "remained",
+        "constant",
+        "connect",
+        "individuals",
+        "shared",
+        "meaning",
+      ],
+      ttr: 0.82,
+      freq_dist: {
+        early: 1,
+        development: 1,
+        communication: 2,
+        systems: 1,
+        always: 1,
+        shaped: 1,
+        needs: 1,
+        societies: 1,
+        use: 1,
+        populations: 1,
+        expanded: 1,
+        people: 1,
+        created: 1,
+        efficient: 1,
+        methods: 1,
+        sharing: 1,
+        information: 2,
+        across: 2,
+        greater: 1,
+        distances: 1,
+        written: 1,
+        language: 1,
+        emerged: 1,
+        way: 1,
+        preserve: 1,
+        knowledge: 1,
+        beyond: 1,
+        limits: 1,
+        memory: 1,
+        allowing: 1,
+        ideas: 1,
+        transmitted: 1,
+        generations: 1,
+        time: 1,
+        improvements: 1,
+        materials: 1,
+        paper: 1,
+        ink: 1,
+        made: 1,
+        writing: 1,
+        accessible: 1,
+        eventually: 1,
+        digital: 1,
+        technologies: 1,
+        accelerated: 1,
+        trend: 1,
+        enabling: 1,
+        rapid: 1,
+        exchange: 1,
+        global: 1,
+        scale: 1,
+        despite: 1,
+        changes: 1,
+        fundamental: 1,
+        purpose: 1,
+        remained: 1,
+        constant: 1,
+        connect: 1,
+        individuals: 1,
+        shared: 1,
+        meaning: 1,
       },
     },
-  ];
+    tfidf_df: [
+      {
+        Document: "analyze.txt",
+        TopTerms: [
+          "information",
+          "communication",
+          "way",
+          "writing",
+          "trend",
+          "transmitted",
+          "time",
+          "use",
+          "written",
+          "societies",
+        ],
+      },
+    ],
+    bigrams: [],
+    sentence_tags: [
+      {
+        sentence:
+          "The early development of communication systems has always been shaped by the needs of the societies that use them.",
+        WHO: false,
+        WHY: false,
+      },
+      {
+        sentence:
+          "As populations expanded, people created more efficient methods for sharing information across greater distances.",
+        WHO: false,
+        WHY: false,
+      },
+      {
+        sentence:
+          "Written language emerged as a way to preserve knowledge beyond the limits of memory, allowing ideas to be transmitted across generations.",
+        WHO: false,
+        WHY: false,
+      },
+      {
+        sentence:
+          "Over time, improvements in materials, such as paper and ink, made writing more accessible.",
+        WHO: false,
+        WHY: false,
+      },
+      {
+        sentence:
+          "Eventually, digital technologies accelerated this trend, enabling rapid exchange of information on a global scale.",
+        WHO: false,
+        WHY: false,
+      },
+      {
+        sentence:
+          "Despite these changes, the fundamental purpose of communication has remained constant: to connect individuals through shared meaning.",
+        WHO: false,
+        WHY: false,
+      },
+    ],
+  };
+  */
+
+  // console.log(analysisDataquantAnalysis.token_info.tokens[1])
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
-      </div>
-      <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
-        text:{" "}
-        {analysisDataquantAnalysis[0] === undefined
-          ? "N/A"
-          : analysisDataquantAnalysis[0].text}
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -170,14 +423,15 @@ export default function QuantitativeAnalysisPanel() {
             </button>
           </div>
         </div>
-        {/* Build Token Stream */}
+
+        {/* Build Token Stream (uses token_info from mock/analysis) */}
         <div className="border-b border-[#0a0a0a] shrink-0">
           <button
             onClick={() => setShowBuildTokenStream(!showBuildTokenStream)}
             className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
           >
             <span className="text-[#b8b8b8] text-[12px] font-medium">
-              Build Token Stream
+              Token Info
             </span>
             {showBuildTokenStream ? (
               <ChevronDown className="size-3.5 text-[#b8b8b8]" />
@@ -186,30 +440,35 @@ export default function QuantitativeAnalysisPanel() {
             )}
           </button>
         </div>
+
+        {/* stats_df */}
         {showBuildTokenStream && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].build_token_stream)
-              .length === 0 ? (
+            {!analysisDataquantAnalysis.token_info ||
+            Object.keys(analysisDataquantAnalysis.token_info).length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-                No Build Token Stream detected
+                No token information detected
               </div>
             ) : (
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
-                  {"nouns: " +
-                    analysisDataquantAnalysis[0].build_token_stream.NOUN}
+                  {"Total tokens: " +
+                    (analysisDataquantAnalysis.token_info.tokens?.length ?? 0)}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"verbs: " +
-                    analysisDataquantAnalysis[0].build_token_stream.VERB}
+                  {"Filtered tokens: " +
+                    (analysisDataquantAnalysis.token_info.tokens_filtered
+                      ?.length ?? 0)}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"adjectives: " +
-                    analysisDataquantAnalysis[0].build_token_stream.ADP}
+                  {"Type-token ratio (TTR): " +
+                    analysisDataquantAnalysis.token_info.ttr}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"adverbs: " +
-                    analysisDataquantAnalysis[0].build_token_stream.ADV}
+                  {"Unique terms: " +
+                    Object.keys(
+                      analysisDataquantAnalysis.token_info.freq_dist ?? {},
+                    ).length}
                 </div>
               </div>
             )}
@@ -236,33 +495,24 @@ export default function QuantitativeAnalysisPanel() {
         </div>
         {showCorpusSentenceWordStats && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(
-              analysisDataquantAnalysis[0].corpus_sentence_word_stats,
-            ).length === 0 ? (
+            {!analysisDataquantAnalysis.stats_df ||
+            analysisDataquantAnalysis.stats_df.length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No content detected
               </div>
             ) : (
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
-                  {"nouns: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                      .verb_noun_ratio}
+                  {"document: " +
+                    analysisDataquantAnalysis.stats_df[0].Document}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"verbs: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                      .modal_density}
+                  {"sentences: " +
+                    analysisDataquantAnalysis.stats_df[0].Sentences}
                 </div>
                 <div className="text-sm text-slate-200">
-                  {"adjectives: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                      .pronoun_share}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"adverbs: " +
-                    analysisDataquantAnalysis[0].corpus_sentence_word_stats
-                      .adj_adv_ratio}
+                  {"words: " +
+                    analysisDataquantAnalysis.stats_df[0].Words}
                 </div>
               </div>
             )}
@@ -287,99 +537,26 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: responsive height with vertical scrolling */}
         {showTfidfTopTerms && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].tfidf_top_terms)
-              .length === 0 ? (
+            {!analysisDataquantAnalysis.tfidf_df ||
+            analysisDataquantAnalysis.tfidf_df.length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No TFIDF Top Terms detected
               </div>
             ) : (
               <div className="p-3 bg-slate-700/30 rounded-lg">
                 <div className="text-sm text-slate-200">
-                  {"who: " + analysisDataquantAnalysis[0].tfidf_top_terms.who}
+                  {"document: " +
+                    analysisDataquantAnalysis.tfidf_df[0].Document}
                 </div>
-                <div className="text-sm text-slate-200">
-                  {"what: " + analysisDataquantAnalysis[0].tfidf_top_terms.what}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"when: " + analysisDataquantAnalysis[0].tfidf_top_terms.when}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"where: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.where}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"why: " + analysisDataquantAnalysis[0].tfidf_top_terms.why}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"how: " + analysisDataquantAnalysis[0].tfidf_top_terms.how}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"by what means: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.by_what_means}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"towards what end: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms
-                      .towards_what_end}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"whence: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms.whence}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"by what consequence: " +
-                    analysisDataquantAnalysis[0].tfidf_top_terms
-                      .by_what_consequence}
+                <div className="text-sm text-slate-200 mt-1">
+                  {"Top terms: " +
+                    analysisDataquantAnalysis.tfidf_df[0].TopTerms.join(", ")}
                 </div>
               </div>
             )}
           </div>
         )}
-        {/* Bigrams */}
-        <div className="border-b border-[#0a0a0a] shrink-0">
-          <button
-            onClick={() => setShowBigrams(!showBigrams)}
-            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
-          >
-            <span className="text-[#b8b8b8] text-[12px] font-medium">
-              Bigrams
-            </span>
-            {showBigrams ? (
-              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
-            ) : (
-              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
-            )}
-          </button>
-        </div>
-        {/* Scrollable list container: responsive height with vertical scrolling */}
-        {showBigrams && (
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].bigrams).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-                No Bigrams detected
-              </div>
-            ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-sm text-slate-200">
-                  {"noun: " +
-                    analysisDataquantAnalysis[0].bigrams.NOUN.join(", ")}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"verb: " +
-                    analysisDataquantAnalysis[0].bigrams.VERB.join(", ")}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"adjective: " +
-                    analysisDataquantAnalysis[0].bigrams.ADP.join(", ")}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"adverb: " +
-                    analysisDataquantAnalysis[0].bigrams.ADV.join(", ")}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+
         {/* SentenceTagging */}
         <div className="border-b border-[#0a0a0a] shrink-0">
           <button
@@ -399,33 +576,79 @@ export default function QuantitativeAnalysisPanel() {
         {/* Scrollable list container: responsive height with vertical scrolling */}
         {showSentenceTagging && (
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
-            {Object.keys(analysisDataquantAnalysis[0].sentencetagging)
-              .length === 0 ? (
+            {!analysisDataquantAnalysis.sentence_tags ||
+            analysisDataquantAnalysis.sentence_tags.length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
                 No SentenceTagging detected
               </div>
             ) : (
               <div className="p-3 bg-slate-700/30 rounded-lg">
-                <div className="text-sm text-slate-200">
-                  {"noun: " +
-                    analysisDataquantAnalysis[0].sentencetagging.NOUN.join(
-                      ", ",
-                    )}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"verb: " +
-                    analysisDataquantAnalysis[0].sentencetagging.VERB.join(
-                      ", ",
-                    )}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"adjective: " +
-                    analysisDataquantAnalysis[0].sentencetagging.ADP.join(", ")}
-                </div>
-                <div className="text-sm text-slate-200">
-                  {"adverb: " +
-                    analysisDataquantAnalysis[0].sentencetagging.ADV.join(", ")}
-                </div>
+                {analysisDataquantAnalysis.sentence_tags.map(
+                  (
+                    item: { sentence: string; WHO: boolean; WHY: boolean },
+                    index: number,
+                  ) => (
+                    <div
+                      key={index}
+                      className="mb-2 border-b border-slate-600/40 pb-2 last:border-b-0 last:pb-0"
+                    >
+                      <div className="text-xs text-slate-400 mb-1">
+                        Sentence {index + 1}
+                      </div>
+                      <div className="text-sm text-slate-200 mb-1">
+                        {item.sentence}
+                      </div>
+                      <div className="text-xs text-slate-300 flex gap-4">
+                        <span>WHO: {item.WHO ? "true" : "false"}</span>
+                        <span>WHY: {item.WHY ? "true" : "false"}</span>
+                      </div>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bigrams */}
+        <div className="border-b border-[#0a0a0a] shrink-0">
+          <button
+            onClick={() => setShowBigrams(!showBigrams)}
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+          >
+            <span className="text-[#b8b8b8] text-[12px] font-medium">
+              Bigrams
+            </span>
+            {showBigrams ? (
+              <ChevronDown className="size-3.5 text-[#b8b8b8]" />
+            ) : (
+              <ChevronRight className="size-3.5 text-[#b8b8b8]" />
+            )}
+          </button>
+        </div>
+        {/* Scrollable list container: responsive height with vertical scrolling */}
+        {showBigrams && (
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 px-3 py-2">
+            {!analysisDataquantAnalysis.bigrams ||
+            analysisDataquantAnalysis.bigrams.length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                No Bigrams detected
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                {analysisDataquantAnalysis.bigrams.map(
+                  (bigram: string, index: number) => (
+                    <div
+                      key={index}
+                      className="text-sm text-slate-200 flex items-center gap-2"
+                    >
+                      <span className="text-xs text-slate-400">
+                        {index + 1}.
+                      </span>
+                      <span>{bigram}</span>
+                    </div>
+                  ),
+                )}
               </div>
             )}
           </div>

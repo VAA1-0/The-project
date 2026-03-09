@@ -54,6 +54,8 @@ import pandas as pd
 nltk.download("punkt", quiet=True)
 nltk.download("stopwords", quiet=True)
 
+nltk.download('punkt_tab')
+
 
 class QuantitativeAnalysis:
     """Object-oriented wrapper for the quantitative corpus analysis utilities.

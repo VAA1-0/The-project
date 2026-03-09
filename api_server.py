@@ -278,25 +278,31 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 shutil.move(str(original_transcript_path), organized_transcript_path)
 
                 # Step 7: POS analysis (AFTER transcript exists in final place)
-                logger.info("📝 Starting POS analysis on transcript...")
-                with open(organized_transcript_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                try:
+                    logger.info("📝 Starting POS analysis on transcript...")
+                    with open(organized_transcript_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
 
-                text = " ".join(
-                    seg["text"] for seg in data.get("segments", [])
-                )
+                    text = " ".join(
+                        seg["text"] for seg in data.get("segments", [])
+                    )
 
-                pos_analyzer = POSAnalysis(text)
-                pos_result = pos_analyzer.run()
+                    pos_analyzer = POSAnalysis(text)
+                    pos_result = pos_analyzer.run()
 
-                pos_path_init = f"{analysis_id}_pos.json" 
-                pos_path = TRANSCRIPTS_DIR / pos_path_init
-                pos_path.parent.mkdir(exist_ok=True, parents=True)
+                    pos_path_init = f"{analysis_id}_pos.json" 
+                    pos_path = TRANSCRIPTS_DIR / pos_path_init
+                    pos_path.parent.mkdir(exist_ok=True, parents=True)
 
-                with open(pos_path, "w", encoding="utf-8") as f:
-                    json.dump(pos_result, f, indent=2, ensure_ascii=False)
+                    with open(pos_path, "w", encoding="utf-8") as f:
+                        json.dump(pos_result, f, indent=2, ensure_ascii=False)
 
-                logger.info(f"POS Results saved: {pos_path}")
+                    logger.info(f"POS Results saved: {pos_path}")
+                except Exception as pos_error:
+                    logger.error(f"❌ POS analysis failed: {str(pos_error)}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    results["pos_error"] = str(pos_error)
 
                 # Additional Quantitative Analysis
 
@@ -304,21 +310,55 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 files = sorted(data_dir.rglob("*.txt"))
                 docs = [p.read_text(encoding="utf-8", errors="ignore") for p in files]
 
-                qa = QuantitativeAnalysis(docs=docs, file_paths=files)
-                results = qa.run()
-                print(results["stats_df"].head(20))
+                quan_path_init = f"{analysis_id}_quan.json" 
+                quan_path = TRANSCRIPTS_DIR / quan_path_init
+                quan_path.parent.mkdir(exist_ok=True, parents=True)
+
+                try:
+                    qa = QuantitativeAnalysis(docs=docs, file_paths=files)
+                    quan_result = qa.run()
+
+                    def normalize_for_json(value):
+                        try:
+                            import pandas as pd
+                            if isinstance(value, pd.DataFrame):
+                                return value.to_dict(orient="records")
+                        except Exception:
+                            pass
+
+                        if isinstance(value, dict):
+                            return {k: normalize_for_json(v) for k, v in value.items()}
+                        if isinstance(value, list):
+                            return [normalize_for_json(v) for v in value]
+                        return value
+
+                    normalized_quan = normalize_for_json(quan_result)
+
+                    with open(quan_path, "w", encoding="utf-8") as f:
+                        json.dump(normalized_quan, f, indent=2, ensure_ascii=False)
+
+                    logger.info(f"QuantitativeAnalysis Results saved: {quan_path}")
+                except Exception as quan_error:
+                    logger.error(f"❌ Quantitative analysis failed: {str(quan_error)}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    results["quan_error"] = str(quan_error)
+
 
                 # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
                     "pos_analysis": str(pos_path),
+                    "quan_analysis": str(quan_path),
                     "metadata": ingestion_result.get("metadata", {}),
                 }
 
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
                 output_files["pos_analysis"] = str(pos_path)
+
+                output_files["quan_analysis"] = str(quan_path)
 
                 logger.info("✅ Audio pipeline completed successfully")
 
@@ -430,7 +470,9 @@ async def download_file(analysis_id: str, file_type: str):
         "summary_json": ("analysis_summary.json", "application/json"),
         "audio": ("extracted_audio.wav", "audio/wav"),
         "transcript": ("transcript.json", "application/json"),
-        "pos_analysis": ("pos_analysis.json", "application/json")
+        "pos_analysis": ("pos_analysis.json", "application/json"),
+
+        "quan_analysis": ("quan_analysis.json", "application/json")
     }
     
     if file_type not in file_mapping:
