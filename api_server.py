@@ -20,6 +20,8 @@ from src.backend.analysis.pipeline_video_frames import FrameAnalysisPipeline
 from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
+from src.backend.analysis.language_modeller import MMSASRTranscriber, DEFAULT_MMS_MODEL_ID
+from src.backend.analysis.expression_detector import ExpressionDetectorDeepFace
 from src.backend.utils.logger import get_logger
 from src.backend.analysis.pos_analysis import POSAnalysis
 from src.backend.analysis.quantitative_analysis import QuantitativeAnalysis
@@ -219,11 +221,38 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                     "summary_json": visual_results.get("summary_json")
                 }
                 
+                # Expression detection
+                try:
+                    logger.info("Starting expression detection...")
+                    expression_detector = ExpressionDetectorDeepFace(
+                        interval=1.0,  # Sample every 1 second for expressions
+                        face_detector="dnn",
+                        precheck=True,
+                        skip_by_seek=True,
+                    )
+                    expression_results = expression_detector.run(video_path)
+                    logger.info(f"Expression detection completed: {len(expression_results)} samples")
+                    
+                    # Save expression results to JSON file
+                    expression_json_path = RESULTS_DIR / f"{analysis_id}_expressions.json"
+                    with open(expression_json_path, "w", encoding="utf-8") as f:
+                        json.dump(expression_results, f, indent=2)
+                    logger.info(f"Expression results saved: {expression_json_path}")
+                except Exception as expr_exc:
+                    logger.warning("Expression detection failed: %s", expr_exc)
+                    expression_results = []
+                    expression_json_path = None
+                
+                # Add expression results to visual_analysis
+                results["visual_analysis"]["expression_results"] = expression_results
+                
                 # Add output files for download
                 output_files["video"] = visual_results.get("annotated_video")
                 output_files["yolo_csv"] = visual_results.get("yolo_csv")
                 output_files["ocr_csv"] = visual_results.get("ocr_csv")
                 output_files["summary_json"] = visual_results.get("summary_json")
+                if expression_json_path:
+                    output_files["expression_json"] = str(expression_json_path)
                 
                 logger.info(f"✅ Visual analysis completed: {len(visual_results.get('yolo_results', []))} detections")
                 
@@ -245,16 +274,36 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 if not Path(audio_path).exists():
                     raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-                # Step 2: Transcribe
+                # Step 2a: Transcribe using the existing Whisper-based pipeline
                 audio_pipeline = AudioTranscriptionPipeline(str(audio_path))
                 transcript = audio_pipeline.run()
 
+                # Step 2b: additionally run the Meta MMS language modeller and
+                # stash its raw text alongside the Whisper result.  This is a
+                # separate step so both engines are exercised independently.
+                try:
+                    lm_transcriber = MMSASRTranscriber(
+                        target_lang=transcript.get("language", "eng"),
+                        model_id=DEFAULT_MMS_MODEL_ID,
+                        chunk_length_s=30.0,
+                        device=None,
+                    )
+                    lm_text = lm_transcriber.transcribe(audio_path)
+                    logger.info("✅ Language modeller transcript length: %d", len(lm_text))
+                    # LM output will be saved in a separate file later; do not
+                    # modify the Whisper pipeline result.
+                except Exception as lm_exc:
+                    logger.warning("Language modeller step failed: %s", lm_exc)
+                    lm_text = None  # Indicate failure
+
                 # Step 3: Prepare organized paths
                 audio_filename = f"{analysis_id}_audio.wav"
-                transcript_filename = f"{analysis_id}_transcript.json"
+                transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
+                lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
 
                 organized_audio_path = AUDIO_DIR / audio_filename
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
+                organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
 
                 # Ensure dirs exist
                 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -276,6 +325,17 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
 
                 # Step 6: Move transcript
                 shutil.move(str(original_transcript_path), organized_transcript_path)
+
+                # write the language model text to its own file
+                if lm_text is not None:
+                    try:
+                        with open(organized_lm_path, "w", encoding="utf-8") as f:
+                            json.dump({"lm_text": lm_text}, f, indent=2, ensure_ascii=False)
+                        logger.info("LM transcript saved: %s", organized_lm_path)
+                    except Exception as exc:
+                        logger.warning("Failed to write LM transcript: %s", exc)
+                else:
+                    logger.info("Skipping LM transcript write due to earlier failure")
 
                 # Step 7: POS analysis (AFTER transcript exists in final place)
                 try:
@@ -349,6 +409,7 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
                     "transcript_path": str(organized_transcript_path),
+                    "lm_transcript_path": str(organized_lm_path) if lm_text is not None else None,
                     "pos_analysis": str(pos_path),
                     "quan_analysis": str(quan_path),
                     "metadata": ingestion_result.get("metadata", {}),
@@ -356,6 +417,8 @@ def run_complete_analysis(analysis_id: str, pipeline_type: str):
 
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                if lm_text is not None:
+                    output_files["lm_transcript"] = str(organized_lm_path)
                 output_files["pos_analysis"] = str(pos_path)
 
                 output_files["quan_analysis"] = str(quan_path)
@@ -432,13 +495,22 @@ async def get_analysis_status(analysis_id: str) -> dict:
             va = results["visual_analysis"]
             response_data["summary"]["yolo_detections"] = len(va.get("yolo_results", []))
             response_data["summary"]["ocr_detections"] = len(va.get("ocr_results", []))
+            response_data["summary"]["expression_samples"] = len(va.get("expression_results", []))
 
         if "audio_analysis" in results:
             aa = results["audio_analysis"]
+            # Whisper transcript summary
             response_data["summary"]["audio_segments"] = len(
                 aa.get("transcript", {}).get("segments", [])
             )
             response_data["summary"]["audio_language"] = aa.get("transcript", {}).get("language", "unknown")
+            # LM transcript length (if available)
+            if aa.get("lm_transcript_path"):
+                try:
+                    lm_text = Path(aa["lm_transcript_path"]).read_text(encoding="utf-8")
+                    response_data["summary"]["lm_length"] = len(lm_text)
+                except Exception:
+                    pass
         
         # Add download links
         response_data["download_links"] = {}
@@ -450,7 +522,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
 async def download_file(analysis_id: str, file_type: str):
     """
     Download analysis results
-    Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript
+    Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript, lm_transcript, pos_analysis, expression_json
     """
     if analysis_id not in analysis_status:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
@@ -470,8 +542,9 @@ async def download_file(analysis_id: str, file_type: str):
         "summary_json": ("analysis_summary.json", "application/json"),
         "audio": ("extracted_audio.wav", "audio/wav"),
         "transcript": ("transcript.json", "application/json"),
+        "lm_transcript": ("lm_transcript.json", "application/json"),
         "pos_analysis": ("pos_analysis.json", "application/json"),
-
+        "expression_json": ("expressions.json", "application/json"),
         "quan_analysis": ("quan_analysis.json", "application/json")
     }
     
