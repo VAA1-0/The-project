@@ -33,6 +33,12 @@ export interface DetectedObject {
   confidence: number;
 }
 
+export interface OCR {
+  timestamp: number;
+  text: string;
+  confidence: number;
+}
+
 export interface POSAnalysis {
   text: string;
   pos_counts: {
@@ -69,45 +75,27 @@ export interface POSAnalysis {
 }
 
 export interface QuantAnalysis {
-  // Placeholder structure for future quantitative analysis
-  text: string;
-  build_token_stream: {
-    NOUN: number;
-    VERB: number;
-    ADP: number;
-    ADV: number;
+  stats_df: Array<{
+    Document: string;
+    Sentences: number;
+    Words: number;
+  }>;
+  token_info: {
+    tokens: string[];
+    tokens_filtered: string[];
+    ttr: number;
+    freq_dist: Record<string, number>;
   };
-  corpus_sentence_word_stats: {
-    verb_noun_ratio: number;
-    modal_density: number;
-    pronoun_share: number;
-    adj_adv_ratio: number;
-    nominalization_density: number;
-  };
-  tfidf_top_terms: {
-    who: [];
-    what: [];
-    when: [];
-    where: [];
-    why: [];
-    how: [];
-    by_what_means: [];
-    towards_what_end: [];
-    whence: [];
-    by_what_consequence: [];
-  };
-  bigrams: {
-    NOUN: [];
-    VERB: [];
-    ADV: [];
-    ADP: [];
-  };
-  sentencetagging: {
-    NOUN: [];
-    VERB: [];
-    ADV: [];
-    ADP: [];
-  };
+  tfidf_df: Array<{
+    Document: string;
+    TopTerms: string[];
+  }>;
+  bigrams: any[];
+  sentence_tags: Array<{
+    sentence: string;
+    WHO: boolean;
+    WHY: boolean;
+  }>;
 }
 
 export interface AnalysisData {
@@ -115,6 +103,7 @@ export interface AnalysisData {
   posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
   detectedObjects: DetectedObject[];
+  ocr: OCR[];
   quantityDetection: DetectedObject[];
   annotations: any[];
   summary: string;
@@ -256,6 +245,7 @@ export class VideoService {
           posAnalysis: [],
           transcript: [],
           detectedObjects: [],
+          ocr: [],
           quantityDetection: [],
           annotations: [],
           summary: `Analysis ${status.status} (${status.progress}%)`,
@@ -273,12 +263,14 @@ export class VideoService {
         csvData,
         transcriptData,
         objects,
+        ocr,
         posAnalysisData,
         quantAnalysisData,
       ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
         this.loadDetectedObjects(id),
+        this.loadOCR(id),
         this.loadPosAnalysis(id),
         this.loadQuantAnalysis(id),
       ]);
@@ -293,6 +285,7 @@ export class VideoService {
         transcript:
           transcriptData.status === "fulfilled" ? transcriptData.value : [],
         detectedObjects: objects.status === "fulfilled" ? objects.value : [],
+        ocr: ocr.status === "fulfilled" ? ocr.value : [],
         quantityDetection: objects.status === "fulfilled" ? objects.value : [],
         annotations: [], // Placeholder for future annotations
         summary: this.generateSummary(status),
@@ -522,6 +515,35 @@ export class VideoService {
     }
   }
 
+
+  /**
+   * Load OCR data
+   */
+  private static async loadOCR(
+    id: string,
+  ): Promise<OCR[]> {
+        try {
+      const csvBlob = await apiService.downloadFile(id, "ocr_csv");
+      const csvText = await csvBlob.text();
+
+      const records = parse(csvText, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as any[];
+
+      return records.map((row) => ({
+        timestamp: row.timestamp ? Number(row.timestamp) : 0,
+        text: row.label || row.text || "",
+        confidence: Number(row.confidence) ? Number(row.confidence) : 0,
+      }));
+    } catch (error) {
+      console.warn("Failed to parse detected objects:", error);
+      return [];
+    }
+  }
+
+
   /**
    * Load POS Analysis data
    */
@@ -606,80 +628,47 @@ export class VideoService {
   private static async loadQuantAnalysis(id: string): Promise<QuantAnalysis[]> {
     // Placeholder for future quantitative analysis loading
     try {
-      const quantBlob = await apiService.downloadFile(id, "quant_analysis");
+      const quantBlob = await apiService.downloadFile(id, "quan_analysis");
       const quantText = await quantBlob.text();
       const quantData = JSON.parse(quantText);
 
-      // Helper to normalize a single POSAnalysis object
+      // Helper to normalize a single QuantAnalysis object
       const normalize = (data: any): QuantAnalysis => ({
-        text: data.text || "",
-        build_token_stream: {
-          NOUN: Number(data.build_token_stream?.NOUN) || 0,
-          VERB: Number(data.build_token_stream?.VERB) || 0,
-          ADP: Number(data.build_token_stream?.ADP) || 0,
-          ADV: Number(data.build_token_stream?.ADV) || 0,
+        stats_df: Array.isArray(data.stats_df)
+          ? data.stats_df.map((stat: any) => ({
+              Document: stat.Document || "",
+              Sentences: Number(stat.Sentences) || 0,
+              Words: Number(stat.Words) || 0,
+            }))
+          : [],
+        token_info: {
+          tokens: Array.isArray(data.token_info?.tokens)
+            ? data.token_info.tokens
+            : [],
+          tokens_filtered: Array.isArray(data.token_info?.tokens_filtered)
+            ? data.token_info.tokens_filtered
+            : [],
+          ttr: Number(data.token_info?.ttr) || 0,
+          freq_dist:
+            typeof data.token_info?.freq_dist === "object" &&
+            data.token_info?.freq_dist !== null
+              ? data.token_info.freq_dist
+              : {},
         },
-        corpus_sentence_word_stats: {
-          verb_noun_ratio:
-            Number(data.corpus_sentence_word_stats?.verb_noun_ratio) || 0,
-          modal_density:
-            Number(data.corpus_sentence_word_stats?.modal_density) || 0,
-          pronoun_share:
-            Number(data.corpus_sentence_word_stats?.pronoun_share) || 0,
-          adj_adv_ratio:
-            Number(data.corpus_sentence_word_stats?.adj_adv_ratio) || 0,
-          nominalization_density:
-            Number(data.corpus_sentence_word_stats?.nominalization_density) ||
-            0,
-        },
-        tfidf_top_terms: {
-          who: Array.isArray(data.tfidf_top_terms?.who)
-            ? data.tfidf_top_terms.who
-            : [],
-          what: Array.isArray(data.tfidf_top_terms?.what)
-            ? data.tfidf_top_terms.what
-            : [],
-          when: Array.isArray(data.tfidf_top_terms?.when)
-            ? data.tfidf_top_terms.when
-            : [],
-          where: Array.isArray(data.tfidf_top_terms?.where)
-            ? data.tfidf_top_terms.where
-            : [],
-          why: Array.isArray(data.tfidf_top_terms?.why)
-            ? data.tfidf_top_terms.why
-            : [],
-          how: Array.isArray(data.tfidf_top_terms?.how)
-            ? data.tfidf_top_terms.how
-            : [],
-          by_what_means: Array.isArray(data.tfidf_top_terms?.by_what_means)
-            ? data.tfidf_top_terms.by_what_means
-            : [],
-          towards_what_end: Array.isArray(
-            data.tfidf_top_terms?.towards_what_end,
-          )
-            ? data.tfidf_top_terms.towards_what_end
-            : [],
-          whence: Array.isArray(data.tfidf_top_terms?.whence)
-            ? data.tfidf_top_terms.whence
-            : [],
-          by_what_consequence: Array.isArray(
-            data.tfidf_top_terms?.by_what_consequence,
-          )
-            ? data.tfidf_top_terms.by_what_consequence
-            : [],
-        },
-        bigrams: {
-          NOUN: Array.isArray(data.bigrams?.NOUN) ? data.bigrams.NOUN : [],
-          VERB: Array.isArray(data.bigrams?.VERB) ? data.bigrams.VERB : [],
-          ADV: Array.isArray(data.bigrams?.ADV) ? data.bigrams.ADV : [],
-          ADP: Array.isArray(data.bigrams?.ADP) ? data.bigrams.ADP : [],
-        },
-        sentencetagging: {
-          NOUN: Array.isArray(data.bigrams?.NOUN) ? data.bigrams.NOUN : [],
-          VERB: Array.isArray(data.bigrams?.VERB) ? data.bigrams.VERB : [],
-          ADV: Array.isArray(data.bigrams?.ADV) ? data.bigrams.ADV : [],
-          ADP: Array.isArray(data.bigrams?.ADP) ? data.bigrams.ADP : [],
-        },
+        tfidf_df: Array.isArray(data.tfidf_df)
+          ? data.tfidf_df.map((tfidf: any) => ({
+              Document: tfidf.Document || "",
+              TopTerms: Array.isArray(tfidf.TopTerms) ? tfidf.TopTerms : [],
+            }))
+          : [],
+        bigrams: Array.isArray(data.bigrams) ? data.bigrams : [],
+        sentence_tags: Array.isArray(data.sentence_tags)
+          ? data.sentence_tags.map((tag: any) => ({
+              sentence: tag.sentence || "",
+              WHO: Boolean(tag.WHO),
+              WHY: Boolean(tag.WHY),
+            }))
+          : [],
       });
 
       if (Array.isArray(quantData)) {

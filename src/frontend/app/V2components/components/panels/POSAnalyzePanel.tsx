@@ -96,15 +96,15 @@ export default function POSAnalyzePanel() {
   }, [videoId]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  /*
   const pos_counts = analysisData?.posAnalysis[0]?.pos_counts || {};
   const pos_ratios = analysisData?.posAnalysis[0]?.pos_ratios || {};
   const interrogative_lens =
     analysisData?.posAnalysis[0]?.interrogative_lens || {};
   const pos_words = analysisData?.posAnalysis[0]?.pos_words || {};
-  */
 
   /* Mock transcript data for demonstration */
+
+  /*
   const pos_counts = {
     NOUN: 16,
     ADV: 1,
@@ -153,6 +153,8 @@ export default function POSAnalyzePanel() {
     VERB: ["on", "saanut", "tehdä", "näkyväksi"],
     ADP: ["niin", "kuin"],
   };
+
+  */
 
   return (
     <main className="h-full flex flex-col overflow-hidden">

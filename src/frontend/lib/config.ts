@@ -75,11 +75,17 @@ export const API_CONFIG = {
       mimeType: "application/json",
       color: "text-indigo-400",
     },
-
-    //TODO: Placeholder for future quantitative analysis
+    quan_analysis: {
+      name: "Quantitative Analysis",
+      extension: ".json",
+      icon: "text",
+      description: "JSON part-of-speech analysis of the transcript",
+      mimeType: "application/json",
+      color: "text-indigo-400",
+    },
   } as const,
 
-  // All 6 expected file types
+  // All 8 expected file types
   EXPECTED_FILE_TYPES: [
     "video",
     "yolo_csv",
@@ -88,7 +94,7 @@ export const API_CONFIG = {
     "audio",
     "transcript",
     "pos_analysis",
-    // "quant_analysis", // TODO: Placeholder for future quantitative analysis
+    "quan_analysis",
   ] as const,
 
   // Status configuration

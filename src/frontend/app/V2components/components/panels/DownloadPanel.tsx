@@ -220,7 +220,7 @@ export default function DownloadPanel() {
         debugLog += `   Pipeline: ${apiStatus.pipeline_type}\n`;
 
         // Build file list for ALL 6 expected file types
-        debugLog += `\n4. Building file list for all 6 file types...\n`;
+        debugLog += `\n4. Building file list for all file types...\n`;
         const files: DownloadFile[] = [];
         const downloadLinks = apiStatus.download_links || {};
 
@@ -235,6 +235,8 @@ export default function DownloadPanel() {
               apiStatus.pipeline_type?.includes(
                 fileType.includes("audio") ? "audio" : "visual",
               ));
+
+          console.log(isAvailable)
 
           if (isAvailable) {
             debugLog += `   ✅ ${fileType}: AVAILABLE\n`;

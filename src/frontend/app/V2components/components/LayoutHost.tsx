@@ -12,6 +12,7 @@ import VideoPanel from "./panels/VideoPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
 import OBJDetectionPanel from "./panels/OBJDetectionPanel";
+import OCRPanel from "./panels/OCRPanel";
 import DownloadPanel from "./panels/DownloadPanel";
 import POSAnalyzePanel from "./panels/POSAnalyzePanel";
 import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
@@ -43,6 +44,10 @@ export default function LayoutHost({
   const layoutRef = useRef<GoldenLayout | null>(null);
 
   const layoutConfig: import("golden-layout").LayoutConfig = {
+    settings: {
+        showMaximiseIcon: false, 
+        showPopoutIcon: false,
+      },
     root: {
       type: "row",
       content: [
@@ -100,6 +105,11 @@ export default function LayoutHost({
               type: "component",
               componentType: "OBJDetection",
               title: "OBJDetection",
+            },
+            {
+              type: "component",
+              componentType: "OCR",
+              title: "OCR",
             },
             {
               type: "component",
@@ -185,6 +195,18 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           OBJDetectionPanel,
+          {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "OCR",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          OCRPanel,
           {},
           ContextWrapper,
         );

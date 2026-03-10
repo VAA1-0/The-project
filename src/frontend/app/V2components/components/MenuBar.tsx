@@ -155,6 +155,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "OCR Lens",
+          onClick: () => {
+            openPanel("OCR");
+          },
+        },
+        {
           label: "POS analysis Lens",
           onClick: () => {
             openPanel("POS");
@@ -205,6 +211,12 @@ export function MenuBar() {
           label: "OBJ Detection Lens",
           onClick: () => {
             openPanel("OBJDetection");
+          },
+        },
+        {
+          label: "OCR Lens",
+          onClick: () => {
+            openPanel("OCR");
           },
         },
         {

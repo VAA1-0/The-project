@@ -415,7 +415,7 @@ class ApiService {
     } catch (error) {
       console.warn("List analyses failed, using fallback:", error);
       // Fallback to mock data
-      return this.getMockAnalyses(limit);
+      // return this.getMockAnalyses(limit);
     }
   }
 
