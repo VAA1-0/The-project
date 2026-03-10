@@ -26,3 +26,5 @@ uploads/
 
 # VS Code
 .vscode/
+# Heavy files:
+*.exe

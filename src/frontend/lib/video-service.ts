@@ -33,9 +33,77 @@ export interface DetectedObject {
   confidence: number;
 }
 
+export interface OCR {
+  timestamp: number;
+  text: string;
+  confidence: number;
+}
+
+export interface POSAnalysis {
+  text: string;
+  pos_counts: {
+    NOUN: number;
+    VERB: number;
+    ADP: number;
+    ADV: number;
+  };
+  pos_ratios: {
+    verb_noun_ratio: number;
+    modal_density: number;
+    pronoun_share: number;
+    adj_adv_ratio: number;
+    nominalization_density: number;
+  };
+  interrogative_lens: {
+    who: [];
+    what: [];
+    when: [];
+    where: [];
+    why: [];
+    how: [];
+    by_what_means: [];
+    towards_what_end: [];
+    whence: [];
+    by_what_consequence: [];
+  };
+  pos_words: {
+    NOUN: [];
+    VERB: [];
+    ADV: [];
+    ADP: [];
+  };
+}
+
+export interface QuantAnalysis {
+  stats_df: Array<{
+    Document: string;
+    Sentences: number;
+    Words: number;
+  }>;
+  token_info: {
+    tokens: string[];
+    tokens_filtered: string[];
+    ttr: number;
+    freq_dist: Record<string, number>;
+  };
+  tfidf_df: Array<{
+    Document: string;
+    TopTerms: string[];
+  }>;
+  bigrams: any[];
+  sentence_tags: Array<{
+    sentence: string;
+    WHO: boolean;
+    WHY: boolean;
+  }>;
+}
+
 export interface AnalysisData {
+  quantAnalysis: QuantAnalysis[];
+  posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
   detectedObjects: DetectedObject[];
+  ocr: OCR[];
   quantityDetection: DetectedObject[];
   annotations: any[];
   summary: string;
@@ -89,7 +157,7 @@ export class VideoService {
   static async upload(
     file: File,
     cvatID: number,
-    duration?: number
+    duration?: number,
   ): Promise<UploadResponse> {
     try {
       const response = await apiService.uploadVideo(file, cvatID);
@@ -104,7 +172,7 @@ export class VideoService {
       throw new Error(
         `Upload failed: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
       );
     }
   }
@@ -173,8 +241,11 @@ export class VideoService {
       // If analysis is not complete, return minimal data
       if (status.status !== "completed") {
         return {
+          quantAnalysis: [],
+          posAnalysis: [],
           transcript: [],
           detectedObjects: [],
+          ocr: [],
           quantityDetection: [],
           annotations: [],
           summary: `Analysis ${status.status} (${status.progress}%)`,
@@ -188,16 +259,33 @@ export class VideoService {
       }
 
       // Load all data in parallel
-      const [csvData, transcriptData, objects] = await Promise.allSettled([
+      const [
+        csvData,
+        transcriptData,
+        objects,
+        ocr,
+        posAnalysisData,
+        quantAnalysisData,
+      ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
         this.loadDetectedObjects(id),
+        this.loadOCR(id),
+        this.loadPosAnalysis(id),
+        this.loadQuantAnalysis(id),
       ]);
 
       return {
+        quantAnalysis:
+          quantAnalysisData.status === "fulfilled"
+            ? quantAnalysisData.value
+            : [],
+        posAnalysis:
+          posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
         transcript:
           transcriptData.status === "fulfilled" ? transcriptData.value : [],
         detectedObjects: objects.status === "fulfilled" ? objects.value : [],
+        ocr: ocr.status === "fulfilled" ? ocr.value : [],
         quantityDetection: objects.status === "fulfilled" ? objects.value : [],
         annotations: [], // Placeholder for future annotations
         summary: this.generateSummary(status),
@@ -222,7 +310,7 @@ export class VideoService {
    */
   static async startAnalysis(
     id: string,
-    pipelineType: "full" | "visual_only" | "audio_only" = "full"
+    pipelineType: "full" | "visual_only" | "audio_only" = "full",
   ): Promise<any> {
     try {
       return await apiService.startAnalysis(id, pipelineType);
@@ -248,26 +336,29 @@ export class VideoService {
    * Get list of recent analyses
    */
   static async listVideos(limit: number = 20): Promise<VideoMetadata[]> {
-  try {
-    const response = await apiService.listAnalyses(limit);
-    const analyses = response.analyses || {};
-    
-    return Object.entries(analyses).map(([id, info]: [string, any]) => ({
-      id,
-      name: info.filename || "Unknown",
-      status: info.status || "unknown",
-      progress: info.progress || 0,
-      uploadedAt: info.start_time
-        ? new Date(info.start_time * 1000).toISOString()
-        : new Date().toISOString(),
-      pipelineType: info.pipeline_type,
-      cvatID: info.cvatID,
-    }));
-  } catch (error) {
-    console.warn("VideoService.listVideos failed, returning empty array:", error);
-    return [];
+    try {
+      const response = await apiService.listAnalyses(limit);
+      const analyses = response.analyses || {};
+
+      return Object.entries(analyses).map(([id, info]: [string, any]) => ({
+        id,
+        name: info.filename || "Unknown",
+        status: info.status || "unknown",
+        progress: info.progress || 0,
+        uploadedAt: info.start_time
+          ? new Date(info.start_time * 1000).toISOString()
+          : new Date().toISOString(),
+        pipelineType: info.pipeline_type,
+        cvatID: info.cvatID,
+      }));
+    } catch (error) {
+      console.warn(
+        "VideoService.listVideos failed, returning empty array:",
+        error,
+      );
+      return [];
+    }
   }
-}
 
   /**
    * Poll for analysis status updates
@@ -276,7 +367,7 @@ export class VideoService {
     id: string,
     onProgress: (status: AnalysisStatus) => void,
     interval: number = 2000,
-    timeout: number = 300000 // 5 minutes
+    timeout: number = 300000, // 5 minutes
   ): Promise<AnalysisStatus> {
     return apiService.pollStatus(id, onProgress, interval, timeout);
   }
@@ -379,7 +470,7 @@ export class VideoService {
   }
 
   private static async loadTranscriptData(
-    id: string
+    id: string,
   ): Promise<TranscriptSegment[]> {
     try {
       const transcriptBlob = await apiService.downloadFile(id, "transcript");
@@ -400,7 +491,7 @@ export class VideoService {
   }
 
   private static async loadDetectedObjects(
-    id: string
+    id: string,
   ): Promise<DetectedObject[]> {
     try {
       const csvBlob = await apiService.downloadFile(id, "yolo_csv");
@@ -420,6 +511,173 @@ export class VideoService {
       }));
     } catch (error) {
       console.warn("Failed to parse detected objects:", error);
+      return [];
+    }
+  }
+
+
+  /**
+   * Load OCR data
+   */
+  private static async loadOCR(
+    id: string,
+  ): Promise<OCR[]> {
+        try {
+      const csvBlob = await apiService.downloadFile(id, "ocr_csv");
+      const csvText = await csvBlob.text();
+
+      const records = parse(csvText, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as any[];
+
+      return records.map((row) => ({
+        timestamp: row.timestamp ? Number(row.timestamp) : 0,
+        text: row.label || row.text || "",
+        confidence: Number(row.confidence) ? Number(row.confidence) : 0,
+      }));
+    } catch (error) {
+      console.warn("Failed to parse detected objects:", error);
+      return [];
+    }
+  }
+
+
+  /**
+   * Load POS Analysis data
+   */
+  private static async loadPosAnalysis(id: string): Promise<POSAnalysis[]> {
+    try {
+      const posBlob = await apiService.downloadFile(id, "pos_analysis");
+      const posText = await posBlob.text();
+      const posData = JSON.parse(posText);
+
+      // Helper to normalize a single POSAnalysis object
+      const normalize = (data: any): POSAnalysis => ({
+        text: data.text || "",
+        pos_counts: {
+          NOUN: Number(data.pos_counts?.NOUN) || 0,
+          VERB: Number(data.pos_counts?.VERB) || 0,
+          ADP: Number(data.pos_counts?.ADP) || 0,
+          ADV: Number(data.pos_counts?.ADV) || 0,
+        },
+        pos_ratios: {
+          verb_noun_ratio: Number(data.pos_ratios?.verb_noun_ratio) || 0,
+          modal_density: Number(data.pos_ratios?.modal_density) || 0,
+          pronoun_share: Number(data.pos_ratios?.pronoun_share) || 0,
+          adj_adv_ratio: Number(data.pos_ratios?.adj_adv_ratio) || 0,
+          nominalization_density:
+            Number(data.pos_ratios?.nominalization_density) || 0,
+        },
+        interrogative_lens: {
+          who: Array.isArray(data.interrogative_lens?.who)
+            ? data.interrogative_lens.who
+            : [],
+          what: Array.isArray(data.interrogative_lens?.what)
+            ? data.interrogative_lens.what
+            : [],
+          when: Array.isArray(data.interrogative_lens?.when)
+            ? data.interrogative_lens.when
+            : [],
+          where: Array.isArray(data.interrogative_lens?.where)
+            ? data.interrogative_lens.where
+            : [],
+          why: Array.isArray(data.interrogative_lens?.why)
+            ? data.interrogative_lens.why
+            : [],
+          how: Array.isArray(data.interrogative_lens?.how)
+            ? data.interrogative_lens.how
+            : [],
+          by_what_means: Array.isArray(data.interrogative_lens?.by_what_means)
+            ? data.interrogative_lens.by_what_means
+            : [],
+          towards_what_end: Array.isArray(
+            data.interrogative_lens?.towards_what_end,
+          )
+            ? data.interrogative_lens.towards_what_end
+            : [],
+          whence: Array.isArray(data.interrogative_lens?.whence)
+            ? data.interrogative_lens.whence
+            : [],
+          by_what_consequence: Array.isArray(
+            data.interrogative_lens?.by_what_consequence,
+          )
+            ? data.interrogative_lens.by_what_consequence
+            : [],
+        },
+        pos_words: {
+          NOUN: Array.isArray(data.pos_words?.NOUN) ? data.pos_words.NOUN : [],
+          VERB: Array.isArray(data.pos_words?.VERB) ? data.pos_words.VERB : [],
+          ADV: Array.isArray(data.pos_words?.ADV) ? data.pos_words.ADV : [],
+          ADP: Array.isArray(data.pos_words?.ADP) ? data.pos_words.ADP : [],
+        },
+      });
+
+      if (Array.isArray(posData)) {
+        return posData.map(normalize);
+      } else {
+        return [normalize(posData)];
+      }
+    } catch (error) {
+      console.warn("Failed to load POS analysis:", error);
+      return [];
+    }
+  }
+
+  private static async loadQuantAnalysis(id: string): Promise<QuantAnalysis[]> {
+    // Placeholder for future quantitative analysis loading
+    try {
+      const quantBlob = await apiService.downloadFile(id, "quan_analysis");
+      const quantText = await quantBlob.text();
+      const quantData = JSON.parse(quantText);
+
+      // Helper to normalize a single QuantAnalysis object
+      const normalize = (data: any): QuantAnalysis => ({
+        stats_df: Array.isArray(data.stats_df)
+          ? data.stats_df.map((stat: any) => ({
+              Document: stat.Document || "",
+              Sentences: Number(stat.Sentences) || 0,
+              Words: Number(stat.Words) || 0,
+            }))
+          : [],
+        token_info: {
+          tokens: Array.isArray(data.token_info?.tokens)
+            ? data.token_info.tokens
+            : [],
+          tokens_filtered: Array.isArray(data.token_info?.tokens_filtered)
+            ? data.token_info.tokens_filtered
+            : [],
+          ttr: Number(data.token_info?.ttr) || 0,
+          freq_dist:
+            typeof data.token_info?.freq_dist === "object" &&
+            data.token_info?.freq_dist !== null
+              ? data.token_info.freq_dist
+              : {},
+        },
+        tfidf_df: Array.isArray(data.tfidf_df)
+          ? data.tfidf_df.map((tfidf: any) => ({
+              Document: tfidf.Document || "",
+              TopTerms: Array.isArray(tfidf.TopTerms) ? tfidf.TopTerms : [],
+            }))
+          : [],
+        bigrams: Array.isArray(data.bigrams) ? data.bigrams : [],
+        sentence_tags: Array.isArray(data.sentence_tags)
+          ? data.sentence_tags.map((tag: any) => ({
+              sentence: tag.sentence || "",
+              WHO: Boolean(tag.WHO),
+              WHY: Boolean(tag.WHY),
+            }))
+          : [],
+      });
+
+      if (Array.isArray(quantData)) {
+        return quantData.map(normalize);
+      } else {
+        return [normalize(quantData)];
+      }
+    } catch (error) {
+      console.warn("Failed to load Quantitative analysis:", error);
       return [];
     }
   }

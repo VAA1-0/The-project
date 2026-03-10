@@ -1,21 +1,47 @@
 // src/frontend/app/V2components/components/panels/VideoPanel.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
-interface VideoPanelProps {
-  videoId?: string | null;
-}
+export default function VideoPanel() {
+  const [videoId, setVideoId] = useState("");
 
-export default function VideoPanel({ videoId }: VideoPanelProps) {
+  // Set video time line
+  const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
+
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
 
-  React.useEffect(() => {
+  // Listen for video ID changes via event bus
+  useEffect(() => {
+    const handler = (id: string) => {
+      setVideoId(id);
+    };
+    eventBus.on("videoIdChanged", handler);
+
+    return () => {
+      eventBus.off("videoIdChanged", handler);
+    };
+  }, []);
+
+  // Listen for video time line changes via event bus
+  useEffect(() => {
+    const handler = (videoTimeLine: number) => {
+      setVideoTimeLine(videoTimeLine);
+    };
+    eventBus.on("videoTimeLineChanged", handler);
+
+    return () => {
+      eventBus.off("videoTimeLineChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -30,17 +56,18 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
         if (!blob) {
           blob = await VideoService.getBlob(videoId);
         }
-        
+
         if (blob) {
           // Clean up previous URL if exists
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
             lastObjectUrl.current = null;
           }
-          
+
           const url = URL.createObjectURL(blob);
           lastObjectUrl.current = url;
           setVideoUrl(url);
+          const m = await VideoService.get(videoId);
           setBlobMissing(false);
           console.log("VideoPanel: Created object URL for video blob");
         } else {
@@ -68,6 +95,24 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
     };
   }, [videoId]);
 
+  // Ref for video element
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  // Set video currentTime when videoUrl or videoTimeLine changes
+  useEffect(() => {
+    if (
+      videoRef.current &&
+      typeof videoTimeLine === "number" &&
+      !isLoading &&
+      videoUrl
+    ) {
+      // Only set if different to avoid unnecessary seek
+      if (Math.abs(videoRef.current.currentTime - videoTimeLine) > 0.1) {
+        videoRef.current.currentTime = videoTimeLine;
+      }
+    }
+  }, [videoUrl, videoTimeLine, isLoading]);
+
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-slate-700">
@@ -75,6 +120,7 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
         {videoId && (
           <div className="text-sm text-slate-400 mt-1">
             Video ID: <span className="font-mono">{videoId}</span>
+            video url is {videoUrl}
           </div>
         )}
       </div>
@@ -85,6 +131,7 @@ export default function VideoPanel({ videoId }: VideoPanelProps) {
         ) : videoUrl ? (
           <video
             key={videoUrl} // Force re-render when URL changes
+            ref={videoRef}
             src={videoUrl}
             controls
             className="w-full h-full object-contain"
