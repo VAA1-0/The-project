@@ -1,0 +1,8 @@
+In the flowchart:
+Multilingual mode
+Annotation tool
+Machine learning feature
+API for LLM Summarization engine
+Music detection
+Graphic detection
+Do youtube links work?

@@ -1,0 +1,69 @@
+#!/bin/bash
+# monitor_analysis.sh
+
+ANALYSIS_ID="71178995-b231-432b-9519-671c0f4dac8b"
+
+while true; do
+    clear
+    echo "📊 Monitoring Analysis: $ANALYSIS_ID"
+    echo "======================================"
+    
+    # Get status
+    STATUS_JSON=$(curl -s "http://localhost:8000/api/status/$ANALYSIS_ID")
+    
+    # Parse with Python for pretty output
+    python3 -c "
+import json, sys, os
+from datetime import datetime
+
+try:
+    data = json.loads('''$STATUS_JSON''')
+    
+    print(f\"Status:          {data.get('status', 'unknown'):<15}\")
+    print(f\"Progress:        {data.get('progress', 0)}%\")
+    print(f\"Filename:        {data.get('filename', 'N/A')}\")
+    
+    if data.get('processing_time'):
+        print(f\"Processing Time: {data.get('processing_time'):.2f} seconds\")
+    
+    if data.get('error'):
+        print(f\"\\n❌ Error: {data['error']}\")
+    
+    if data.get('summary'):
+        print(f\"\\n📈 Summary:\")
+        summary = data['summary']
+        for key, value in summary.items():
+            print(f\"   {key}: {value}\")
+    
+    if data.get('download_links'):
+        print(f\"\\n📥 Download Links:\")
+        for file_type, url in data['download_links'].items():
+            print(f\"   • {file_type}: http://localhost:8000{url}\")
+    
+    # Check if files exist in container
+    print(f\"\\n🔍 Checking files in container...\")
+    import subprocess
+    result = subprocess.run(
+        ['docker', 'exec', os.popen('docker ps -q').read().strip(), 
+         'find', '/app/outputs', '-name', f'*{'''$ANALYSIS_ID'''}*', '-type', 'f'],
+        capture_output=True, text=True
+    )
+    
+    if result.stdout.strip():
+        print(\"✅ Files found:\")
+        for line in result.stdout.strip().split('\\n'):
+            if line:
+                print(f\"   📄 {line}\")
+    else:
+        print(\"   No output files found yet.\")
+        
+except Exception as e:
+    print(f\"Error parsing response: {e}\")
+    print(f\"Raw response: {'''$STATUS_JSON'''}\")
+"
+    
+    echo ""
+    echo "🔄 Auto-refreshing every 5 seconds... (Ctrl+C to stop)"
+    echo "======================================"
+    sleep 5
+done
