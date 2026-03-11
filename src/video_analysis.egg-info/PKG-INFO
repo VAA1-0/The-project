@@ -2,7 +2,8 @@ Metadata-Version: 2.4
 Name: video-analysis
 Version: 1.0.0
 Requires-Python: >=3.8
-License-File: LICENSE
+License-File: LICENSE.md
+License-File: NOTICE.md
 Requires-Dist: opencv-python>=4.8.0
 Requires-Dist: ultralytics>=8.0.0
 Requires-Dist: easyocr>=1.7.0

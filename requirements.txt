@@ -48,6 +48,19 @@ pyclipper==1.3.0.post6
 # MACHINE LEARNING & DEEP LEARNING
 # ============================================
 
+tensorflow==2.16.1
+retina-face==0.0.17
+mtcnn==0.1.1
+gdown==5.2.0
+
+# Audio Recognition
+dejavu-audio==0.1.5
+
+# Lyrics API
+lyricsgenius==3.0.1
+
+# Face Recognition
+deepface==0.0.93
 # PyTorch Ecosystem
 torch==2.9.0
 torchaudio==2.9.0
@@ -59,6 +72,8 @@ tokenizers==0.22.1
 tiktoken==0.12.0
 safetensors==0.6.2
 huggingface-hub==0.36.0
+scikit-learn==1.6.1
+nltk==3.9.1
 
 # SpaCy & NLP
 spacy==3.8.9

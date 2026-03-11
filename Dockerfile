@@ -36,7 +36,8 @@ RUN pip install --no-cache-dir \
     pandas==2.3.3 \
     scipy==1.15.3 \
     matplotlib==3.10.7 \
-    pillow==12.0.0
+    pillow==12.0.0 \
+    scikit-learn==1.6.1
 
 # 3. Install computer vision packages
 RUN pip install --no-cache-dir \
@@ -55,7 +56,8 @@ RUN pip install --no-cache-dir \
     whisper==1.1.10 \
     tiktoken==0.12.0 \
     tokenizers==0.22.1 \
-    safetensors==0.6.2
+    safetensors==0.6.2 \
+    nltk==3.9.1
 
 # 5. Install web/API packages
 RUN pip install --no-cache-dir \
