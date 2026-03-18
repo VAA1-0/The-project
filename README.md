@@ -32,7 +32,7 @@ After installation, simply launch **VAA1** from the Start Menu.
 ```
 run_vaa1.bat
 ```
-Download the repo
+Download the repo,
 Double‑click the file and follow on‑screen messages.
 
 ---
@@ -55,7 +55,7 @@ No manual configuration or command‑line input is required.
 
 ## 🌐 Ports Used
 
-The following ports are used for this project
+The following ports are used for this project,
 make sure there are no services running on them:
 
 * **8000** — Backend API
