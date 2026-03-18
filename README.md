@@ -4,11 +4,11 @@ VAA1 is an open-source pipeline designed to automate the first stages of video a
 
 ---
 
-## Quick Start (Recommended — One‑Click on Windows)
+## Quick Start
 
 VAA1 is currently being tested on **Windows** and can be run using a **single installer or launcher**. No terminal usage is required.
 
-### Option A — Windows Installer (Best for most users)
+### Option A — Windows Installer
 
 ```
 VAA1_Setup.exe
@@ -32,11 +32,7 @@ After installation, simply launch **VAA1** from the Start Menu.
 ```
 run_vaa1.bat
 ```
-
-* No installation required
-* Runs directly from the project folder
-* Ideal for testing and development
-
+Download the repo
 Double‑click the file and follow on‑screen messages.
 
 ---
@@ -59,14 +55,15 @@ No manual configuration or command‑line input is required.
 
 ## 🌐 Ports Used
 
-The following ports are managed automatically:
+The following ports are used for this project
+make sure there are no services running on them:
 
 * **8000** — Backend API
 * **3000** — Frontend / Electron
 * **8091** — CVAT proxy
 * Internal Docker ports used by CVAT
 
-If a port is already in use, the launcher will resolve it automatically when safe to do so.
+If a port is already in use, the launcher will NOT resolve it automatically when safe to do so.
 
 ---
 
@@ -85,7 +82,6 @@ VAA1 will automatically:
 
 * Restart failed services
 * Rebuild missing containers
-* Release occupied ports
 * Retry startup steps
 
 If user action is required, a **clear, human‑readable message** is shown (no logs or technical errors).
