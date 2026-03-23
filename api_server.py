@@ -44,6 +44,8 @@ app.add_middleware(
         "http://127.0.0.1:3000", 
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -57,11 +59,11 @@ AUDIO_DIR = Path("outputs/audio")
 TRANSCRIPTS_DIR = Path("outputs/transcripts")
 STATIC_DIR = Path("static")
 
-UPLOAD_DIR.mkdir(exist_ok=True)
-RESULTS_DIR.mkdir(exist_ok=True)
-AUDIO_DIR.mkdir(exist_ok=True)
-TRANSCRIPTS_DIR.mkdir(exist_ok=True)
-STATIC_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
+RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+AUDIO_DIR.mkdir(exist_ok=True, parents=True)
+TRANSCRIPTS_DIR.mkdir(exist_ok=True, parents=True)
+STATIC_DIR.mkdir(exist_ok=True, parents=True)
 
 # Serve static files (for downloaded files)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
