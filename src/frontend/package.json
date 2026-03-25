@@ -30,7 +30,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "baseline-browser-mapping": "^2.8.32",
+    "baseline-browser-mapping": "^2.10.10",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^39.1.0",

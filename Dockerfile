@@ -18,8 +18,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip first
+# Upgrade pip and install setuptools explicitly
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+ENV PIP_DEFAULT_TIMEOUT=150
 
 # ============================================
 # INSTALL ALL PACKAGES DIRECTLY
@@ -98,7 +99,6 @@ RUN pip install --no-cache-dir \
     anyio==4.11.0 \
     requests==2.32.5 \
     urllib3==2.5.0 \
-    httpx \
     cloudpathlib==0.23.0 \
     fsspec==2025.10.0 \
     smart-open==7.5.0
@@ -164,6 +164,23 @@ RUN pip install --no-cache-dir \
     regex==2025.11.3 \
     wrapt==2.0.1
 
+# 15. Install face recognition / deep learning packages
+RUN pip install --no-cache-dir \
+    deepface==0.0.93 \
+    tensorflow==2.20.0 \
+    tf_keras==2.20.1 \
+    retina-face==0.0.17 \
+    mtcnn==0.1.1 \
+    gdown==5.2.0
+
+
+# ADD THIS WHEN EXPRESSION LENS IS BACK
+# 16. Music detection packages
+# RUN pip install --no-cache-dir \
+#    lyricsgenius==3.0.1
+
+# upgrade pip setup tools
+RUN pip install --no-cache-dir --upgrade setuptools==69.5.1
 # Create necessary directories
 RUN mkdir -p /app/outputs /app/uploads /app/models
 

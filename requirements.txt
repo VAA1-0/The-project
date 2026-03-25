@@ -49,12 +49,10 @@ pyclipper==1.3.0.post6
 # ============================================
 
 tensorflow==2.16.1
+tf_keras==2.20.1
 retina-face==0.0.17
 mtcnn==0.1.1
 gdown==5.2.0
-
-# Audio Recognition
-dejavu-audio==0.1.5
 
 # Lyrics API
 lyricsgenius==3.0.1

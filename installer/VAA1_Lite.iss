@@ -4,7 +4,7 @@ AppVersion=1.0
 DefaultDirName={autopf}\VAA1-Lite
 DefaultGroupName=VAA1 Lite
 OutputBaseFilename=VAA1_Lite_Setup
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 Compression=lzma
 SolidCompression=yes
 
