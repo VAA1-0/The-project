@@ -2,6 +2,10 @@
 virtenvir/
 
 src/cvat/backend/node_modules/
+node_modules/
+src/frontend/node_modules/
+src/frontend/.next/
+.next/
 
 outputs/*
 
@@ -15,6 +19,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# macOS / local OS noise
+.DS_Store
+
 # Logs
 logs/
 *.log
@@ -22,7 +29,17 @@ logs/
 # Generated outputs / temp
 outputs/
 uploads/
+tmp/
+*.tmp
 
+# Local archives / bundles
+*.zip
+*.tar.gz
+
+# Local runtime manifests
+docs/current_progress_diffstat_*.txt
+docs/current_progress_status_*.txt
+docs/current_progress_file_list_*.txt
 
 # VS Code
 .vscode/
