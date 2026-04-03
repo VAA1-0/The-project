@@ -1,28 +1,165 @@
 // src/frontend/lib/api-service.ts
+import { buildAnalysisSearchParams } from "./analysis-request";
+
 export interface UploadResponse {
   analysis_id: string;
   filename: string;
   message: string;
   status: string;
   cvatID: number;
+  bundle_type?: "analysis" | "project";
+  imported_analysis_ids?: string[];
+  imported_count?: number;
+  project_name?: string;
 }
 
 export interface AnalysisStatus {
   analysis_id: string;
   status: "uploaded" | "processing" | "completed" | "error";
   progress: number;
+  event_log?: AnalysisEvent[];
+  mission_stage?: string;
+  mission_message?: string;
   filename: string;
   error?: string;
   processing_time?: number;
+  apply_face_anonymization?: boolean;
+  face_message_style?: "plain" | "starfleet";
+  face_requires_person_detection?: boolean;
+  uploaded_at?: string;
+  analysis_started_at?: string;
+  analysis_completed_at?: string;
+  source_video_path?: string;
+  source_video_exists?: boolean;
+  source_video_message?: string;
+  source_media_metadata?: SourceMediaMetadata;
   summary?: {
     yolo_detections: number;
     ocr_detections: number;
+    expression_samples?: number;
+    expression_status?: "completed" | "failed" | "not_run";
+    expression_error?: string;
     audio_segments?: number;
+    audio_prosody_cues?: number;
     audio_language?: string;
+    audio_language_name?: string;
+    audio_language_source?: string;
+    audio_language_confidence?: number;
+    audio_error?: string;
+    audio_prosody_error?: string;
+    pos_error?: string;
+    quan_error?: string;
+    language_support?: {
+      quant?: string;
+      pos?: string;
+      future_discourse?: string;
+      nltk_stopwords?: boolean;
+      spacy_model?: string | null;
+      spacy_model_available?: boolean;
+      registry_language_name?: string;
+      registry_target_support?: {
+        quant?: string;
+        pos?: string;
+        future_discourse?: string;
+      };
+      regional_varieties?: string[];
+      notes?: string[];
+    };
+    language_profile?: {
+      code?: string;
+      name?: string;
+      iso6393?: string | null;
+      source?: string;
+      confidence?: number;
+      hint?: string | null;
+      text_guess?: {
+        code?: string | null;
+        name?: string;
+        confidence?: number;
+        method?: string;
+        token_count?: number;
+      };
+      support?: {
+        quant?: string;
+        pos?: string;
+        future_discourse?: string;
+        nltk_stopwords?: boolean;
+        spacy_model?: string | null;
+        spacy_model_available?: boolean;
+        registry_language_name?: string;
+        registry_target_support?: {
+          quant?: string;
+          pos?: string;
+          future_discourse?: string;
+        };
+        regional_varieties?: string[];
+        notes?: string[];
+      };
+    };
+    language_pack_policy?: {
+      primary_language?: {
+        code?: string;
+        name?: string;
+        fixed?: boolean;
+      };
+      policy?: string;
+      policy_label?: string;
+      slot_limit?: number;
+      selected_languages?: Array<{ code?: string; name?: string }>;
+      special_use_language?: { code?: string; name?: string } | null;
+      allow_rough_interpretation?: boolean;
+      rough_interpretation_label?: string;
+      commercial_extension_required?: boolean;
+      notes?: string[];
+    };
+    face_frames_considered?: number;
+    face_frames_selected?: number;
+    face_frames_skipped_no_person?: number;
   };
+  face_results?: {
+    frames?: Array<{
+      frame_index?: number;
+      source_timestamp?: number;
+      faces?: Array<{
+        age?: number | null;
+        dominant_gender?: string | null;
+        face_confidence?: number | null;
+        warnings?: Array<{ code?: string; technical_note?: string; user_message?: string }>;
+      }>;
+      warnings?: Array<{ code?: string; technical_note?: string; user_message?: string }>;
+    }>;
+  } | null;
+  annotation_corrections?: AnnotationCorrections | null;
   download_links?: Record<string, string>;
   pipeline_type?: string;
+  analysis_tier?: string;
+  modality_focus?: string;
+  language_pack_policy?: {
+    primary_language?: {
+      code?: string;
+      name?: string;
+      fixed?: boolean;
+    };
+    policy?: string;
+    policy_label?: string;
+    slot_limit?: number;
+    selected_languages?: Array<{ code?: string; name?: string }>;
+    special_use_language?: { code?: string; name?: string } | null;
+    allow_rough_interpretation?: boolean;
+    rough_interpretation_label?: string;
+    commercial_extension_required?: boolean;
+    notes?: string[];
+  };
   cvatID?: number;
+}
+
+export interface AnalysisEvent {
+  timestamp: string;
+  event_type: string;
+  progress?: number;
+  mission_stage?: string;
+  mission_message?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface AnalysisStartResponse {
@@ -31,6 +168,107 @@ export interface AnalysisStartResponse {
   message: string;
   progress: number;
   pipeline_type: string;
+}
+
+export interface AnalysisStartOptions {
+  analysisTier?: "quick_sweep" | "science_scan" | "forensic_sensor";
+  modalityFocus?: "multimodal" | "graphics" | "audio" | "images" | "text";
+  morphologyPackPolicy?: "core_only" | "plus_1" | "plus_2";
+  morphologyLanguages?: string[];
+  specialUseMorphologyLanguage?: string;
+  allowRoughInterpretation?: boolean;
+  applyFaceAnonymization?: boolean;
+  faceMessageStyle?: "plain" | "starfleet";
+  faceRequiresPersonDetection?: boolean;
+}
+
+export interface WorkspaceInfo {
+  results_dir: string;
+  imported_work_dir: string;
+  downloads_note: string;
+}
+
+export interface SourceMediaMetadata {
+  analysis_id?: string;
+  original_filename?: string;
+  stored_filename?: string;
+  source_video_path?: string;
+  source_video_exists?: boolean;
+  mime_type?: string | null;
+  format_name?: string | null;
+  container_extension?: string | null;
+  duration_seconds?: number | null;
+  size_bytes?: number | null;
+  video_codec?: string | null;
+  audio_codec?: string | null;
+  has_audio?: boolean;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  video_bitrate?: number | null;
+  audio_bitrate?: number | null;
+  audio_channels?: number | null;
+  audio_sample_rate?: number | string | null;
+  uploaded_at?: string;
+  analysis_started_at?: string;
+  analysis_completed_at?: string;
+  pipeline_type?: string;
+  cvatID?: number;
+  filesystem_modified_at?: string;
+  user_annotations?: {
+    editor_notes?: string;
+    source_context?: string;
+    provenance_notes?: string;
+  };
+}
+
+export interface AnnotationCorrectionRule {
+  id: string;
+  modality: "text" | "object" | "ocr" | "expression";
+  raw_value: string;
+  corrected_value: string;
+  target_timestamp?: number;
+  target_start_timestamp?: number;
+  target_end_timestamp?: number;
+  target_track_id?: number;
+  note?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface AnnotationCorrections {
+  analysis_id?: string;
+  version?: number;
+  updated_at?: string;
+  updated_by?: string;
+  text_substitutions?: AnnotationCorrectionRule[];
+  label_overrides?: AnnotationCorrectionRule[];
+}
+
+export type WorkspacePathType = "results" | "imports";
+
+export interface MorphologyCatalogItem {
+  code: string;
+  name: string;
+  spacy_model?: string | null;
+  has_named_pipeline?: boolean;
+  installed?: boolean;
+  local_status?: string;
+  current_support?: {
+    quant?: string;
+    pos?: string;
+    future_discourse?: string;
+  };
+  target_support?: {
+    quant?: string;
+    pos?: string;
+    future_discourse?: string;
+  };
+  is_eu_official?: boolean;
+  is_un_official?: boolean;
+  is_recommended_extra?: boolean;
+  notes?: string[];
+  future_feed_repair_ready?: boolean;
 }
 
 class ApiService {
@@ -124,7 +362,20 @@ class ApiService {
   async startAnalysis(
     analysisId: string,
     pipelineType: "full" | "visual_only" | "audio_only" = "full",
+    options: AnalysisStartOptions = {},
   ): Promise<AnalysisStartResponse> {
+    const {
+      analysisTier = "science_scan",
+      modalityFocus = "multimodal",
+      morphologyPackPolicy = "core_only",
+      morphologyLanguages = [],
+      specialUseMorphologyLanguage = "",
+      allowRoughInterpretation = true,
+      applyFaceAnonymization = false,
+      faceMessageStyle = "plain",
+      faceRequiresPersonDetection = false,
+    } = options;
+
     // Check if this is a mock ID
     if (analysisId.startsWith("mock-")) {
       return {
@@ -137,8 +388,20 @@ class ApiService {
     }
 
     try {
+      const searchParams = buildAnalysisSearchParams(pipelineType, {
+        analysisTier,
+        modalityFocus,
+        morphologyPackPolicy,
+        morphologyLanguages,
+        specialUseMorphologyLanguage,
+        allowRoughInterpretation,
+        applyFaceAnonymization,
+        faceMessageStyle,
+        faceRequiresPersonDetection,
+      });
+
       const response = await fetch(
-        `${this.baseURL}/api/analyze/${analysisId}?pipeline_type=${pipelineType}`,
+        `${this.baseURL}/api/analyze/${analysisId}?${searchParams.toString()}`,
         {
           method: "POST",
         },
@@ -175,10 +438,6 @@ class ApiService {
       if (!response.ok) {
         const errorText = await response.text();
         console.warn("Status check failed:", response.status, errorText);
-        // For development, fall back to mock
-        if (!this.useMock) {
-          return this.getMockStatus(analysisId);
-        }
         throw new Error(
           `Status check failed: ${response.status} ${response.statusText} - ${errorText}`,
         );
@@ -186,9 +445,11 @@ class ApiService {
 
       return response.json();
     } catch (error) {
-      console.warn("Status check failed, using fallback:", error);
-      // Fallback to mock status
-      return this.getMockStatus(analysisId);
+      console.warn("Status check failed:", error);
+      if (this.useMock) {
+        return this.getMockStatus(analysisId);
+      }
+      throw error;
     }
   }
 
@@ -250,6 +511,7 @@ class ApiService {
             pos_analysis: `${this.baseURL}/api/download/${analysisId}/pos_analysis`,
             // Edit By Runzhou: add quan_analysis link
             quan_analysis: `${this.baseURL}/api/download/${analysisId}/quan_analysis`,
+            expression_json: `${this.baseURL}/api/download/${analysisId}/expression_json`,
           }
         : undefined;
 
@@ -267,6 +529,8 @@ class ApiService {
           ? {
               yolo_detections: Math.floor(Math.random() * 200) + 50,
               ocr_detections: Math.floor(Math.random() * 50) + 10,
+              expression_samples: Math.floor(Math.random() * 10) + 1,
+              expression_status: "completed",
               audio_segments: Math.floor(Math.random() * 20) + 5,
               audio_language: "en",
             }
@@ -301,6 +565,58 @@ class ApiService {
     return response.blob();
   }
 
+  async downloadBundle(analysisId: string): Promise<Blob> {
+    if (analysisId.startsWith("mock-")) {
+      return new Blob([`Mock analysis bundle for ${analysisId}`], {
+        type: "application/zip",
+      });
+    }
+
+    const response = await fetch(`${this.baseURL}/api/download-bundle/${analysisId}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Bundle download failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.blob();
+  }
+
+  async getAnnotationCorrections(analysisId: string): Promise<AnnotationCorrections> {
+    const response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Annotation corrections fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const result = await response.json();
+    return result.annotation_corrections || {};
+  }
+
+  async saveAnnotationCorrections(
+    analysisId: string,
+    corrections: AnnotationCorrections,
+  ): Promise<AnnotationCorrections> {
+    const response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(corrections),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Annotation corrections save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const result = await response.json();
+    return result.annotation_corrections || {};
+  }
+
   private getMimeType(fileType: string): string {
     const mimeTypes: Record<string, string> = {
       video: "video/mp4",
@@ -313,6 +629,11 @@ class ApiService {
       pos_analysis: "application/json",
       // Edit By Runzhou: add quan_analysis mime type
       quan_analysis: "application/json",
+      source_media_metadata_json: "application/json",
+      source_media_metadata_csv: "text/csv",
+      annotation_corrections: "application/json",
+      expression_json: "application/json",
+      face_anonymization_manifest: "application/json",
     };
     return mimeTypes[fileType] || "application/octet-stream";
   }
@@ -386,6 +707,136 @@ class ApiService {
     }
   }
 
+  async downloadAndSaveBundle(
+    analysisId: string,
+    filename?: string,
+  ): Promise<void> {
+    try {
+      const blob = await this.downloadBundle(analysisId);
+      this.downloadBlob(blob, filename || `${analysisId}_analysis_bundle.zip`);
+    } catch (error) {
+      console.error("Failed to download analysis bundle:", error);
+      throw error;
+    }
+  }
+
+  async downloadProjectBundle(payload: Record<string, unknown>): Promise<Blob> {
+    const response = await fetch(`${this.baseURL}/api/download-project-bundle`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Project bundle download failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.blob();
+  }
+
+  async downloadAndSaveProjectBundle(
+    payload: Record<string, unknown>,
+    filename?: string,
+  ): Promise<void> {
+    try {
+      const blob = await this.downloadProjectBundle(payload);
+      this.downloadBlob(blob, filename || "vaa1_project_bundle.zip");
+    } catch (error) {
+      console.error("Failed to download project bundle:", error);
+      throw error;
+    }
+  }
+
+  async saveQuantMatrixSnapshot(
+    analysisId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.baseURL}/api/matrices/quant/${analysisId}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Quant matrix save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+  }
+
+  async savePOSMatrixSnapshot(
+    analysisId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.baseURL}/api/matrices/pos/${analysisId}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `POS matrix save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+  }
+
+  async getSourceMediaMetadata(analysisId: string): Promise<SourceMediaMetadata> {
+    const response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source media metadata fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async updateSourceMediaMetadata(
+    analysisId: string,
+    payload: {
+      editor_notes?: string;
+      source_context?: string;
+      provenance_notes?: string;
+    },
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source media metadata save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
   /**
    * Get list of recent analyses (for admin/debugging)
    */
@@ -441,6 +892,94 @@ class ApiService {
     }
   }
 
+  async clearSession(): Promise<{
+    message: string;
+    cleared_analysis_ids: string[];
+    skipped_processing_ids: string[];
+  }> {
+    const response = await fetch(`${this.baseURL}/api/session/clear`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Session clear failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async importSavedWork(file: File): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${this.baseURL}/api/import-bundle`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Saved work import failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async getWorkspaceInfo(): Promise<WorkspaceInfo> {
+    const response = await fetch(`${this.baseURL}/api/workspace-info`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Workspace info failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async revealWorkspacePath(pathType: WorkspacePathType): Promise<void> {
+    const response = await fetch(
+      `${this.baseURL}/api/reveal-workspace-path/${pathType}`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Reveal workspace path failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+  }
+
+  async getMorphologyCatalog(query = ""): Promise<{
+    items: MorphologyCatalogItem[];
+    query?: string;
+    feed_repair_api_ready?: boolean;
+    notes?: string[];
+  }> {
+    const search = new URLSearchParams();
+    if (query.trim()) {
+      search.set("query", query.trim());
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    const response = await fetch(`${this.baseURL}/api/morphology/catalog${suffix}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Morphology catalog failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
   /**
    * Health check for API server
    */
@@ -487,10 +1026,13 @@ class ApiService {
       "summary_json",
       "audio",
       "transcript",
+      "annotation_corrections",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
       // Edit By Runzhou: add quan_analysis file type
       "quan_analysis",
+      "expression_json",
+      "face_anonymization_manifest",
     ];
   }
 
@@ -505,10 +1047,13 @@ class ApiService {
       summary_json: "Analysis Summary (JSON)",
       audio: "Extracted Audio",
       transcript: "Transcript (JSON)",
+      annotation_corrections: "Annotation Corrections (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
       // Edit By Runzhou: add quan_analysis display name
       quan_analysis: "Quantity Analysis (JSON)",
+      expression_json: "Expression Analysis (JSON)",
+      face_anonymization_manifest: "Face Anonymization Manifest (JSON)",
     };
 
     return displayNames[fileType] || fileType;
@@ -525,10 +1070,13 @@ class ApiService {
       summary_json: ".json",
       audio: ".wav",
       transcript: ".json",
+      annotation_corrections: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",
       // Edit By Runzhou: add quan_analysis file extension
       quan_analysis: ".json",
+      expression_json: ".json",
+      face_anonymization_manifest: ".json",
     };
 
     return extensions[fileType] || "";

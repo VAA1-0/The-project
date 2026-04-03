@@ -28,6 +28,22 @@ export interface VideoMetadata {
   pipelineType?: "full" | "visual_only" | "audio_only";
   analysisTier?: string;
   modalityFocus?: string;
+  languagePackPolicy?: {
+    primary_language?: {
+      code?: string;
+      name?: string;
+      fixed?: boolean;
+    };
+    policy?: string;
+    policy_label?: string;
+    slot_limit?: number;
+    selected_languages?: Array<{ code?: string; name?: string }>;
+    special_use_language?: { code?: string; name?: string } | null;
+    allow_rough_interpretation?: boolean;
+    rough_interpretation_label?: string;
+    commercial_extension_required?: boolean;
+    notes?: string[];
+  };
   applyFaceAnonymization?: boolean;
   faceMessageStyle?: "plain" | "starfleet";
   faceRequiresPersonDetection?: boolean;
@@ -775,12 +791,80 @@ export interface POSAnalysis {
     available?: boolean;
     counts?: Record<string, number>;
     examples?: Record<string, string[]>;
+    occurrences?: Record<string, string[]>;
     labels?: Record<string, string>;
     note?: string;
   };
 }
 
 export interface QuantAnalysis {
+  evidence_map?: {
+    frequent_terms?: Array<{
+      type?: string;
+      term?: string;
+      matched_terms?: string[];
+      count?: number;
+      snippets?: string[];
+      segment_refs?: Array<{
+        text?: string;
+        context_text?: string;
+        start?: number;
+        end?: number;
+        t?: string;
+      }>;
+    }>;
+    tfidf_terms?: Array<{
+      type?: string;
+      term?: string;
+      matched_terms?: string[];
+      count?: number;
+      snippets?: string[];
+      segment_refs?: Array<{
+        text?: string;
+        context_text?: string;
+        start?: number;
+        end?: number;
+        t?: string;
+      }>;
+    }>;
+    bigrams?: Array<{
+      type?: string;
+      phrase?: string;
+      matched_terms?: string[];
+      snippets?: string[];
+      segment_refs?: Array<{
+        text?: string;
+        start?: number;
+        end?: number;
+        t?: string;
+      }>;
+    }>;
+    sentence_tags?: Array<{
+      type?: string;
+      sentence?: string;
+      WHO?: boolean;
+      WHY?: boolean;
+      matched_terms?: string[];
+      segment_refs?: Array<{
+        text?: string;
+        start?: number;
+        end?: number;
+        t?: string;
+      }>;
+    }>;
+    concordance?: Array<{
+      type?: string;
+      line?: string;
+      keyword?: string | null;
+      matched_terms?: string[];
+      segment_refs?: Array<{
+        text?: string;
+        start?: number;
+        end?: number;
+        t?: string;
+      }>;
+    }>;
+  };
   stats_df: Array<{
     Document: string;
     Sentences: number;
@@ -807,6 +891,15 @@ export interface QuantAnalysis {
     lines: string[];
     width?: number;
     requested_lines?: number;
+    entries?: Array<{
+      left_context?: string;
+      keyword?: string;
+      right_context?: string;
+      text?: string;
+      start?: number;
+      end?: number;
+      t?: string;
+    }>;
   };
 }
 
@@ -1450,12 +1543,69 @@ export interface AnalysisStatus {
         notes?: string[];
       };
     };
+    language_pack_policy?: {
+      primary_language?: {
+        code?: string;
+        name?: string;
+        fixed?: boolean;
+      };
+      policy?: string;
+      policy_label?: string;
+      slot_limit?: number;
+      selected_languages?: Array<{ code?: string; name?: string }>;
+      special_use_language?: { code?: string; name?: string } | null;
+      allow_rough_interpretation?: boolean;
+      rough_interpretation_label?: string;
+      commercial_extension_required?: boolean;
+      notes?: string[];
+    };
+    audio_prosody_cues?: number;
+    audio_prosody_error?: string;
     face_frames_considered?: number;
     face_frames_selected?: number;
     face_frames_skipped_no_person?: number;
   };
+  face_results?: {
+    frames?: Array<{
+      frame_index?: number;
+      source_timestamp?: number;
+      faces?: Array<{
+        age?: number | null;
+        dominant_gender?: string | null;
+        face_confidence?: number | null;
+        warnings?: Array<{
+          code?: string;
+          technical_note?: string;
+          user_message?: string;
+        }>;
+      }>;
+      warnings?: Array<{
+        code?: string;
+        technical_note?: string;
+        user_message?: string;
+      }>;
+    }>;
+  } | null;
   download_links?: Record<string, string>;
   pipeline_type?: string; // This was missing
+  analysis_tier?: string;
+  modality_focus?: string;
+  language_pack_policy?: {
+    primary_language?: {
+      code?: string;
+      name?: string;
+      fixed?: boolean;
+    };
+    policy?: string;
+    policy_label?: string;
+    slot_limit?: number;
+    selected_languages?: Array<{ code?: string; name?: string }>;
+    special_use_language?: { code?: string; name?: string } | null;
+    allow_rough_interpretation?: boolean;
+    rough_interpretation_label?: string;
+    commercial_extension_required?: boolean;
+    notes?: string[];
+  };
   cvatID?: number;
 }
 
@@ -1541,6 +1691,7 @@ export class VideoService {
           | "audio_only",
         analysisTier: status.analysis_tier,
         modalityFocus: status.modality_focus,
+        languagePackPolicy: status.language_pack_policy,
         applyFaceAnonymization: status.apply_face_anonymization,
         faceMessageStyle: status.face_message_style,
         faceRequiresPersonDetection: status.face_requires_person_detection,
@@ -2484,6 +2635,7 @@ export class VideoService {
               available: Boolean(data.case_profile.available),
               counts: data.case_profile.counts || {},
               examples: data.case_profile.examples || {},
+              occurrences: data.case_profile.occurrences || {},
               labels: data.case_profile.labels || {},
               note: data.case_profile.note,
             }
@@ -2510,6 +2662,25 @@ export class VideoService {
 
       // Helper to normalize a single QuantAnalysis object
       const normalize = (data: any): QuantAnalysis => ({
+        evidence_map: data.evidence_map
+          ? {
+              frequent_terms: Array.isArray(data.evidence_map.frequent_terms)
+                ? data.evidence_map.frequent_terms
+                : [],
+              tfidf_terms: Array.isArray(data.evidence_map.tfidf_terms)
+                ? data.evidence_map.tfidf_terms
+                : [],
+              bigrams: Array.isArray(data.evidence_map.bigrams)
+                ? data.evidence_map.bigrams
+                : [],
+              sentence_tags: Array.isArray(data.evidence_map.sentence_tags)
+                ? data.evidence_map.sentence_tags
+                : [],
+              concordance: Array.isArray(data.evidence_map.concordance)
+                ? data.evidence_map.concordance
+                : [],
+            }
+          : undefined,
         stats_df: Array.isArray(data.stats_df)
           ? data.stats_df.map((stat: any) => ({
               Document: stat.Document || "",
@@ -2550,6 +2721,18 @@ export class VideoService {
               keyword: data.concordance.keyword ?? null,
               lines: Array.isArray(data.concordance.lines)
                 ? data.concordance.lines
+                : [],
+              entries: Array.isArray(data.concordance.entries)
+                ? data.concordance.entries.map((entry: any) => ({
+                    left_context: entry.left_context || "",
+                    keyword: entry.keyword || "",
+                    right_context: entry.right_context || "",
+                    text: entry.text || "",
+                    start:
+                      entry.start !== undefined ? Number(entry.start) : undefined,
+                    end: entry.end !== undefined ? Number(entry.end) : undefined,
+                    t: entry.t || undefined,
+                  }))
                 : [],
               width:
                 data.concordance.width !== undefined
