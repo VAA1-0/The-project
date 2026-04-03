@@ -56,6 +56,15 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
 import { useLayoutHost } from "../LayoutHost";
 
+type ToolsWorkspace =
+  | "analysis"
+  | "visual"
+  | "morphology"
+  | "face"
+  | "language"
+  | "mission"
+  | "expression";
+
 export default function ToolsPanel() {
   const { openPanel } = useLayoutHost();
   const selectSurfaceClassName =
@@ -119,6 +128,8 @@ export default function ToolsPanel() {
   const [showLanguageRecords, setShowLanguageRecords] = useState(false);
   const [showMissionRecords, setShowMissionRecords] = useState(false);
   const [showExpressionRecords, setShowExpressionRecords] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<ToolsWorkspace>("analysis");
 
   const expressionAggregate = React.useMemo(() => {
     const samples = analysisData?.expressionResults ?? [];
@@ -276,8 +287,14 @@ export default function ToolsPanel() {
   useEffect(() => {
     const focusSection = (section: string) => {
       const targets: Record<string, () => void> = {
-        analysis: () => {},
+        analysis: () => {
+          setActiveWorkspace("analysis");
+        },
+        visual: () => {
+          setActiveWorkspace("visual");
+        },
         morphology: () => {
+          setActiveWorkspace("morphology");
           setShowMorphologyRecords(true);
           window.setTimeout(() => {
             morphologySectionRef.current?.scrollIntoView({
@@ -287,6 +304,7 @@ export default function ToolsPanel() {
           }, 80);
         },
         face: () => {
+          setActiveWorkspace("face");
           setShowFaceRecords(true);
           window.setTimeout(() => {
             faceSectionRef.current?.scrollIntoView({
@@ -296,6 +314,7 @@ export default function ToolsPanel() {
           }, 80);
         },
         language: () => {
+          setActiveWorkspace("language");
           setShowLanguageRecords(true);
           window.setTimeout(() => {
             languageSectionRef.current?.scrollIntoView({
@@ -305,6 +324,7 @@ export default function ToolsPanel() {
           }, 80);
         },
         mission: () => {
+          setActiveWorkspace("mission");
           setShowMissionRecords(true);
           window.setTimeout(() => {
             missionSectionRef.current?.scrollIntoView({
@@ -312,6 +332,10 @@ export default function ToolsPanel() {
               block: "start",
             });
           }, 80);
+        },
+        expression: () => {
+          setActiveWorkspace("expression");
+          setShowExpressionRecords(true);
         },
       };
 
@@ -323,6 +347,12 @@ export default function ToolsPanel() {
       eventBus.off<string>("toolsSectionFocus", focusSection);
     };
   }, []);
+
+  useEffect(() => {
+    if (activeWorkspace !== "visual") {
+      eventBus.emit("visualCueClose", null);
+    }
+  }, [activeWorkspace]);
 
   useEffect(() => {
     async function load() {
@@ -773,10 +803,92 @@ export default function ToolsPanel() {
                 Reference: <span className="font-mono">{videoId}</span>
               </div>
             )}
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
+              {[
+                ["analysis", "Analysis setup"],
+                ["visual", "Visual cues"],
+                ["morphology", "Morphology catalog"],
+                ["face", "Face records"],
+                ["language", "Language records"],
+                ["mission", "Mission records"],
+                ["expression", "Expression records"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`rounded border px-2 py-1 transition-colors ${
+                    activeWorkspace === key
+                      ? "border-slate-500 bg-slate-800/70 text-slate-200"
+                      : "border-white/8 bg-[#171717] text-slate-500 hover:text-slate-300"
+                  }`}
+                  onClick={() => setActiveWorkspace(key as ToolsWorkspace)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-3">
             <div className="space-y-3 pb-4">
+              {activeWorkspace === "visual" && (
+                <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3 text-xs text-slate-300">
+                  <div>
+                    <div className="font-medium text-slate-200">Visual cues</div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Open a particular cue in the Video panel when you need to inspect an underlying visual indication.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                    {[
+                      ["shot", "Shot size"],
+                      ["frame", "Frame class"],
+                      ["spatial", "Spatial scan"],
+                      ["text", "Text/graphic"],
+                      ["human", "Human presence"],
+                      ["margin", "Margin scan"],
+                      ["corner", "Corner scan"],
+                      ["depth", "Depth scan"],
+                      ["lighting", "Lighting"],
+                      ["color", "Color regime"],
+                      ["clutter", "Visual clutter"],
+                      ["motion", "Motion scan"],
+                      ["transition", "Transition scan"],
+                      ["tone", "Tone scan"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className="rounded border border-white/8 bg-[#171717] px-2 py-1 transition-colors hover:text-slate-200"
+                        disabled={!videoId}
+                        onClick={() => {
+                          if (!videoId) return;
+                          eventBus.emit("videoIdChanged", videoId);
+                          openPanel("VideoPanel");
+                          window.setTimeout(() => {
+                            eventBus.emit("videoIdChanged", videoId);
+                            eventBus.emit("visualCueOpen", key);
+                          }, 40);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    These cues remain provisional. Use them for checking and confirmation rather than final interpretive claims.
+                  </div>
+                  <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100/85">
+                    Visual cues note: this tool needs a thorough check-up and calibration session.
+                    The cues should participate in an active feedback loop so they can become more
+                    accurate and indicative over time. A broader triangulation principle may be needed
+                    across the program, so these signals are checked against other evidence rather than
+                    treated as standalone truth.
+                  </div>
+                </div>
+              )}
+
+              {(activeWorkspace === "analysis" || activeWorkspace === "morphology") && (
               <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3">
                 <div className="space-y-1">
                   <Label htmlFor="analysis-tier">Analysis tier</Label>
@@ -1062,7 +1174,9 @@ export default function ToolsPanel() {
                   </div>
                 </Collapsible>
               </div>
+              )}
 
+              {activeWorkspace === "face" && (
               <Collapsible open={showFaceRecords} onOpenChange={setShowFaceRecords}>
                 <div
                   ref={faceSectionRef}
@@ -1147,7 +1261,11 @@ export default function ToolsPanel() {
                   </CollapsibleContent>
                 </div>
               </Collapsible>
+              )}
 
+              {(activeWorkspace === "analysis" ||
+                activeWorkspace === "language" ||
+                activeWorkspace === "mission") && (
               <div className="space-y-1 rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-300">
                 <div>
                   Analysis setup: {analysisTierLabel}, {modalityFocusLabel}, {morphologyPackLabel}.
@@ -1220,8 +1338,10 @@ export default function ToolsPanel() {
                   <div>Quant lens note: {analysisData.metadata.quantError}</div>
                 )}
               </div>
+              )}
 
-              {(analysisData?.metadata?.audioLanguage ||
+              {activeWorkspace === "language" &&
+              (analysisData?.metadata?.audioLanguage ||
                 analysisData?.metadata?.languageProfile ||
                 analysisData?.metadata?.languageSupport) && (
                 <Collapsible
@@ -1321,7 +1441,7 @@ export default function ToolsPanel() {
                 </Collapsible>
               )}
 
-              {missionLog.length > 0 && (
+              {activeWorkspace === "mission" && missionLog.length > 0 && (
                 <Collapsible
                   open={showMissionRecords}
                   onOpenChange={setShowMissionRecords}
@@ -1371,7 +1491,8 @@ export default function ToolsPanel() {
                 </Collapsible>
               )}
 
-              {analysisData?.expressionResults?.length > 0 && (
+              {activeWorkspace === "expression" &&
+              analysisData?.expressionResults?.length > 0 && (
                 <Collapsible
                   open={showExpressionRecords}
                   onOpenChange={setShowExpressionRecords}
@@ -1423,6 +1544,28 @@ export default function ToolsPanel() {
                 </div>
                 </Collapsible>
               )}
+
+              {activeWorkspace === "language" &&
+                !analysisData?.metadata?.audioLanguage &&
+                !analysisData?.metadata?.languageProfile &&
+                !analysisData?.metadata?.languageSupport && (
+                  <div className="rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-500">
+                    No language records are available for this analysis yet.
+                  </div>
+                )}
+
+              {activeWorkspace === "mission" && missionLog.length === 0 && (
+                <div className="rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-500">
+                  No mission records are available for this analysis yet.
+                </div>
+              )}
+
+              {activeWorkspace === "expression" &&
+                !(analysisData?.expressionResults?.length > 0) && (
+                  <div className="rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-500">
+                    No expression records are available for this analysis yet.
+                  </div>
+                )}
             </div>
           </div>
 

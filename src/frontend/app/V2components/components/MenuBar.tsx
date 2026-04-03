@@ -697,6 +697,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "Visual cues",
+          onClick: () => {
+            openToolsSection("visual");
+          },
+        },
+        {
           label: "Morphology Catalog",
           onClick: () => {
             openToolsSection("morphology");
