@@ -788,6 +788,7 @@ class POSAnalysis:
     def extract_case_profile(self) -> Dict[str, Any]:
         counts: Counter = Counter()
         examples: Dict[str, List[str]] = {}
+        occurrences: Dict[str, List[str]] = {}
         structured_hits = 0
 
         for token in self.doc:
@@ -801,6 +802,8 @@ class POSAnalysis:
             structured_hits += 1
             for case_value in case_values:
                 counts[case_value] += 1
+                occurrences.setdefault(case_value, [])
+                occurrences[case_value].append(token.text)
                 examples.setdefault(case_value, [])
                 if token.text not in examples[case_value] and len(examples[case_value]) < 8:
                     examples[case_value].append(token.text)
@@ -810,17 +813,20 @@ class POSAnalysis:
                 "available": False,
                 "counts": {},
                 "examples": {},
+                "occurrences": {},
                 "labels": {},
                 "note": "Structured case/morphology was not available for this language model.",
             }
 
         filtered_counts = {key: value for key, value in counts.items() if value > 0}
         filtered_examples = {key: value for key, value in examples.items() if value}
+        filtered_occurrences = {key: value for key, value in occurrences.items() if value}
 
         return {
             "available": True,
             "counts": filtered_counts,
             "examples": filtered_examples,
+            "occurrences": filtered_occurrences,
             "labels": {
                 key: CASE_LABELS.get(key, key)
                 for key in filtered_counts.keys()

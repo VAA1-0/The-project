@@ -48,6 +48,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 import spacy
 import pandas as pd
+from src.backend.analysis.language_utils import (
+    fallback_spacy_language_code,
+    normalize_language_code,
+    normalize_language_name,
+    resolve_spacy_model,
+    safe_stopwords,
+    simple_word_tokens,
+)
 
 
 # Ensure basic NLTK resources are available.
@@ -55,6 +63,15 @@ nltk.download("punkt", quiet=True)
 nltk.download("stopwords", quiet=True)
 
 nltk.download('punkt_tab')
+
+
+WHY_PATTERNS = {
+    "english": re.compile(r"\b(because|in order to|so that)\b", flags=re.IGNORECASE),
+    "finnish": re.compile(
+        r"\b(koska|jotta|siksi|sen vuoksi|tämän vuoksi)\b",
+        flags=re.IGNORECASE,
+    ),
+}
 
 
 class QuantitativeAnalysis:
@@ -74,12 +91,17 @@ class QuantitativeAnalysis:
         zip_path: Optional[str] = None,
         docs: Optional[List[str]] = None,
         file_paths: Optional[List[Path]] = None,
-        spacy_model: str = "en_core_web_sm",
+        document_labels: Optional[List[str]] = None,
+        spacy_model: Optional[str] = None,
+        language_code: str = "en",
     ) -> None:
         self.zip_path = zip_path
         self.docs = docs
         self.file_paths = file_paths
-        self.spacy_model = spacy_model
+        self.document_labels = document_labels
+        self.language_code = normalize_language_code(language_code) or language_code
+        self.language_name = normalize_language_name(self.language_code)
+        self.spacy_model = resolve_spacy_model(self.language_code, spacy_model)
 
         # populated after run()
         self.stats_df: Optional[pd.DataFrame] = None
@@ -87,6 +109,8 @@ class QuantitativeAnalysis:
         self.tfidf_df: Optional[pd.DataFrame] = None
         self.bigrams: Optional[List[Tuple[str, str]]] = None
         self.sentence_tags: Optional[pd.DataFrame] = None
+        self.concordance: Optional[Dict[str, Any]] = None
+        self.evidence_map: Optional[Dict[str, Any]] = None
 
     def _ensure_corpus_loaded(self):
         if self.docs is None:
@@ -99,6 +123,9 @@ class QuantitativeAnalysis:
         compute_tfidf: bool = True,
         compute_bigrams: bool = True,
         bigram_min_freq: int = 5,
+        concordance_keyword: Optional[str] = None,
+        concordance_width: int = 80,
+        concordance_lines: int = 10,
     ) -> Dict[str, Any]:
         """Run the standard exploratory analysis and return a result dict.
 
@@ -108,19 +135,33 @@ class QuantitativeAnalysis:
           - 'tfidf_df': top terms per document (pandas.DataFrame) or None
           - 'bigrams': list of bigram tuples or None
           - 'sentence_tags': DataFrame of sentence WHO/WHY tags
+          - 'concordance': keyword-in-context lines or None
         """
         self._ensure_corpus_loaded()
 
         # Basic per-document statistics
-        self.stats_df = corpus_sentence_word_stats(self.docs, self.file_paths)
+        self.stats_df = corpus_sentence_word_stats(
+            self.docs,
+            self.file_paths,
+            language_name=self.language_name,
+            document_labels=self.document_labels,
+        )
 
         # Token stream and lexical stats
-        self.token_info = build_token_stream(self.docs)
+        self.token_info = build_token_stream(
+            self.docs,
+            stop_lang=self.language_code,
+        )
 
         # TF-IDF top terms
         if compute_tfidf:
             try:
-                self.tfidf_df = compute_tfidf_top_terms(self.docs, self.file_paths)
+                self.tfidf_df = compute_tfidf_top_terms(
+                    self.docs,
+                    self.file_paths,
+                    stop_lang=self.language_code,
+                    document_labels=self.document_labels,
+                )
             except Exception:
                 self.tfidf_df = None
         else:
@@ -137,9 +178,31 @@ class QuantitativeAnalysis:
 
         # Sentence tagging
         try:
-            self.sentence_tags = tag_sentences_who_why(self.docs, spacy_model=self.spacy_model)
+            self.sentence_tags = tag_sentences_who_why(
+                self.docs,
+                language_name=self.language_name,
+                spacy_model=self.spacy_model,
+                language_code=self.language_code,
+            )
         except Exception:
             self.sentence_tags = pd.DataFrame()
+
+        try:
+            freq_dist = self.token_info.get("freq_dist", {}) if self.token_info else {}
+            keyword = concordance_keyword or most_frequent_keyword(freq_dist)
+            self.concordance = build_concordance_data(
+                self.token_info.get("tokens", []) if self.token_info else [],
+                keyword=keyword,
+                width=concordance_width,
+                lines=concordance_lines,
+            )
+        except Exception:
+            self.concordance = None
+
+        try:
+            self.evidence_map = self.build_evidence_map()
+        except Exception:
+            self.evidence_map = {}
 
         return {
             "stats_df": self.stats_df,
@@ -147,7 +210,258 @@ class QuantitativeAnalysis:
             "tfidf_df": self.tfidf_df,
             "bigrams": self.bigrams,
             "sentence_tags": self.sentence_tags,
+            "concordance": self.concordance,
+            "evidence_map": self.evidence_map,
         }
+
+    def build_evidence_map(self) -> Dict[str, Any]:
+        docs = self.docs or []
+        doc_text = "\n".join(docs)
+
+        def build_term_evidence(term: str, *, count: Optional[int] = None) -> Dict[str, Any]:
+            term = str(term or "").strip()
+            if not term:
+                return {}
+            pattern = re.compile(rf"\b{re.escape(term)}\b", flags=re.IGNORECASE)
+            matches = list(pattern.finditer(doc_text))
+            snippets: List[str] = []
+            for match in matches[:5]:
+                start = max(0, match.start() - 50)
+                end = min(len(doc_text), match.end() + 50)
+                snippet = doc_text[start:end].replace("\n", " ").strip()
+                if snippet not in snippets:
+                    snippets.append(snippet)
+            return {
+                "type": "term",
+                "term": term,
+                "matched_terms": [term],
+                "count": int(count) if count is not None else len(matches),
+                "snippets": snippets,
+            }
+
+        def build_phrase_evidence(phrase: str) -> Dict[str, Any]:
+            phrase = str(phrase or "").strip()
+            if not phrase:
+                return {}
+            phrase_lower = phrase.lower()
+            snippets: List[str] = []
+            for sent in simple_sentence_candidates(doc_text):
+                if phrase_lower in sent.lower():
+                    cleaned = sent.strip()
+                    if cleaned and cleaned not in snippets:
+                        snippets.append(cleaned)
+                if len(snippets) >= 5:
+                    break
+            return {
+                "type": "phrase",
+                "phrase": phrase,
+                "matched_terms": [token for token in phrase.split() if token],
+                "snippets": snippets,
+            }
+
+        freq_dist = self.token_info.get("freq_dist", {}) if self.token_info else {}
+        frequent_terms = []
+        for term, count in Counter(freq_dist).most_common(20):
+            evidence = build_term_evidence(term, count=count)
+            if evidence:
+                frequent_terms.append(evidence)
+
+        tfidf_terms = []
+        if self.tfidf_df is not None and not self.tfidf_df.empty:
+            seen_terms = set()
+            for _, row in self.tfidf_df.iterrows():
+                for term in row.get("TopTerms", []) or []:
+                    lowered = str(term).lower()
+                    if lowered in seen_terms:
+                        continue
+                    seen_terms.add(lowered)
+                    evidence = build_term_evidence(str(term))
+                    if evidence:
+                        tfidf_terms.append(evidence)
+
+        bigram_evidence = []
+        for bigram in self.bigrams or []:
+            phrase = bigram if isinstance(bigram, str) else " ".join(map(str, bigram))
+            evidence = build_phrase_evidence(phrase)
+            if evidence:
+                bigram_evidence.append(evidence)
+
+        sentence_tag_evidence = []
+        if self.sentence_tags is not None and not self.sentence_tags.empty:
+            for _, row in self.sentence_tags.head(20).iterrows():
+                sentence = row.get("sentence", "")
+                sentence_tag_evidence.append(
+                    {
+                        "type": "sentence",
+                        "sentence": sentence,
+                        "WHO": bool(row.get("WHO")),
+                        "WHY": bool(row.get("WHY")),
+                        "matched_terms": simple_word_tokens(sentence, lowercase=False)[:8],
+                    }
+                )
+
+        concordance_evidence = []
+        for line in (self.concordance or {}).get("lines", [])[:10]:
+            concordance_evidence.append(
+                {
+                    "type": "concordance_line",
+                    "line": line,
+                    "keyword": (self.concordance or {}).get("keyword"),
+                    "matched_terms": simple_word_tokens(line, lowercase=False)[:8],
+                }
+            )
+
+        return {
+            "frequent_terms": frequent_terms,
+            "tfidf_terms": tfidf_terms,
+            "bigrams": bigram_evidence,
+            "sentence_tags": sentence_tag_evidence,
+            "concordance": concordance_evidence,
+        }
+
+
+def simple_sentence_candidates(text: str) -> List[str]:
+    if not text:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def split_keyword_context(text: str, keyword: str) -> Dict[str, str]:
+    if not text or not keyword:
+        return {
+            "left_context": text or "",
+            "keyword": keyword or "",
+            "right_context": "",
+        }
+    match = re.search(re.escape(keyword), text, flags=re.IGNORECASE)
+    if not match:
+        return {
+            "left_context": text,
+            "keyword": keyword,
+            "right_context": "",
+        }
+    return {
+        "left_context": text[: match.start()].strip(),
+        "keyword": text[match.start() : match.end()],
+        "right_context": text[match.end() :].strip(),
+    }
+
+
+def attach_quant_evidence_to_transcript(
+    quant_result: Dict[str, Any],
+    transcript_segments: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    evidence_map = quant_result.get("evidence_map")
+    if not isinstance(evidence_map, dict) or not transcript_segments:
+        return quant_result
+
+    def normalize_segment(segment: Dict[str, Any], index: int) -> Dict[str, Any]:
+        return {
+            "index": index,
+            "text": segment.get("text", ""),
+            "start": float(segment.get("start", 0) or 0),
+            "end": float(segment.get("end", 0) or 0),
+            "t": segment.get("t"),
+        }
+
+    normalized_segments = [
+        normalize_segment(segment, index)
+        for index, segment in enumerate(transcript_segments)
+        if segment.get("text")
+    ]
+
+    def build_context_text(segment_index: int, window_size: int = 2) -> str:
+        start_index = max(0, segment_index - window_size)
+        end_index = min(len(normalized_segments), segment_index + window_size + 1)
+        parts = [
+            str(segment.get("text") or "").strip()
+            for segment in normalized_segments[start_index:end_index]
+            if str(segment.get("text") or "").strip()
+        ]
+        return " ".join(parts).strip()
+
+    def find_segment_refs(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+        candidate_texts: List[str] = []
+        for key in ("sentence", "line", "phrase", "term"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                candidate_texts.append(value.strip())
+        for snippet in item.get("snippets", []) or []:
+            if isinstance(snippet, str) and snippet.strip():
+                candidate_texts.append(snippet.strip())
+        matched_terms = [
+            str(term).strip()
+            for term in (item.get("matched_terms") or [])
+            if str(term).strip()
+        ]
+
+        refs: List[Dict[str, Any]] = []
+        seen = set()
+        for segment in normalized_segments:
+            segment_text = segment["text"].lower()
+            text_match = any(
+                candidate.lower() in segment_text or segment_text in candidate.lower()
+                for candidate in candidate_texts
+            )
+            term_match = bool(matched_terms) and all(
+                term.lower() in segment_text for term in matched_terms[:4]
+            )
+            partial_term_match = bool(matched_terms) and any(
+                term.lower() in segment_text for term in matched_terms[:4]
+            )
+
+            if not (text_match or term_match or partial_term_match):
+                continue
+
+            ref_key = (segment["start"], segment["end"], segment["text"])
+            if ref_key in seen:
+                continue
+            seen.add(ref_key)
+            refs.append(
+                {
+                    **segment,
+                    "context_text": build_context_text(int(segment["index"])),
+                }
+            )
+        return refs
+
+    for key, items in list(evidence_map.items()):
+        if not isinstance(items, list):
+            continue
+        enriched_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                enriched_items.append(item)
+                continue
+            enriched = dict(item)
+            enriched["segment_refs"] = find_segment_refs(item)
+            enriched_items.append(enriched)
+        evidence_map[key] = enriched_items
+
+    quant_result["evidence_map"] = evidence_map
+
+    concordance = quant_result.get("concordance")
+    if isinstance(concordance, dict) and concordance.get("keyword"):
+        keyword = str(concordance.get("keyword") or "").strip()
+        entries: List[Dict[str, Any]] = []
+        for segment in normalized_segments:
+            if not keyword or keyword.lower() not in segment["text"].lower():
+                continue
+            entry = {
+                **split_keyword_context(segment["text"], keyword),
+                "text": segment["text"],
+                "start": segment["start"],
+                "end": segment["end"],
+                "t": segment["t"],
+            }
+            entries.append(entry)
+            if len(entries) >= int(concordance.get("requested_lines") or 10):
+                break
+        concordance["entries"] = entries
+        quant_result["concordance"] = concordance
+
+    return quant_result
 
 
 def process_quantitative(
@@ -207,7 +521,10 @@ def load_corpus_from_zip(zip_path: str, extract_dir: Optional[str] = None) -> Tu
 
 
 def corpus_sentence_word_stats(
-    docs: Iterable[str], file_paths: Iterable[Path]
+    docs: Iterable[str],
+    file_paths: Iterable[Path],
+    language_name: str = "english",
+    document_labels: Optional[Iterable[str]] = None,
 ) -> pd.DataFrame:
     """
     Compute per-document sentence and word counts for a corpus.
@@ -236,12 +553,19 @@ def corpus_sentence_word_stats(
     """
     stats = []
 
-    for path, doc in zip(file_paths, docs):
-        sentences = nltk.sent_tokenize(doc)
-        words = nltk.word_tokenize(doc)
+    labels = list(document_labels) if document_labels is not None else []
+    for index, (path, doc) in enumerate(zip(file_paths, docs)):
+        try:
+            sentences = nltk.sent_tokenize(doc, language=language_name)
+        except Exception:
+            sentences = nltk.sent_tokenize(doc)
+        try:
+            words = nltk.word_tokenize(doc, language=language_name)
+        except Exception:
+            words = simple_word_tokens(doc, lowercase=False)
         stats.append(
             {
-                "Document": path.name,
+                "Document": labels[index] if index < len(labels) and labels[index] else path.name,
                 "Sentences": len(sentences),
                 "Words": len(words),
             }
@@ -299,9 +623,7 @@ def build_token_stream(
     if lowercase:
         text = text.lower()
 
-    # Remove everything that is not a lowercase letter or whitespace.
-    text_clean = re.sub(r"[^a-z\s]", " ", text)
-    raw_tokens = text_clean.split()
+    raw_tokens = simple_word_tokens(text, lowercase=False)
     if not raw_tokens:
         return {
             "tokens": [],
@@ -319,7 +641,7 @@ def build_token_stream(
 
     tokens_filtered = tokens_alpha
     if remove_stopwords:
-        sw = set(stopwords.words(stop_lang))
+        sw = safe_stopwords(stop_lang)
         tokens_filtered = [w for w in tokens_alpha if w not in sw]
 
     freq_dist = Counter(tokens_filtered)
@@ -337,6 +659,8 @@ def compute_tfidf_top_terms(
     file_paths: Iterable[Path],
     max_features: int = 1000,
     top_n: int = 10,
+    stop_lang: str = "english",
+    document_labels: Optional[Iterable[str]] = None,
 ) -> pd.DataFrame:
     """
     Compute TF-IDF scores and return top terms per document.
@@ -366,16 +690,23 @@ def compute_tfidf_top_terms(
     default. The TF–IDF matrix is built once and rows are inspected
     to pick top terms for each document.
     """
-    vectorizer = TfidfVectorizer(stop_words="english", max_features=max_features)
+    stop_words = sorted(safe_stopwords(stop_lang)) or None
+    vectorizer = TfidfVectorizer(stop_words=stop_words, max_features=max_features)
     tfidf_matrix = vectorizer.fit_transform(list(docs))
     feature_names = vectorizer.get_feature_names_out()
 
     records = []
+    labels = list(document_labels) if document_labels is not None else []
     for idx, path in enumerate(file_paths):
         scores = tfidf_matrix[idx].toarray().flatten()
         top_idx = scores.argsort()[::-1][:top_n]
         terms = [feature_names[i] for i in top_idx]
-        records.append({"Document": path.name, "TopTerms": terms})
+        records.append(
+            {
+                "Document": labels[idx] if idx < len(labels) and labels[idx] else path.name,
+                "TopTerms": terms,
+            }
+        )
 
     return pd.DataFrame(records)
 
@@ -418,6 +749,53 @@ def compute_bigram_collocations(
     return bigrams
 
 
+def most_frequent_keyword(freq_dist: Dict[str, int] | Counter) -> Optional[str]:
+    if not freq_dist:
+        return None
+    try:
+        return Counter(freq_dist).most_common(1)[0][0]
+    except Exception:
+        return None
+
+
+def build_concordance_data(
+    tokens: Iterable[str],
+    keyword: Optional[str],
+    width: int = 80,
+    lines: int = 10,
+) -> Dict[str, Any]:
+    token_list = list(tokens)
+    if not token_list or not keyword:
+        return {
+            "keyword": keyword,
+            "lines": [],
+            "width": width,
+            "requested_lines": lines,
+        }
+
+    keyword_lower = keyword.lower()
+    half_window = max(10, width // 4)
+    matches: List[str] = []
+
+    for index, token in enumerate(token_list):
+        if token.lower() != keyword_lower:
+            continue
+        start = max(0, index - half_window)
+        end = min(len(token_list), index + half_window + 1)
+        snippet = " ".join(token_list[start:end]).strip()
+        if snippet:
+            matches.append(snippet)
+        if len(matches) >= lines:
+            break
+
+    return {
+        "keyword": keyword,
+        "lines": matches,
+        "width": width,
+        "requested_lines": lines,
+    }
+
+
 def concordance_for_keyword(
     tokens: Iterable[str],
     keyword: str,
@@ -449,7 +827,9 @@ def concordance_for_keyword(
 
 def tag_sentences_who_why(
     docs: Iterable[str],
-    spacy_model: str = "en_core_web_sm",
+    language_name: str = "english",
+    spacy_model: Optional[str] = "en_core_web_sm",
+    language_code: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Tag sentences with simple WHO / WHY indicators.
@@ -478,14 +858,21 @@ def tag_sentences_who_why(
     exploratory filtering of sentences that talk about agents (WHO)
     and reasons / purposes (WHY).
     """
-    nlp = spacy.load(spacy_model)
+    try:
+        nlp = spacy.load(spacy_model) if spacy_model else spacy.blank("xx")
+    except Exception:
+        fallback_lang = fallback_spacy_language_code(language_code)
+        nlp = spacy.blank(fallback_lang)
 
     sentences: List[str] = []
     for doc in docs:
-        sentences.extend(nltk.sent_tokenize(doc))
+        try:
+            sentences.extend(nltk.sent_tokenize(doc, language=language_name))
+        except Exception:
+            sentences.extend(nltk.sent_tokenize(doc))
 
     records = []
-    pattern = re.compile(r"\b(because|in order to|so that)\b", flags=re.IGNORECASE)
+    pattern = WHY_PATTERNS.get(language_name, WHY_PATTERNS["english"])
 
     for sent in sentences:
         doc_spacy = nlp(sent)
