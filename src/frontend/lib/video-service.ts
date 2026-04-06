@@ -692,6 +692,350 @@ function applyAnnotationCorrectionsToQuantAnalysis(
   }));
 }
 
+type CinematicShotSizeSummary = {
+  dominant_label?: string | null;
+  sample_count?: number;
+  distribution?: Record<string, number>;
+  interval_summaries?: Array<{
+    start: number;
+    end: number;
+    dominant_label: string;
+    distribution?: Record<string, number>;
+  }>;
+};
+
+type CinematicCluesMetadata = {
+  shotSize?: {
+    method?: string;
+    samples?: Array<{
+      timestamp: number;
+      label: string;
+      person_count?: number;
+      dominant_area_share?: number;
+      confidence?: number;
+    }>;
+    summary?: CinematicShotSizeSummary;
+  };
+  transitionClues?: {
+    method?: string;
+    samples?: Array<{
+      timestamp: number;
+      label: string;
+      zone_tone_shift?: number;
+      occupancy_shift?: number;
+      frame_class?: string;
+    }>;
+    summary?: {
+      dominant_label?: string | null;
+      sample_count?: number;
+      distribution?: Record<string, number>;
+      interval_summaries?: Array<{
+        start: number;
+        end: number;
+        dominant_label: string;
+        distribution?: Record<string, number>;
+      }>;
+    };
+  };
+  movementHint?: {
+    method?: string;
+    samples?: Array<{
+      timestamp: number;
+      label: string;
+      zone_tone_shift?: number;
+      occupancy_shift?: number;
+      frame_class?: string;
+    }>;
+    summary?: {
+      dominant_label?: string | null;
+      sample_count?: number;
+      distribution?: Record<string, number>;
+    };
+  };
+  compositionHint?: {
+    method?: string;
+    samples?: Array<{
+      timestamp: number;
+      label: string;
+      left_occupancy?: number;
+      center_occupancy?: number;
+      right_occupancy?: number;
+      frame_class?: string;
+    }>;
+    summary?: {
+      dominant_label?: string | null;
+      sample_count?: number;
+      distribution?: Record<string, number>;
+    };
+  };
+  subjectArrangementHint?: {
+    method?: string;
+    samples?: Array<{
+      timestamp: number;
+      label: string;
+      person_count?: number;
+      text_count?: number;
+      frame_class?: string;
+    }>;
+    summary?: {
+      dominant_label?: string | null;
+      sample_count?: number;
+      distribution?: Record<string, number>;
+    };
+  };
+};
+
+function buildDistributionFromLabels(labels: string[]): Record<string, number> {
+  return labels.reduce<Record<string, number>>((acc, label) => {
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function dominantLabelFromDistribution(
+  distribution?: Record<string, number>,
+): string | null {
+  const entries = Object.entries(distribution || {}).filter(([, count]) => Number(count) > 0);
+  if (!entries.length) return null;
+  return entries.sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0] < b[0] ? -1 : 1;
+  })[0]?.[0] || null;
+}
+
+function stripCinematicPrefix(value: string, clueKey: string): string {
+  const prefix = `${clueKey}:`;
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+function applyAnnotationCorrectionsToCinematicClues(
+  cinematicClues: CinematicCluesMetadata | undefined,
+  corrections?: AnnotationCorrections | null,
+) {
+  const labelRules = corrections?.label_overrides || [];
+  const addedShotSamples = labelRules
+    .filter(
+      (rule) =>
+        rule?.modality === "cinematic" &&
+        String(rule?.raw_value || "").trim().toLowerCase() ===
+          "cinematic-add:shot-size" &&
+        String(rule?.corrected_value || "").trim(),
+    )
+    .map((rule) => {
+      const timestamp =
+        Number(rule?.target_timestamp) ||
+        Number(rule?.target_start_timestamp) ||
+        0;
+      return {
+        timestamp,
+        label: String(rule?.corrected_value || "").trim(),
+      };
+    })
+    .sort((left, right) => left.timestamp - right.timestamp);
+  if (!cinematicClues && !addedShotSamples.length) {
+    return cinematicClues;
+  }
+
+  const applyCinematicLabel = (
+    clueKey: string,
+    label: string,
+    context: {
+      timestamp?: number | null;
+      startTimestamp?: number | null;
+      endTimestamp?: number | null;
+    },
+  ) =>
+    stripCinematicPrefix(
+      applyLabelOverride(`${clueKey}:${label}`, "cinematic", labelRules, context),
+      clueKey,
+    );
+
+  const mapSampleLabels = <
+    T extends { timestamp: number; label: string; [key: string]: unknown },
+  >(
+    clueKey: string,
+    samples?: T[],
+  ): T[] | undefined =>
+    samples
+      ?.filter(
+        (sample) =>
+          !isDetectionDropped(`${clueKey}:${sample.label}`, "cinematic", labelRules, {
+            timestamp: sample.timestamp,
+          }),
+      )
+      .map((sample) => ({
+        ...sample,
+        label: applyCinematicLabel(clueKey, sample.label, {
+          timestamp: sample.timestamp,
+        }),
+      }));
+
+  const mapIntervalSummaries = (
+    summaries?: Array<{
+      start: number;
+      end: number;
+      dominant_label: string;
+      distribution?: Record<string, number>;
+    }>,
+  ) =>
+    summaries
+      ?.filter(
+        (interval) =>
+          !isDetectionDropped(
+            `shot-size:${interval.dominant_label}`,
+            "cinematic",
+            labelRules,
+            {
+              startTimestamp: interval.start,
+              endTimestamp: interval.end,
+              timestamp: interval.start,
+            },
+          ),
+      )
+      .map((interval) => {
+        const correctedLabel = applyCinematicLabel("shot-size", interval.dominant_label, {
+          startTimestamp: interval.start,
+          endTimestamp: interval.end,
+          timestamp: interval.start,
+        });
+        return {
+          ...interval,
+          dominant_label: correctedLabel,
+          distribution:
+            correctedLabel !== interval.dominant_label
+              ? { [correctedLabel]: Math.max(1, Object.values(interval.distribution || {}).reduce((a, b) => a + Number(b || 0), 0)) }
+              : interval.distribution,
+        };
+      });
+
+  const correctedShotSamples = [
+    ...(mapSampleLabels("shot-size", cinematicClues?.shotSize?.samples) || []),
+    ...addedShotSamples.map((sample) => ({
+      ...sample,
+      label: applyCinematicLabel("shot-size", sample.label, {
+        timestamp: sample.timestamp,
+        startTimestamp: sample.timestamp,
+        endTimestamp: sample.timestamp,
+      }),
+    })),
+  ].sort((left, right) => Number(left.timestamp || 0) - Number(right.timestamp || 0));
+  const correctedShotIntervals = mapIntervalSummaries(
+    cinematicClues?.shotSize?.summary?.interval_summaries,
+  );
+  const correctedShotDistribution = buildDistributionFromLabels(
+    (correctedShotSamples || []).map((sample) => sample.label),
+  );
+
+  const correctedTransitionSamples = mapSampleLabels(
+    "transition",
+    cinematicClues?.transitionClues?.samples,
+  );
+  const correctedTransitionDistribution = buildDistributionFromLabels(
+    (correctedTransitionSamples || []).map((sample) => sample.label),
+  );
+
+  const correctedMovementSamples = mapSampleLabels(
+    "movement",
+    cinematicClues?.movementHint?.samples,
+  );
+  const correctedMovementDistribution = buildDistributionFromLabels(
+    (correctedMovementSamples || []).map((sample) => sample.label),
+  );
+
+  const correctedCompositionSamples = mapSampleLabels(
+    "composition",
+    cinematicClues?.compositionHint?.samples,
+  );
+  const correctedCompositionDistribution = buildDistributionFromLabels(
+    (correctedCompositionSamples || []).map((sample) => sample.label),
+  );
+
+  const correctedSubjectArrangementSamples = mapSampleLabels(
+    "subject-arrangement",
+    cinematicClues?.subjectArrangementHint?.samples,
+  );
+  const correctedSubjectArrangementDistribution = buildDistributionFromLabels(
+    (correctedSubjectArrangementSamples || []).map((sample) => sample.label),
+  );
+
+  return {
+    ...cinematicClues,
+    shotSize: cinematicClues?.shotSize || correctedShotSamples.length
+      ? {
+          ...(cinematicClues?.shotSize || {}),
+          samples: correctedShotSamples,
+          summary: {
+            ...(cinematicClues?.shotSize?.summary || {}),
+            dominant_label:
+              dominantLabelFromDistribution(correctedShotDistribution) ||
+              cinematicClues?.shotSize?.summary?.dominant_label ||
+              correctedShotSamples[0]?.label ||
+              null,
+            sample_count: correctedShotSamples?.length ?? 0,
+            distribution: correctedShotDistribution,
+            interval_summaries: correctedShotIntervals,
+          },
+        }
+      : undefined,
+    transitionClues: cinematicClues?.transitionClues
+      ? {
+          ...cinematicClues.transitionClues,
+          samples: correctedTransitionSamples,
+          summary: {
+            ...cinematicClues.transitionClues.summary,
+            dominant_label:
+              dominantLabelFromDistribution(correctedTransitionDistribution) ||
+              cinematicClues.transitionClues.summary?.dominant_label,
+            sample_count: correctedTransitionSamples?.length ?? 0,
+            distribution: correctedTransitionDistribution,
+          },
+        }
+      : undefined,
+    movementHint: cinematicClues?.movementHint
+      ? {
+          ...cinematicClues.movementHint,
+          samples: correctedMovementSamples,
+          summary: {
+            ...cinematicClues.movementHint.summary,
+            dominant_label:
+              dominantLabelFromDistribution(correctedMovementDistribution) ||
+              cinematicClues.movementHint.summary?.dominant_label,
+            sample_count: correctedMovementSamples?.length ?? 0,
+            distribution: correctedMovementDistribution,
+          },
+        }
+      : undefined,
+    compositionHint: cinematicClues?.compositionHint
+      ? {
+          ...cinematicClues.compositionHint,
+          samples: correctedCompositionSamples,
+          summary: {
+            ...cinematicClues.compositionHint.summary,
+            dominant_label:
+              dominantLabelFromDistribution(correctedCompositionDistribution) ||
+              cinematicClues.compositionHint.summary?.dominant_label,
+            sample_count: correctedCompositionSamples?.length ?? 0,
+            distribution: correctedCompositionDistribution,
+          },
+        }
+      : undefined,
+    subjectArrangementHint: cinematicClues?.subjectArrangementHint
+      ? {
+          ...cinematicClues.subjectArrangementHint,
+          samples: correctedSubjectArrangementSamples,
+          summary: {
+            ...cinematicClues.subjectArrangementHint.summary,
+            dominant_label:
+              dominantLabelFromDistribution(correctedSubjectArrangementDistribution) ||
+              cinematicClues.subjectArrangementHint.summary?.dominant_label,
+            sample_count: correctedSubjectArrangementSamples?.length ?? 0,
+            distribution: correctedSubjectArrangementDistribution,
+          },
+        }
+      : undefined,
+  };
+}
+
 export interface POSAnalysis {
   text: string;
   analysis_mode?: string;
@@ -925,6 +1269,122 @@ export interface AnalysisData {
     sourceName?: string;
     yoloDetections: number;
     ocrDetections: number;
+    cinematicClues?: {
+      shotSize?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          person_count?: number;
+          dominant_area_share?: number;
+          confidence?: number;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+          interval_summaries?: Array<{
+            start: number;
+            end: number;
+            dominant_label: string;
+            distribution?: Record<string, number>;
+          }>;
+        };
+      };
+      transitionClues?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          zone_tone_shift?: number;
+          occupancy_shift?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+          interval_summaries?: Array<{
+            start: number;
+            end: number;
+            dominant_label: string;
+            distribution?: Record<string, number>;
+          }>;
+        };
+      };
+      movementHint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          zone_tone_shift?: number;
+          occupancy_shift?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+      compositionHint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          left_occupancy?: number;
+          center_occupancy?: number;
+          right_occupancy?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+      subjectArrangementHint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          person_count?: number;
+          text_count?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+    };
+    spatialToneScan?: {
+      summary?: {
+        sample_count?: number;
+        dominant_frame_class?: string;
+        frame_class_distribution?: Record<string, number>;
+        dominant_tone_by_zone?: Record<string, string>;
+      };
+      samples?: Array<{
+        timestamp: number;
+        frame_class?: string;
+        zones?: Record<
+          string,
+          {
+            occupancy_mass?: number;
+            person_count?: number;
+            text_count?: number;
+            object_count?: number;
+            dominant_tone?: string;
+            brightness_band?: string;
+            saturation_band?: string;
+          }
+        >;
+        foreground_activity?: number;
+        background_activity?: number;
+      }>;
+    };
     audioSegments?: number;
     audioProsodyCues?: number;
     audioLanguage?: string;
@@ -1485,6 +1945,116 @@ export interface AnalysisStatus {
   summary?: {
     yolo_detections: number;
     ocr_detections: number;
+    cinematic_clues?: {
+      shot_size?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          person_count?: number;
+          dominant_area_share?: number;
+          confidence?: number;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+          interval_summaries?: Array<{
+            start: number;
+            end: number;
+            dominant_label: string;
+            distribution?: Record<string, number>;
+          }>;
+        };
+      };
+      transition_clues?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          zone_tone_shift?: number;
+          occupancy_shift?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+      movement_hint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          zone_tone_shift?: number;
+          occupancy_shift?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+      composition_hint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          left_occupancy?: number;
+          center_occupancy?: number;
+          right_occupancy?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+      subject_arrangement_hint?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          label: string;
+          person_count?: number;
+          text_count?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          dominant_label?: string | null;
+          sample_count?: number;
+          distribution?: Record<string, number>;
+        };
+      };
+    };
+    spatial_tone_scan?: {
+      summary?: {
+        sample_count?: number;
+        dominant_frame_class?: string;
+        frame_class_distribution?: Record<string, number>;
+        dominant_tone_by_zone?: Record<string, string>;
+      };
+      samples?: Array<{
+        timestamp: number;
+        frame_class?: string;
+        zones?: Record<
+          string,
+          {
+            occupancy_mass?: number;
+            person_count?: number;
+            text_count?: number;
+            object_count?: number;
+            dominant_tone?: string;
+            brightness_band?: string;
+            saturation_band?: string;
+          }
+        >;
+        foreground_activity?: number;
+        background_activity?: number;
+      }>;
+    };
     expression_samples?: number;
     expression_status?: "completed" | "failed" | "not_run";
     expression_error?: string;
@@ -1863,6 +2433,48 @@ export class VideoService {
         expressionData.status === "fulfilled"
           ? applyAnnotationCorrectionsToExpressions(expressionData.value, corrections)
           : [];
+      const correctedCinematicClues = applyAnnotationCorrectionsToCinematicClues(
+        status.summary?.cinematic_clues
+          ? {
+              shotSize: status.summary.cinematic_clues?.shot_size
+                ? {
+                    method: status.summary.cinematic_clues.shot_size.method,
+                    samples: status.summary.cinematic_clues.shot_size.samples,
+                    summary: status.summary.cinematic_clues.shot_size.summary,
+                  }
+                : undefined,
+              transitionClues: status.summary.cinematic_clues?.transition_clues
+                ? {
+                    method: status.summary.cinematic_clues.transition_clues.method,
+                    samples: status.summary.cinematic_clues.transition_clues.samples,
+                    summary: status.summary.cinematic_clues.transition_clues.summary,
+                  }
+                : undefined,
+              movementHint: status.summary.cinematic_clues?.movement_hint
+                ? {
+                    method: status.summary.cinematic_clues.movement_hint.method,
+                    samples: status.summary.cinematic_clues.movement_hint.samples,
+                    summary: status.summary.cinematic_clues.movement_hint.summary,
+                  }
+                : undefined,
+              compositionHint: status.summary.cinematic_clues?.composition_hint
+                ? {
+                    method: status.summary.cinematic_clues.composition_hint.method,
+                    samples: status.summary.cinematic_clues.composition_hint.samples,
+                    summary: status.summary.cinematic_clues.composition_hint.summary,
+                  }
+                : undefined,
+              subjectArrangementHint: status.summary.cinematic_clues?.subject_arrangement_hint
+                ? {
+                    method: status.summary.cinematic_clues.subject_arrangement_hint.method,
+                    samples: status.summary.cinematic_clues.subject_arrangement_hint.samples,
+                    summary: status.summary.cinematic_clues.subject_arrangement_hint.summary,
+                  }
+                : undefined,
+            }
+          : undefined,
+        corrections,
+      );
 
       const analysisData = {
         quantAnalysis: correctedQuantAnalysis,
@@ -1886,6 +2498,13 @@ export class VideoService {
           sourceName: status.filename,
           yoloDetections: status.summary?.yolo_detections || 0,
           ocrDetections: status.summary?.ocr_detections || 0,
+          cinematicClues: correctedCinematicClues,
+          spatialToneScan: status.summary?.spatial_tone_scan
+            ? {
+                summary: status.summary.spatial_tone_scan.summary,
+                samples: status.summary.spatial_tone_scan.samples,
+              }
+            : undefined,
           audioSegments: status.summary?.audio_segments,
           audioProsodyCues: status.summary?.audio_prosody_cues,
           audioLanguage:

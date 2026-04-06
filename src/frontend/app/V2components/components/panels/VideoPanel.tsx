@@ -1881,7 +1881,30 @@ export default function VideoPanel() {
     analysisData?.metadata?.cinematicClues?.shotSize?.summary || fallbackShotSizeSummary;
   const shotSizeSamples =
     analysisData?.metadata?.cinematicClues?.shotSize?.samples || fallbackShotSizeSamples;
+  const correctedCurrentShotSample = useMemo(() => {
+    if (!shotSizeSamples.length) {
+      return null;
+    }
+    const nearby = [...shotSizeSamples]
+      .filter((sample) => Math.abs((sample.timestamp ?? 0) - currentTime) <= 0.35)
+      .sort((left, right) => {
+        const leftDistance = Math.abs((left.timestamp ?? 0) - currentTime);
+        const rightDistance = Math.abs((right.timestamp ?? 0) - currentTime);
+        if (leftDistance !== rightDistance) {
+          return leftDistance - rightDistance;
+        }
+        return (left.timestamp ?? 0) - (right.timestamp ?? 0);
+      });
+    return nearby[0] || null;
+  }, [currentTime, shotSizeSamples]);
   const currentShotSizeEstimate = useMemo(() => {
+    if (correctedCurrentShotSample?.label) {
+      return {
+        label: correctedCurrentShotSample.label,
+        person_count: correctedCurrentShotSample.person_count ?? 0,
+        timestamp: correctedCurrentShotSample.timestamp ?? currentTime,
+      };
+    }
     const people = rawDetectedObjects.filter((item) => {
       if ((item.class_name || item.raw_class_name || "").toLowerCase() !== "person") {
         return false;
@@ -1920,7 +1943,7 @@ export default function VideoPanel() {
       person_count: people.length,
       timestamp: currentTime,
     };
-  }, [currentTime, rawDetectedObjects, videoHeight, videoWidth]);
+  }, [correctedCurrentShotSample, currentTime, rawDetectedObjects, videoHeight, videoWidth]);
   const nearbyShotSizeSamples = useMemo(
     () =>
       [...shotSizeSamples]
@@ -3036,6 +3059,18 @@ export default function VideoPanel() {
                 }}
               >
                 Visual cues
+              </button>
+              <button
+                type="button"
+                className="hover:text-slate-300"
+                onClick={() => {
+                  if (!videoId) return;
+                  eventBus.emit("videoIdChanged", videoId);
+                  eventBus.emit("videoTimeLineChanged", currentTime);
+                  openPanel("OBJDetectionPanel");
+                }}
+              >
+                Object detections
               </button>
               {activeInspectorKey && (
                 <button

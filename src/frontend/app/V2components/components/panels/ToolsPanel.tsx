@@ -50,6 +50,12 @@ import { apiService } from "@/lib/api-service";
 import type { AnalysisEvent, MorphologyCatalogItem } from "@/lib/api-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { listJobs } from "@/cvat-api/client";
+import {
+  broadcastAnalysisCorrectionRefresh,
+  buildCorrectionRule,
+  mergeCorrectionRule,
+  pushCorrectionSnapshot,
+} from "@/lib/annotation-corrections";
 
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -64,6 +70,88 @@ type ToolsWorkspace =
   | "language"
   | "mission"
   | "expression";
+
+type VisualWorkspaceView = "cinematic" | "inspectors";
+
+type CinematicTimelineEntry = {
+  key: string;
+  start: number;
+  end: number;
+  label: string;
+  origin?: "derived" | "analyst-added";
+};
+
+const CINEMATIC_SHOT_SIZE_OPTIONS = [
+  "extreme wide shot",
+  "wide shot",
+  "medium wide shot",
+  "medium shot",
+  "medium close-up",
+  "close-up",
+  "extreme close-up",
+  "two-shot",
+  "over-the-shoulder",
+  "point of view",
+  "establishing shot",
+];
+
+function cinematicEntryId(entry: CinematicTimelineEntry): string {
+  return `${entry.key}:${entry.start}:${entry.end}`;
+}
+
+function compressCinematicSamples(
+  clueType: string,
+  samples?: Array<{ timestamp: number; label: string }>,
+): CinematicTimelineEntry[] {
+  if (!samples?.length) return [];
+  const sorted = [...samples].sort((a, b) => a.timestamp - b.timestamp);
+  const entries: CinematicTimelineEntry[] = [];
+
+  for (const sample of sorted) {
+    const label = String(sample.label || "unknown");
+    const timestamp = Number(sample.timestamp || 0);
+    const last = entries[entries.length - 1];
+    if (last && last.label === label) {
+      last.end = timestamp;
+      continue;
+    }
+    entries.push({
+      key: clueType,
+      start: timestamp,
+      end: timestamp,
+      label,
+    });
+  }
+
+  return entries;
+}
+
+function normalizeCinematicLabel(value: string, clueKey: string): string {
+  const prefix = `${clueKey}:`;
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+function classifyCinematicShotSize(heightRatio: number, widthRatio: number): string {
+  if (heightRatio >= 0.9 || widthRatio >= 0.75) {
+    return "extreme close-up";
+  }
+  if (heightRatio >= 0.72 || widthRatio >= 0.58) {
+    return "close-up";
+  }
+  if (heightRatio >= 0.58) {
+    return "cowboy shot";
+  }
+  if (heightRatio >= 0.42) {
+    return "medium close-up";
+  }
+  if (heightRatio >= 0.28) {
+    return "medium shot";
+  }
+  if (heightRatio >= 0.12) {
+    return "long shot";
+  }
+  return "extreme long shot";
+}
 
 export default function ToolsPanel() {
   const { openPanel } = useLayoutHost();
@@ -104,6 +192,20 @@ export default function ToolsPanel() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [activeVisualView, setActiveVisualView] =
+    useState<VisualWorkspaceView>("cinematic");
+  const [openCinematicSections, setOpenCinematicSections] = useState<
+    Record<string, boolean>
+  >({
+    "shot-size": true,
+  });
+  const [activeCinematicCorrectionId, setActiveCinematicCorrectionId] =
+    useState<string | null>(null);
+  const [activeCinematicCorrectionValue, setActiveCinematicCorrectionValue] =
+    useState("");
+  const [pendingShotSizeTimestamp, setPendingShotSizeTimestamp] = useState("");
+  const [shotAdditionSelectKey, setShotAdditionSelectKey] = useState(0);
+  const [currentVideoTime, setCurrentVideoTime] = useState(0);
 
   const lastObjectUrl = React.useRef<string | null>(null);
   const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -244,6 +346,345 @@ export default function ToolsPanel() {
     return parsed.toLocaleString();
   }, []);
 
+  const openVideoAtTime = React.useCallback(
+    (nextTime: number, cueKey?: string) => {
+      if (!videoId) return;
+      const cueMap: Record<string, string> = {
+        "shot-size": "shot",
+        transition: "transition",
+        movement: "motion",
+        composition: "spatial",
+        "subject-arrangement": "human",
+      };
+      const mappedCue = cueKey ? cueMap[cueKey] : undefined;
+      eventBus.emit("videoIdChanged", videoId);
+      openPanel("VideoPanel");
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", videoId);
+        if (mappedCue) {
+          eventBus.emit("visualCueOpen", mappedCue);
+        }
+        eventBus.emit("videoTimeLineChanged", nextTime);
+      }, 60);
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", videoId);
+        if (mappedCue) {
+          eventBus.emit("visualCueOpen", mappedCue);
+        }
+        eventBus.emit("videoTimeLineChanged", nextTime);
+      }, 180);
+    },
+    [openPanel, videoId],
+  );
+
+  const getCorrectedCinematicEntry = React.useCallback(
+    (entry: CinematicTimelineEntry) => {
+      const overrides = analysisData?.annotationCorrections?.label_overrides || [];
+      const matchingRule = overrides.find((rule) => {
+        if (rule?.modality !== "cinematic") return false;
+        if (!String(rule?.raw_value || "").trim().toLowerCase().startsWith(`${entry.key}:`)) return false;
+        return (
+          Number(rule?.target_start_timestamp) === Number(entry.start) &&
+          Number(rule?.target_end_timestamp) === Number(entry.end)
+        );
+      });
+      const value = matchingRule?.corrected_value?.trim() || entry.label;
+      return normalizeCinematicLabel(value, entry.key);
+    },
+    [analysisData?.annotationCorrections?.label_overrides],
+  );
+
+  const saveCinematicCorrection = React.useCallback(
+    async (entry: CinematicTimelineEntry, explicitValue?: string) => {
+      if (!videoId) return;
+      const currentLabel = getCorrectedCinematicEntry(entry);
+      const correctedValue =
+        explicitValue?.trim() ||
+        window.prompt("Set analyst override for cinematic clue:", currentLabel)?.trim();
+      if (!correctedValue || correctedValue.trim() === currentLabel.trim()) {
+        return;
+      }
+
+      const filteredOverrides = (analysisData?.annotationCorrections?.label_overrides || []).filter(
+        (rule) =>
+          !(
+            rule?.modality === "cinematic" &&
+            String(rule?.raw_value || "").trim().toLowerCase().startsWith(`${entry.key}:`) &&
+            Number(rule?.target_start_timestamp) === Number(entry.start) &&
+            Number(rule?.target_end_timestamp) === Number(entry.end)
+          ),
+      );
+      const rawValue = `${entry.key}:${entry.label}`;
+      const nextCorrections = mergeCorrectionRule(
+        {
+          ...(analysisData?.annotationCorrections || {}),
+          label_overrides: filteredOverrides,
+        },
+        buildCorrectionRule("cinematic", rawValue, correctedValue.trim(), "", {
+          targetStartTimestamp: entry.start,
+          targetEndTimestamp: entry.end,
+          targetTimestamp: entry.start,
+        }),
+      );
+      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      setActiveCinematicCorrectionId(null);
+      setActiveCinematicCorrectionValue("");
+      broadcastAnalysisCorrectionRefresh(videoId);
+    },
+    [analysisData?.annotationCorrections, getCorrectedCinematicEntry, videoId],
+  );
+
+  const saveCinematicShotAddition = React.useCallback(
+    async (label: string) => {
+      if (!videoId) return;
+      const parsedTimestamp = Number.parseFloat(pendingShotSizeTimestamp);
+      const targetTimestamp = Number.isFinite(parsedTimestamp)
+        ? Math.max(0, parsedTimestamp)
+        : Math.max(0, currentVideoTime);
+      const filteredOverrides = (
+        analysisData?.annotationCorrections?.label_overrides || []
+      ).filter(
+        (rule) =>
+          !(
+            rule?.modality === "cinematic" &&
+            String(rule?.raw_value || "").trim().toLowerCase() ===
+              "cinematic-add:shot-size" &&
+            Number(rule?.target_timestamp) === Number(targetTimestamp)
+          ),
+      );
+      const nextCorrections = mergeCorrectionRule(
+        {
+          ...(analysisData?.annotationCorrections || {}),
+          label_overrides: filteredOverrides,
+        },
+        buildCorrectionRule(
+          "cinematic",
+          "cinematic-add:shot-size",
+          label.trim(),
+          "",
+          {
+            targetTimestamp,
+            targetStartTimestamp: targetTimestamp,
+            targetEndTimestamp: targetTimestamp,
+          },
+        ),
+      );
+      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      setPendingShotSizeTimestamp(currentVideoTime.toFixed(1));
+      setShotAdditionSelectKey((previous) => previous + 1);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    },
+    [
+      analysisData?.annotationCorrections,
+      currentVideoTime,
+      pendingShotSizeTimestamp,
+      videoId,
+    ],
+  );
+
+  const deleteCinematicShotAddition = React.useCallback(
+    async (entry: CinematicTimelineEntry) => {
+      if (!videoId || entry.origin !== "analyst-added") return;
+      const filteredOverrides = (
+        analysisData?.annotationCorrections?.label_overrides || []
+      ).filter(
+        (rule) =>
+          !(
+            rule?.modality === "cinematic" &&
+            String(rule?.raw_value || "").trim().toLowerCase() ===
+              "cinematic-add:shot-size" &&
+            Number(rule?.target_timestamp) === Number(entry.start) &&
+            Number(rule?.target_end_timestamp ?? rule?.target_timestamp ?? entry.start) ===
+              Number(entry.end)
+          ),
+      );
+      const nextCorrections = {
+        ...(analysisData?.annotationCorrections || {}),
+        label_overrides: filteredOverrides,
+      };
+      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    },
+    [analysisData?.annotationCorrections, videoId],
+  );
+
+  const cinematicTimelineSections = React.useMemo(() => {
+    const clues = analysisData?.metadata?.cinematicClues;
+    const sections: Array<{ key: string; label: string; entries: CinematicTimelineEntry[] }> = [];
+    const mergeShotEntries = (entries: CinematicTimelineEntry[]) =>
+      entries.sort((left, right) => {
+        if (left.start !== right.start) return left.start - right.start;
+        if (left.end !== right.end) return left.end - right.end;
+        return left.label.localeCompare(right.label);
+      });
+    const addedShotSizeEntries: CinematicTimelineEntry[] = (
+      analysisData?.annotationCorrections?.label_overrides || []
+    )
+      .filter(
+        (rule) =>
+          rule?.modality === "cinematic" &&
+          String(rule?.raw_value || "").trim().toLowerCase() ===
+            "cinematic-add:shot-size" &&
+          String(rule?.corrected_value || "").trim(),
+      )
+      .map((rule) => {
+        const timestamp =
+          Number(rule?.target_timestamp) ||
+          Number(rule?.target_start_timestamp) ||
+          0;
+        return {
+          key: "shot-size",
+          start: timestamp,
+          end: Number(rule?.target_end_timestamp ?? timestamp),
+          label: String(rule?.corrected_value || "").trim(),
+          origin: "analyst-added",
+        };
+      });
+
+    const shotIntervals =
+      clues?.shotSize?.summary?.interval_summaries?.map((interval) => ({
+        key: "shot-size",
+        start: Number(interval.start ?? 0),
+        end: Number(interval.end ?? interval.start ?? 0),
+        label: normalizeCinematicLabel(
+          String(interval.dominant_label || "unknown"),
+          "shot-size",
+        ),
+        origin: "derived" as const,
+      })) || [];
+    if (shotIntervals.length) {
+      sections.push({
+        key: "shot-size",
+        label: "Shot size",
+        entries: mergeShotEntries([...shotIntervals, ...addedShotSizeEntries]),
+      });
+    } else {
+      const shotEntries = clues
+        ? compressCinematicSamples("shot-size", clues.shotSize?.samples)
+        : [];
+      if (shotEntries.length) {
+        sections.push({
+          key: "shot-size",
+          label: "Shot size",
+          entries: mergeShotEntries([...shotEntries, ...addedShotSizeEntries]),
+        });
+      } else {
+        const personObjects = (analysisData?.rawDetectedObjects || []).filter(
+          (item) => (item.class_name || item.raw_class_name || "").toLowerCase() === "person",
+        );
+        const estimatedWidth = Math.max(
+          1920,
+          ...personObjects.map((item) => Math.max(0, item.bbox?.x2 ?? 0)),
+        );
+        const estimatedHeight = Math.max(
+          1080,
+          ...personObjects.map((item) => Math.max(0, item.bbox?.y2 ?? 0)),
+        );
+        const byBucket = new Map<number, typeof personObjects>();
+        for (const item of personObjects) {
+          const bucket = Math.floor((item.timestamp || 0) / 5);
+          const current = byBucket.get(bucket) || [];
+          current.push(item);
+          byBucket.set(bucket, current);
+        }
+        const fallbackEntries: CinematicTimelineEntry[] = [...byBucket.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([bucket, items]) => {
+            const dominant = items.reduce((best, current) => {
+              const bestArea =
+                Math.max(0, (best.bbox?.x2 ?? 0) - (best.bbox?.x1 ?? 0)) *
+                Math.max(0, (best.bbox?.y2 ?? 0) - (best.bbox?.y1 ?? 0));
+              const currentArea =
+                Math.max(0, (current.bbox?.x2 ?? 0) - (current.bbox?.x1 ?? 0)) *
+                Math.max(0, (current.bbox?.y2 ?? 0) - (current.bbox?.y1 ?? 0));
+              return currentArea > bestArea ? current : best;
+            }, items[0]);
+            const width = Math.max(
+              0,
+              (dominant.bbox?.x2 ?? 0) - (dominant.bbox?.x1 ?? 0),
+            );
+            const height = Math.max(
+              0,
+              (dominant.bbox?.y2 ?? 0) - (dominant.bbox?.y1 ?? 0),
+            );
+            return {
+              key: "shot-size",
+              start: bucket * 5,
+              end: bucket * 5 + 5,
+              label: classifyCinematicShotSize(
+                height / Math.max(estimatedHeight, 1),
+                width / Math.max(estimatedWidth, 1),
+              ),
+              origin: "derived" as const,
+            };
+          });
+        if (fallbackEntries.length) {
+          sections.push({
+            key: "shot-size",
+            label: "Shot size",
+            entries: mergeShotEntries([...fallbackEntries, ...addedShotSizeEntries]),
+          });
+        } else if (addedShotSizeEntries.length) {
+          sections.push({
+            key: "shot-size",
+            label: "Shot size",
+            entries: addedShotSizeEntries,
+          });
+        }
+      }
+    }
+
+    if (clues) {
+      const transitionEntries = compressCinematicSamples(
+        "transition",
+        clues.transitionClues?.samples,
+      );
+      if (transitionEntries.length) {
+        sections.push({ key: "transition", label: "Transition", entries: transitionEntries });
+      }
+
+      const movementEntries = compressCinematicSamples("movement", clues.movementHint?.samples);
+      if (movementEntries.length) {
+        sections.push({ key: "movement", label: "Movement", entries: movementEntries });
+      }
+
+      const compositionEntries = compressCinematicSamples(
+        "composition",
+        clues.compositionHint?.samples,
+      );
+      if (compositionEntries.length) {
+        sections.push({ key: "composition", label: "Composition", entries: compositionEntries });
+      }
+
+      const subjectArrangementEntries = compressCinematicSamples(
+        "subject-arrangement",
+        clues.subjectArrangementHint?.samples,
+      );
+      if (subjectArrangementEntries.length) {
+        sections.push({
+          key: "subject-arrangement",
+          label: "Subject arrangement",
+          entries: subjectArrangementEntries,
+        });
+      }
+    }
+
+    return sections;
+  }, [
+    analysisData?.annotationCorrections?.label_overrides,
+    analysisData?.metadata?.cinematicClues,
+    analysisData?.rawDetectedObjects,
+  ]);
+
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
@@ -255,6 +696,23 @@ export default function ToolsPanel() {
       eventBus.off("videoIdChanged", handler);
     };
   }, []);
+
+  useEffect(() => {
+    const handler = (nextTime: number) => {
+      setCurrentVideoTime(Number(nextTime) || 0);
+    };
+    eventBus.on("videoTimeLineChanged", handler);
+
+    return () => {
+      eventBus.off("videoTimeLineChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingShotSizeTimestamp) {
+      setPendingShotSizeTimestamp(currentVideoTime.toFixed(1));
+    }
+  }, [currentVideoTime, pendingShotSizeTimestamp]);
 
   useEffect(() => {
     let mounted = true;
@@ -292,6 +750,7 @@ export default function ToolsPanel() {
         },
         visual: () => {
           setActiveWorkspace("visual");
+          setActiveVisualView("cinematic");
         },
         morphology: () => {
           setActiveWorkspace("morphology");
@@ -833,13 +1292,195 @@ export default function ToolsPanel() {
             <div className="space-y-3 pb-4">
               {activeWorkspace === "visual" && (
                 <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3 text-xs text-slate-300">
-                  <div>
-                    <div className="font-medium text-slate-200">Visual cues</div>
-                    <div className="mt-1 text-[11px] text-slate-500">
-                      Open a particular cue in the Video panel when you need to inspect an underlying visual indication.
-                    </div>
-                  </div>
+                  <div className="font-medium text-slate-200">Visual cues</div>
                   <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                    {[
+                      ["cinematic", "Cinematic clues"],
+                      ["inspectors", "Cue inspectors"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`rounded border px-2 py-1 transition-colors ${
+                          activeVisualView === key
+                            ? "border-slate-500 bg-slate-800/70 text-slate-200"
+                            : "border-white/8 bg-[#171717] text-slate-500 hover:text-slate-300"
+                        }`}
+                        onClick={() => setActiveVisualView(key as VisualWorkspaceView)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {activeVisualView === "cinematic" && (
+                    <div className="rounded-md border border-white/8 bg-[#171717] px-3 py-2 text-[11px] text-slate-400">
+                      {cinematicTimelineSections.length > 0 ? (
+                        <div className="rounded-md border border-white/8 bg-[#141414] px-2 py-2">
+                          <div className="max-h-none space-y-2 overflow-visible pr-1">
+                            {cinematicTimelineSections.map((section) => (
+                              <Collapsible
+                                key={section.key}
+                                open={Boolean(openCinematicSections[section.key])}
+                                onOpenChange={(nextOpen) =>
+                                  setOpenCinematicSections((previous) => ({
+                                    ...previous,
+                                    [section.key]: nextOpen,
+                                  }))
+                                }
+                              >
+                                <CollapsibleTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center justify-between rounded border border-white/8 bg-[#191919] px-2 py-2 text-left text-[11px] text-slate-300 transition-colors hover:text-slate-100"
+                                  >
+                                    <span>{section.label}</span>
+                                    <span className="text-slate-500">
+                                      {openCinematicSections[section.key] ? "-" : "+"}
+                                    </span>
+                                  </button>
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="mt-1 space-y-1">
+                                  {section.key === "shot-size" ? (
+                                    <div className="mb-2 rounded border border-white/8 bg-[#161616] px-2 py-2">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Select
+                                          key={shotAdditionSelectKey}
+                                          onValueChange={(value) => {
+                                            void saveCinematicShotAddition(value);
+                                          }}
+                                        >
+                                          <SelectTrigger className="h-7 w-[170px] border-white/8 bg-[#1a1a1a] text-[10px] text-slate-400">
+                                            <SelectValue placeholder="Add shot size" />
+                                          </SelectTrigger>
+                                          <SelectContent className="border-white/12 bg-[#202020] text-slate-200">
+                                            {CINEMATIC_SHOT_SIZE_OPTIONS.map((option) => (
+                                              <SelectItem key={option} value={option}>
+                                                {option}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          step="0.1"
+                                          value={pendingShotSizeTimestamp}
+                                          onChange={(event) =>
+                                            setPendingShotSizeTimestamp(event.target.value)
+                                          }
+                                          className="h-7 w-[92px] border-white/8 bg-[#1a1a1a] px-2 text-[10px] text-slate-400"
+                                          placeholder="0.0"
+                                        />
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  {section.entries.map((entry, index) => (
+                                    <div
+                                      key={`${section.key}-${entry.start}-${entry.end}-${index}`}
+                                      className="flex items-start gap-2"
+                                    >
+                                      {(() => {
+                                        const entryId = cinematicEntryId(entry);
+                                        const hasDropdownOptions = entry.key === "shot-size";
+                                        const correctionOpen =
+                                          activeCinematicCorrectionId === entryId;
+                                        return (
+                                          <>
+                                      <button
+                                        type="button"
+                                        className="flex min-w-0 flex-1 items-start justify-between rounded border border-white/8 bg-[#191919] px-2 py-1 text-left text-[11px] text-slate-300 transition-colors hover:text-slate-100"
+                                        onClick={() => openVideoAtTime(entry.start)}
+                                      >
+                                        <span className="min-w-0 truncate pr-2">
+                                          {index + 1}. {getCorrectedCinematicEntry(entry)}
+                                        </span>
+                                        <span className="ml-3 shrink-0 text-slate-500">
+                                          {entry.start}s-{entry.end}s
+                                        </span>
+                                      </button>
+                                      {hasDropdownOptions ? (
+                                        correctionOpen ? (
+                                          <div className="flex shrink-0 items-center gap-2">
+                                            <Select
+                                              open={correctionOpen}
+                                              onOpenChange={(nextOpen) => {
+                                                if (!nextOpen) {
+                                                  setActiveCinematicCorrectionId(null);
+                                                  setActiveCinematicCorrectionValue("");
+                                                }
+                                              }}
+                                              value={activeCinematicCorrectionValue}
+                                              onValueChange={(value) => {
+                                                setActiveCinematicCorrectionValue(value);
+                                                void saveCinematicCorrection(entry, value);
+                                              }}
+                                            >
+                                              <SelectTrigger className="h-8 w-[190px] border-white/12 bg-[#202020] text-[11px] text-slate-200">
+                                                <SelectValue placeholder="Select correction" />
+                                              </SelectTrigger>
+                                              <SelectContent className="border-white/12 bg-[#202020] text-slate-200">
+                                                {CINEMATIC_SHOT_SIZE_OPTIONS.map((option) => (
+                                                  <SelectItem key={option} value={option}>
+                                                    {option}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="shrink-0 rounded border border-white/8 bg-[#191919] px-2 py-1 text-[10px] text-slate-400 transition-colors hover:text-slate-100"
+                                            onClick={() => {
+                                              setActiveCinematicCorrectionId(entryId);
+                                              setActiveCinematicCorrectionValue(
+                                                getCorrectedCinematicEntry(entry),
+                                              );
+                                            }}
+                                          >
+                                            Correct
+                                          </button>
+                                        )
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          className="shrink-0 rounded border border-white/8 bg-[#191919] px-2 py-1 text-[10px] text-slate-400 transition-colors hover:text-slate-100"
+                                          onClick={() => saveCinematicCorrection(entry)}
+                                        >
+                                          Correct
+                                        </button>
+                                      )}
+                                      {entry.origin === "analyst-added" ? (
+                                        <button
+                                          type="button"
+                                          className="shrink-0 rounded border border-red-500/20 bg-[#191919] px-2 py-1 text-[10px] text-red-300/80 transition-colors hover:text-red-200"
+                                          onClick={() => {
+                                            void deleteCinematicShotAddition(entry);
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      ) : null}
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
+                                  ))}
+                                </CollapsibleContent>
+                              </Collapsible>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 rounded-md border border-white/8 bg-[#141414] px-3 py-2 text-[11px] text-slate-500">
+                          No cinematic clue record available for this analysis yet.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {activeVisualView === "inspectors" && (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
                     {[
                       ["shot", "Shot size"],
                       ["frame", "Frame class"],
@@ -875,16 +1516,8 @@ export default function ToolsPanel() {
                       </button>
                     ))}
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    These cues remain provisional. Use them for checking and confirmation rather than final interpretive claims.
-                  </div>
-                  <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100/85">
-                    Visual cues note: this tool needs a thorough check-up and calibration session.
-                    The cues should participate in an active feedback loop so they can become more
-                    accurate and indicative over time. A broader triangulation principle may be needed
-                    across the program, so these signals are checked against other evidence rather than
-                    treated as standalone truth.
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -224,7 +224,7 @@ export interface SourceMediaMetadata {
 
 export interface AnnotationCorrectionRule {
   id: string;
-  modality: "text" | "object" | "ocr" | "expression";
+  modality: "text" | "object" | "ocr" | "expression" | "cinematic";
   raw_value: string;
   corrected_value: string;
   target_timestamp?: number;
