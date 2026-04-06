@@ -4,6 +4,7 @@ import { useLayoutHost } from "../LayoutHost";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
+import { apiService } from "@/lib/api-service";
 
 import {
   Download,
@@ -180,6 +181,8 @@ export default function POSAnalyzePanel() {
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [isRefreshingPOS, setIsRefreshingPOS] = useState(false);
+  const [posRefreshMessage, setPosRefreshMessage] = useState<string | null>(null);
 
   // State for show/hide sections
   const [showPosCounts, setShowPosCounts] = useState(true);
@@ -503,6 +506,43 @@ export default function POSAnalyzePanel() {
     );
   };
 
+  const refreshPOSFromCorrectedTranscript = async () => {
+    if (!videoId) {
+      return;
+    }
+
+    try {
+      setIsRefreshingPOS(true);
+      setPosRefreshMessage(null);
+      await apiService.refreshPOSAnalysis(videoId, {
+        segments: transcriptSegments.map((segment: any) => ({
+          text: segment?.text || "",
+          start: segment?.start,
+          end: segment?.end,
+        })),
+        language_code:
+          analysisData?.metadata?.languageProfile?.code ||
+          analysisData?.metadata?.audioLanguage ||
+          "en",
+      });
+      const refreshedAnalysis = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshedAnalysis);
+      setRawCsv(refreshedAnalysis.rawCsv || null);
+      setRefreshNonce((current) => current + 1);
+      setPosRefreshMessage("POS refreshed from corrected transcript.");
+      window.setTimeout(() => setPosRefreshMessage(null), 2500);
+      alert("POS refreshed from corrected transcript.");
+    } catch (error) {
+      console.error("POS refresh failed:", error);
+      alert(
+        "Could not refresh POS from the corrected transcript: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    } finally {
+      setIsRefreshingPOS(false);
+    }
+  };
+
   const renderGrammarWordButtons = (label: string, words: string[]) => (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {words.length === 0 ? (
@@ -695,6 +735,11 @@ export default function POSAnalyzePanel() {
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>
+      {posRefreshMessage ? (
+        <div className="mx-3 mb-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+          {posRefreshMessage}
+        </div>
+      ) : null}
       <div className="flex-1 overflow-y-auto">
         {/* Header */}
         <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
@@ -718,6 +763,16 @@ export default function POSAnalyzePanel() {
                   className="block w-full rounded px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800/70"
                 >
                   Add Current Analysis to POS Matrix
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void refreshPOSFromCorrectedTranscript();
+                    setShowPosMenu(false);
+                  }}
+                  className="block w-full rounded px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800/70"
+                >
+                  {isRefreshingPOS ? "Refreshing POS..." : "Refresh POS from corrected transcript"}
                 </button>
                 <button
                   type="button"

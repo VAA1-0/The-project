@@ -18,7 +18,7 @@ import json
 import io
 import zipfile
 import subprocess
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import asyncio
 import csv
 from datetime import datetime, timezone
@@ -186,6 +186,30 @@ def build_source_media_metadata_payload(
             "editor_notes": user_annotations.get("editor_notes", ""),
             "source_context": user_annotations.get("source_context", ""),
             "provenance_notes": user_annotations.get("provenance_notes", ""),
+            "title": user_annotations.get("title", ""),
+            "scope": user_annotations.get("scope", ""),
+            "description": user_annotations.get("description", ""),
+            "persons": user_annotations.get("persons", []),
+            "relations": user_annotations.get("relations", ""),
+            "location_country": user_annotations.get("location_country", ""),
+            "location_city": user_annotations.get("location_city", ""),
+            "location_place": user_annotations.get("location_place", ""),
+            "location_room": user_annotations.get("location_room", ""),
+            "time_era": user_annotations.get("time_era", ""),
+            "time_year": user_annotations.get("time_year", ""),
+            "time_moment": user_annotations.get("time_moment", ""),
+            "situation_event": user_annotations.get("situation_event", ""),
+            "keywords": user_annotations.get("keywords", []),
+            "interaction_dynamics": user_annotations.get("interaction_dynamics", ""),
+            "narrative_development": user_annotations.get("narrative_development", ""),
+            "performance_expression": user_annotations.get("performance_expression", ""),
+            "genre": user_annotations.get("genre", ""),
+            "references": user_annotations.get("references", []),
+            "reference_files": status.get("source_media_reference_files", []),
+            "reference_relation": user_annotations.get("reference_relation", ""),
+            "reference_source": user_annotations.get("reference_source", ""),
+            "confidence": user_annotations.get("confidence", ""),
+            "notes": user_annotations.get("notes", ""),
         },
     }
 
@@ -898,6 +922,7 @@ async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) ->
                 "source_context": "",
                 "provenance_notes": "",
             },
+            "source_media_reference_files": [],
         }
         append_analysis_event(
             analysis_status[analysis_id],
@@ -1250,6 +1275,8 @@ def run_complete_analysis(
                     "yolo_results": visual_results.get("yolo_results", []),
                     "tracked_objects": visual_results.get("tracked_objects", []),
                     "ocr_results": visual_results.get("ocr_results", []),
+                    "cinematic_clues": visual_results.get("cinematic_clues", {}),
+                    "spatial_tone_scan": visual_results.get("spatial_tone_scan", {}),
                     "face_results": visual_results.get("face_results"),
                     "face_anonymization": visual_results.get("face_anonymization"),
                     "face_anonymization_enabled": visual_results.get("face_anonymization_enabled", False),
@@ -1743,6 +1770,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["yolo_detections"] = len(va.get("yolo_results", []))
             response_data["summary"]["tracked_objects"] = len(va.get("tracked_objects", []))
             response_data["summary"]["ocr_detections"] = len(va.get("ocr_results", []))
+            response_data["summary"]["cinematic_clues"] = va.get("cinematic_clues", {})
+            response_data["summary"]["spatial_tone_scan"] = va.get("spatial_tone_scan", {})
             response_data["summary"]["expression_samples"] = len(va.get("expression_results", []))
             response_data["summary"]["expression_status"] = va.get(
                 "expression_status", "not_run"
@@ -2187,15 +2216,79 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
     annotations = status.setdefault("source_media_annotations", {})
-    for key in ("editor_notes", "source_context", "provenance_notes"):
+    for key in (
+        "editor_notes",
+        "source_context",
+        "provenance_notes",
+        "title",
+        "scope",
+        "description",
+        "persons",
+        "relations",
+        "location_country",
+        "location_city",
+        "location_place",
+        "location_room",
+        "time_era",
+        "time_year",
+        "time_moment",
+        "situation_event",
+        "keywords",
+        "interaction_dynamics",
+        "narrative_development",
+        "performance_expression",
+        "genre",
+        "references",
+        "reference_relation",
+        "reference_source",
+        "confidence",
+        "notes",
+    ):
         if key in payload:
-            annotations[key] = payload.get(key) or ""
+            value = payload.get(key)
+            if key in ("persons", "keywords", "references"):
+                annotations[key] = value if isinstance(value, list) else []
+            else:
+                annotations[key] = value or ""
 
     write_source_media_metadata_files(status)
     append_analysis_event(
         status,
         "source_media_metadata_updated",
-        details={"fields": [key for key in ("editor_notes", "source_context", "provenance_notes") if key in payload]},
+        details={
+            "fields": [
+                key
+                for key in (
+                    "editor_notes",
+                    "source_context",
+                    "provenance_notes",
+                    "title",
+                    "scope",
+                    "description",
+                    "persons",
+                    "relations",
+                    "location_country",
+                    "location_city",
+                    "location_place",
+                    "location_room",
+                    "time_era",
+                    "time_year",
+                    "time_moment",
+                    "situation_event",
+                    "keywords",
+                    "interaction_dynamics",
+                    "narrative_development",
+                    "performance_expression",
+                    "genre",
+                    "references",
+                    "reference_relation",
+                    "reference_source",
+                    "confidence",
+                    "notes",
+                )
+                if key in payload
+            ]
+        },
     )
     persist_analysis_record_for_status(status)
 
@@ -2204,6 +2297,193 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "analysis_id": analysis_id,
         "source_media_metadata": status.get("source_media_metadata", {}),
     }
+
+
+@app.post("/api/source-media/{analysis_id}/references", response_model=dict)
+async def upload_source_media_references(
+    analysis_id: str,
+    files: List[UploadFile] = File(...),
+) -> dict:
+    """Attach reference files to an analysis source-media record."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    allowed_extensions = {
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".txt",
+        ".jpeg",
+        ".jpg",
+        ".png",
+        ".webp",
+    }
+    analysis_dir = RESULTS_DIR / analysis_id
+    references_dir = analysis_dir / "reference_materials"
+    references_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files = status.setdefault("source_media_reference_files", [])
+    uploaded_items = []
+
+    for file in files:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported reference file type: {suffix or 'unknown'}",
+            )
+        safe_stem = slugify_name(Path(file.filename or "reference").stem)
+        stored_name = f"{safe_stem}_{uuid.uuid4().hex[:8]}{suffix}"
+        destination = references_dir / stored_name
+        with open(destination, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        item = {
+            "filename": file.filename,
+            "stored_filename": stored_name,
+            "media_type": file.content_type or "",
+            "size_bytes": destination.stat().st_size,
+            "download_url": f"/api/source-media/{analysis_id}/references/{stored_name}",
+        }
+        saved_files.append(item)
+        uploaded_items.append(item)
+
+    write_source_media_metadata_files(status)
+    append_analysis_event(
+        status,
+        "source_media_references_uploaded",
+        details={"count": len(uploaded_items)},
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "reference_files": uploaded_items,
+        "source_media_metadata": status.get("source_media_metadata", {}),
+    }
+
+
+@app.post("/api/pos-analysis/{analysis_id}/refresh", response_model=dict)
+async def refresh_pos_analysis(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Rebuild POS analysis from corrected transcript content."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    output_files = status.setdefault("output_files", {})
+    transcript_segments = payload.get("segments") or []
+    language_code = (
+        payload.get("language_code")
+        or payload.get("language")
+        or (
+            ((status.get("results") or {}).get("analysis_artifacts") or {})
+            .get("transcript", {})
+            .get("language")
+        )
+        or "en"
+    )
+
+    transcript_text = " ".join(
+        str(segment.get("text", "")).strip()
+        for segment in transcript_segments
+        if isinstance(segment, dict) and str(segment.get("text", "")).strip()
+    ).strip()
+
+    if not transcript_text:
+        transcript_path_raw = output_files.get("transcript")
+        if transcript_path_raw and Path(transcript_path_raw).exists():
+            try:
+                transcript_data = json.loads(
+                    Path(transcript_path_raw).read_text(encoding="utf-8")
+                )
+                transcript_text = " ".join(
+                    str(segment.get("text", "")).strip()
+                    for segment in transcript_data.get("segments", [])
+                    if str(segment.get("text", "")).strip()
+                ).strip()
+                language_code = (
+                    transcript_data.get("language")
+                    or (transcript_data.get("language_info") or {}).get("code")
+                    or language_code
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Could not read transcript for POS refresh: {exc}",
+                ) from exc
+
+    if not transcript_text:
+        raise HTTPException(
+            status_code=400,
+            detail="No corrected transcript text available for POS refresh",
+        )
+
+    pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
+
+    pos_path_raw = output_files.get("pos_analysis")
+    if pos_path_raw:
+        pos_path = Path(pos_path_raw)
+    else:
+        transcript_path_raw = output_files.get("transcript")
+        if transcript_path_raw:
+            transcript_path = Path(transcript_path_raw)
+            pos_path = transcript_path.with_name(
+                f"{transcript_path.stem.replace('_transcript', '')}_pos.json"
+            )
+        else:
+            pos_path = TRANSCRIPTS_DIR / f"{analysis_id}_pos.json"
+
+    pos_path.parent.mkdir(parents=True, exist_ok=True)
+    pos_path.write_text(
+        json.dumps(pos_result, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["pos_analysis"] = str(pos_path)
+
+    append_analysis_event(
+        status,
+        "pos_analysis_refreshed",
+        details={
+            "language_code": language_code,
+            "segment_count": len(transcript_segments),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "output_path": str(pos_path),
+    }
+
+
+@app.get("/api/source-media/{analysis_id}/references/{stored_filename}")
+async def download_source_media_reference(analysis_id: str, stored_filename: str):
+    """Download an attached source-media reference file."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    references_dir = RESULTS_DIR / analysis_id / "reference_materials"
+    file_path = references_dir / stored_filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Reference file not found")
+
+    metadata = next(
+        (
+            item
+            for item in status.get("source_media_reference_files", [])
+            if item.get("stored_filename") == stored_filename
+        ),
+        None,
+    )
+    filename = metadata.get("filename") if isinstance(metadata, dict) else stored_filename
+    media_type = metadata.get("media_type") if isinstance(metadata, dict) else None
+    return FileResponse(path=file_path, filename=filename, media_type=media_type)
 
 
 @app.get("/api/annotation-corrections/{analysis_id}", response_model=dict)

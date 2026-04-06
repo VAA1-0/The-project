@@ -37,6 +37,14 @@ export default function ProjectPanel() {
   const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [showWorkspaceLeafs, setShowWorkspaceLeafs] = useState(false);
+  const [queuedAnalysisIds, setQueuedAnalysisIds] = useState<string[]>([]);
+  const [activeQueuedAnalysisId, setActiveQueuedAnalysisId] = useState<
+    string | null
+  >(null);
+  const [queuePaused, setQueuePaused] = useState(false);
+  const [coolingMinutes, setCoolingMinutes] = useState("2");
+  const [coolingUntil, setCoolingUntil] = useState<number | null>(null);
+  const [coolingNow, setCoolingNow] = useState(Date.now());
 
   // Event bus video id state
   const [videoId, setVideoId] = useState("");
@@ -72,6 +80,49 @@ export default function ProjectPanel() {
       window.removeEventListener("video-uploaded", handler);
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeQueuedAnalysisId && queuedAnalysisIds.length === 0 && !coolingUntil) {
+      return;
+    }
+
+    let mounted = true;
+    const refreshList = async () => {
+      try {
+        const list = await VideoService.list(50);
+        if (mounted) {
+          setLibraryVideos(list);
+        }
+      } catch {
+        // Keep current list if refresh fails; queue should stay calm.
+      }
+    };
+
+    void refreshList();
+    const interval = window.setInterval(() => {
+      void refreshList();
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [activeQueuedAnalysisId, queuedAnalysisIds, coolingUntil]);
+
+  useEffect(() => {
+    if (!coolingUntil) {
+      return;
+    }
+
+    setCoolingNow(Date.now());
+    const interval = window.setInterval(() => {
+      setCoolingNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [coolingUntil]);
 
   useEffect(() => {
     let mounted = true;
@@ -323,50 +374,54 @@ export default function ProjectPanel() {
     openPanel("SourceMediaMetadata", { videoId: id });
   };
 
+  const startAnalysisForVideo = async (id: string, notify = true) => {
+    selectVideo(id);
+    const current = await VideoService.get(id);
+    await VideoService.startAnalysis(id, "full", {
+      analysisTier: (current.analysisTier as
+        | "quick_sweep"
+        | "science_scan"
+        | "forensic_sensor") || "science_scan",
+      modalityFocus: (current.modalityFocus as
+        | "multimodal"
+        | "graphics"
+        | "audio"
+        | "images"
+        | "text") || "multimodal",
+      morphologyPackPolicy:
+        (current.languagePackPolicy?.policy as
+          | "core_only"
+          | "plus_1"
+          | "plus_2") || "core_only",
+      morphologyLanguages:
+        current.languagePackPolicy?.selected_languages
+          ?.map((item) => item.code || "")
+          .filter(Boolean) || [],
+      specialUseMorphologyLanguage:
+        current.languagePackPolicy?.special_use_language?.code ||
+        current.languagePackPolicy?.special_use_language?.name ||
+        "",
+      allowRoughInterpretation:
+        current.languagePackPolicy?.allow_rough_interpretation ?? true,
+      applyFaceAnonymization: Boolean(current.applyFaceAnonymization),
+      faceMessageStyle: current.faceMessageStyle || "plain",
+      faceRequiresPersonDetection: Boolean(current.faceRequiresPersonDetection),
+    });
+
+    setLibraryVideos((prev) =>
+      prev.map((video) =>
+        video.id === id ? { ...video, status: "processing", progress: 5 } : video,
+      ),
+    );
+
+    if (notify) {
+      alert("Analysis started.");
+    }
+  };
+
   const analyzeVideo = async (id: string) => {
     try {
-      selectVideo(id);
-      const current = await VideoService.get(id);
-      await VideoService.startAnalysis(id, "full", {
-        analysisTier: (current.analysisTier as
-          | "quick_sweep"
-          | "science_scan"
-          | "forensic_sensor") || "science_scan",
-        modalityFocus: (current.modalityFocus as
-          | "multimodal"
-          | "graphics"
-          | "audio"
-          | "images"
-          | "text") || "multimodal",
-        morphologyPackPolicy:
-          (current.languagePackPolicy?.policy as
-            | "core_only"
-            | "plus_1"
-            | "plus_2") || "core_only",
-        morphologyLanguages:
-          current.languagePackPolicy?.selected_languages
-            ?.map((item) => item.code || "")
-            .filter(Boolean) || [],
-        specialUseMorphologyLanguage:
-          current.languagePackPolicy?.special_use_language?.code ||
-          current.languagePackPolicy?.special_use_language?.name ||
-          "",
-        allowRoughInterpretation:
-          current.languagePackPolicy?.allow_rough_interpretation ?? true,
-        applyFaceAnonymization: Boolean(current.applyFaceAnonymization),
-        faceMessageStyle: current.faceMessageStyle || "plain",
-        faceRequiresPersonDetection: Boolean(current.faceRequiresPersonDetection),
-      });
-
-      setLibraryVideos((prev) =>
-        prev.map((video) =>
-          video.id === id
-            ? { ...video, status: "processing", progress: 5 }
-            : video,
-        ),
-      );
-
-      alert("Analysis started.");
+      await startAnalysisForVideo(id, true);
     } catch (error) {
       console.error("Analyze from project panel failed:", error);
       alert(
@@ -375,6 +430,80 @@ export default function ProjectPanel() {
       );
     }
   };
+
+  const toggleQueueVideo = (id: string) => {
+    setQueuedAnalysisIds((previous) =>
+      previous.includes(id)
+        ? previous.filter((item) => item !== id)
+        : [...previous, id],
+    );
+  };
+
+  const clearQueue = () => {
+    setQueuedAnalysisIds([]);
+    setActiveQueuedAnalysisId(null);
+    setCoolingUntil(null);
+    setQueuePaused(false);
+  };
+
+  useEffect(() => {
+    if (queuePaused) {
+      return;
+    }
+
+    const currentStatus = activeQueuedAnalysisId
+      ? libraryVideos.find((video) => video.id === activeQueuedAnalysisId)?.status
+      : null;
+
+    if (activeQueuedAnalysisId) {
+      if (currentStatus === "completed" || currentStatus === "error") {
+        setActiveQueuedAnalysisId(null);
+        const coolingMs = Math.max(0, Number(coolingMinutes) || 0) * 60 * 1000;
+        setCoolingUntil(coolingMs > 0 ? Date.now() + coolingMs : null);
+      }
+      return;
+    }
+
+    if (coolingUntil && coolingUntil > Date.now()) {
+      return;
+    }
+
+    if (coolingUntil && coolingUntil <= Date.now()) {
+      setCoolingUntil(null);
+    }
+
+    if (queuedAnalysisIds.length === 0) {
+      return;
+    }
+
+    const anyProcessing = libraryVideos.some((video) => video.status === "processing");
+    if (anyProcessing) {
+      return;
+    }
+
+    const nextId = queuedAnalysisIds[0];
+    setQueuedAnalysisIds((previous) => previous.slice(1));
+    setActiveQueuedAnalysisId(nextId);
+    void startAnalysisForVideo(nextId, false).catch((error) => {
+      console.error("Queued analysis start failed:", error);
+      setActiveQueuedAnalysisId(null);
+      alert(
+        "Could not start one queued analysis: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    });
+  }, [
+    activeQueuedAnalysisId,
+    coolingMinutes,
+    coolingUntil,
+    libraryVideos,
+    queuePaused,
+    queuedAnalysisIds,
+  ]);
+
+  const coolingSecondsRemaining = coolingUntil
+    ? Math.max(0, Math.ceil((coolingUntil - coolingNow) / 1000))
+    : 0;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -506,6 +635,57 @@ export default function ProjectPanel() {
           </Collapsible>
         )}
         <div className="flex-1 min-h-0">
+          <div className="border-b border-[#131313] bg-[#181818] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#8d8d8d]">
+              <span className="uppercase tracking-[0.12em] text-[#7a7a7a]">
+                Analysis queue
+              </span>
+              <span>
+                {activeQueuedAnalysisId
+                  ? "Running 1 job"
+                  : queuedAnalysisIds.length > 0
+                    ? `${queuedAnalysisIds.length} queued`
+                    : "Idle"}
+              </span>
+              {coolingUntil && coolingSecondsRemaining > 0 ? (
+                <span>{`Cooling ${coolingSecondsRemaining}s`}</span>
+              ) : null}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2">
+                  <span className="text-[#6f6f6f]">Cool-down</span>
+                  <select
+                    value={coolingMinutes}
+                    onChange={(e) => setCoolingMinutes(e.target.value)}
+                    className="rounded border border-[#2a2a2a] bg-[#202020] px-2 py-1 text-[10px] text-[#b8b8b8]"
+                  >
+                    <option value="0">0 min</option>
+                    <option value="2">2 min</option>
+                    <option value="5">5 min</option>
+                    <option value="10">10 min</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setQueuePaused((value) => !value)}
+                  className="rounded border border-[#2a2a2a] px-2 py-1 text-[10px] text-[#7f7f7f] hover:bg-[#232323] hover:text-[#a8a8a8]"
+                >
+                  {queuePaused ? "Resume queue" : "Pause queue"}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearQueue}
+                  disabled={
+                    queuedAnalysisIds.length === 0 &&
+                    !activeQueuedAnalysisId &&
+                    !coolingUntil
+                  }
+                  className="rounded border border-[#2a2a2a] px-2 py-1 text-[10px] text-[#7f7f7f] hover:bg-[#232323] hover:text-[#a8a8a8] disabled:opacity-40"
+                >
+                  Clear queue
+                </button>
+              </div>
+            </div>
+          </div>
           {/* Scrollable Video list */}
           <div className="space-y-2 flex-1 overflow-y-auto p-2 h-full max-h-full">
             {/* Real mapped videos */}
@@ -604,6 +784,17 @@ export default function ProjectPanel() {
                       </button>
                       <button
                         type="button"
+                        className="rounded border border-slate-800 px-2 py-1 text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/50 hover:text-slate-300 disabled:opacity-40"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleQueueVideo(vid.id);
+                        }}
+                        disabled={vid.status === "processing" || vid.status === "completed"}
+                      >
+                        {queuedAnalysisIds.includes(vid.id) ? "Queued" : "Queue"}
+                      </button>
+                      <button
+                        type="button"
                         className="rounded border border-slate-800 px-2 py-1 text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/50 hover:text-slate-300"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -613,6 +804,15 @@ export default function ProjectPanel() {
                         Media
                       </button>
                     </div>
+
+                    {activeQueuedAnalysisId === vid.id ||
+                    queuedAnalysisIds.includes(vid.id) ? (
+                      <div className="text-[10px] text-[#8c8c8c]">
+                        {activeQueuedAnalysisId === vid.id
+                          ? "Queued run active"
+                          : `Queued position ${queuedAnalysisIds.indexOf(vid.id) + 1}`}
+                      </div>
+                    ) : null}
 
                     <VideoItem
                       vid={vid}

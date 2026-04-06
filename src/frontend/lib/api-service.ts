@@ -219,6 +219,36 @@ export interface SourceMediaMetadata {
     editor_notes?: string;
     source_context?: string;
     provenance_notes?: string;
+    title?: string;
+    scope?: string;
+    description?: string;
+    persons?: string[];
+    relations?: string;
+    location_country?: string;
+    location_city?: string;
+    location_place?: string;
+    location_room?: string;
+    time_era?: string;
+    time_year?: string;
+    time_moment?: string;
+    situation_event?: string;
+    keywords?: string[];
+    interaction_dynamics?: string;
+    narrative_development?: string;
+    performance_expression?: string;
+    genre?: string;
+    references?: string[];
+    reference_files?: Array<{
+      filename?: string;
+      stored_filename?: string;
+      media_type?: string;
+      size_bytes?: number;
+      download_url?: string;
+    }>;
+    reference_relation?: string;
+    reference_source?: string;
+    confidence?: string;
+    notes?: string;
   };
 }
 
@@ -816,6 +846,29 @@ class ApiService {
       editor_notes?: string;
       source_context?: string;
       provenance_notes?: string;
+      title?: string;
+      scope?: string;
+      description?: string;
+      persons?: string[];
+      relations?: string;
+      location_country?: string;
+      location_city?: string;
+      location_place?: string;
+      location_room?: string;
+      time_era?: string;
+      time_year?: string;
+      time_moment?: string;
+      situation_event?: string;
+      keywords?: string[];
+      interaction_dynamics?: string;
+      narrative_development?: string;
+      performance_expression?: string;
+      genre?: string;
+      references?: string[];
+      reference_relation?: string;
+      reference_source?: string;
+      confidence?: string;
+      notes?: string;
     },
   ): Promise<SourceMediaMetadata> {
     const response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`, {
@@ -835,6 +888,70 @@ class ApiService {
 
     const data = await response.json();
     return data.source_media_metadata || {};
+  }
+
+  async uploadSourceMediaReferences(
+    analysisId: string,
+    files: File[],
+  ): Promise<SourceMediaMetadata> {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/references`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Reference upload failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  getSourceMediaReferenceUrl(downloadUrl?: string): string | null {
+    if (!downloadUrl) {
+      return null;
+    }
+    return `${this.baseURL}${downloadUrl}`;
+  }
+
+  async refreshPOSAnalysis(
+    analysisId: string,
+    payload: {
+      segments?: Array<{
+        text?: string;
+        start?: number;
+        end?: number;
+      }>;
+      language_code?: string;
+    },
+  ): Promise<{ status: string; analysis_id: string; output_path?: string }> {
+    const response = await fetch(`${this.baseURL}/api/pos-analysis/${analysisId}/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `POS refresh failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
   }
 
   /**
