@@ -1282,6 +1282,8 @@ def run_complete_analysis(
                     "ocr_results": visual_results.get("ocr_results", []),
                     "cinematic_clues": visual_results.get("cinematic_clues", {}),
                     "spatial_tone_scan": visual_results.get("spatial_tone_scan", {}),
+                    "motion_evidence": visual_results.get("motion_evidence", {}),
+                    "scene_segments": visual_results.get("scene_segments", {}),
                     "face_results": visual_results.get("face_results"),
                     "face_anonymization": visual_results.get("face_anonymization"),
                     "face_anonymization_enabled": visual_results.get("face_anonymization_enabled", False),
@@ -1777,6 +1779,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["ocr_detections"] = len(va.get("ocr_results", []))
             response_data["summary"]["cinematic_clues"] = va.get("cinematic_clues", {})
             response_data["summary"]["spatial_tone_scan"] = va.get("spatial_tone_scan", {})
+            response_data["summary"]["motion_evidence"] = va.get("motion_evidence", {})
+            response_data["summary"]["scene_segments"] = va.get("scene_segments", {})
             response_data["summary"]["expression_samples"] = len(va.get("expression_results", []))
             response_data["summary"]["expression_status"] = va.get(
                 "expression_status", "not_run"

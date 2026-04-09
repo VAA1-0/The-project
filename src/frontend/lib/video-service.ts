@@ -159,6 +159,36 @@ export interface ExpressionSample {
   top_emotion_score?: number | null;
   score_margin?: number | null;
   quality?: string | null;
+  face_signal?: {
+    level?: string | null;
+    face_count_in_frame?: number | null;
+    face_area_share?: number | null;
+  };
+  expression_evidence?: {
+    level?: string | null;
+    dominant_emotion_ready?: boolean;
+    top_score?: number | null;
+    score_margin?: number | null;
+  };
+  affect_hints?: {
+    valence?: string | null;
+    activation?: string | null;
+    confidence?: string | null;
+  };
+  social_function_profile?: {
+    authority_signal?: number | null;
+    affiliation_signal?: number | null;
+    persuasion_signal?: number | null;
+    distance_signal?: number | null;
+    reassurance_signal?: number | null;
+  };
+  interpreted_expression?: {
+    label?: string | null;
+    confidence?: string | null;
+    near_neighbors?: string[];
+    social_function?: string[];
+    basis?: string[];
+  };
   error?: string | null;
   bbox?: {
     x?: number;
@@ -1385,6 +1415,43 @@ export interface AnalysisData {
         background_activity?: number;
       }>;
     };
+    motionSceneBasis?: {
+      motionEvidence?: {
+        method?: string;
+        samples?: Array<{
+          timestamp: number;
+          motion_label?: string;
+          activity_label?: string;
+          occupancy_shift?: number;
+          foreground_delta?: number;
+          background_delta?: number;
+          zone_tone_shift?: number;
+          frame_class?: string;
+        }>;
+        summary?: {
+          sample_count?: number;
+          dominant_motion?: string | null;
+          distribution?: Record<string, number>;
+          activity_distribution?: Record<string, number>;
+          high_motion_samples?: number;
+          mean_occupancy_shift?: number;
+        };
+      };
+      sceneSegments?: {
+        method?: string;
+        source?: string;
+        segments?: Array<{
+          scene_index: number;
+          start: number;
+          end: number;
+          duration?: number;
+        }>;
+        summary?: {
+          scene_count?: number;
+          mean_scene_duration?: number;
+        };
+      };
+    };
     audioSegments?: number;
     audioProsodyCues?: number;
     audioLanguage?: string;
@@ -2055,6 +2122,41 @@ export interface AnalysisStatus {
         background_activity?: number;
       }>;
     };
+    motion_evidence?: {
+      method?: string;
+      samples?: Array<{
+        timestamp: number;
+        motion_label?: string;
+        activity_label?: string;
+        occupancy_shift?: number;
+        foreground_delta?: number;
+        background_delta?: number;
+        zone_tone_shift?: number;
+        frame_class?: string;
+      }>;
+      summary?: {
+        sample_count?: number;
+        dominant_motion?: string | null;
+        distribution?: Record<string, number>;
+        activity_distribution?: Record<string, number>;
+        high_motion_samples?: number;
+        mean_occupancy_shift?: number;
+      };
+    };
+    scene_segments?: {
+      method?: string;
+      source?: string;
+      segments?: Array<{
+        scene_index: number;
+        start: number;
+        end: number;
+        duration?: number;
+      }>;
+      summary?: {
+        scene_count?: number;
+        mean_scene_duration?: number;
+      };
+    };
     expression_samples?: number;
     expression_status?: "completed" | "failed" | "not_run";
     expression_error?: string;
@@ -2505,6 +2607,26 @@ export class VideoService {
                 samples: status.summary.spatial_tone_scan.samples,
               }
             : undefined,
+          motionSceneBasis:
+            status.summary?.motion_evidence || status.summary?.scene_segments
+              ? {
+                  motionEvidence: status.summary?.motion_evidence
+                    ? {
+                        method: status.summary.motion_evidence.method,
+                        samples: status.summary.motion_evidence.samples,
+                        summary: status.summary.motion_evidence.summary,
+                      }
+                    : undefined,
+                  sceneSegments: status.summary?.scene_segments
+                    ? {
+                        method: status.summary.scene_segments.method,
+                        source: status.summary.scene_segments.source,
+                        segments: status.summary.scene_segments.segments,
+                        summary: status.summary.scene_segments.summary,
+                      }
+                    : undefined,
+                }
+              : undefined,
           audioSegments: status.summary?.audio_segments,
           audioProsodyCues: status.summary?.audio_prosody_cues,
           audioLanguage:
@@ -3069,6 +3191,89 @@ export class VideoService {
         score_margin:
           sample.score_margin !== undefined ? Number(sample.score_margin) : null,
         quality: sample.quality ?? null,
+        face_signal:
+          sample.face_signal && typeof sample.face_signal === "object"
+            ? {
+                level: sample.face_signal.level ?? null,
+                face_count_in_frame:
+                  sample.face_signal.face_count_in_frame !== undefined
+                    ? Number(sample.face_signal.face_count_in_frame)
+                    : null,
+                face_area_share:
+                  sample.face_signal.face_area_share !== undefined
+                    ? Number(sample.face_signal.face_area_share)
+                    : null,
+              }
+            : undefined,
+        expression_evidence:
+          sample.expression_evidence && typeof sample.expression_evidence === "object"
+            ? {
+                level: sample.expression_evidence.level ?? null,
+                dominant_emotion_ready:
+                  sample.expression_evidence.dominant_emotion_ready !== undefined
+                    ? Boolean(sample.expression_evidence.dominant_emotion_ready)
+                    : undefined,
+                top_score:
+                  sample.expression_evidence.top_score !== undefined
+                    ? Number(sample.expression_evidence.top_score)
+                    : null,
+                score_margin:
+                  sample.expression_evidence.score_margin !== undefined
+                    ? Number(sample.expression_evidence.score_margin)
+                    : null,
+              }
+            : undefined,
+        affect_hints:
+          sample.affect_hints && typeof sample.affect_hints === "object"
+            ? {
+                valence: sample.affect_hints.valence ?? null,
+                activation: sample.affect_hints.activation ?? null,
+                confidence: sample.affect_hints.confidence ?? null,
+              }
+            : undefined,
+        social_function_profile:
+          sample.social_function_profile &&
+          typeof sample.social_function_profile === "object"
+            ? {
+                authority_signal:
+                  sample.social_function_profile.authority_signal !== undefined
+                    ? Number(sample.social_function_profile.authority_signal)
+                    : null,
+                affiliation_signal:
+                  sample.social_function_profile.affiliation_signal !== undefined
+                    ? Number(sample.social_function_profile.affiliation_signal)
+                    : null,
+                persuasion_signal:
+                  sample.social_function_profile.persuasion_signal !== undefined
+                    ? Number(sample.social_function_profile.persuasion_signal)
+                    : null,
+                distance_signal:
+                  sample.social_function_profile.distance_signal !== undefined
+                    ? Number(sample.social_function_profile.distance_signal)
+                    : null,
+                reassurance_signal:
+                  sample.social_function_profile.reassurance_signal !== undefined
+                    ? Number(sample.social_function_profile.reassurance_signal)
+                    : null,
+              }
+            : undefined,
+        interpreted_expression:
+          sample.interpreted_expression &&
+          typeof sample.interpreted_expression === "object"
+            ? {
+                label: sample.interpreted_expression.label ?? null,
+                confidence: sample.interpreted_expression.confidence ?? null,
+                near_neighbors: Array.isArray(sample.interpreted_expression.near_neighbors)
+                  ? sample.interpreted_expression.near_neighbors
+                  : [],
+                social_function: Array.isArray(sample.interpreted_expression.social_function)
+                  ? sample.interpreted_expression.social_function
+                  : [],
+                basis: Array.isArray(sample.interpreted_expression.basis)
+                  ? sample.interpreted_expression.basis
+                  : [],
+              }
+            : undefined,
         error: sample.error ?? null,
         bbox: normalizeExpressionBox(sample.bbox),
       }));

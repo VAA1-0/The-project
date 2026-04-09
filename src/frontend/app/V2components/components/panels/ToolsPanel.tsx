@@ -255,6 +255,12 @@ export default function ToolsPanel() {
       .slice(0, expressionPreviewCount[0] ?? 4);
   }, [analysisData, expressionPreviewCount]);
 
+  const motionSceneBasis = analysisData?.metadata?.motionSceneBasis;
+  const motionEvidenceSummary = motionSceneBasis?.motionEvidence?.summary;
+  const motionEvidenceSamples = motionSceneBasis?.motionEvidence?.samples ?? [];
+  const sceneSegmentSummary = motionSceneBasis?.sceneSegments?.summary;
+  const sceneSegments = motionSceneBasis?.sceneSegments?.segments ?? [];
+
   const analysisTierLabel = React.useMemo(() => {
     const labels = {
       quick_sweep: "Quick sweep",
@@ -1314,6 +1320,100 @@ export default function ToolsPanel() {
                   </div>
                   {activeVisualView === "cinematic" && (
                     <div className="rounded-md border border-white/8 bg-[#171717] px-3 py-2 text-[11px] text-slate-400">
+                      {motionSceneBasis && (
+                        <div className="mb-3 rounded-md border border-white/8 bg-[#141414] px-3 py-3">
+                          <div className="mb-2 font-medium text-slate-200">
+                            Motion and scene basis
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <div className="rounded border border-white/8 bg-[#171717] px-3 py-2">
+                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                                Motion evidence
+                              </div>
+                              <div className="mt-1 text-slate-200">
+                                {motionEvidenceSummary?.dominant_motion || "No dominant motion yet"}
+                              </div>
+                              <div className="mt-1 space-y-1 text-[10px] text-slate-400">
+                                <div>
+                                  Samples: {motionEvidenceSummary?.sample_count ?? 0}
+                                </div>
+                                <div>
+                                  High-motion samples: {motionEvidenceSummary?.high_motion_samples ?? 0}
+                                </div>
+                                <div>
+                                  Mean occupancy shift: {motionEvidenceSummary?.mean_occupancy_shift ?? 0}
+                                </div>
+                                {motionSceneBasis.motionEvidence?.method ? (
+                                  <div>Method: {motionSceneBasis.motionEvidence.method}</div>
+                                ) : null}
+                              </div>
+                              {motionEvidenceSamples.length > 0 && (
+                                <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
+                                  <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+                                    Recent motion samples
+                                  </div>
+                                  <div className="space-y-1 text-[10px] text-slate-300">
+                                    {motionEvidenceSamples.slice(0, 5).map((sample, index) => (
+                                      <div
+                                        key={`motion-${sample.timestamp}-${index}`}
+                                        className="flex items-center justify-between gap-2"
+                                      >
+                                        <span className="truncate">
+                                          {sample.motion_label || "unknown"} / {sample.activity_label || "unknown"}
+                                        </span>
+                                        <span className="shrink-0 text-slate-500">
+                                          {sample.timestamp}s
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            <div className="rounded border border-white/8 bg-[#171717] px-3 py-2">
+                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                                Scene basis
+                              </div>
+                              <div className="mt-1 text-slate-200">
+                                {sceneSegmentSummary?.scene_count ?? 0} scene intervals
+                              </div>
+                              <div className="mt-1 space-y-1 text-[10px] text-slate-400">
+                                <div>
+                                  Mean scene duration: {sceneSegmentSummary?.mean_scene_duration ?? 0}s
+                                </div>
+                                {motionSceneBasis.sceneSegments?.source ? (
+                                  <div>Source: {motionSceneBasis.sceneSegments.source}</div>
+                                ) : null}
+                                {motionSceneBasis.sceneSegments?.method ? (
+                                  <div>Method: {motionSceneBasis.sceneSegments.method}</div>
+                                ) : null}
+                              </div>
+                              {sceneSegments.length > 0 && (
+                                <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
+                                  <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+                                    First scene intervals
+                                  </div>
+                                  <div className="space-y-1 text-[10px] text-slate-300">
+                                    {sceneSegments.slice(0, 5).map((segment) => (
+                                      <div
+                                        key={`scene-${segment.scene_index}-${segment.start}-${segment.end}`}
+                                        className="flex items-center justify-between gap-2"
+                                      >
+                                        <span className="truncate">
+                                          Scene {segment.scene_index}
+                                        </span>
+                                        <span className="shrink-0 text-slate-500">
+                                          {segment.start}s-{segment.end}s
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {cinematicTimelineSections.length > 0 ? (
                         <div className="rounded-md border border-white/8 bg-[#141414] px-2 py-2">
                           <div className="max-h-none space-y-2 overflow-visible pr-1">

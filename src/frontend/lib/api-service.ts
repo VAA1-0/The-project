@@ -39,6 +39,41 @@ export interface AnalysisStatus {
     expression_samples?: number;
     expression_status?: "completed" | "failed" | "not_run";
     expression_error?: string;
+    motion_evidence?: {
+      method?: string;
+      samples?: Array<{
+        timestamp: number;
+        motion_label?: string;
+        activity_label?: string;
+        occupancy_shift?: number;
+        foreground_delta?: number;
+        background_delta?: number;
+        zone_tone_shift?: number;
+        frame_class?: string;
+      }>;
+      summary?: {
+        sample_count?: number;
+        dominant_motion?: string | null;
+        distribution?: Record<string, number>;
+        activity_distribution?: Record<string, number>;
+        high_motion_samples?: number;
+        mean_occupancy_shift?: number;
+      };
+    };
+    scene_segments?: {
+      method?: string;
+      source?: string;
+      segments?: Array<{
+        scene_index: number;
+        start: number;
+        end: number;
+        duration?: number;
+      }>;
+      summary?: {
+        scene_count?: number;
+        mean_scene_duration?: number;
+      };
+    };
     audio_segments?: number;
     audio_prosody_cues?: number;
     audio_language?: string;
