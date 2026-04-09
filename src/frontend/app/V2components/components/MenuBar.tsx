@@ -7,6 +7,14 @@ import { createVideoTask } from "@/cvat-api/client";
 import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { Library } from "@/lib/local-library";
+import {
+  EXPERTISE_AXIS_OPTIONS,
+  getMediaSubgenreOptions,
+  getSituationalSubgenreOptions,
+  MEDIA_GENRE_OPTIONS,
+  PRIVACY_AXIS_OPTIONS,
+  SITUATIONAL_GENRE_OPTIONS,
+} from "@/lib/metadata-taxonomy";
 
 const QUANT_MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
 const QUANT_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
@@ -33,6 +41,11 @@ type UploadMetadataDraft = {
   narrative_development: string;
   performance_expression: string;
   genre: string;
+  genre_subtype: string;
+  situational_genre: string;
+  situational_subtype: string;
+  privacy_axis: string;
+  expertise_axis: string;
   references: string;
   reference_files: File[];
   reference_relation: string;
@@ -80,6 +93,11 @@ export function MenuBar() {
     narrative_development: "",
     performance_expression: "",
     genre: "",
+    genre_subtype: "",
+    situational_genre: "",
+    situational_subtype: "",
+    privacy_axis: "",
+    expertise_axis: "",
     references: "",
     reference_files: [],
     reference_relation: "",
@@ -110,6 +128,17 @@ export function MenuBar() {
       }
     });
   }
+
+  const updateUploadDraft = (
+    index: number,
+    patch: Partial<UploadMetadataDraft>,
+  ) => {
+    setUploadMetadataDrafts((previous) =>
+      previous.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    );
+  };
 
   // Upload handler: show file selector and upload video
   const runUploadWithMetadata = async (
@@ -176,6 +205,11 @@ export function MenuBar() {
           narrative_development: draft.narrative_development.trim(),
           performance_expression: draft.performance_expression.trim(),
           genre: draft.genre.trim(),
+          genre_subtype: draft.genre_subtype.trim(),
+          situational_genre: draft.situational_genre.trim(),
+          situational_subtype: draft.situational_subtype.trim(),
+          privacy_axis: draft.privacy_axis.trim(),
+          expertise_axis: draft.expertise_axis.trim(),
           references: draft.references
             .split("\n")
             .map((value) => value.trim())
@@ -1058,6 +1092,32 @@ export function MenuBar() {
                     </div>
                     <label className="mt-3 block">
                       <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                        Media genre
+                      </div>
+                      <select
+                        value={draft.genre}
+                        onChange={(e) =>
+                          updateUploadDraft(index, {
+                            genre: e.target.value,
+                            genre_subtype: "",
+                          })
+                        }
+                        className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                      >
+                        <option value="">Not set</option>
+                        {MEDIA_GENRE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <MetaHint>
+                        Choose the main media class, including broadcast,
+                        webvideo, and webcall formats.
+                      </MetaHint>
+                    </label>
+                    <label className="mt-3 block">
+                      <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                         References
                       </div>
                       <textarea
@@ -1190,7 +1250,6 @@ export function MenuBar() {
                             ["time_year", "Time: year"],
                             ["time_moment", "Time: moment"],
                             ["situation_event", "Situation / event"],
-                            ["genre", "Genre"],
                           ].map(([key, label]) => (
                             <label key={key} className="block">
                               <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -1211,6 +1270,126 @@ export function MenuBar() {
                               />
                             </label>
                           ))}
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="block">
+                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                              Genre subtype
+                            </div>
+                            <select
+                              value={draft.genre_subtype}
+                              onChange={(e) =>
+                                updateUploadDraft(index, {
+                                  genre_subtype: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
+                              disabled={!draft.genre}
+                            >
+                              <option value="">
+                                {draft.genre
+                                  ? "Select subtype"
+                                  : "Choose media genre first"}
+                              </option>
+                              {getMediaSubgenreOptions(draft.genre).map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                              Situational genre
+                            </div>
+                            <select
+                              value={draft.situational_genre}
+                              onChange={(e) =>
+                                updateUploadDraft(index, {
+                                  situational_genre: e.target.value,
+                                  situational_subtype: "",
+                                })
+                              }
+                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                            >
+                              <option value="">Not set</option>
+                              {SITUATIONAL_GENRE_OPTIONS.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                              Situational subtype
+                            </div>
+                            <select
+                              value={draft.situational_subtype}
+                              onChange={(e) =>
+                                updateUploadDraft(index, {
+                                  situational_subtype: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
+                              disabled={!draft.situational_genre}
+                            >
+                              <option value="">
+                                {draft.situational_genre
+                                  ? "Select subtype"
+                                  : "Choose situational genre first"}
+                              </option>
+                              {getSituationalSubgenreOptions(
+                                draft.situational_genre,
+                              ).map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                              Privacy axis
+                            </div>
+                            <select
+                              value={draft.privacy_axis}
+                              onChange={(e) =>
+                                updateUploadDraft(index, {
+                                  privacy_axis: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                            >
+                              <option value="">Not set</option>
+                              {PRIVACY_AXIS_OPTIONS.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                              Expertise axis
+                            </div>
+                            <select
+                              value={draft.expertise_axis}
+                              onChange={(e) =>
+                                updateUploadDraft(index, {
+                                  expertise_axis: e.target.value,
+                                })
+                              }
+                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                            >
+                              <option value="">Not set</option>
+                              {EXPERTISE_AXIS_OPTIONS.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         </div>
                         <label className="block">
                           <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">

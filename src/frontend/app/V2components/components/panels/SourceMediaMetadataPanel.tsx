@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
+import {
+  EXPERTISE_AXIS_OPTIONS,
+  getMediaSubgenreOptions,
+  getSituationalSubgenreOptions,
+  MEDIA_GENRE_OPTIONS,
+  PRIVACY_AXIS_OPTIONS,
+  SITUATIONAL_GENRE_OPTIONS,
+} from "@/lib/metadata-taxonomy";
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined || value === "") {
@@ -101,6 +109,11 @@ export default function SourceMediaMetadataPanel() {
   const [narrativeDevelopment, setNarrativeDevelopment] = useState("");
   const [performanceExpression, setPerformanceExpression] = useState("");
   const [genre, setGenre] = useState("");
+  const [genreSubtype, setGenreSubtype] = useState("");
+  const [situationalGenre, setSituationalGenre] = useState("");
+  const [situationalSubtype, setSituationalSubtype] = useState("");
+  const [privacyAxis, setPrivacyAxis] = useState("");
+  const [expertiseAxis, setExpertiseAxis] = useState("");
   const [references, setReferences] = useState("");
   const [referenceRelation, setReferenceRelation] = useState("");
   const [referenceSource, setReferenceSource] = useState("");
@@ -144,6 +157,11 @@ export default function SourceMediaMetadataPanel() {
         setNarrativeDevelopment("");
         setPerformanceExpression("");
         setGenre("");
+        setGenreSubtype("");
+        setSituationalGenre("");
+        setSituationalSubtype("");
+        setPrivacyAxis("");
+        setExpertiseAxis("");
         setReferences("");
         setReferenceRelation("");
         setReferenceSource("");
@@ -182,6 +200,15 @@ export default function SourceMediaMetadataPanel() {
           nextMetadata.user_annotations?.performance_expression || "",
         );
         setGenre(nextMetadata.user_annotations?.genre || "");
+        setGenreSubtype(nextMetadata.user_annotations?.genre_subtype || "");
+        setSituationalGenre(
+          nextMetadata.user_annotations?.situational_genre || "",
+        );
+        setSituationalSubtype(
+          nextMetadata.user_annotations?.situational_subtype || "",
+        );
+        setPrivacyAxis(nextMetadata.user_annotations?.privacy_axis || "");
+        setExpertiseAxis(nextMetadata.user_annotations?.expertise_axis || "");
         setReferences((nextMetadata.user_annotations?.references || []).join("\n"));
         setReferenceRelation(nextMetadata.user_annotations?.reference_relation || "");
         setReferenceSource(nextMetadata.user_annotations?.reference_source || "");
@@ -230,6 +257,11 @@ export default function SourceMediaMetadataPanel() {
         narrative_development: narrativeDevelopment,
         performance_expression: performanceExpression,
         genre,
+        genre_subtype: genreSubtype,
+        situational_genre: situationalGenre,
+        situational_subtype: situationalSubtype,
+        privacy_axis: privacyAxis,
+        expertise_axis: expertiseAxis,
         references: references
           .split("\n")
           .map((value) => value.trim())
@@ -604,12 +636,120 @@ export default function SourceMediaMetadataPanel() {
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   Genre
                 </div>
-                <input
+                <select
                   value={genre}
-                  onChange={(e) => setGenre(e.target.value)}
+                  onChange={(e) => {
+                    setGenre(e.target.value);
+                    setGenreSubtype("");
+                  }}
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                />
+                >
+                  <option value="">Not set</option>
+                  {MEDIA_GENRE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
+              <label className="block">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  Genre subtype
+                </div>
+                <select
+                  value={genreSubtype}
+                  onChange={(e) => setGenreSubtype(e.target.value)}
+                  disabled={!genre}
+                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
+                >
+                  <option value="">
+                    {genre ? "Select subtype" : "Choose genre first"}
+                  </option>
+                  {getMediaSubgenreOptions(genre).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  Situational genre
+                </div>
+                <select
+                  value={situationalGenre}
+                  onChange={(e) => {
+                    setSituationalGenre(e.target.value);
+                    setSituationalSubtype("");
+                  }}
+                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                >
+                  <option value="">Not set</option>
+                  {SITUATIONAL_GENRE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  Situational subtype
+                </div>
+                <select
+                  value={situationalSubtype}
+                  onChange={(e) => setSituationalSubtype(e.target.value)}
+                  disabled={!situationalGenre}
+                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
+                >
+                  <option value="">
+                    {situationalGenre
+                      ? "Select subtype"
+                      : "Choose situational genre first"}
+                  </option>
+                  {getSituationalSubgenreOptions(situationalGenre).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    Privacy axis
+                  </div>
+                  <select
+                    value={privacyAxis}
+                    onChange={(e) => setPrivacyAxis(e.target.value)}
+                    className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                  >
+                    <option value="">Not set</option>
+                    {PRIVACY_AXIS_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    Expertise axis
+                  </div>
+                  <select
+                    value={expertiseAxis}
+                    onChange={(e) => setExpertiseAxis(e.target.value)}
+                    className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                  >
+                    <option value="">Not set</option>
+                    {EXPERTISE_AXIS_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   References

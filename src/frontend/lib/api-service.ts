@@ -237,6 +237,11 @@ export interface SourceMediaMetadata {
     narrative_development?: string;
     performance_expression?: string;
     genre?: string;
+    genre_subtype?: string;
+    situational_genre?: string;
+    situational_subtype?: string;
+    privacy_axis?: string;
+    expertise_axis?: string;
     references?: string[];
     reference_files?: Array<{
       filename?: string;
@@ -864,6 +869,11 @@ class ApiService {
       narrative_development?: string;
       performance_expression?: string;
       genre?: string;
+      genre_subtype?: string;
+      situational_genre?: string;
+      situational_subtype?: string;
+      privacy_axis?: string;
+      expertise_axis?: string;
       references?: string[];
       reference_relation?: string;
       reference_source?: string;
