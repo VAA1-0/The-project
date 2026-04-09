@@ -3,22 +3,29 @@
 import React, { useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import type { VideoMetadata } from "@/lib/video-service";
+
+type LibraryVideo = VideoMetadata & {
+  tag?: string | null;
+  analysis?: unknown;
+};
 
 type Props = {
-  vid: any;
+  vid: LibraryVideo;
   onView: (id?: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, newName: string) => Promise<void> | void;
   onUpdateTag: (id: string, newTag: string) => Promise<void> | void;
+  showHeader?: boolean;
 };
 
 // VideoItem component representing a single video entry with actions in Video Library
 const VideoItem: React.FC<Props> = ({
   vid,
-  onView,
   onDelete,
   onRename,
   onUpdateTag,
+  showHeader = true,
 }) => {
   const [tagEdit, setTagEdit] = useState(false);
   const [tagValue, setTagValue] = useState<string>(vid.tag ?? "");
@@ -82,10 +89,10 @@ const VideoItem: React.FC<Props> = ({
             Cancel
           </Button>
         </div>
-      ) : (
+      ) : showHeader ? (
         <div>
           <div className="font-medium">{vid.name}</div>
-          <div className="text-xs text-slate-400">
+          <div className="text-xs text-[var(--ui-passive-text)]">
             {vid.analysis ? "Analyzed" : "Uploaded"}
             {vid.status === "pending" && (
               <span className="ml-2 text-yellow-300">• Pending</span>
@@ -98,7 +105,8 @@ const VideoItem: React.FC<Props> = ({
             )}
           </div>
         </div>
-      )}
+      ) : null
+      }
 
       <div className="flex gap-2">
         {tagEdit ? (
@@ -123,7 +131,7 @@ const VideoItem: React.FC<Props> = ({
 
             <Button
               size="sm"
-              className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="h-7 cursor-pointer text-[10px] text-slate-300 hover:bg-slate-800/50 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 onUpdateTag(vid.id, tagValue);
                 setTagEdit(false);
@@ -136,7 +144,7 @@ const VideoItem: React.FC<Props> = ({
             <Button
               size="sm"
               variant="ghost"
-              className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="h-7 cursor-pointer text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/50 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={() => {
                 setTagEdit(false);
                 setTagValue(vid.tag ?? "");
@@ -149,20 +157,20 @@ const VideoItem: React.FC<Props> = ({
         ) : (
           <Button
             variant="ghost"
-            className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="h-6 cursor-pointer px-2 text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/40 hover:text-slate-300 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             onClick={() => {
               setTagEdit(true);
               setTagValue(vid.tag ?? "");
             }}
             aria-label="Edit tag"
           >
-            Edit Tag
+            Tag
           </Button>
         )}
 
         <Button
           variant="ghost"
-          className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="h-6 cursor-pointer px-2 text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/40 hover:text-slate-300 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           onClick={() => {
             setRenameMode(true);
             setRenameValue(vid.name.replace(/\.[^.]+$/, ""));
@@ -178,7 +186,7 @@ const VideoItem: React.FC<Props> = ({
         </Button> */}
 
         <Button
-          className="cursor-pointer h-8 hover:bg-slate-700/40 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          className="h-6 cursor-pointer px-2 text-[10px] text-[var(--ui-passive-text)] hover:bg-slate-800/40 hover:text-red-300 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
           onClick={() => onDelete(vid.id)}
           variant="ghost"
           aria-label="Delete video"

@@ -1,6 +1,5 @@
 // src/frontend/app/api/upload/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate a unique ID for this analysis
-    const analysisId = `mock-${uuidv4()}`;
+    const analysisId = `mock-${crypto.randomUUID()}`;
     
     console.log('Mock upload received:', {
       filename: file.name,

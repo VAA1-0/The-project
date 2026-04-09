@@ -2,18 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "./ui/card";
-import { Separator } from "./ui/separator";
-import { GameRunLogo } from "./ProjectLogo";
-import { getCvatHealth, loginToCvat } from "@/cvat-api/client";
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { GameRunLogo } from "@/components/ProjectLogo";
+import { loginToCvat } from "@/cvat-api/client";
 
 const Play: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
@@ -35,10 +35,6 @@ const Brain: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
     />
   </svg>
 );
-
-interface LandingPageProps {
-  onAuthenticate: () => void;
-}
 
 export function LandingPage() {
   const router = useRouter();
@@ -189,7 +185,9 @@ export function LandingPage() {
                     type="email"
                     placeholder="Email address"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setEmail(e.target.value)
+                    }
                     className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400"
                     required
                   />
@@ -198,7 +196,9 @@ export function LandingPage() {
                     type="password"
                     placeholder="Password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setPassword(e.target.value)
+                    }
                     className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:placeholder:text-slate-400"
                     required
                   />

@@ -8,18 +8,17 @@ import { useParams, useRouter } from "next/navigation";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 
-import { Button } from "./ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
   CardDescription,
-} from "./ui/card";
-import { Separator } from "./ui/separator";
-import { Toggle } from "./ui/toggle";
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Toggle } from "@/components/ui/toggle";
 import { listJobs, listTasks } from "@/cvat-api/client";
-import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
 
 export default function AnalyzePage() {
   const { id } = useParams() as { id: string };
@@ -585,7 +584,6 @@ export default function AnalyzePage() {
           </Card>
         </aside>
       </div>
-      <AnalyzePageV2 />
     </div>
   );
 }

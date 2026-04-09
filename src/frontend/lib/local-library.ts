@@ -9,7 +9,7 @@ export interface VideoItem {
   name: string;
   length: number; // in seconds
   tag: string | null;
-  analysis: any; // placeholder now
+  analysis: unknown; // placeholder now
 }
 
 export interface FolderItem {
@@ -86,5 +86,9 @@ export const Library = {
     const state = load();
     state.folders = state.folders.filter(f => f.id !== id);
     save(state);
+  },
+
+  clearAll() {
+    save({ videos: [], folders: [] });
   },
 };

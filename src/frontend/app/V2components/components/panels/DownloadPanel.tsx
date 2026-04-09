@@ -28,6 +28,7 @@ import {
 
 interface DownloadFile {
   name: string;
+  shortName: string;
   type: string;
   downloadUrl: string;
   icon: React.ReactNode;
@@ -35,6 +36,11 @@ interface DownloadFile {
   available: boolean;
   size?: string;
 }
+
+const QUANT_MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
+const QUANT_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
+const POS_MATRIX_STORAGE_KEY = "vaa1.pos.matrix.sections";
+const POS_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const config = {
@@ -87,6 +93,23 @@ const formatTime = (seconds: number): string => {
   return parts.join(" ");
 };
 
+const starfleetNote = (status: any) => {
+  const summary = status?.summary || {};
+  const notes: string[] = [];
+
+  if (summary.audio_error) {
+    notes.push(`Audio channel note: ${summary.audio_error}`);
+  }
+  if (summary.pos_error) {
+    notes.push(`Linguistic station note: ${summary.pos_error}`);
+  }
+  if (summary.quan_error) {
+    notes.push(`Quant lens note: ${summary.quan_error}`);
+  }
+
+  return notes;
+};
+
 export default function DownloadPanel() {
   const [videoId, setVideoId] = useState("");
 
@@ -96,6 +119,7 @@ export default function DownloadPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [showDebug, setShowDebug] = useState(false);
+  const [projectAnalysisCount, setProjectAnalysisCount] = useState(0);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
@@ -115,6 +139,8 @@ export default function DownloadPanel() {
     const iconColors = {
       video: "text-blue-400",
       yolo_csv: "text-green-400",
+      tracked_objects_csv: "text-emerald-400",
+      tracked_objects_json: "text-emerald-400",
       ocr_csv: "text-purple-400",
       summary_json: "text-yellow-400",
       audio: "text-pink-400",
@@ -139,6 +165,42 @@ export default function DownloadPanel() {
     return <IconComponent className={`${className} ${colorClass}`} />;
   };
 
+  const getShortDownloadName = (fileType: string) => {
+    const shortNames: Record<string, string> = {
+      video: "Video",
+      yolo_csv: "Objects",
+      tracked_objects_csv: "Tracked Objects CSV",
+      tracked_objects_json: "Tracked Objects",
+      ocr_csv: "OCR",
+      summary_json: "Summary",
+      audio: "Audio",
+      transcript: "Transcript",
+      linked_transcript: "Time Bank Transcript",
+      time_bank_ocr: "Time Bank OCR",
+      time_bank_objects: "Time Bank Objects",
+      time_bank_expressions: "Time Bank Expressions",
+      pos_analysis: "POS",
+      quan_analysis: "Quant",
+      source_media_metadata_json: "Media Metadata",
+      source_media_metadata_csv: "Media Metadata CSV",
+      annotation_corrections: "Corrections",
+      pos_matrix: "POS Matrix",
+      quant_matrix: "Quant Matrix",
+      expression_json: "Expressions",
+      face_anonymization_manifest: "Face Manifest",
+    };
+
+    return shortNames[fileType] || getFileTypeConfig(fileType).name;
+  };
+
+  const getDownloadFileName = (baseName: string, fileType: string) => {
+    const config = getFileTypeConfig(fileType);
+    const shortName = getShortDownloadName(fileType)
+      .toLowerCase()
+      .replace(/\s+/g, "_");
+    return `${baseName}_${shortName}${config.extension}`;
+  };
+
   const loadAnalysisData = async () => {
     if (!videoId) {
       setAvailableFiles([]);
@@ -153,6 +215,16 @@ export default function DownloadPanel() {
     debugLog += `Video ID: ${videoId}\n`;
 
     try {
+      try {
+        const analyses = await VideoService.list(200);
+        setProjectAnalysisCount(
+          analyses.filter((analysis) => analysis.status === "completed").length,
+        );
+      } catch (projectError) {
+        console.warn("Failed to load project analysis count:", projectError);
+        setProjectAnalysisCount(0);
+      }
+
       // Try direct API call first (most reliable)
       debugLog += `\n1. Direct API call to FastAPI...\n`;
       debugLog += `   URL: http://localhost:8000/api/status/${videoId}\n`;
@@ -219,8 +291,8 @@ export default function DownloadPanel() {
         debugLog += `   Filename: ${apiStatus.filename}\n`;
         debugLog += `   Pipeline: ${apiStatus.pipeline_type}\n`;
 
-        // Build file list for ALL 6 expected file types
-        debugLog += `\n4. Building file list for all file types...\n`;
+        // Build file list for expected file types
+        debugLog += `\n4. Building file list...\n`;
         const files: DownloadFile[] = [];
         const downloadLinks = apiStatus.download_links || {};
 
@@ -235,9 +307,6 @@ export default function DownloadPanel() {
               apiStatus.pipeline_type?.includes(
                 fileType.includes("audio") ? "audio" : "visual",
               ));
-
-          console.log(isAvailable)
-
           if (isAvailable) {
             debugLog += `   ✅ ${fileType}: AVAILABLE\n`;
             const downloadUrl =
@@ -245,9 +314,8 @@ export default function DownloadPanel() {
 
             // Add file to the list with proper icon
             files.push({
-              name: `${baseName}_${config.name.replace(/\s+/g, "_")}${
-                config.extension
-              }`,
+              name: getDownloadFileName(baseName, fileType),
+              shortName: getShortDownloadName(fileType),
               type: fileType,
               downloadUrl: downloadUrl,
               icon: getFileIcon(fileType, "size-5"),
@@ -262,15 +330,22 @@ export default function DownloadPanel() {
             });
           } else {
             debugLog += `   ⚠️ ${fileType}: NOT AVAILABLE\n`;
+            const unavailableDescription =
+              fileType === "face_anonymization_manifest"
+                ? apiStatus.apply_face_anonymization
+                  ? "Face anonymization was engaged, but the manifest has not reported in yet"
+                  : "Available when face anonymization is engaged before analysis"
+                : apiStatus.status === "processing"
+                  ? "Generating after analysis completes"
+                  : "Not available in this analysis";
             files.push({
-              name: `${config.name} (Pending)`,
+              name: getDownloadFileName(baseName, fileType),
+              shortName: getShortDownloadName(fileType),
               type: fileType,
               downloadUrl: "",
               icon: getFileIcon(fileType, "size-5"),
-              description: `${config.description} - ${
-                apiStatus.status === "processing"
-                  ? "Will be generated when analysis completes"
-                  : "Not generated in this analysis"
+              description: `${unavailableDescription}${
+                config.description ? `. ${config.description}` : ""
               }`,
               available: false,
             });
@@ -301,7 +376,6 @@ export default function DownloadPanel() {
       setIsLoading(false);
       setRefreshing(false);
       setDebugInfo(debugLog);
-      console.log(debugLog);
     }
   };
 
@@ -409,18 +483,91 @@ export default function DownloadPanel() {
       return;
     }
 
-    if (!confirm(`Download ${downloadableFiles.length} file(s)?`)) return;
+    if (!confirm(`Download ${downloadableFiles.length} file(s) as one zip bundle?`))
+      return;
 
     try {
-      for (const file of downloadableFiles) {
-        await handleDownload(file.type, file.downloadUrl, file.name);
-        // Small delay between downloads
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-      alert(`Successfully downloaded ${downloadableFiles.length} file(s)!`);
+      await handleDownload(
+        "bundle",
+        `/api/download-bundle/${videoId}`,
+        `${videoId}_analysis_bundle.zip`,
+      );
+      alert(`Successfully downloaded ${downloadableFiles.length} file(s) as one bundle!`);
     } catch (error) {
       console.error("Batch download failed:", error);
       alert("Failed to download files. Please try again.");
+    }
+  };
+
+  const buildProjectPayload = async () => {
+    const analyses = await VideoService.list(200);
+    const completedAnalyses = analyses
+      .filter((analysis) => analysis.status === "completed")
+      .map((analysis) => analysis.id);
+
+    const quantMatrixSections = (() => {
+      try {
+        const stored = window.localStorage.getItem(QUANT_MATRIX_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const quantMatrixAnalyses = (() => {
+      try {
+        const stored = window.localStorage.getItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const posMatrixSections = (() => {
+      try {
+        const stored = window.localStorage.getItem(POS_MATRIX_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const posMatrixAnalyses = (() => {
+      try {
+        const stored = window.localStorage.getItem(POS_MATRIX_ANALYSES_STORAGE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    return {
+      project_name: "vaa1_project",
+      analysis_ids: completedAnalyses,
+      matrices: {
+        pos: {
+          selected_sections: posMatrixSections,
+          analysis_ids: posMatrixAnalyses,
+        },
+        quant: {
+          selected_sections: quantMatrixSections,
+          analysis_ids: quantMatrixAnalyses,
+        },
+      },
+    };
+  };
+
+  const handleDownloadProject = async () => {
+    try {
+      const payload = await buildProjectPayload();
+      if (!Array.isArray(payload.analysis_ids) || payload.analysis_ids.length === 0) {
+        alert("There are no completed analyses yet to save as a project.");
+        return;
+      }
+      await VideoService.exportProjectBundle(payload, "vaa1_project_bundle.zip");
+    } catch (error) {
+      console.error("Project bundle download failed:", error);
+      alert("Failed to download the whole project bundle.");
     }
   };
 
@@ -435,14 +582,14 @@ export default function DownloadPanel() {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="h-full flex flex-col bg-[#1a1a1a]">
-        <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
           <div>
-            <h2 className="text-m font-semibold text-slate-300">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
               Download Results
             </h2>
             {videoId && (
-              <div className="text-xs text-slate-500 mt-1">
-                Video ID:{" "}
+              <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
+                Session{" "}
                 <span className="font-mono">{videoId.substring(0, 8)}...</span>
               </div>
             )}
@@ -481,15 +628,30 @@ export default function DownloadPanel() {
                 </TooltipContent>
               </Tooltip>
             )}
+            {showDebug && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowDebug(false)}
+                    className="px-2 py-1 text-xs rounded border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                  >
+                    Hide Debug
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Hide debug info</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
             {getAvailableFileCount() > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleDownloadAll}
-                    className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 transition-colors disabled:opacity-50"
+                    className="px-2 py-1 text-[10px] bg-slate-800 hover:bg-slate-700 rounded flex items-center gap-1.5 transition-colors disabled:opacity-50 text-slate-300"
                     disabled={getAvailableFileCount() === 0}
                   >
-                    <Download className="size-4" />
+                    <Download className="size-3.5" />
                     Download All ({getAvailableFileCount()})
                   </button>
                 </TooltipTrigger>
@@ -502,16 +664,16 @@ export default function DownloadPanel() {
         </div>
 
         {analysisStatus && (
-          <div className="px-4 py-3 border-b border-slate-700 bg-slate-900/50">
+          <div className="px-3 py-2 border-b border-slate-800 bg-slate-900/40">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <StatusBadge status={analysisStatus.status} />
-                <span className="text-xs text-slate-300 truncate max-w-xs">
+                <span className="text-[11px] text-slate-400 truncate max-w-xs">
                   {analysisStatus.filename}
                 </span>
               </div>
               {analysisStatus.progress !== undefined && (
-                <span className="text-xs font-medium text-slate-300">
+                <span className="text-[11px] font-medium text-slate-400">
                   {analysisStatus.progress}%
                 </span>
               )}
@@ -523,17 +685,17 @@ export default function DownloadPanel() {
                   <span>Analysis in progress...</span>
                   <span>{analysisStatus.progress}%</span>
                 </div>
-                <div className="w-full bg-slate-700 rounded-full h-2">
+                <div className="w-full bg-slate-800/90 rounded-full h-2">
                   <div
-                    className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                    className="bg-slate-500 h-2 rounded-full transition-all duration-500"
                     style={{ width: `${analysisStatus.progress || 0}%` }}
                   />
                 </div>
               </div>
             )}
 
-            <div className="flex items-center justify-between mt-3 text-xs">
-              <div className="text-slate-400">
+            <div className="flex items-center justify-between mt-3 text-[11px]">
+              <div className="text-[var(--ui-passive-text)]">
                 {getAvailableFileCount()} of {getTotalFileCount()} files ready
               </div>
 
@@ -548,7 +710,7 @@ export default function DownloadPanel() {
                 )}
               </div>
               */}
-              <div className="flex items-center gap-3 text-slate-500">
+              <div className="flex items-center gap-3 text-[var(--ui-passive-text)]">
                 {analysisStatus.pipeline_type && (
                   <span>Pipeline: {analysisStatus.pipeline_type}</span>
                 )}
@@ -598,12 +760,18 @@ export default function DownloadPanel() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div
+          className="download-panel-scroll flex-1 overflow-y-auto p-3"
+          style={{
+            scrollbarColor: "#3a3a3a #141414",
+            scrollbarWidth: "thin",
+          }}
+        >
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-64">
               <Loader2 className="size-8 text-slate-400 animate-spin mb-4" />
               <div className="text-slate-400">Loading analysis data...</div>
-              <div className="text-xs text-slate-500 mt-2">
+              <div className="mt-2 text-xs text-[var(--ui-passive-text)]">
                 Connecting to FastAPI backend...
               </div>
             </div>
@@ -613,7 +781,7 @@ export default function DownloadPanel() {
               <div className="text-slate-400 text-lg mb-2">
                 No Video Selected
               </div>
-              <div className="text-slate-500 text-sm text-center max-w-xs">
+              <div className="max-w-xs text-center text-sm text-[var(--ui-passive-text)]">
                 Select a video from the Project Panel to view and download
                 analysis results
               </div>
@@ -622,10 +790,11 @@ export default function DownloadPanel() {
             <div className="flex flex-col items-center justify-center h-64 p-4">
               <AlertCircle className="size-12 text-red-400 mb-4" />
               <div className="text-slate-300 text-lg mb-2 text-center">
-                Analysis Error
+                Red Alert
               </div>
               <div className="text-sm text-slate-400 text-center mb-4">
-                {analysisStatus.error || "An error occurred during analysis"}
+                {analysisStatus.error ||
+                  "A critical subsystem went offline during the mission."}
               </div>
               <button
                 onClick={handleRefresh}
@@ -640,26 +809,30 @@ export default function DownloadPanel() {
               <Clock className="size-12 text-yellow-400 mb-4 animate-pulse" />
               <div className="text-slate-300 text-lg mb-2">
                 {analysisStatus?.status === "processing"
-                  ? "Analysis in Progress..."
-                  : "Analysis Not Complete"}
+                  ? "Mission in Progress"
+                  : "Mission Awaiting Completion"}
               </div>
-              <div className="text-sm text-slate-500 text-center max-w-sm">
+              <div className="max-w-sm text-center text-sm text-[var(--ui-passive-text)]">
                 {analysisStatus?.progress !== undefined && (
                   <div className="mb-3">
                     <div className="text-slate-300 font-medium mb-1">
                       {analysisStatus.progress}% complete
                     </div>
-                    <div className="w-48 bg-slate-700 rounded-full h-2">
+                    {analysisStatus?.mission_message && (
+                      <div className="text-xs text-slate-400 mb-2">
+                        {analysisStatus.mission_message}
+                      </div>
+                    )}
+                    <div className="w-48 bg-slate-800/90 rounded-full h-2">
                       <div
-                        className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                        className="bg-slate-500 h-2 rounded-full transition-all duration-500"
                         style={{ width: `${analysisStatus.progress}%` }}
                       />
                     </div>
                   </div>
                 )}
                 <p className="mb-2">
-                  All {getTotalFileCount()} file types will be generated when
-                  analysis completes:
+                  Results will appear here as they become available:
                 </p>
                 <div className="grid grid-cols-2 gap-1 text-xs">
                   {API_CONFIG.EXPECTED_FILE_TYPES.map((type, idx) => (
@@ -668,21 +841,70 @@ export default function DownloadPanel() {
                       className="text-slate-400 flex items-center gap-1"
                     >
                       <div className="size-2 rounded-full bg-blue-500/50"></div>
-                      {getFileTypeConfig(type).name}
+                      {getShortDownloadName(type)}
                     </div>
                   ))}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/25 p-3">
+                <div className="text-xs uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
+                  Whole Project
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-300">
+                      Full project bundle
+                    </div>
+                    <div className="mt-1 text-[11px] leading-5 text-[var(--ui-passive-text)]">
+                      Saves all completed analyses together with the current matrix state as one project package.
+                    </div>
+                    <div className="mt-2 text-[11px] text-[var(--ui-passive-text)]">
+                      Completed analyses in project: {projectAnalysisCount}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleDownloadProject}
+                    className="shrink-0 rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    disabled={projectAnalysisCount === 0}
+                  >
+                    Download Project
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-900/25 p-3">
+                <div className="text-xs uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
+                  Per Analysed Video
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-300">
+                      Current video bundle
+                    </div>
+                    <div className="mt-1 text-[11px] leading-5 text-[var(--ui-passive-text)]">
+                      Saves the current analysed video and its available result files as one package.
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleDownloadAll}
+                    className="shrink-0 rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    disabled={getAvailableFileCount() === 0}
+                  >
+                    Download Video Bundle
+                  </button>
+                </div>
+              </div>
+
               {availableFiles.map((file, index) => (
                 <div
                   key={index}
-                  className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
+                  className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
                     file.available
-                      ? "border-slate-700 hover:bg-slate-800/50 hover:border-slate-600 cursor-pointer group"
-                      : "border-slate-800 opacity-60 cursor-not-allowed"
+                      ? "border-slate-800 hover:bg-slate-800/35 hover:border-slate-700 cursor-pointer group"
+                      : "border-slate-900 opacity-60 cursor-not-allowed"
                   }`}
                   onClick={() =>
                     file.available &&
@@ -690,57 +912,61 @@ export default function DownloadPanel() {
                   }
                 >
                   <div
-                    className={`shrink-0 p-3 rounded-lg ${
+                    className={`shrink-0 p-2.5 rounded-lg ${
                       file.available
-                        ? "bg-slate-800 group-hover:bg-slate-700"
-                        : "bg-slate-900"
+                        ? "bg-slate-900/80 group-hover:bg-slate-800"
+                        : "bg-slate-950"
                     }`}
                   >
                     {file.icon}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1 text-xs flex-wrap">
+                    <div className="flex items-center justify-between mb-1 text-[11px] flex-wrap">
                       <div
-                        className={`font-medium truncate ${
+                        className={`font-medium truncate text-[11px] ${
                           file.available
-                            ? "text-slate-300 group-hover:text-white"
-                            : "text-slate-500"
+                            ? "text-slate-400 group-hover:text-slate-200"
+                            : "text-[var(--ui-passive-text)]"
                         }`}
                       >
-                        {file.name}
+                        {file.shortName}
                       </div>
                       <span
                         className={`text-xs px-2 py-1 rounded ${
                           file.available
                             ? "text-green-400 bg-green-500/10"
-                            : "text-slate-600 bg-slate-900/50"
+                            : "text-[var(--ui-passive-text)] bg-slate-900/50"
                         }`}
                       >
                         {file.available ? "Ready" : "Pending"}
                       </span>
                     </div>
-                    <div className="text-xs text-slate-500 mb-1">
-                      {file.description}
+                    <div className="mb-1 text-[11px] leading-5 text-[var(--ui-passive-text)] line-clamp-2">
+                      {file.available
+                        ? file.description
+                        : `Stand by. ${file.description}`}
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-600">
-                      <span className="font-mono">{file.type}</span>
+                    <div className="flex items-center gap-3 text-[11px] text-slate-700">
+                      {file.available && (
+                        <span className="font-mono truncate">{file.name}</span>
+                      )}
                       {file.size && <span>• {file.size}</span>}
                     </div>
                   </div>
                   {file.available ? (
                     <button
-                      className="p-3 hover:bg-slate-700 rounded-lg transition-all shrink-0 group-hover:bg-blue-600/20"
+                      className="p-2 hover:bg-slate-800 rounded-lg transition-all shrink-0 group-hover:bg-blue-600/10"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDownload(file.type, file.downloadUrl, file.name);
                       }}
-                      title={`Download ${file.name}`}
+                      title={`Download ${file.shortName}`}
                     >
                       <Download className="size-5 text-blue-400 group-hover:text-blue-300" />
                     </button>
                   ) : (
-                    <div className="text-xs text-slate-500 italic px-3 py-2 border border-slate-700 rounded">
-                      Not generated
+                    <div className="px-3 py-2 text-[11px] italic text-[var(--ui-passive-text)] border border-slate-800 rounded">
+                      Not yet on channel
                     </div>
                   )}
                 </div>
@@ -750,24 +976,24 @@ export default function DownloadPanel() {
                 <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
                   <h4 className="text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
                     <AlertCircle className="size-4 text-yellow-500" />
-                    Some files not generated
+                    Some stations are still offline
                   </h4>
                   <p className="text-xs text-slate-400 mb-3">
-                    Not all expected files were generated. This could be
-                    because:
+                    This can happen when a subsystem is still running, was not
+                    part of the selected mission profile, or did not return a report.
                   </p>
-                  <ul className="text-xs text-slate-500 space-y-1">
-                    <li>
-                      • The analysis pipeline type didn't include all modules
-                    </li>
-                    <li>
-                      • Certain analysis steps failed (check backend logs)
-                    </li>
-                    <li>
-                      • The video didn't contain content for all analysis types
-                    </li>
-                    <li>• Backend processing is still in progress</li>
+                  <ul className="space-y-1 text-xs text-[var(--ui-passive-text)]">
+                    <li>• visual and audio branches may not both be engaged</li>
+                    <li>• some outputs are optional, including face manifests</li>
+                    <li>• mission telemetry may still be arriving</li>
                   </ul>
+                  {starfleetNote(analysisStatus).length > 0 && (
+                    <div className="mt-3 rounded border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
+                      {starfleetNote(analysisStatus).map((note) => (
+                        <div key={note}>{note}</div>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-3 pt-3 border-t border-slate-700">
                     <button
                       onClick={() =>
@@ -775,13 +1001,13 @@ export default function DownloadPanel() {
                       }
                       className="text-xs text-blue-400 hover:text-blue-300"
                     >
-                      Check FastAPI Docs →
+                      Open Captain&apos;s Reference →
                     </button>
                   </div>
                 </div>
               )}
 
-              <div className="text-xs text-slate-500 pt-4 border-t border-slate-700">
+              <div className="border-t border-slate-700 pt-4 text-xs text-[var(--ui-passive-text)]">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="size-2 rounded-full bg-green-500"></div>

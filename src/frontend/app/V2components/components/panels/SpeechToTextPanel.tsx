@@ -3,6 +3,16 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
+import {
+  broadcastAnalysisCorrectionRefresh,
+  buildDropCorrectionRule,
+  canUndoCorrectionSnapshot,
+  buildCorrectionRule,
+  createEmptyCorrections,
+  mergeCorrectionRule,
+  pushCorrectionSnapshot,
+  undoLastCorrectionSnapshot,
+} from "@/lib/annotation-corrections";
 
 import {
   Download,
@@ -10,6 +20,7 @@ import {
   MoreHorizontal,
   ChevronDown,
   ChevronRight,
+  RotateCcw,
 } from "lucide-react";
 
 import {
@@ -19,8 +30,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export default function SpeechToTextPanel() {
-  const [videoId, setVideoId] = useState("");
+export default function SpeechToTextPanel({
+  videoId: initialVideoId = "",
+  panelMode = "transcript",
+}: {
+  videoId?: string;
+  panelMode?: "transcript" | "audio";
+}) {
+  const [videoId, setVideoId] = useState(initialVideoId);
 
   // Event bus video time line state
   const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
@@ -32,21 +49,36 @@ export default function SpeechToTextPanel() {
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [selectedWord, setSelectedWord] = useState<string>("");
 
   // State for show/hide summary
   const [showSummary, setShowSummary] = useState(true);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
+    if (initialVideoId) {
+      setVideoId(initialVideoId);
+    }
+  }, [initialVideoId]);
+
+  useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
+    const correctionHandler = (id: string) => {
+      if (id === videoId) {
+        setRefreshNonce((current) => current + 1);
+      }
+    };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("analysisCorrectionsChanged", correctionHandler);
 
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
-  }, []);
+  }, [videoId]);
 
   useEffect(() => {
     async function load() {
@@ -100,10 +132,17 @@ export default function SpeechToTextPanel() {
       }
     }
     load();
-  }, [videoId]);
+  }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcript ?? [];
+  const audioProsody = analysisData?.audioProsody ?? [];
+  const transcriptMissionNote =
+    metadata?.missionMessage ||
+    analysisData?.metadata?.audioError ||
+    analysisData?.metadata?.audioProsodyError ||
+    analysisData?.metadata?.posError ||
+    analysisData?.metadata?.quantError;
 
   /* Mock transcript data for demonstration */
   /*
@@ -421,14 +460,122 @@ export default function SpeechToTextPanel() {
   ];
   */
 
-  const detectedObjects = analysisData?.detectedObjects ?? [];
   const summaryText = analysisData?.summary ?? "…";
+  const isAudioMode = panelMode === "audio";
+  const prosodySectionClass = isAudioMode
+    ? "shrink min-h-[220px] max-h-[58%] overflow-y-auto space-y-2 pr-2 mb-4"
+    : "shrink-0 max-h-40 overflow-y-auto space-y-2 pr-2 mb-4";
+  const transcriptSectionClass = isAudioMode
+    ? "min-h-[140px] max-h-[34%] overflow-y-auto space-y-2 pr-2"
+    : "flex-1 overflow-y-auto space-y-2 pr-2";
+
+  const saveTextCorrection = async (rawValue: string) => {
+    if (!videoId || !rawValue) {
+      return;
+    }
+    const correctedValue = window.prompt("Correct transcript word/spelling:", rawValue);
+    if (!correctedValue || correctedValue.trim() === rawValue.trim()) {
+      return;
+    }
+    const nextCorrections = mergeCorrectionRule(
+      analysisData?.annotationCorrections,
+      buildCorrectionRule("text", rawValue, correctedValue.trim()),
+    );
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedWord("");
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const saveTranscriptSpanCorrection = async (row: any) => {
+    if (!videoId) {
+      return;
+    }
+    const rawText = String(row?.rawText || row?.text || "").trim();
+    if (!rawText) {
+      return;
+    }
+    const correctedValue = window.prompt("Correct transcript span:", rawText);
+    if (!correctedValue || correctedValue.trim() === rawText) {
+      return;
+    }
+    const nextCorrections = mergeCorrectionRule(
+      analysisData?.annotationCorrections,
+      buildCorrectionRule("text", rawText, correctedValue.trim()),
+    );
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedWord("");
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const dropTextCorrection = async (rawValue: string) => {
+    if (!videoId || !rawValue) {
+      return;
+    }
+    const confirmed = window.confirm(`Drop transcript word "${rawValue}" from surfaced views?`);
+    if (!confirmed) {
+      return;
+    }
+    const nextCorrections = mergeCorrectionRule(
+      analysisData?.annotationCorrections,
+      buildDropCorrectionRule("text", rawValue),
+    );
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedWord("");
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const undoLastCorrection = async () => {
+    if (!videoId) {
+      return;
+    }
+    const restored = undoLastCorrectionSnapshot(videoId);
+    if (restored === null && !analysisData?.annotationCorrections) {
+      return;
+    }
+    const nextCorrections =
+      restored || createEmptyCorrections(analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedWord("");
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const canUndo = canUndoCorrectionSnapshot(videoId);
 
   return (
     <TooltipProvider delayDuration={200}>
       <main className="h-full flex flex-col overflow-hidden">
-        <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
-          video Id: {videoId}
+        <div className="text-xs text-slate-400 px-3 py-2 shrink-0 flex items-center justify-between gap-3">
+          <span>video Id: {videoId}</span>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void undoLastCorrection();
+                  }}
+                  disabled={!canUndo}
+                  className="p-1 hover:bg-[#2a2a2a] rounded disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <RotateCcw className="size-3.5 text-[#b8b8b8]" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Undo last correction</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* SUMMARY */}
@@ -465,12 +612,122 @@ export default function SpeechToTextPanel() {
           {/* Scrollable list container: flexible height with vertical scrolling */}
           <div className="min-h-0 px-3 flex flex-col">
             <div className="text-sm font-semibold mb-2 shrink-0">
-              Speech to Text:
+              Audio Prosody:
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+            <div className={prosodySectionClass}>
+              {audioProsody.length === 0 ? (
+                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-400 text-xs">
+                  No prosody cues on channel yet.
+                </div>
+              ) : (
+                audioProsody.slice(0, 8).map((cue: any) => (
+                  <div
+                    key={cue.cue_id || `${cue.start}-${cue.end}`}
+                    className="p-3 bg-slate-700/20 rounded-lg cursor-pointer hover:bg-slate-700/35 transition-colors"
+                    onClick={() => {
+                      eventBus.emit("videoTimeLineChanged", cue.start);
+                    }}
+                  >
+                    <div className="text-[11px] text-amber-300">
+                      {cue.start}s ~ {cue.end}s
+                    </div>
+                    <div className="text-xs text-slate-300 mt-1">
+                      Pace: {cue.pace?.label || "n/a"}
+                      {typeof cue.pace?.words_per_second === "number"
+                        ? ` • ${cue.pace.words_per_second.toFixed(2)} w/s`
+                        : ""}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Pause: {cue.pauses?.before_label || "n/a"} before
+                      {typeof cue.pauses?.before_seconds === "number"
+                        ? ` (${cue.pauses.before_seconds.toFixed(2)}s)`
+                        : ""}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Turn: {cue.turn_structure?.transition || "n/a"}
+                      {cue.turn_structure?.likely_turn_boundary
+                        ? " • likely boundary"
+                        : ""}
+                      {cue.turn_structure?.overlap_cue
+                        ? ` • overlap ${cue.turn_structure.overlap_seconds?.toFixed(2)}s`
+                        : ""}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Role support: {cue.interaction_cues?.role_support || "n/a"}
+                      {typeof cue.interaction_cues?.run_length === "number"
+                        ? ` • run ${cue.interaction_cues.run_position || 1}/${cue.interaction_cues.run_length}`
+                        : ""}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Rhythm: {cue.rhythm_profile?.label || "n/a"}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Tonality: {cue.tonality_profile?.label || "n/a"}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Environment: {cue.sound_environment?.label || "n/a"}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Emphasis: {cue.emphasis?.label || "n/a"}
+                      {typeof cue.emphasis?.score === "number"
+                        ? ` • ${Math.round(cue.emphasis.score * 100)}%`
+                        : ""}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Contour: {cue.pitch_energy_contour?.label || "n/a"}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="text-sm font-semibold mb-2 shrink-0">
+              {isAudioMode ? "Transcript Support:" : "Speech to Text:"}
+            </div>
+            {selectedWord ? (
+              <div className="mb-2 shrink-0 rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-slate-300">
+                    Selected word: <span className="font-medium text-slate-100">{selectedWord}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void saveTextCorrection(selectedWord);
+                      }}
+                      className="rounded bg-slate-800/70 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-700/80 hover:text-slate-50"
+                    >
+                      Correct
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void dropTextCorrection(selectedWord);
+                      }}
+                      className="rounded bg-rose-900/40 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                    >
+                      Drop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWord("")}
+                      className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className={transcriptSectionClass}>
               {transcript.length === 0 ? (
                 <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
-                  No speech to text detected
+                  <div>No transcript on channel yet.</div>
+                  {transcriptMissionNote && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      {transcriptMissionNote}
+                    </div>
+                  )}
                 </div>
               ) : (
                 transcript.map((row: any) => (
@@ -483,10 +740,56 @@ export default function SpeechToTextPanel() {
                       console.log("Seeking video to", row.start);
                     }}
                   >
-                    <div className="text-xs text-cyan-300">
-                      {row.start}s ~ {row.end}s
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-cyan-300">
+                        {row.start}s ~ {row.end}s
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void saveTranscriptSpanCorrection(row);
+                        }}
+                        className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
+                        title="Correct this whole transcript span"
+                      >
+                        Correct span
+                      </button>
                     </div>
-                    <div className="text-sm text-slate-200">{row.text}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {String(row.text || "")
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .map((word: string, index: number) => (
+                          (() => {
+                            const cleanedWord = word.replace(
+                              /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,
+                              "",
+                            );
+                            const isSelected = cleanedWord && cleanedWord === selectedWord;
+                            return (
+                          <button
+                            key={`${row.start}-${word}-${index}`}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (cleanedWord) {
+                                setSelectedWord(cleanedWord);
+                              }
+                            }}
+                            className={`rounded px-1 py-0.5 text-sm hover:bg-slate-700/60 hover:text-slate-50 ${
+                              isSelected
+                                ? "bg-cyan-900/40 text-cyan-100"
+                                : "text-slate-200"
+                            }`}
+                            title="Click to select this word for correction or drop."
+                          >
+                            {word}
+                          </button>
+                            );
+                          })()
+                        ))}
+                    </div>
                   </div>
                 ))
               )}

@@ -1,10 +1,21 @@
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-import { VideoService } from "@/lib/video-service";
-import { getVideoBlob } from "@/lib/blob-store";
+import { VideoService, groupDetectedObjectsForDisplay } from "@/lib/video-service";
+import { getVideoBlob, saveVideoBlob } from "@/lib/blob-store";
+import {
+  broadcastAnalysisCorrectionRefresh,
+  canUndoCorrectionSnapshot,
+  buildCorrectionRule,
+  buildDropCorrectionRule,
+  createEmptyCorrections,
+  mergeCorrectionRule,
+  pushCorrectionSnapshot,
+  removeCorrectionRule,
+  undoLastCorrectionSnapshot,
+} from "@/lib/annotation-corrections";
 
-import { Download, Search, MoreHorizontal } from "lucide-react";
+import { Download, Search, MoreHorizontal, RotateCcw } from "lucide-react";
 
 import {
   Tooltip,
@@ -26,18 +37,26 @@ export default function OBJDetectionPanel() {
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
+    const correctionHandler = (id: string) => {
+      if (id === videoId) {
+        setRefreshNonce((current) => current + 1);
+      }
+    };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("analysisCorrectionsChanged", correctionHandler);
 
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
-  }, []);
+  }, [videoId]);
 
   useEffect(() => {
     async function load() {
@@ -63,6 +82,9 @@ export default function OBJDetectionPanel() {
         if (!blob) {
           // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
           blob = await VideoService.getBlob(videoId);
+          if (blob) {
+            await saveVideoBlob(videoId, blob);
+          }
         }
         if (blob) {
           if (lastObjectUrl.current) {
@@ -91,22 +113,187 @@ export default function OBJDetectionPanel() {
       }
     }
     load();
-  }, [videoId]);
+  }, [videoId, refreshNonce]);
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
+  const groupedObjects = [...groupDetectedObjectsForDisplay(detectedObjects)].sort(
+    (left: any, right: any) => {
+      const leftStart = left.startTimestamp ?? left.timestamp ?? 0;
+      const rightStart = right.startTimestamp ?? right.timestamp ?? 0;
+      if (leftStart !== rightStart) {
+        return leftStart - rightStart;
+      }
+
+      const leftEnd = left.endTimestamp ?? left.timestamp ?? 0;
+      const rightEnd = right.endTimestamp ?? right.timestamp ?? 0;
+      if (leftEnd !== rightEnd) {
+        return leftEnd - rightEnd;
+      }
+
+      const leftTrack = left.trackId ?? Number.MAX_SAFE_INTEGER;
+      const rightTrack = right.trackId ?? Number.MAX_SAFE_INTEGER;
+      if (leftTrack !== rightTrack) {
+        return leftTrack - rightTrack;
+      }
+
+      return String(left.displayLabel || left.class_name || "").localeCompare(
+        String(right.displayLabel || right.class_name || ""),
+      );
+    },
+  );
   const summaryText = analysisData?.summary ?? "…";
+
+  const saveObjectCorrection = async (obj: any) => {
+    const rawValue = obj?.raw_class_name || obj?.class_name || obj?.displayLabel;
+    if (!videoId || !rawValue) {
+      return;
+    }
+    const suggested = Array.from(
+      new Set(
+        groupedObjects
+          .map((item: any) => item.raw_class_name || item.class_name || item.displayLabel)
+          .filter(Boolean),
+      ),
+    )
+      .sort()
+      .slice(0, 12);
+    const correctedValue = window.prompt(
+      `Correct object label:\n${rawValue}\n\nLikely labels: ${suggested.join(", ")}`,
+      rawValue,
+    );
+    if (!correctedValue || correctedValue.trim() === rawValue.trim()) {
+      return;
+    }
+    const existingCorrections = analysisData?.annotationCorrections;
+    const filteredOverrides = (existingCorrections?.label_overrides || []).filter(
+      (rule: any) =>
+        !(
+          rule?.modality === "object" &&
+          String(rule?.raw_value || "").trim().toLowerCase() ===
+            rawValue.trim().toLowerCase() &&
+          rule?.target_timestamp === undefined &&
+          rule?.target_start_timestamp === undefined &&
+          rule?.target_end_timestamp === undefined &&
+          rule?.target_track_id === undefined
+        ),
+    );
+    const nextCorrections = mergeCorrectionRule(
+      {
+        ...(existingCorrections || {}),
+        label_overrides: filteredOverrides,
+      },
+      buildCorrectionRule("object", rawValue, correctedValue.trim(), "", {
+        targetTimestamp: obj.timestamp,
+        targetStartTimestamp: obj.startTimestamp ?? obj.timestamp,
+        targetEndTimestamp: obj.endTimestamp ?? obj.timestamp,
+        targetTrackId: obj.trackId,
+      }),
+    );
+    pushCorrectionSnapshot(videoId, existingCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const revertObjectCorrection = async (obj: any) => {
+    if (!videoId) {
+      return;
+    }
+    const rawValue = obj?.raw_class_name || obj?.class_name || obj?.displayLabel;
+    const scopedRuleId = buildCorrectionRule("object", rawValue, "__revert__", "", {
+      targetTimestamp: obj.timestamp,
+      targetStartTimestamp: obj.startTimestamp ?? obj.timestamp,
+      targetEndTimestamp: obj.endTimestamp ?? obj.timestamp,
+      targetTrackId: obj.trackId,
+    }).id;
+    let nextCorrections = removeCorrectionRule(
+      analysisData?.annotationCorrections,
+      scopedRuleId,
+    );
+    for (const rule of analysisData?.annotationCorrections?.label_overrides || []) {
+      if (
+        rule?.modality === "object" &&
+        String(rule?.raw_value || "").trim().toLowerCase() ===
+          String(rawValue).trim().toLowerCase() &&
+        (rule?.target_track_id === undefined ||
+          Number(rule.target_track_id) === Number(obj.trackId))
+      ) {
+        nextCorrections = removeCorrectionRule(nextCorrections, rule.id);
+      }
+    }
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const dropObjectDetection = async (obj: any) => {
+    if (!videoId) {
+      return;
+    }
+    const rawValue = obj?.raw_class_name || obj?.class_name || obj?.displayLabel;
+    const nextCorrections = mergeCorrectionRule(
+      analysisData?.annotationCorrections,
+      buildDropCorrectionRule("object", rawValue, {
+        targetTimestamp: obj.timestamp,
+        targetStartTimestamp: obj.startTimestamp ?? obj.timestamp,
+        targetEndTimestamp: obj.endTimestamp ?? obj.timestamp,
+        targetTrackId: obj.trackId,
+      }),
+    );
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const undoLastCorrection = async () => {
+    if (!videoId) {
+      return;
+    }
+    const restored = undoLastCorrectionSnapshot(videoId);
+    if (restored === null && !analysisData?.annotationCorrections) {
+      return;
+    }
+    const nextCorrections =
+      restored || createEmptyCorrections(analysisData?.annotationCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const canUndo = canUndoCorrectionSnapshot(videoId);
 
   return (
     <TooltipProvider delayDuration={200}>
       <main className="h-full flex flex-col overflow-hidden">
-        <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
-          video Id: {videoId}
-        </div>
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
           <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
-            <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
+            <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
+              Objects
+            </span>
             <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void undoLastCorrection();
+                    }}
+                    disabled={!canUndo}
+                    className="p-1 hover:bg-[#2a2a2a] rounded disabled:opacity-40 disabled:hover:bg-transparent"
+                  >
+                    <RotateCcw className="size-3.5 text-[#b8b8b8]" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Undo last correction</p>
+                </TooltipContent>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button className="p-1 hover:bg-[#2a2a2a] rounded">
@@ -129,35 +316,127 @@ export default function OBJDetectionPanel() {
               </Tooltip>
             </div>
           </div>
-          {/* Detected Objects */}
-          {/* Scrollable list container: flexible height with vertical scrolling */}
           <div className="flex-1 min-h-0 px-3 pb-3 flex flex-col">
-            <div className="text-sm font-semibold mb-2 shrink-0">
-              Detected Objects:
+            <div className="mb-2 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
+              Detected objects
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-              {detectedObjects.length === 0 ? (
-                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-2">
+              {groupedObjects.length === 0 ? (
+                <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
                   No detected objects
                 </div>
               ) : (
-                detectedObjects.map((obj: any, idx: number) => (
+                groupedObjects.map((obj: any, idx: number) => (
                   <div
                     key={`${obj.class_name}-${idx}`}
-                    className="p-3 rounded-lg bg-slate-700/30 cursor-pointer hover:bg-slate-700/50"
-                    // Click to seek video to object timestamp
+                    className="cursor-pointer rounded border border-slate-800 bg-slate-950/20 px-3 py-2 transition hover:bg-slate-900/35"
                     onClick={() => {
-                      eventBus.emit("videoTimeLineChanged", obj.timestamp);
-                      console.log("Seeking video to", obj.timestamp);
+                      const cueTime =
+                        obj.startTimestamp ?? obj.timestamp ?? 0;
+                      eventBus.emit("videoTimeLineChanged", cueTime);
+                      console.log("Seeking video to", cueTime);
                     }}
                   >
-                    <div className="flex justify-between text-white">
-                      <span>{obj.class_name}</span>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="truncate text-[11px] text-slate-200">
+                        {obj.displayLabel || obj.class_name}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void saveObjectCorrection(obj);
+                          }}
+                          className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
+                        >
+                          Correct
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void dropObjectDetection(obj);
+                          }}
+                          className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                        >
+                          Drop
+                        </button>
+                        <span className="text-[10px] text-[var(--ui-passive-text)]">
+                          {(obj.confidence * 100).toFixed(1)}%
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-400">
-                      Seen at {obj.timestamp.toFixed(2)}s{" • "}Confidence:{" "}
-                      {(obj.confidence * 100).toFixed(2)}%
+                    {obj.raw_class_name &&
+                      (obj.displayLabel || obj.class_name) &&
+                      !String(obj.displayLabel || obj.class_name)
+                        .toLowerCase()
+                        .startsWith(String(obj.raw_class_name).toLowerCase()) && (
+                        <div className="mt-1 text-[10px] text-amber-300/90">
+                          Raw label: {obj.raw_class_name}
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void revertObjectCorrection(obj);
+                            }}
+                            className="ml-2 rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
+                          >
+                            Revert
+                          </button>
+                        </div>
+                      )}
+                    <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                      Seen {(obj.startTimestamp ?? obj.timestamp).toFixed(2)}s
+                      {obj.endTimestamp !== undefined &&
+                        obj.endTimestamp !== obj.startTimestamp &&
+                        ` - ${obj.endTimestamp.toFixed(2)}s`}
+                      {" • "}
+                      {obj.occurrenceCount && obj.occurrenceCount > 1
+                        ? `${obj.occurrenceCount} detections grouped`
+                        : ""}
                     </div>
+                    {obj.screenPresenceProfile && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        {obj.screenPresenceProfile.tier === "primary"
+                          ? "Primary on-screen agent"
+                          : obj.screenPresenceProfile.tier === "secondary"
+                            ? "Secondary on-screen agent"
+                            : "Background on-screen agent"}
+                        {" • "}
+                        {obj.screenPresenceProfile.profileId}
+                        {" • "}
+                        {Math.round(obj.screenPresenceProfile.dominanceScore * 100)}%
+                      </div>
+                    )}
+                    {obj.screenPresenceProfile?.cues?.length > 0 && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Cues: {obj.screenPresenceProfile.cues.join(" • ")}
+                      </div>
+                    )}
+                    {obj.demographicSummary && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Possible{" "}
+                        {[
+                          obj.demographicSummary.ageBand,
+                          obj.demographicSummary.genderPresentation,
+                        ]
+                          .filter(Boolean)
+                          .join(" • ")}
+                        {" • "}
+                        {obj.demographicSummary.confidenceLabel}
+                        {typeof obj.demographicSummary.confidenceScore === "number" &&
+                          ` ${Math.round(obj.demographicSummary.confidenceScore * 100)}%`}
+                      </div>
+                    )}
+                    {obj.demographicSummary?.audioSupport && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Audio support: {obj.demographicSummary.audioSupport.label}
+                        {" • "}
+                        {obj.demographicSummary.audioSupport.overlappingSegments} segment
+                        {obj.demographicSummary.audioSupport.overlappingSegments === 1 ? "" : "s"}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
