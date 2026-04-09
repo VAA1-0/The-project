@@ -33,6 +33,89 @@ from deepface import DeepFace
 
 logger = logging.getLogger(__name__)
 
+EXPRESSION_ONTOLOGY_MAP: Dict[str, Dict[str, Any]] = {
+    "serious": {
+        "near_neighbors": ["focused", "formal_neutral", "composed"],
+        "social_function": ["authority", "credibility", "task-orientation"],
+    },
+    "focused": {
+        "near_neighbors": ["serious", "attentive", "analytical"],
+        "social_function": ["attention", "competence", "task-management"],
+    },
+    "formal_neutral": {
+        "near_neighbors": ["serious", "composed", "restrained"],
+        "social_function": ["neutrality", "procedural legitimacy", "role containment"],
+    },
+    "composed": {
+        "near_neighbors": ["formal_neutral", "serious", "reassuring"],
+        "social_function": ["stability", "calm authority", "self-regulation"],
+    },
+    "restrained": {
+        "near_neighbors": ["formal_neutral", "composed", "deliberate"],
+        "social_function": ["decorum", "distance", "institutional fit"],
+    },
+    "deliberate": {
+        "near_neighbors": ["focused", "restrained", "reflective"],
+        "social_function": ["carefulness", "credibility", "discursive control"],
+    },
+    "concerned": {
+        "near_neighbors": ["serious", "tense", "reassuring"],
+        "social_function": ["warning", "problem-signaling", "care orientation"],
+    },
+    "reflective": {
+        "near_neighbors": ["deliberate", "analytical", "focused"],
+        "social_function": ["thoughtfulness", "evaluation", "discursive pacing"],
+    },
+    "skeptical": {
+        "near_neighbors": ["reflective", "critical", "concerned"],
+        "social_function": ["critical filtering", "distance", "epistemic caution"],
+    },
+    "attentive": {
+        "near_neighbors": ["focused", "reflective", "warm"],
+        "social_function": ["listening", "engagement", "responsiveness"],
+    },
+    "emphatic": {
+        "near_neighbors": ["assertive", "authoritative", "serious"],
+        "social_function": ["persuasion", "salience marking", "mobilization"],
+    },
+    "assertive": {
+        "near_neighbors": ["authoritative", "emphatic", "serious"],
+        "social_function": ["stance-taking", "boundary-setting", "persuasion"],
+    },
+    "authoritative": {
+        "near_neighbors": ["assertive", "composed", "serious"],
+        "social_function": ["authority", "coordination", "trust projection"],
+    },
+    "warm": {
+        "near_neighbors": ["reassuring", "empathetic", "approving"],
+        "social_function": ["affiliation", "trust-building", "social ease"],
+    },
+    "reassuring": {
+        "near_neighbors": ["warm", "composed", "concerned"],
+        "social_function": ["calming", "trust support", "anxiety reduction"],
+    },
+    "empathetic": {
+        "near_neighbors": ["warm", "concerned", "reassuring"],
+        "social_function": ["affiliation", "solidarity", "care signaling"],
+    },
+    "amused": {
+        "near_neighbors": ["warm", "approving", "lightly_pleased"],
+        "social_function": ["bonding", "softening", "tension relief"],
+    },
+    "approving": {
+        "near_neighbors": ["warm", "reassuring", "amused"],
+        "social_function": ["endorsement", "reward", "alignment"],
+    },
+    "tense": {
+        "near_neighbors": ["concerned", "assertive", "uneasy"],
+        "social_function": ["strain signal", "pressure indication", "alertness"],
+    },
+    "uneasy": {
+        "near_neighbors": ["concerned", "tense", "skeptical"],
+        "social_function": ["uncertainty signal", "guardedness", "distance"],
+    },
+}
+
 # Default URLs for OpenCV's ResNet SSD face detector (deploy + caffemodel)
 # Sources: OpenCV's github / model zoo
 DEFAULT_DNN_PROTO_URL = "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt"
@@ -67,6 +150,9 @@ class ExpressionDetectorDeepFace:
         precheck: bool = True,
         skip_by_seek: bool = True,
         min_face_size: Tuple[int, int] = (30, 30),
+        min_dominant_score: float = 0.35,
+        min_score_margin: float = 0.10,
+        uncertain_label: str = "uncertain",
     ) -> None:
         """
         Parameters
@@ -94,6 +180,15 @@ class ExpressionDetectorDeepFace:
             Seek to timestamps (fast) instead of reading all frames.
         min_face_size : Tuple[int,int]
             Minimum face size (w,h) to accept for Haar cascade.
+        min_dominant_score : float
+            Minimum top emotion score required before the detector commits to a
+            dominant label.
+        min_score_margin : float
+            Minimum difference required between the top and second emotion scores
+            before the detector commits to a dominant label.
+        uncertain_label : str
+            Label used when an emotion signal is present but too weak or ambiguous
+            to treat as a trustworthy dominant emotion.
         """
         if interval <= 0:
             raise ValueError("interval must be > 0")
@@ -111,6 +206,9 @@ class ExpressionDetectorDeepFace:
         self.skip_by_seek = bool(skip_by_seek)
         self.min_face_size = tuple(min_face_size)
         self.dnn_confidence = float(dnn_confidence)
+        self.min_dominant_score = float(min_dominant_score)
+        self.min_score_margin = float(min_score_margin)
+        self.uncertain_label = str(uncertain_label)
 
         # Haar cascade setup
         if haar_cascade_path:
@@ -256,16 +354,322 @@ class ExpressionDetectorDeepFace:
                 actions=["emotion"],
                 enforce_detection=self.enforce_detection,
                 detector_backend=self.detector_backend,
-                prog_bar=False,
             )
+            if isinstance(analysis, list):
+                if not analysis:
+                    return {
+                        "dominant_emotion": None,
+                        "emotion": None,
+                        "error": "DeepFace returned an empty result list",
+                    }
+                analysis = analysis[0]
+            if not isinstance(analysis, dict):
+                return {
+                    "dominant_emotion": None,
+                    "emotion": None,
+                    "top_emotion_score": None,
+                    "score_margin": None,
+                    "quality": "error",
+                    "error": f"Unexpected DeepFace result type: {type(analysis).__name__}",
+                }
+            emotion_scores = analysis.get("emotion")
+            dominant_emotion = analysis.get("dominant_emotion")
+            top_emotion_score = None
+            score_margin = None
+            quality = "clear"
+
+            if isinstance(emotion_scores, dict) and emotion_scores:
+                ranked = sorted(
+                    (
+                        (str(label), float(score) / 100.0 if float(score) > 1.0 else float(score))
+                        for label, score in emotion_scores.items()
+                    ),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )
+                top_label, top_emotion_score = ranked[0]
+                second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+                score_margin = top_emotion_score - second_score
+
+                if (
+                    top_emotion_score < self.min_dominant_score
+                    or score_margin < self.min_score_margin
+                ):
+                    dominant_emotion = self.uncertain_label
+                    quality = "weak"
+                else:
+                    dominant_emotion = top_label
+
             return {
-                "dominant_emotion": analysis.get("dominant_emotion"),
-                "emotion": analysis.get("emotion"),
+                "dominant_emotion": dominant_emotion,
+                "emotion": emotion_scores,
+                "top_emotion_score": top_emotion_score,
+                "score_margin": score_margin,
+                "quality": quality,
+                "expression_evidence": self._build_expression_evidence(
+                    dominant_emotion=dominant_emotion,
+                    emotion_scores=emotion_scores,
+                    top_emotion_score=top_emotion_score,
+                    score_margin=score_margin,
+                    quality=quality,
+                ),
+                "affect_hints": self._derive_affect_hints(
+                    emotion_scores=emotion_scores,
+                    quality=quality,
+                ),
                 "error": None,
             }
         except Exception as exc:
             logger.debug("DeepFace analyze error for face crop: %s", exc, exc_info=True)
-            return {"dominant_emotion": None, "emotion": None, "error": str(exc)}
+            return {
+                "dominant_emotion": None,
+                "emotion": None,
+                "top_emotion_score": None,
+                "score_margin": None,
+                "quality": "error",
+                "expression_evidence": {
+                    "level": "error",
+                    "dominant_emotion_ready": False,
+                },
+                "affect_hints": {
+                    "valence": "unavailable",
+                    "activation": "unavailable",
+                    "confidence": "none",
+                },
+                "error": str(exc),
+            }
+
+    def _build_expression_evidence(
+        self,
+        *,
+        dominant_emotion: Optional[str],
+        emotion_scores: Optional[Dict[str, Any]],
+        top_emotion_score: Optional[float],
+        score_margin: Optional[float],
+        quality: str,
+    ) -> Dict[str, Any]:
+        if quality == "error":
+            return {
+                "level": "error",
+                "dominant_emotion_ready": False,
+            }
+
+        if not emotion_scores:
+            return {
+                "level": "none",
+                "dominant_emotion_ready": False,
+            }
+
+        if quality == "weak" or dominant_emotion == self.uncertain_label:
+            return {
+                "level": "weak",
+                "dominant_emotion_ready": False,
+                "top_score": top_emotion_score,
+                "score_margin": score_margin,
+            }
+
+        return {
+            "level": "clear",
+            "dominant_emotion_ready": True,
+            "top_score": top_emotion_score,
+            "score_margin": score_margin,
+        }
+
+    def _derive_affect_hints(
+        self,
+        *,
+        emotion_scores: Optional[Dict[str, Any]],
+        quality: str,
+    ) -> Dict[str, Any]:
+        if not emotion_scores or quality == "error":
+            return {
+                "valence": "unavailable",
+                "activation": "unavailable",
+                "confidence": "none",
+            }
+
+        normalized_scores: Dict[str, float] = {}
+        for label, raw_score in emotion_scores.items():
+            try:
+                score = float(raw_score)
+            except Exception:
+                continue
+            normalized_scores[str(label).lower()] = score / 100.0 if score > 1.0 else score
+
+        if not normalized_scores:
+            return {
+                "valence": "unavailable",
+                "activation": "unavailable",
+                "confidence": "none",
+            }
+
+        positive = (
+            normalized_scores.get("happy", 0.0)
+            + normalized_scores.get("surprise", 0.0) * 0.3
+        )
+        negative = (
+            normalized_scores.get("sad", 0.0)
+            + normalized_scores.get("angry", 0.0)
+            + normalized_scores.get("fear", 0.0)
+            + normalized_scores.get("disgust", 0.0)
+        )
+
+        high_activation = (
+            normalized_scores.get("angry", 0.0)
+            + normalized_scores.get("fear", 0.0)
+            + normalized_scores.get("surprise", 0.0)
+            + normalized_scores.get("happy", 0.0) * 0.5
+        )
+        low_activation = (
+            normalized_scores.get("sad", 0.0)
+            + normalized_scores.get("neutral", 0.0) * 0.6
+        )
+
+        valence_delta = positive - negative
+        activation_delta = high_activation - low_activation
+
+        if quality == "weak":
+            confidence = "low"
+        elif max(normalized_scores.values()) >= 0.6:
+            confidence = "high"
+        else:
+            confidence = "medium"
+
+        def label_delta(delta: float, positive_label: str, negative_label: str) -> str:
+            if delta >= 0.2:
+                return positive_label
+            if delta <= -0.2:
+                return negative_label
+            return "mixed_or_uncertain"
+
+        return {
+            "valence": label_delta(valence_delta, "positive_tilt", "negative_tilt"),
+            "activation": label_delta(activation_delta, "higher_activation", "lower_activation"),
+            "confidence": confidence,
+        }
+
+    def _derive_social_function(
+        self,
+        *,
+        affect_hints: Dict[str, Any],
+        quality: str,
+        face_area_share: float,
+    ) -> Dict[str, float]:
+        valence = affect_hints.get("valence")
+        activation = affect_hints.get("activation")
+        confidence = affect_hints.get("confidence")
+
+        base = {
+            "authority_signal": 0.0,
+            "affiliation_signal": 0.0,
+            "persuasion_signal": 0.0,
+            "distance_signal": 0.0,
+            "reassurance_signal": 0.0,
+        }
+
+        if confidence == "none" or quality == "error":
+            return base
+
+        if valence == "positive_tilt":
+            base["affiliation_signal"] += 0.5
+            base["reassurance_signal"] += 0.3
+        elif valence == "negative_tilt":
+            base["distance_signal"] += 0.35
+            base["authority_signal"] += 0.15
+
+        if activation == "higher_activation":
+            base["persuasion_signal"] += 0.45
+            base["authority_signal"] += 0.25
+        elif activation == "lower_activation":
+            base["reassurance_signal"] += 0.35
+            base["authority_signal"] += 0.2
+
+        if face_area_share >= 0.12:
+            base["authority_signal"] += 0.1
+
+        return {key: round(min(1.0, value), 3) for key, value in base.items()}
+
+    def _interpret_expression(
+        self,
+        *,
+        dominant_emotion: Optional[str],
+        quality: str,
+        face_signal_level: str,
+        affect_hints: Dict[str, Any],
+        social_function_profile: Dict[str, float],
+    ) -> Dict[str, Any]:
+        valence = affect_hints.get("valence")
+        activation = affect_hints.get("activation")
+        confidence = affect_hints.get("confidence")
+        raw = (dominant_emotion or "").lower()
+
+        label = "formal_neutral"
+        basis = ["ontology_guarded_interpretation"]
+
+        if quality == "no_face":
+            label = "formal_neutral"
+            basis.append("no_face_detected")
+        elif quality == "weak" or raw == self.uncertain_label:
+            if valence == "negative_tilt" and activation == "higher_activation":
+                label = "tense"
+            elif valence == "negative_tilt":
+                label = "concerned"
+            elif valence == "positive_tilt":
+                label = "warm"
+            elif face_signal_level in ("strong", "moderate"):
+                label = "serious"
+            else:
+                label = "restrained"
+            basis.append("weak_signal_guard")
+        elif raw in {"happy"}:
+            label = "warm" if activation != "higher_activation" else "amused"
+            basis.append("raw_happy")
+        elif raw in {"surprise"}:
+            label = "emphatic" if activation == "higher_activation" else "attentive"
+            basis.append("raw_surprise")
+        elif raw in {"sad"}:
+            label = "concerned" if activation != "lower_activation" else "reflective"
+            basis.append("guard_sad_to_concerned_or_reflective")
+        elif raw in {"angry"}:
+            label = "assertive" if activation == "higher_activation" else "serious"
+            basis.append("guard_angry_to_serious_or_assertive")
+        elif raw in {"fear"}:
+            label = "uneasy" if activation != "higher_activation" else "tense"
+            basis.append("raw_fear")
+        elif raw in {"disgust"}:
+            label = "skeptical"
+            basis.append("raw_disgust")
+        elif raw in {"neutral"}:
+            if social_function_profile.get("authority_signal", 0.0) >= 0.4:
+                label = "authoritative"
+            elif social_function_profile.get("reassurance_signal", 0.0) >= 0.35:
+                label = "reassuring"
+            elif face_signal_level == "small":
+                label = "restrained"
+            else:
+                label = "formal_neutral"
+            basis.append("raw_neutral")
+        else:
+            if valence == "positive_tilt":
+                label = "warm"
+            elif valence == "negative_tilt" and activation == "higher_activation":
+                label = "tense"
+            elif valence == "negative_tilt":
+                label = "concerned"
+            elif activation == "lower_activation":
+                label = "composed"
+            else:
+                label = "serious"
+            basis.append("fallback_mapping")
+
+        ontology = EXPRESSION_ONTOLOGY_MAP.get(label, {})
+        return {
+            "label": label,
+            "confidence": confidence or "low",
+            "near_neighbors": ontology.get("near_neighbors", []),
+            "social_function": ontology.get("social_function", []),
+            "basis": basis,
+        }
 
     # -------------------------
     # Main method — analyze entire video (multi-face)
@@ -354,6 +758,9 @@ class ExpressionDetectorDeepFace:
                             "bbox": None,
                             "dominant_emotion": None,
                             "emotion": None,
+                            "top_emotion_score": None,
+                            "score_margin": None,
+                            "quality": "error",
                             "detector": self.face_detector,
                             "error": "frame unreadable at seek position",
                         })
@@ -384,6 +791,23 @@ class ExpressionDetectorDeepFace:
                         "bbox": None,
                         "dominant_emotion": None,
                         "emotion": None,
+                        "top_emotion_score": None,
+                        "score_margin": None,
+                        "quality": "no_face",
+                        "face_signal": {
+                            "level": "absent",
+                            "face_count_in_frame": 0,
+                            "face_area_share": 0.0,
+                        },
+                        "expression_evidence": {
+                            "level": "none",
+                            "dominant_emotion_ready": False,
+                        },
+                        "affect_hints": {
+                            "valence": "unavailable",
+                            "activation": "unavailable",
+                            "confidence": "none",
+                        },
                         "detector": self.face_detector,
                         "error": "no face detected (fast detector)",
                     })
@@ -406,6 +830,31 @@ class ExpressionDetectorDeepFace:
                     face_crop = frame[y0:y1, x0:x1]
 
                     analysis = self._analyze_face_crop(face_crop)
+                    face_area_share = ((x1 - x0) * (y1 - y0)) / max(1, (w_frame * h_frame))
+                    face_signal_level = (
+                        "strong"
+                        if face_area_share >= 0.12
+                        else "moderate"
+                        if face_area_share >= 0.04
+                        else "small"
+                    )
+                    affect_hints = analysis.get("affect_hints") or {
+                        "valence": "unavailable",
+                        "activation": "unavailable",
+                        "confidence": "none",
+                    }
+                    social_function_profile = self._derive_social_function(
+                        affect_hints=affect_hints,
+                        quality=str(analysis.get("quality") or ""),
+                        face_area_share=float(face_area_share),
+                    )
+                    interpreted_expression = self._interpret_expression(
+                        dominant_emotion=analysis.get("dominant_emotion"),
+                        quality=str(analysis.get("quality") or ""),
+                        face_signal_level=face_signal_level,
+                        affect_hints=affect_hints,
+                        social_function_profile=social_function_profile,
+                    )
 
                     results.append({
                         "frame_index": sample_index,
@@ -414,6 +863,18 @@ class ExpressionDetectorDeepFace:
                         "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)],
                         "dominant_emotion": analysis.get("dominant_emotion"),
                         "emotion": analysis.get("emotion"),
+                        "top_emotion_score": analysis.get("top_emotion_score"),
+                        "score_margin": analysis.get("score_margin"),
+                        "quality": analysis.get("quality"),
+                        "face_signal": {
+                            "level": face_signal_level,
+                            "face_count_in_frame": len(face_bboxes),
+                            "face_area_share": round(float(face_area_share), 4),
+                        },
+                        "expression_evidence": analysis.get("expression_evidence"),
+                        "affect_hints": affect_hints,
+                        "social_function_profile": social_function_profile,
+                        "interpreted_expression": interpreted_expression,
                         "detector": self.face_detector,
                         "error": analysis.get("error"),
                     })

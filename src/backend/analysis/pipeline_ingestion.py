@@ -54,12 +54,33 @@ def validate_video(video_path: str) -> dict:
     if not audio_streams:
         raise VideoIngestionError("Video has no audio track.")
 
+    video_stream = video_streams[0] if video_streams else {}
+    audio_stream = audio_streams[0] if audio_streams else {}
+
+    fps = None
+    avg_frame_rate = video_stream.get("avg_frame_rate")
+    if avg_frame_rate and avg_frame_rate != "0/0":
+        try:
+            numerator, denominator = avg_frame_rate.split("/")
+            if float(denominator) != 0:
+                fps = round(float(numerator) / float(denominator), 3)
+        except Exception:
+            fps = None
+
     return {
         "duration": duration,
         "size_bytes": size,
-        "video_codec": video_streams[0].get("codec_name", "unknown"),
-        "audio_codec": audio_streams[0].get("codec_name", "unknown"),
+        "format_name": format_info.get("format_name", "unknown"),
+        "video_codec": video_stream.get("codec_name", "unknown"),
+        "audio_codec": audio_stream.get("codec_name", "unknown"),
         "has_audio": True,
+        "width": video_stream.get("width"),
+        "height": video_stream.get("height"),
+        "fps": fps,
+        "video_bitrate": int(video_stream.get("bit_rate", 0) or 0),
+        "audio_bitrate": int(audio_stream.get("bit_rate", 0) or 0),
+        "audio_channels": audio_stream.get("channels"),
+        "audio_sample_rate": audio_stream.get("sample_rate"),
     }
 
 
