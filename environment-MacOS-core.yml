@@ -6,6 +6,7 @@ channels:
 dependencies:
   - python=3.10
   - pip
+  - pyarrow
   - setuptools
   - wheel
   - ffmpeg
@@ -114,3 +115,4 @@ dependencies:
       - wrapt==2.0.1
       - lyricsgenius==3.0.1
       - gdown==5.2.0
+      - scenedetect
