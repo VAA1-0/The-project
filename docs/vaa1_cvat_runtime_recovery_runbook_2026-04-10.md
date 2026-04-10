@@ -149,3 +149,63 @@ The project now ensures the CVAT auth cache directory is created before writing 
 - `src/cvat/backend/data/GlobalVariables.ts`
 
 This removes one avoidable local auth-persistence failure mode.
+
+## Local Adjustments Not Yet Pushed
+
+The following adjustments were made locally during runtime debugging but were not included in the last protected CVAT runtime push.
+
+### 1. Lightweight backend work remains local
+
+File:
+
+- `app/main.py`
+
+Local changes present:
+
+- richer upload and analysis status metadata
+- lightweight download endpoints
+- health endpoint
+- face-anonymization-related flags passed through lightweight analysis flow
+
+This is a separate lightweight-backend track and was intentionally not bundled into the CVAT runtime checkpoint.
+
+### 2. CVAT entrypoint file mode changed locally
+
+File:
+
+- `src/cvat/cvat-engine/entrypoint.sh`
+
+Local change present:
+
+- file mode changed from `100644` to `100755`
+
+Note:
+
+- the pushed runtime fix already avoids relying on host execute permission by invoking the script through `bash` in compose
+- this mode change is still present locally and should be reviewed before any future push
+
+### 3. Local CVAT auth token file was removed from working tree
+
+File:
+
+- `src/cvat/backend/.cvat_tokens/cvat_token.json`
+
+Local state:
+
+- deleted from working tree after runtime/auth handling
+
+Note:
+
+- this file contains local session material and should be treated as local runtime state, not durable project data
+- it should not be restored or committed blindly
+
+## Next Functional Gap
+
+CVAT runtime is now operational locally, but the workflow is still incomplete.
+
+Still missing:
+
+1. one-click VAA1 annotation handoff
+2. automatic creation of a CVAT task when `cvatID` is missing
+3. clean storage of the created `cvatID`
+4. direct opening of the created job from VAA1

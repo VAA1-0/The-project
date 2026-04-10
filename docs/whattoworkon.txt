@@ -13,3 +13,5 @@ Transcript integrity package:
 Bond trailer timestamp/transcript bug; full-duration transcript coverage; backend QA gating for short transcript spans; fallback retranscription strategy for degraded audio cases
 Panel maturation governance package:
 align remaining panels to the calmer evidence-register style already strongest in OCR, OBJ, Expressions, POS Matrix, and Quant Matrix; mature Download, Tools, TimeBank, Video Compare, Speech/Audio, and remaining Video-side governance surfaces
+CVAT base workflow package:
+runtime now works locally; next implement one-click VAA1 handoff: create CVAT task if missing, store cvatID, and open the correct job without re-upload or manual route knowledge
