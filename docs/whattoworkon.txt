@@ -7,3 +7,5 @@ Music detection
 Graphic detection
 Do youtube links work?
 Structured review of `petteri` against `main`, grouped into merge blocks before any main-branch merge
+Detector calibration package:
+motion, scene, person, and object detector calibration; adaptive dense sampling; genre-specific object-detection build-up; separation of heuristic description from true genre-detection workflow

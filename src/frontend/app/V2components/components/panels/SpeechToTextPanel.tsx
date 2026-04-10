@@ -99,11 +99,9 @@ export default function SpeechToTextPanel({
 
         // Load video blob - hybrid approach
         // 1. First try to get the original video from IndexedDB (instant preview)
-        let blob = await getVideoBlob(videoId);
-
+        let blob = await VideoService.getBlob(videoId);
         if (!blob) {
-          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
-          blob = await VideoService.getBlob(videoId);
+          blob = await getVideoBlob(videoId);
         }
         if (blob) {
           if (lastObjectUrl.current) {

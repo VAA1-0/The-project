@@ -820,12 +820,11 @@ export default function VideoPanel() {
 
   const loadVideoSource = React.useCallback(async (analysisId: string) => {
     const nextMetadata = await VideoService.get(analysisId);
-    let blob = await getVideoBlob(analysisId);
-    if (!blob) {
-      blob = await VideoService.getBlob(analysisId);
-      if (blob) {
-        await saveVideoBlob(analysisId, blob);
-      }
+    let blob = await VideoService.getBlob(analysisId);
+    if (blob) {
+      await saveVideoBlob(analysisId, blob);
+    } else {
+      blob = await getVideoBlob(analysisId);
     }
 
     return {
@@ -2331,19 +2330,48 @@ export default function VideoPanel() {
     };
   }, [activeOCR.length, activeRawObjects.length, currentSpatialScan.entries]);
   const currentMotionScan = useMemo(() => {
+    const motionSamples = analysisData?.metadata?.motionSceneBasis?.motionEvidence?.samples || [];
+    const nearestMotionSample = motionSamples.length
+      ? [...motionSamples].sort((left, right) => {
+          const leftDistance = Math.abs((left.timestamp ?? 0) - currentTime);
+          const rightDistance = Math.abs((right.timestamp ?? 0) - currentTime);
+          if (leftDistance !== rightDistance) {
+            return leftDistance - rightDistance;
+          }
+          return (left.timestamp ?? 0) - (right.timestamp ?? 0);
+        })[0]
+      : null;
     const diff = liveToneSample?.frame_diff;
+    const summary = analysisData?.metadata?.motionSceneBasis?.motionEvidence?.summary;
+    const sceneSegments = analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [];
+    const activeScene = sceneSegments.find(
+      (segment) =>
+        typeof segment?.start === "number" &&
+        typeof segment?.end === "number" &&
+        currentTime >= segment.start &&
+        currentTime <= segment.end,
+    );
     return {
-      label:
-        typeof diff !== "number"
+      label: nearestMotionSample?.motion_label
+        || (typeof diff !== "number"
           ? "unknown"
           : diff < 12
             ? "static"
             : diff < 28
               ? "mild motion"
-              : "strong motion",
+              : "strong motion"),
       diff,
+      sample: nearestMotionSample,
+      summary,
+      activeScene,
     };
-  }, [liveToneSample?.frame_diff]);
+  }, [
+    analysisData?.metadata?.motionSceneBasis?.motionEvidence?.samples,
+    analysisData?.metadata?.motionSceneBasis?.motionEvidence?.summary,
+    analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments,
+    currentTime,
+    liveToneSample?.frame_diff,
+  ]);
   const currentTransitionScan = useMemo(() => {
     return {
       label: liveToneSample?.transition_hint || "continuity stable",
@@ -3060,18 +3088,6 @@ export default function VideoPanel() {
               >
                 Visual cues
               </button>
-              <button
-                type="button"
-                className="hover:text-slate-300"
-                onClick={() => {
-                  if (!videoId) return;
-                  eventBus.emit("videoIdChanged", videoId);
-                  eventBus.emit("videoTimeLineChanged", currentTime);
-                  openPanel("OBJDetectionPanel");
-                }}
-              >
-                Object detections
-              </button>
               {activeInspectorKey && (
                 <button
                   type="button"
@@ -3310,9 +3326,47 @@ export default function VideoPanel() {
                       <div className="mb-2 text-[10px] text-[var(--ui-passive-text)]">
                         {currentMotionScan.label}
                       </div>
+                      {currentMotionScan.sample?.activity_label && (
+                        <div className="mb-2 rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-[10px] text-[var(--ui-passive-text)]">
+                          activity {currentMotionScan.sample.activity_label}
+                        </div>
+                      )}
                       {typeof currentMotionScan.diff === "number" && (
                         <div className="rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-[10px] text-[var(--ui-passive-text)]">
                           diff {currentMotionScan.diff.toFixed(1)}
+                        </div>
+                      )}
+                      {currentMotionScan.sample && (
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[var(--ui-passive-text)]">
+                          {typeof currentMotionScan.sample.occupancy_shift === "number" && (
+                            <div className="rounded border border-slate-800 bg-slate-950/20 px-2 py-1">
+                              occupancy shift {currentMotionScan.sample.occupancy_shift.toFixed(2)}
+                            </div>
+                          )}
+                          {typeof currentMotionScan.sample.foreground_delta === "number" && (
+                            <div className="rounded border border-slate-800 bg-slate-950/20 px-2 py-1">
+                              foreground {currentMotionScan.sample.foreground_delta.toFixed(2)}
+                            </div>
+                          )}
+                          {typeof currentMotionScan.sample.background_delta === "number" && (
+                            <div className="rounded border border-slate-800 bg-slate-950/20 px-2 py-1">
+                              background {currentMotionScan.sample.background_delta.toFixed(2)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {currentMotionScan.summary && (
+                        <div className="mt-2 text-[10px] text-[var(--ui-passive-text)]">
+                          dominant {currentMotionScan.summary.dominant_motion || "unknown"} •
+                          samples {currentMotionScan.summary.sample_count ?? 0} •
+                          high motion {currentMotionScan.summary.high_motion_samples ?? 0}
+                        </div>
+                      )}
+                      {currentMotionScan.activeScene && (
+                        <div className="mt-2 text-[10px] text-[var(--ui-passive-text)]">
+                          scene {currentMotionScan.activeScene.scene_index} •{" "}
+                          {formatTime(currentMotionScan.activeScene.start)} to{" "}
+                          {formatTime(currentMotionScan.activeScene.end)}
                         </div>
                       )}
                     </>

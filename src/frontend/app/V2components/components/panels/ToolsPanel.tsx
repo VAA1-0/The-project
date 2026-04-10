@@ -153,6 +153,99 @@ function classifyCinematicShotSize(heightRatio: number, widthRatio: number): str
   return "extreme long shot";
 }
 
+function formatSeconds(value?: number | null): string {
+  const safe = Number(value ?? 0);
+  if (!Number.isFinite(safe)) return "0s";
+  const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(3);
+  return `${Number(rounded)}s`;
+}
+
+function classifySceneDensity(sceneCount: number, meanDuration: number): string {
+  if (sceneCount >= 350 || meanDuration <= 0.45) {
+    return "very high cut density";
+  }
+  if (sceneCount >= 160 || meanDuration <= 1.2) {
+    return "high-cut density";
+  }
+  if (sceneCount >= 60 || meanDuration <= 2.8) {
+    return "moderate-cut density";
+  }
+  return "longer scene holds";
+}
+
+function describeSceneBasis(sceneCount: number, meanDuration: number): string {
+  if (sceneCount >= 350 || meanDuration <= 0.45) {
+    return "This material shows very dense cutting, which can legitimately produce many short bands. Treat this as navigational evidence, not final scene truth.";
+  }
+  if (sceneCount >= 160 || meanDuration <= 1.2) {
+    return "This readout suggests fast-cut material. Use merged bands first, then inspect raw intervals only when needed.";
+  }
+  if (sceneCount >= 60 || meanDuration <= 2.8) {
+    return "This looks like moderate cutting. The derived bands should be usable as a first pass, but they still need analyst review.";
+  }
+  return "This material appears to hold shots longer, so derived scene bands should read more cleanly at top level.";
+}
+
+function describeMotionBasis(
+  summary?: {
+    dominant_motion?: string;
+    sample_count?: number;
+    high_motion_samples?: number;
+    mean_occupancy_shift?: number;
+  } | null,
+): string {
+  if (!summary) {
+    return "Motion evidence is not available yet.";
+  }
+  const dominant = String(summary.dominant_motion || "unknown");
+  const highMotionSamples = Number(summary.high_motion_samples ?? 0);
+  const sampleCount = Math.max(1, Number(summary.sample_count ?? 0));
+  const ratio = highMotionSamples / sampleCount;
+
+  if (dominant === "low motion" && ratio < 0.15) {
+    return "Overall motion reads as restrained, with activity spikes likely concentrated around cuts or brief bursts.";
+  }
+  if (ratio >= 0.35) {
+    return "This segment shows sustained visual churn. Use the notable moments as jump points into the densest activity.";
+  }
+  return "Motion evidence is mixed rather than constant. The notable moments are the best entry points for quick review.";
+}
+
+function mergeMicroScenes(
+  segments: Array<{ scene_index: number; start: number; end: number; duration?: number }>,
+  minDurationSeconds = 0.75,
+) {
+  if (!segments.length) return [];
+  const merged: Array<{ scene_index: number; start: number; end: number; duration: number; mergedCount: number }> = [];
+
+  for (const segment of segments) {
+    const start = Number(segment.start ?? 0);
+    const end = Number(segment.end ?? start);
+    const duration = Math.max(0, Number(segment.duration ?? end - start));
+    const last = merged[merged.length - 1];
+
+    if (
+      last &&
+      (duration < minDurationSeconds || last.duration < minDurationSeconds)
+    ) {
+      last.end = end;
+      last.duration = Math.max(0, last.end - last.start);
+      last.mergedCount += 1;
+      continue;
+    }
+
+    merged.push({
+      scene_index: segment.scene_index,
+      start,
+      end,
+      duration,
+      mergedCount: 1,
+    });
+  }
+
+  return merged;
+}
+
 export default function ToolsPanel() {
   const { openPanel } = useLayoutHost();
   const selectSurfaceClassName =
@@ -257,9 +350,64 @@ export default function ToolsPanel() {
 
   const motionSceneBasis = analysisData?.metadata?.motionSceneBasis;
   const motionEvidenceSummary = motionSceneBasis?.motionEvidence?.summary;
-  const motionEvidenceSamples = motionSceneBasis?.motionEvidence?.samples ?? [];
+  const motionEvidenceSamples = React.useMemo(
+    () => motionSceneBasis?.motionEvidence?.samples ?? [],
+    [motionSceneBasis?.motionEvidence?.samples],
+  );
   const sceneSegmentSummary = motionSceneBasis?.sceneSegments?.summary;
-  const sceneSegments = motionSceneBasis?.sceneSegments?.segments ?? [];
+  const sceneSegments = React.useMemo(
+    () => motionSceneBasis?.sceneSegments?.segments ?? [],
+    [motionSceneBasis?.sceneSegments?.segments],
+  );
+  const notableMotionMoments = React.useMemo(() => {
+    if (!motionEvidenceSamples.length) return [];
+    const sorted = [...motionEvidenceSamples].sort(
+      (left, right) =>
+        (right.occupancy_shift ?? 0) - (left.occupancy_shift ?? 0) ||
+        (right.foreground_delta ?? 0) - (left.foreground_delta ?? 0),
+    );
+    const unique: typeof motionEvidenceSamples = [];
+    for (const sample of sorted) {
+      if (
+        unique.some(
+          (existing) => Math.abs((existing.timestamp ?? 0) - (sample.timestamp ?? 0)) < 0.5,
+        )
+      ) {
+        continue;
+      }
+      unique.push(sample);
+      if (unique.length >= 4) break;
+    }
+    return unique.sort((left, right) => (left.timestamp ?? 0) - (right.timestamp ?? 0));
+  }, [motionEvidenceSamples]);
+  const mergedSceneSegments = React.useMemo(
+    () => mergeMicroScenes(sceneSegments),
+    [sceneSegments],
+  );
+  const mergedScenePreview = React.useMemo(
+    () => mergedSceneSegments.slice(0, 6),
+    [mergedSceneSegments],
+  );
+  const sceneDensityLabel = React.useMemo(
+    () =>
+      classifySceneDensity(
+        Number(sceneSegmentSummary?.scene_count ?? 0),
+        Number(sceneSegmentSummary?.mean_scene_duration ?? 0),
+      ),
+    [sceneSegmentSummary?.mean_scene_duration, sceneSegmentSummary?.scene_count],
+  );
+  const sceneBasisDescription = React.useMemo(
+    () =>
+      describeSceneBasis(
+        Number(sceneSegmentSummary?.scene_count ?? 0),
+        Number(sceneSegmentSummary?.mean_scene_duration ?? 0),
+      ),
+    [sceneSegmentSummary?.mean_scene_duration, sceneSegmentSummary?.scene_count],
+  );
+  const motionBasisDescription = React.useMemo(
+    () => describeMotionBasis(motionEvidenceSummary),
+    [motionEvidenceSummary],
+  );
 
   const analysisTierLabel = React.useMemo(() => {
     const labels = {
@@ -1325,6 +1473,17 @@ export default function ToolsPanel() {
                           <div className="mb-2 font-medium text-slate-200">
                             Motion and scene basis
                           </div>
+                          <div className="mb-3 flex flex-wrap gap-2 text-[10px] text-slate-400">
+                            <div className="rounded border border-white/8 bg-[#171717] px-2 py-1">
+                              reading: provisional derived basis
+                            </div>
+                            <div className="rounded border border-white/8 bg-[#171717] px-2 py-1">
+                              density: {sceneDensityLabel}
+                            </div>
+                          </div>
+                          <div className="mb-3 rounded border border-white/8 bg-[#151515] px-3 py-2 text-[10px] leading-relaxed text-slate-400">
+                            {sceneBasisDescription}
+                          </div>
                           <div className="grid gap-2 md:grid-cols-2">
                             <div className="rounded border border-white/8 bg-[#171717] px-3 py-2">
                               <div className="text-[10px] uppercase tracking-wide text-slate-500">
@@ -1347,24 +1506,32 @@ export default function ToolsPanel() {
                                   <div>Method: {motionSceneBasis.motionEvidence.method}</div>
                                 ) : null}
                               </div>
-                              {motionEvidenceSamples.length > 0 && (
+                              <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2 text-[10px] leading-relaxed text-slate-400">
+                                {motionBasisDescription}
+                              </div>
+                              {notableMotionMoments.length > 0 && (
                                 <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
                                   <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-                                    Recent motion samples
+                                    Notable motion moments
                                   </div>
                                   <div className="space-y-1 text-[10px] text-slate-300">
-                                    {motionEvidenceSamples.slice(0, 5).map((sample, index) => (
-                                      <div
+                                    {notableMotionMoments.map((sample, index) => (
+                                      <button
+                                        type="button"
                                         key={`motion-${sample.timestamp}-${index}`}
-                                        className="flex items-center justify-between gap-2"
+                                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-slate-800/50"
+                                        onClick={() => {
+                                          eventBus.emit("videoIdChanged", videoId);
+                                          eventBus.emit("videoTimeLineChanged", Number(sample.timestamp || 0));
+                                        }}
                                       >
                                         <span className="truncate">
                                           {sample.motion_label || "unknown"} / {sample.activity_label || "unknown"}
                                         </span>
                                         <span className="shrink-0 text-slate-500">
-                                          {sample.timestamp}s
+                                          {formatSeconds(sample.timestamp)}
                                         </span>
-                                      </div>
+                                      </button>
                                     ))}
                                   </div>
                                 </div>
@@ -1379,7 +1546,10 @@ export default function ToolsPanel() {
                               </div>
                               <div className="mt-1 space-y-1 text-[10px] text-slate-400">
                                 <div>
-                                  Mean scene duration: {sceneSegmentSummary?.mean_scene_duration ?? 0}s
+                                  Merged review bands: {mergedSceneSegments.length}
+                                </div>
+                                <div>
+                                  Mean scene duration: {formatSeconds(sceneSegmentSummary?.mean_scene_duration)}
                                 </div>
                                 {motionSceneBasis.sceneSegments?.source ? (
                                   <div>Source: {motionSceneBasis.sceneSegments.source}</div>
@@ -1388,24 +1558,30 @@ export default function ToolsPanel() {
                                   <div>Method: {motionSceneBasis.sceneSegments.method}</div>
                                 ) : null}
                               </div>
-                              {sceneSegments.length > 0 && (
+                              {mergedScenePreview.length > 0 && (
                                 <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
                                   <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-                                    First scene intervals
+                                    Opening scene bands
                                   </div>
                                   <div className="space-y-1 text-[10px] text-slate-300">
-                                    {sceneSegments.slice(0, 5).map((segment) => (
-                                      <div
+                                    {mergedScenePreview.map((segment) => (
+                                      <button
+                                        type="button"
                                         key={`scene-${segment.scene_index}-${segment.start}-${segment.end}`}
-                                        className="flex items-center justify-between gap-2"
+                                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-slate-800/50"
+                                        onClick={() => {
+                                          eventBus.emit("videoIdChanged", videoId);
+                                          eventBus.emit("videoTimeLineChanged", Number(segment.start || 0));
+                                        }}
                                       >
                                         <span className="truncate">
                                           Scene {segment.scene_index}
+                                          {segment.mergedCount > 1 ? ` • merged x${segment.mergedCount}` : ""}
                                         </span>
                                         <span className="shrink-0 text-slate-500">
-                                          {segment.start}s-{segment.end}s
+                                          {formatSeconds(segment.start)}-{formatSeconds(segment.end)}
                                         </span>
-                                      </div>
+                                      </button>
                                     ))}
                                   </div>
                                 </div>
