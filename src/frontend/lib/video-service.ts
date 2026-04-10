@@ -5,6 +5,7 @@ import type {
   AnalysisStartOptions,
   AnnotationCorrections,
   AnnotationCorrectionRule,
+  ManualTranscriptEntry,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
 import { readFileSync } from "fs";
@@ -61,10 +62,31 @@ export interface TranscriptSegment {
   speaker: string;
   start: number; // Raw start time in seconds
   end: number; // Raw end time in seconds
+  segmentType?: string;
+  synthetic?: boolean;
+  status?: "confirmed" | "unconfirmed";
+  correctionSource?: "transcript" | "manual";
+  targetId?: string;
 }
 
 export interface TranscriptDataBundle {
   segments: TranscriptSegment[];
+  timelineSegments?: TranscriptSegment[];
+  quality?: {
+    status?: string;
+    segment_count?: number;
+    last_segment_end_seconds?: number;
+    media_duration_seconds?: number | null;
+    audio_duration_seconds?: number | null;
+    coverage_target_seconds?: number | null;
+    coverage_ratio?: number;
+    trailing_uncovered_seconds?: number;
+    thresholds?: {
+      warn_gap_seconds?: number;
+      warn_gap_ratio?: number;
+    };
+    reasons?: string[];
+  };
   languageProfile?: {
     code?: string;
     name?: string;
@@ -467,11 +489,47 @@ function applyAnnotationCorrectionsToTranscript(
   corrections?: AnnotationCorrections | null,
 ): TranscriptSegment[] {
   const textRules = corrections?.text_substitutions || [];
-  return transcript.map((segment) => ({
-    ...segment,
-    rawText: segment.rawText || segment.text,
-    text: applyTextSubstitutions(segment.text, textRules),
-  }));
+  const correctedBase = transcript.map((segment) => {
+    const baseText = String(segment.text || "").trim();
+    const normalizedEmpty =
+      baseText.length > 0 ? baseText : segment.status === "unconfirmed" ? "Unconfirmed" : "";
+    return {
+      ...segment,
+      rawText: segment.rawText || segment.text,
+      text: applyTextSubstitutions(normalizedEmpty, textRules),
+      status: segment.status || (normalizedEmpty ? "confirmed" : "unconfirmed"),
+      correctionSource: segment.correctionSource || "transcript",
+    };
+  });
+
+  const manualEntries = (corrections?.manual_transcript_entries || []).map(
+    (entry: ManualTranscriptEntry): TranscriptSegment => {
+      const manualText = String(entry.text || "").trim();
+      const status = entry.status || (manualText ? "confirmed" : "unconfirmed");
+      const normalizedText = manualText || "Unconfirmed";
+      return {
+        t: `${Number(entry.start || 0).toFixed(1)}s`,
+        text: applyTextSubstitutions(normalizedText, textRules),
+        rawText: normalizedText,
+        speaker: "Analyst note",
+        start: Number(entry.start || 0),
+        end: Number(entry.end ?? entry.start ?? 0),
+        segmentType: "manual_entry",
+        synthetic: false,
+        status,
+        correctionSource: "manual",
+        targetId: entry.id,
+      };
+    },
+  );
+
+  return [...correctedBase, ...manualEntries].sort((left, right) => {
+    const startDelta = Number(left.start || 0) - Number(right.start || 0);
+    if (startDelta !== 0) {
+      return startDelta;
+    }
+    return Number(left.end || 0) - Number(right.end || 0);
+  });
 }
 
 function applyAnnotationCorrectionsToObjects(
@@ -1281,6 +1339,7 @@ export interface AnalysisData {
   quantAnalysis: QuantAnalysis[];
   posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
+  transcriptTimeline?: TranscriptSegment[];
   detectedObjects: DetectedObject[];
   rawDetectedObjects: DetectedObject[];
   faceResults?: AnalysisStatus["face_results"] | null;
@@ -1299,6 +1358,7 @@ export interface AnalysisData {
     sourceName?: string;
     yoloDetections: number;
     ocrDetections: number;
+    transcriptQuality?: TranscriptDataBundle["quality"];
     cinematicClues?: {
       shotSize?: {
         method?: string;
@@ -2501,9 +2561,17 @@ export class VideoService {
 
       const transcriptSegments =
         transcriptData.status === "fulfilled" ? transcriptData.value.segments : [];
+      const transcriptTimelineSegments =
+        transcriptData.status === "fulfilled"
+          ? transcriptData.value.timelineSegments || transcriptData.value.segments
+          : [];
       const corrections = correctionsPayload || null;
       const correctedTranscript = applyAnnotationCorrectionsToTranscript(
         transcriptSegments,
+        corrections,
+      );
+      const correctedTranscriptTimeline = applyAnnotationCorrectionsToTranscript(
+        transcriptTimelineSegments,
         corrections,
       );
       const correctedPosAnalysis = applyAnnotationCorrectionsToPosAnalysis(
@@ -2582,6 +2650,7 @@ export class VideoService {
         quantAnalysis: correctedQuantAnalysis,
         posAnalysis: correctedPosAnalysis,
         transcript: correctedTranscript,
+        transcriptTimeline: correctedTranscriptTimeline,
         detectedObjects: profiledObjects,
         rawDetectedObjects: correctedRawObjects,
         faceResults: status.face_results,
@@ -2600,6 +2669,10 @@ export class VideoService {
           sourceName: status.filename,
           yoloDetections: status.summary?.yolo_detections || 0,
           ocrDetections: status.summary?.ocr_detections || 0,
+          transcriptQuality:
+            transcriptData.status === "fulfilled"
+              ? transcriptData.value.quality
+              : undefined,
           cinematicClues: correctedCinematicClues,
           spatialToneScan: status.summary?.spatial_tone_scan
             ? {
@@ -2921,15 +2994,23 @@ export class VideoService {
       const transcriptBlob = await apiService.downloadFile(id, "transcript");
       const transcriptText = await transcriptBlob.text();
       const transcriptData = JSON.parse(transcriptText);
+      const normalizeSegment = (seg: any): TranscriptSegment => ({
+        t: `${Number(seg.start).toFixed(1)}s`,
+        text: seg.text || "",
+        rawText: seg.raw_text || seg.rawText || seg.text || "",
+        speaker: "Speaker 1",
+        start: seg.start || 0,
+        end: seg.end || 0,
+        segmentType: seg.segment_type || "utterance",
+        synthetic: Boolean(seg.synthetic),
+      });
 
       return {
-        segments: (transcriptData.segments || []).map((seg: any) => ({
-          t: `${Number(seg.start).toFixed(1)}s`,
-          text: seg.text || "",
-          speaker: "Speaker 1",
-          start: seg.start || 0,
-          end: seg.end || 0,
-        })),
+        segments: (transcriptData.segments || []).map(normalizeSegment),
+        timelineSegments: (
+          transcriptData.timeline_segments || transcriptData.segments || []
+        ).map(normalizeSegment),
+        quality: transcriptData.quality,
         languageProfile: transcriptData.language_info
           ? {
               code: transcriptData.language_info.code ?? transcriptData.language,

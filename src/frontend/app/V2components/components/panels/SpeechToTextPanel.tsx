@@ -11,7 +11,9 @@ import {
   createEmptyCorrections,
   mergeCorrectionRule,
   pushCorrectionSnapshot,
+  removeManualTranscriptEntry,
   undoLastCorrectionSnapshot,
+  upsertManualTranscriptEntry,
 } from "@/lib/annotation-corrections";
 
 import {
@@ -29,6 +31,25 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+
+function formatSpeechSeconds(value?: number | null): string {
+  const safe = Number(value ?? 0);
+  if (!Number.isFinite(safe)) return "0s";
+  const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(2);
+  return `${Number(rounded)}s`;
+}
+
+type TranscriptEditorDraft = {
+  mode: "span" | "manual";
+  source: "transcript" | "manual";
+  targetId?: string;
+  rawText?: string;
+  start: string;
+  end: string;
+  text: string;
+  status: "confirmed" | "unconfirmed";
+  note: string;
+};
 
 export default function SpeechToTextPanel({
   videoId: initialVideoId = "",
@@ -51,6 +72,9 @@ export default function SpeechToTextPanel({
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedWord, setSelectedWord] = useState<string>("");
+  const [selectedWordDraft, setSelectedWordDraft] = useState<string>("");
+  const [editorDraft, setEditorDraft] = useState<TranscriptEditorDraft | null>(null);
+  const [editorMessage, setEditorMessage] = useState<string | null>(null);
 
   // State for show/hide summary
   const [showSummary, setShowSummary] = useState(true);
@@ -66,16 +90,21 @@ export default function SpeechToTextPanel({
     const handler = (id: string) => {
       setVideoId(id);
     };
+    const timeHandler = (time: number) => {
+      setVideoTimeLine(Number(time) || 0);
+    };
     const correctionHandler = (id: string) => {
       if (id === videoId) {
         setRefreshNonce((current) => current + 1);
       }
     };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("videoTimeLineChanged", timeHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
 
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("videoTimeLineChanged", timeHandler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
   }, [videoId]);
@@ -133,8 +162,9 @@ export default function SpeechToTextPanel({
   }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const transcript = analysisData?.transcript ?? [];
+  const transcript = analysisData?.transcriptTimeline ?? analysisData?.transcript ?? [];
   const audioProsody = analysisData?.audioProsody ?? [];
+  const transcriptQuality = analysisData?.metadata?.transcriptQuality;
   const transcriptMissionNote =
     metadata?.missionMessage ||
     analysisData?.metadata?.audioError ||
@@ -471,10 +501,7 @@ export default function SpeechToTextPanel({
     if (!videoId || !rawValue) {
       return;
     }
-    const correctedValue = window.prompt("Correct transcript word/spelling:", rawValue);
-    if (!correctedValue || correctedValue.trim() === rawValue.trim()) {
-      return;
-    }
+    const correctedValue = selectedWordDraft.trim() || "Unconfirmed";
     const nextCorrections = mergeCorrectionRule(
       analysisData?.annotationCorrections,
       buildCorrectionRule("text", rawValue, correctedValue.trim()),
@@ -484,39 +511,115 @@ export default function SpeechToTextPanel({
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedWord("");
+    setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
-  const saveTranscriptSpanCorrection = async (row: any) => {
-    if (!videoId) {
+  const openTranscriptSpanEditor = (row: any) => {
+    setEditorMessage(null);
+    setEditorDraft({
+      mode: "span",
+      source: row?.correctionSource === "manual" ? "manual" : "transcript",
+      targetId: row?.targetId,
+      rawText: String(row?.rawText || row?.text || "").trim(),
+      start: String(Number(row?.start ?? 0)),
+      end: String(Number(row?.end ?? row?.start ?? 0)),
+      text:
+        String(row?.rawText || row?.text || "").trim() === "Unconfirmed"
+          ? ""
+          : String(row?.rawText || row?.text || "").trim(),
+      status: row?.status === "unconfirmed" ? "unconfirmed" : "confirmed",
+      note: "",
+    });
+  };
+
+  const openManualTranscriptEditor = () => {
+    const baseStart = Math.max(0, Number(videoTimeLine || 0));
+    const baseEnd = Number((baseStart + 2).toFixed(2));
+    setEditorMessage(null);
+    setEditorDraft({
+      mode: "manual",
+      source: "manual",
+      start: String(Number(baseStart.toFixed(2))),
+      end: String(baseEnd),
+      text: "",
+      status: "unconfirmed",
+      note: "",
+    });
+  };
+
+  const saveTranscriptEditor = async () => {
+    if (!videoId || !editorDraft) {
       return;
     }
-    const rawText = String(row?.rawText || row?.text || "").trim();
-    if (!rawText) {
+    const start = Number(editorDraft.start);
+    const end = Number(editorDraft.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+      setEditorMessage("Check the start and end timestamps.");
       return;
     }
-    const correctedValue = window.prompt("Correct transcript span:", rawText);
-    if (!correctedValue || correctedValue.trim() === rawText) {
-      return;
+    const normalizedText = editorDraft.text.trim() || "Unconfirmed";
+    const normalizedStatus =
+      editorDraft.status === "unconfirmed" || normalizedText === "Unconfirmed"
+        ? "unconfirmed"
+        : "confirmed";
+
+    let nextCorrections = analysisData?.annotationCorrections;
+    if (editorDraft.source === "manual") {
+      const entryId =
+        editorDraft.targetId || `manual:${start.toFixed(2)}:${end.toFixed(2)}`;
+      nextCorrections = upsertManualTranscriptEntry(nextCorrections, {
+        id: entryId,
+        start,
+        end,
+        text: normalizedStatus === "unconfirmed" ? "" : normalizedText,
+        status: normalizedStatus,
+        note: editorDraft.note.trim(),
+        updated_at: new Date().toISOString(),
+        updated_by: "analyst",
+      });
+    } else {
+      const rawText = String(editorDraft.rawText || "").trim() || "Unconfirmed";
+      nextCorrections = mergeCorrectionRule(
+        nextCorrections,
+        buildCorrectionRule("text", rawText, normalizedText, editorDraft.note.trim(), {
+          targetStartTimestamp: start,
+          targetEndTimestamp: end,
+        }),
+      );
     }
-    const nextCorrections = mergeCorrectionRule(
-      analysisData?.annotationCorrections,
-      buildCorrectionRule("text", rawText, correctedValue.trim()),
-    );
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedWord("");
+    setSelectedWordDraft("");
+    setEditorDraft(null);
+    setEditorMessage(null);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
+  const removeTranscriptEditorEntry = async () => {
+    if (!videoId || !editorDraft || editorDraft.source !== "manual" || !editorDraft.targetId) {
+      return;
+    }
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    const nextCorrections = removeManualTranscriptEntry(
+      analysisData?.annotationCorrections,
+      editorDraft.targetId,
+    );
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedWord("");
+    setSelectedWordDraft("");
+    setEditorDraft(null);
+    setEditorMessage(null);
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
   const dropTextCorrection = async (rawValue: string) => {
     if (!videoId || !rawValue) {
-      return;
-    }
-    const confirmed = window.confirm(`Drop transcript word "${rawValue}" from surfaced views?`);
-    if (!confirmed) {
       return;
     }
     const nextCorrections = mergeCorrectionRule(
@@ -528,6 +631,7 @@ export default function SpeechToTextPanel({
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedWord("");
+    setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
@@ -545,6 +649,7 @@ export default function SpeechToTextPanel({
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedWord("");
+    setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
@@ -577,12 +682,12 @@ export default function SpeechToTextPanel({
         </div>
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* SUMMARY */}
-          <div className="border-b border-[#0a0a0a] shrink-0">
+          <div className="border-b border-white/8 shrink-0">
             <button
               onClick={() => setShowSummary(!showSummary)}
-              className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#2a2a2a] transition-colors"
+              className="w-full px-3 py-2 flex items-center justify-between rounded px-1 hover:bg-white/5 transition-colors"
             >
-              <span className="text-[#b8b8b8] text-[12px] font-medium">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
                 Summary
               </span>
               {showSummary ? (
@@ -595,11 +700,11 @@ export default function SpeechToTextPanel({
           {showSummary && (
             <div className="flex-1 min-h-20 overflow-y-auto space-y-2 px-3 py-2">
               {summaryText.length === 0 ? (
-                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300 py-2">
+                <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-slate-300">
                   No summary available
                 </div>
               ) : (
-                <div className="p-3 bg-slate-700/30 rounded-lg py-2">
+                <div className="rounded border border-white/8 bg-[#151515] px-3 py-3">
                   <div className="text-sm text-slate-200">{summaryText}</div>
                 </div>
               )}
@@ -609,27 +714,174 @@ export default function SpeechToTextPanel({
           {/* Speech to text */}
           {/* Scrollable list container: flexible height with vertical scrolling */}
           <div className="min-h-0 px-3 flex flex-col">
-            <div className="text-sm font-semibold mb-2 shrink-0">
-              Audio Prosody:
+            <div className="mb-3 shrink-0 rounded border border-white/8 bg-[#151515] px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                    Transcript governance
+                  </div>
+                  <div className="mt-1 text-xs text-slate-300">
+                    Keep transcript corrections, unresolved marks, and manual timestamp entries inside this panel.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={openManualTranscriptEditor}
+                  className="rounded border border-white/10 bg-[#101010] px-2.5 py-1.5 text-[11px] text-slate-200 hover:bg-slate-800/40 hover:text-slate-50"
+                >
+                  Add marker
+                </button>
+              </div>
+              {editorDraft ? (
+                <div className="mt-3 rounded border border-white/8 bg-[#111111] px-3 py-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                        {editorDraft.mode === "manual" ? "New transcript marker" : "Transcript span editor"}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-300">
+                        Empty transcript text is surfaced as <span className="text-amber-200">Unconfirmed</span>.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditorDraft(null);
+                        setEditorMessage(null);
+                      }}
+                      className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">Start</div>
+                      <input
+                        value={editorDraft.start}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current ? { ...current, start: event.target.value } : current,
+                          )
+                        }
+                        className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">End</div>
+                      <input
+                        value={editorDraft.end}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current ? { ...current, end: event.target.value } : current,
+                          )
+                        }
+                        className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                      />
+                    </label>
+                  </div>
+                  <label className="mt-3 block text-[11px] text-slate-400">
+                    <div className="mb-1 uppercase tracking-[0.14em]">Transcript text</div>
+                    <textarea
+                      value={editorDraft.text}
+                      onChange={(event) =>
+                        setEditorDraft((current) =>
+                          current ? { ...current, text: event.target.value } : current,
+                        )
+                      }
+                      placeholder="Leave blank to mark as Unconfirmed"
+                      className="min-h-[84px] w-full rounded border border-white/10 bg-[#171717] px-2 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                    />
+                  </label>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <label className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">Status</div>
+                      <select
+                        value={editorDraft.status}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  status: event.target.value as "confirmed" | "unconfirmed",
+                                }
+                              : current,
+                          )
+                        }
+                        className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                      >
+                        <option value="confirmed">Confirmed</option>
+                        <option value="unconfirmed">Unconfirmed</option>
+                      </select>
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">Note</div>
+                      <input
+                        value={editorDraft.note}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current ? { ...current, note: event.target.value } : current,
+                          )
+                        }
+                        placeholder="Optional analyst note"
+                        className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                      />
+                    </label>
+                  </div>
+                  {editorMessage ? (
+                    <div className="mt-3 text-xs text-amber-200">{editorMessage}</div>
+                  ) : null}
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="text-[11px] text-slate-500">
+                      Manual markers are stored with timestamps and reloaded with the analysis corrections.
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {editorDraft.source === "manual" && editorDraft.targetId ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void removeTranscriptEditorEntry();
+                          }}
+                          className="rounded border border-rose-500/30 bg-rose-950/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-900/20"
+                        >
+                          Remove marker
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void saveTranscriptEditor();
+                        }}
+                        className="rounded border border-white/10 bg-[#101010] px-2.5 py-1.5 text-[11px] text-slate-100 hover:bg-slate-800/40"
+                      >
+                        Save in panel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="mb-2 shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
+              Audio prosody
             </div>
             <div className={prosodySectionClass}>
               {audioProsody.length === 0 ? (
-                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-400 text-xs">
+                <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-xs text-slate-400">
                   No prosody cues on channel yet.
                 </div>
               ) : (
                 audioProsody.slice(0, 8).map((cue: any) => (
                   <div
                     key={cue.cue_id || `${cue.start}-${cue.end}`}
-                    className="p-3 bg-slate-700/20 rounded-lg cursor-pointer hover:bg-slate-700/35 transition-colors"
+                    className="cursor-pointer rounded border border-white/8 bg-[#171717] px-3 py-3 transition-colors hover:bg-slate-800/25"
                     onClick={() => {
                       eventBus.emit("videoTimeLineChanged", cue.start);
                     }}
                   >
-                    <div className="text-[11px] text-amber-300">
-                      {cue.start}s ~ {cue.end}s
+                    <div className="text-[11px] text-slate-300">
+                      {formatSpeechSeconds(cue.start)} ~ {formatSpeechSeconds(cue.end)}
                     </div>
-                    <div className="text-xs text-slate-300 mt-1">
+                    <div className="mt-2 text-xs text-slate-300">
                       Pace: {cue.pace?.label || "n/a"}
                       {typeof cue.pace?.words_per_second === "number"
                         ? ` • ${cue.pace.words_per_second.toFixed(2)} w/s`
@@ -678,14 +930,25 @@ export default function SpeechToTextPanel({
                 ))
               )}
             </div>
-            <div className="text-sm font-semibold mb-2 shrink-0">
+            <div className="mb-2 shrink-0 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
               {isAudioMode ? "Transcript Support:" : "Speech to Text:"}
             </div>
             {selectedWord ? (
-              <div className="mb-2 shrink-0 rounded border border-slate-700 bg-slate-900/60 px-3 py-2">
+              <div className="mb-2 shrink-0 rounded border border-white/8 bg-[#171717] px-3 py-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-xs text-slate-300">
-                    Selected word: <span className="font-medium text-slate-100">{selectedWord}</span>
+                  <div className="min-w-[220px] flex-1">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                      Selected word
+                    </div>
+                    <div className="mt-1 text-xs text-slate-300">
+                      Raw token: <span className="font-medium text-slate-100">{selectedWord}</span>
+                    </div>
+                    <input
+                      value={selectedWordDraft}
+                      onChange={(event) => setSelectedWordDraft(event.target.value)}
+                      placeholder="Correction inside panel, or leave blank for Unconfirmed"
+                      className="mt-2 w-full rounded border border-white/10 bg-[#121212] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -708,7 +971,10 @@ export default function SpeechToTextPanel({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSelectedWord("")}
+                      onClick={() => {
+                        setSelectedWord("");
+                        setSelectedWordDraft("");
+                      }}
                       className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
                     >
                       Clear
@@ -719,7 +985,7 @@ export default function SpeechToTextPanel({
             ) : null}
             <div className={transcriptSectionClass}>
               {transcript.length === 0 ? (
-                <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+                <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-slate-300">
                   <div>No transcript on channel yet.</div>
                   {transcriptMissionNote && (
                     <div className="mt-2 text-xs text-slate-400">
@@ -728,33 +994,71 @@ export default function SpeechToTextPanel({
                   )}
                 </div>
               ) : (
-                transcript.map((row: any) => (
+                transcript.map((row: any) => {
+                  const isSynthetic = Boolean(row.synthetic);
+                  const segmentLabel =
+                    row.segmentType === "manual_entry"
+                      ? "Manual marker"
+                      : row.segmentType === "unresolved_tail"
+                        ? "Unresolved tail"
+                        : row.segmentType === "unresolved_interval"
+                          ? "Unresolved interval"
+                          : "Transcript span";
+                  return (
                   <div
-                    key={row.start}
-                    className="p-3 bg-slate-700/30 rounded-lg cursor-pointer hover:bg-slate-700/50"
-                    // Click to seek video to object timestamp
+                    key={`${row.targetId || row.start}-${row.end}-${row.segmentType || "utterance"}`}
+                    className={`rounded border px-3 py-3 transition-colors ${
+                      isSynthetic
+                        ? "border-amber-500/20 bg-amber-950/10 text-slate-300"
+                        : "cursor-pointer border-white/8 bg-[#171717] hover:bg-slate-800/25"
+                    }`}
                     onClick={() => {
                       eventBus.emit("videoTimeLineChanged", row.start);
                       console.log("Seeking video to", row.start);
                     }}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs text-cyan-300">
-                        {row.start}s ~ {row.end}s
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div className="space-y-1 text-[11px] text-slate-400">
+                        <div className={isSynthetic ? "text-amber-200/80" : "text-slate-500"}>
+                          {segmentLabel}
+                        </div>
+                        <div className="text-slate-200">
+                          {formatSpeechSeconds(row.start)} ~ {formatSpeechSeconds(row.end)}
+                        </div>
+                        <div>
+                          duration {formatSpeechSeconds(Number(row.end ?? 0) - Number(row.start ?? 0))}
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void saveTranscriptSpanCorrection(row);
-                        }}
-                        className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
-                        title="Correct this whole transcript span"
-                      >
-                        Correct span
-                      </button>
+                      {isSynthetic ? (
+                        <div className="rounded border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-[10px] text-amber-100/80">
+                          Coverage marker
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="rounded border border-white/8 bg-[#121212] px-2 py-1 text-[10px] text-slate-400">
+                            {row.status === "unconfirmed" ? "Unconfirmed" : "Confirmed"}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openTranscriptSpanEditor(row);
+                            }}
+                            className="rounded border border-white/8 bg-[#121212] px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800/40 hover:text-slate-50"
+                            title="Edit this transcript span inside the panel"
+                          >
+                            Edit span
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
+                    <div
+                      className={`border-l-2 pl-3 text-[13px] leading-6 ${
+                        isSynthetic
+                          ? "border-amber-500/20 text-slate-300"
+                          : "border-slate-700 text-slate-200"
+                      }`}
+                    >
                       {String(row.text || "")
                         .split(/\s+/)
                         .filter(Boolean)
@@ -771,16 +1075,26 @@ export default function SpeechToTextPanel({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              if (cleanedWord) {
+                              if (!isSynthetic && cleanedWord) {
                                 setSelectedWord(cleanedWord);
+                                setSelectedWordDraft(cleanedWord);
                               }
                             }}
-                            className={`rounded px-1 py-0.5 text-sm hover:bg-slate-700/60 hover:text-slate-50 ${
+                            disabled={isSynthetic}
+                            className={`mr-1 inline rounded px-0.5 py-0 text-[13px] leading-6 ${
+                              isSynthetic
+                                ? "cursor-default text-slate-300"
+                                : "hover:bg-slate-700/35 hover:text-slate-50"
+                            } ${
                               isSelected
                                 ? "bg-cyan-900/40 text-cyan-100"
                                 : "text-slate-200"
                             }`}
-                            title="Click to select this word for correction or drop."
+                            title={
+                              isSynthetic
+                                ? "Synthetic coverage marker"
+                                : "Click to select this word for correction or drop."
+                            }
                           >
                             {word}
                           </button>
@@ -789,9 +1103,17 @@ export default function SpeechToTextPanel({
                         ))}
                     </div>
                   </div>
-                ))
+                );
+                })
               )}
             </div>
+            {transcriptQuality?.status === "degraded" ? (
+              <div className="mt-3 rounded border border-amber-500/20 bg-amber-950/10 px-3 py-2 text-[11px] text-amber-100/85">
+                Transcript coverage is flagged for review. Last decoded speech ends at{" "}
+                {formatSpeechSeconds(transcriptQuality.last_segment_end_seconds)} with about{" "}
+                {formatSpeechSeconds(transcriptQuality.trailing_uncovered_seconds)} still uncovered.
+              </div>
+            ) : null}
           </div>
         </div>
       </main>

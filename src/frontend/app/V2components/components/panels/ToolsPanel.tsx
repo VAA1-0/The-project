@@ -1400,7 +1400,7 @@ export default function ToolsPanel() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col bg-[#111111]">
-          <div className="border-b border-white/10 px-4 py-3">
+          <div className="border-b border-white/8 bg-[#141414] px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--ui-passive-text)]">
               Analysis Desk
             </div>
@@ -1431,8 +1431,8 @@ export default function ToolsPanel() {
                   type="button"
                   className={`rounded border px-2 py-1 transition-colors ${
                     activeWorkspace === key
-                      ? "border-slate-500 bg-slate-800/70 text-slate-200"
-                      : "border-white/8 bg-[#171717] text-slate-500 hover:text-slate-300"
+                      ? "border-slate-500/60 bg-[#161616] text-slate-100"
+                      : "border-white/10 bg-[#101010] text-slate-500 hover:bg-white/5 hover:text-slate-300"
                   }`}
                   onClick={() => setActiveWorkspace(key as ToolsWorkspace)}
                 >
@@ -1445,8 +1445,15 @@ export default function ToolsPanel() {
           <div className="flex-1 overflow-y-auto px-4 py-3">
             <div className="space-y-3 pb-4">
               {activeWorkspace === "visual" && (
-                <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3 text-xs text-slate-300">
-                  <div className="font-medium text-slate-200">Visual cues</div>
+                <div className="space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                      Visual cues
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Evidence-oriented review of cinematic patterns, motion, and scene structure.
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
                     {[
                       ["cinematic", "Cinematic clues"],
@@ -1457,8 +1464,8 @@ export default function ToolsPanel() {
                         type="button"
                         className={`rounded border px-2 py-1 transition-colors ${
                           activeVisualView === key
-                            ? "border-slate-500 bg-slate-800/70 text-slate-200"
-                            : "border-white/8 bg-[#171717] text-slate-500 hover:text-slate-300"
+                            ? "border-slate-500/60 bg-[#161616] text-slate-100"
+                            : "border-white/10 bg-[#101010] text-slate-500 hover:bg-white/5 hover:text-slate-300"
                         }`}
                         onClick={() => setActiveVisualView(key as VisualWorkspaceView)}
                       >
@@ -1467,125 +1474,151 @@ export default function ToolsPanel() {
                     ))}
                   </div>
                   {activeVisualView === "cinematic" && (
-                    <div className="rounded-md border border-white/8 bg-[#171717] px-3 py-2 text-[11px] text-slate-400">
+                    <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[11px] text-slate-400">
                       {motionSceneBasis && (
-                        <div className="mb-3 rounded-md border border-white/8 bg-[#141414] px-3 py-3">
-                          <div className="mb-2 font-medium text-slate-200">
+                        <div className="mb-3 rounded-md border border-white/8 bg-[#151515] px-3 py-3">
+                          <div className="mb-3 font-medium text-slate-200">
                             Motion and scene basis
                           </div>
-                          <div className="mb-3 flex flex-wrap gap-2 text-[10px] text-slate-400">
-                            <div className="rounded border border-white/8 bg-[#171717] px-2 py-1">
-                              reading: provisional derived basis
-                            </div>
-                            <div className="rounded border border-white/8 bg-[#171717] px-2 py-1">
-                              density: {sceneDensityLabel}
+                          <div className="mb-3 overflow-hidden rounded border border-white/8 bg-[#121212]">
+                            <div className="grid gap-px bg-white/8 md:grid-cols-2">
+                              <div className="bg-[#151515] px-3 py-2 text-[10px] text-slate-400">
+                                <div className="uppercase tracking-wide text-slate-500">Reading</div>
+                                <div className="mt-1 text-slate-200">Provisional derived basis</div>
+                              </div>
+                              <div className="bg-[#151515] px-3 py-2 text-[10px] text-slate-400">
+                                <div className="uppercase tracking-wide text-slate-500">Density</div>
+                                <div className="mt-1 text-slate-200">{sceneDensityLabel}</div>
+                              </div>
                             </div>
                           </div>
-                          <div className="mb-3 rounded border border-white/8 bg-[#151515] px-3 py-2 text-[10px] leading-relaxed text-slate-400">
+                          <div className="mb-3 border-l-2 border-slate-700 pl-3 text-[10px] leading-relaxed text-slate-400">
                             {sceneBasisDescription}
                           </div>
                           <div className="grid gap-2 md:grid-cols-2">
-                            <div className="rounded border border-white/8 bg-[#171717] px-3 py-2">
-                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                            <div className="overflow-hidden rounded border border-white/8 bg-[#141414]">
+                              <div className="border-b border-white/8 px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
                                 Motion evidence
                               </div>
-                              <div className="mt-1 text-slate-200">
-                                {motionEvidenceSummary?.dominant_motion || "No dominant motion yet"}
-                              </div>
-                              <div className="mt-1 space-y-1 text-[10px] text-slate-400">
-                                <div>
-                                  Samples: {motionEvidenceSummary?.sample_count ?? 0}
+                              <div className="space-y-3 px-3 py-3">
+                                <div className="text-sm text-slate-200">
+                                  {motionEvidenceSummary?.dominant_motion || "No dominant motion yet"}
                                 </div>
-                                <div>
-                                  High-motion samples: {motionEvidenceSummary?.high_motion_samples ?? 0}
-                                </div>
-                                <div>
-                                  Mean occupancy shift: {motionEvidenceSummary?.mean_occupancy_shift ?? 0}
-                                </div>
-                                {motionSceneBasis.motionEvidence?.method ? (
-                                  <div>Method: {motionSceneBasis.motionEvidence.method}</div>
-                                ) : null}
-                              </div>
-                              <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2 text-[10px] leading-relaxed text-slate-400">
-                                {motionBasisDescription}
-                              </div>
-                              {notableMotionMoments.length > 0 && (
-                                <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
-                                  <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-                                    Notable motion moments
-                                  </div>
-                                  <div className="space-y-1 text-[10px] text-slate-300">
-                                    {notableMotionMoments.map((sample, index) => (
-                                      <button
-                                        type="button"
-                                        key={`motion-${sample.timestamp}-${index}`}
-                                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-slate-800/50"
-                                        onClick={() => {
-                                          eventBus.emit("videoIdChanged", videoId);
-                                          eventBus.emit("videoTimeLineChanged", Number(sample.timestamp || 0));
-                                        }}
-                                      >
-                                        <span className="truncate">
-                                          {sample.motion_label || "unknown"} / {sample.activity_label || "unknown"}
-                                        </span>
-                                        <span className="shrink-0 text-slate-500">
-                                          {formatSeconds(sample.timestamp)}
-                                        </span>
-                                      </button>
-                                    ))}
+                                <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
+                                  <div className="divide-y divide-white/8 text-[10px] text-slate-400">
+                                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span>Samples</span>
+                                      <span className="text-slate-200">{motionEvidenceSummary?.sample_count ?? 0}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span>High-motion samples</span>
+                                      <span className="text-slate-200">{motionEvidenceSummary?.high_motion_samples ?? 0}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span>Mean occupancy shift</span>
+                                      <span className="text-slate-200">{motionEvidenceSummary?.mean_occupancy_shift ?? 0}</span>
+                                    </div>
+                                    {motionSceneBasis.motionEvidence?.method ? (
+                                      <div className="px-3 py-2">
+                                        <span className="text-slate-500">Method</span>
+                                        <div className="mt-1 text-slate-300">{motionSceneBasis.motionEvidence.method}</div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
-                              )}
+                                <div className="border-l-2 border-slate-700 pl-3 text-[10px] leading-relaxed text-slate-400">
+                                  {motionBasisDescription}
+                                </div>
+                                {notableMotionMoments.length > 0 && (
+                                  <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
+                                    <div className="border-b border-white/8 px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                      Notable motion moments
+                                    </div>
+                                    <div className="divide-y divide-white/8 text-[10px] text-slate-300">
+                                      {notableMotionMoments.map((sample, index) => (
+                                        <button
+                                          type="button"
+                                          key={`motion-${sample.timestamp}-${index}`}
+                                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition hover:bg-slate-800/30"
+                                          onClick={() => {
+                                            eventBus.emit("videoIdChanged", videoId);
+                                            eventBus.emit("videoTimeLineChanged", Number(sample.timestamp || 0));
+                                          }}
+                                        >
+                                          <span className="truncate">
+                                            {sample.motion_label || "unknown"} / {sample.activity_label || "unknown"}
+                                          </span>
+                                          <span className="shrink-0 text-slate-500">
+                                            {formatSeconds(sample.timestamp)}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="rounded border border-white/8 bg-[#171717] px-3 py-2">
-                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                            <div className="overflow-hidden rounded border border-white/8 bg-[#141414]">
+                              <div className="border-b border-white/8 px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
                                 Scene basis
                               </div>
-                              <div className="mt-1 text-slate-200">
-                                {sceneSegmentSummary?.scene_count ?? 0} scene intervals
-                              </div>
-                              <div className="mt-1 space-y-1 text-[10px] text-slate-400">
-                                <div>
-                                  Merged review bands: {mergedSceneSegments.length}
+                              <div className="space-y-3 px-3 py-3">
+                                <div className="text-sm text-slate-200">
+                                  {sceneSegmentSummary?.scene_count ?? 0} scene intervals
                                 </div>
-                                <div>
-                                  Mean scene duration: {formatSeconds(sceneSegmentSummary?.mean_scene_duration)}
-                                </div>
-                                {motionSceneBasis.sceneSegments?.source ? (
-                                  <div>Source: {motionSceneBasis.sceneSegments.source}</div>
-                                ) : null}
-                                {motionSceneBasis.sceneSegments?.method ? (
-                                  <div>Method: {motionSceneBasis.sceneSegments.method}</div>
-                                ) : null}
-                              </div>
-                              {mergedScenePreview.length > 0 && (
-                                <div className="mt-2 rounded border border-white/8 bg-[#151515] px-2 py-2">
-                                  <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
-                                    Opening scene bands
-                                  </div>
-                                  <div className="space-y-1 text-[10px] text-slate-300">
-                                    {mergedScenePreview.map((segment) => (
-                                      <button
-                                        type="button"
-                                        key={`scene-${segment.scene_index}-${segment.start}-${segment.end}`}
-                                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-slate-800/50"
-                                        onClick={() => {
-                                          eventBus.emit("videoIdChanged", videoId);
-                                          eventBus.emit("videoTimeLineChanged", Number(segment.start || 0));
-                                        }}
-                                      >
-                                        <span className="truncate">
-                                          Scene {segment.scene_index}
-                                          {segment.mergedCount > 1 ? ` • merged x${segment.mergedCount}` : ""}
-                                        </span>
-                                        <span className="shrink-0 text-slate-500">
-                                          {formatSeconds(segment.start)}-{formatSeconds(segment.end)}
-                                        </span>
-                                      </button>
-                                    ))}
+                                <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
+                                  <div className="divide-y divide-white/8 text-[10px] text-slate-400">
+                                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span>Merged review bands</span>
+                                      <span className="text-slate-200">{mergedSceneSegments.length}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                      <span>Mean scene duration</span>
+                                      <span className="text-slate-200">{formatSeconds(sceneSegmentSummary?.mean_scene_duration)}</span>
+                                    </div>
+                                    {motionSceneBasis.sceneSegments?.source ? (
+                                      <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                        <span>Source</span>
+                                        <span className="text-slate-200">{motionSceneBasis.sceneSegments.source}</span>
+                                      </div>
+                                    ) : null}
+                                    {motionSceneBasis.sceneSegments?.method ? (
+                                      <div className="px-3 py-2">
+                                        <span className="text-slate-500">Method</span>
+                                        <div className="mt-1 text-slate-300">{motionSceneBasis.sceneSegments.method}</div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
-                              )}
+                                {mergedScenePreview.length > 0 && (
+                                  <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
+                                    <div className="border-b border-white/8 px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                      Opening scene bands
+                                    </div>
+                                    <div className="divide-y divide-white/8 text-[10px] text-slate-300">
+                                      {mergedScenePreview.map((segment) => (
+                                        <button
+                                          type="button"
+                                          key={`scene-${segment.scene_index}-${segment.start}-${segment.end}`}
+                                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition hover:bg-slate-800/30"
+                                          onClick={() => {
+                                            eventBus.emit("videoIdChanged", videoId);
+                                            eventBus.emit("videoTimeLineChanged", Number(segment.start || 0));
+                                          }}
+                                        >
+                                          <span className="truncate">
+                                            Scene {segment.scene_index}
+                                            {segment.mergedCount > 1 ? ` • merged x${segment.mergedCount}` : ""}
+                                          </span>
+                                          <span className="shrink-0 text-slate-500">
+                                            {formatSeconds(segment.start)}-{formatSeconds(segment.end)}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>

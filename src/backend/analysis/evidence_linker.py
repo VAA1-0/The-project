@@ -44,7 +44,7 @@ def link_transcript_to_trace(
         ...
     }
     """
-    segments = transcript_data.get("segments") or []
+    segments = transcript_data.get("timeline_segments") or transcript_data.get("segments") or []
     anchors: list[Anchor] = []
     objects: list[EvidenceObject] = []
 
@@ -52,6 +52,8 @@ def link_transcript_to_trace(
         start_ms = seconds_to_ms(segment.get("start"))
         end_ms = seconds_to_ms(segment.get("end"))
         text = str(segment.get("text") or "").strip()
+        segment_type = str(segment.get("segment_type") or "utterance")
+        synthetic = bool(segment.get("synthetic"))
 
         anchor = Anchor(
             media_id=media_ref.media_id,
@@ -62,11 +64,17 @@ def link_transcript_to_trace(
         anchors.append(anchor)
 
         utterance = EvidenceObject(
-            object_type="utterance",
+            object_type=(
+                "utterance"
+                if segment_type == "utterance"
+                else "transcript_interval_marker"
+            ),
             anchor_id=anchor.anchor_id,
             payload={
                 "text": text,
                 "segment_index": index,
+                "segment_type": segment_type,
+                "synthetic": synthetic,
                 "language": transcript_data.get("language"),
                 "language_name": transcript_data.get("language_name"),
                 "language_info": transcript_data.get("language_info"),

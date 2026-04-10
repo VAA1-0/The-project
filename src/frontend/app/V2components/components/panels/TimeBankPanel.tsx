@@ -97,19 +97,22 @@ function buildEnvelopeFromAnalysisData(
   }
 
   if (type === "transcript") {
-    const anchors = (analysisData.transcript || []).map((item, index) => ({
+    const transcriptRows = analysisData.transcriptTimeline || analysisData.transcript || [];
+    const anchors = transcriptRows.map((item, index) => ({
       anchor_id: makeAnchorId("txt", index),
       media_id: analysisId,
       t_start_ms: Math.round(Number(item.start || 0) * 1000),
       t_end_ms: Math.round(Number(item.end || 0) * 1000),
     }));
-    const objects = (analysisData.transcript || []).map((item, index) => ({
+    const objects = transcriptRows.map((item, index) => ({
       id: `txt_event_${analysisId}_${index}`,
-      object_type: "utterance",
+      object_type: item.synthetic ? "transcript_interval_marker" : "utterance",
       anchor_id: anchors[index].anchor_id,
       payload: {
         text: item.text,
         raw_text: item.rawText || item.text,
+        segment_type: item.segmentType || "utterance",
+        synthetic: Boolean(item.synthetic),
       },
       confidence: null,
       created_by: "client_fallback",
@@ -673,13 +676,13 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
 
   return (
     <div className="flex h-full flex-col bg-[#161616] text-slate-100">
-      <div className="border-b border-[#202020] px-3 py-2">
+      <div className="border-b border-white/8 bg-[#141414] px-3 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-[#8f8f8f]">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
               Time Bank
             </div>
-            <div className="truncate text-[11px] text-[#8f8f8f]">
+            <div className="mt-1 truncate text-[11px] text-slate-400">
               Navigable multimodal evidence with side-by-side comparison
             </div>
           </div>
@@ -689,7 +692,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
               className={`rounded border px-2 py-1 ${
                 currentIncluded
                   ? "border-blue-500/30 bg-blue-500/10 text-slate-100"
-                  : "border-[#2f2f2f] text-[#b8b8b8] hover:bg-[#222222]"
+                  : "border-white/10 bg-[#101010] text-slate-300 hover:bg-white/5"
               }`}
               title={
                 currentIncluded
@@ -701,7 +704,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
             </button>
             <button
               onClick={clearAnalyses}
-              className="rounded border border-[#2f2f2f] px-2 py-1 text-[#8f8f8f] hover:bg-[#222222]"
+              className="rounded border border-white/10 bg-[#101010] px-2 py-1 text-slate-400 hover:bg-white/5"
             >
               Reset
             </button>
@@ -721,7 +724,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   isCurrent
                     ? "border-blue-500/40 bg-blue-500/10 text-slate-100"
-                    : "border-[#2f2f2f] bg-[#111111] text-[#8f8f8f] hover:bg-[#181818]"
+                    : "border-white/10 bg-[#101010] text-slate-400 hover:bg-white/5"
                 }`}
                 title={row?.sourceName || analysisId}
               >
@@ -741,16 +744,16 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
             );
           })}
         </div>
-        <div className="mt-2 text-[11px] text-[#8f8f8f]">
+        <div className="mt-3 rounded border border-white/8 bg-[#121212] px-3 py-2 text-[11px] text-slate-400">
           Open another analysis in VAA1, then press `Add Current` to compare it side by side here. Drag feature headings to reorder the columns.
         </div>
       </div>
 
       <div className="flex-1 overflow-auto px-3 py-3">
         {loading ? (
-          <div className="text-sm text-[#8f8f8f]">Loading Time Bank…</div>
+          <div className="rounded border border-white/8 bg-[#121212] px-4 py-4 text-sm text-slate-400">Loading Time Bank…</div>
         ) : rows.length === 0 ? (
-          <div className="rounded-sm border border-[#2a2a2a] bg-[#111111] px-4 py-4 text-sm text-[#8f8f8f]">
+          <div className="rounded border border-white/8 bg-[#121212] px-4 py-4 text-sm text-slate-400">
             No analyses selected. Open an analysis, then use `Add Current`.
           </div>
         ) : (
@@ -763,11 +766,11 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                   .join(" ")}`,
               }}
             >
-              <div className="rounded-sm border border-[#2a2a2a] bg-[#111111] px-3 py-2.5">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-[#8f8f8f]">
+              <div className="rounded border border-white/8 bg-[#151515] px-3 py-2.5">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                   Source
                 </div>
-                <div className="mt-1 text-[11px] text-[#8f8f8f]">Timeline row</div>
+                <div className="mt-1 text-[11px] text-slate-500">Timeline row</div>
               </div>
               {sections.map((section) => (
                 <div
@@ -780,21 +783,21 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                     reorderSection(section);
                     setDraggedSection(null);
                   }}
-                  className="rounded-sm border border-[#2a2a2a] bg-[#111111] px-3 py-2.5"
+                  className="rounded border border-white/8 bg-[#151515] px-3 py-2.5"
                   title="Drag to reorder feature columns"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] uppercase tracking-[0.16em] text-[#8f8f8f]">
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                       {SECTION_LABELS[section]}
                     </div>
-                    <div className="flex items-center gap-1 text-[11px] text-[#8f8f8f]">
+                    <div className="flex items-center gap-1 text-[11px] text-slate-500">
                       <button
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
                           adjustSectionWidth(section, -40);
                         }}
-                        className="rounded border border-[#2f2f2f] px-1 hover:bg-[#1a1a1a]"
+                        className="rounded border border-white/10 bg-[#101010] px-1 hover:bg-white/5"
                         title="Narrow this column"
                       >
                         -
@@ -805,7 +808,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                           event.stopPropagation();
                           adjustSectionWidth(section, 40);
                         }}
-                        className="rounded border border-[#2f2f2f] px-1 hover:bg-[#1a1a1a]"
+                        className="rounded border border-white/10 bg-[#101010] px-1 hover:bg-white/5"
                         title="Widen this column"
                       >
                         +
@@ -813,7 +816,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                       <span>drag</span>
                     </div>
                   </div>
-                  <div className="mt-1 grid grid-cols-[72px_minmax(0,1fr)_52px] gap-2 text-[11px] text-[#8f8f8f]">
+                  <div className="mt-1 grid grid-cols-[72px_minmax(0,1fr)_52px] gap-2 text-[11px] text-slate-500">
                     <span>Time</span>
                     <span>Evidence</span>
                     <span className="text-right">Conf.</span>
@@ -825,13 +828,13 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                 <React.Fragment key={row.id}>
                   <button
                     onClick={() => eventBus.emit("videoIdChanged", row.id)}
-                    className="min-w-0 rounded-sm border border-[#2a2a2a] bg-[#111111] px-3 py-2 text-left hover:bg-[#181818]"
+                    className="min-w-0 rounded border border-white/8 bg-[#151515] px-3 py-2 text-left hover:bg-white/5"
                     title={`${row.sourceName}\n${row.id}`}
                   >
                     <div className="truncate text-[12px] text-slate-200">
                       {compactLabel(row.sourceName, 34)}
                     </div>
-                    <div className="mt-1 text-[11px] text-[#8f8f8f]">
+                    <div className="mt-1 text-[11px] text-slate-500">
                       {row.id === selectedVideoId ? "current source" : "source ready"}
                     </div>
                   </button>

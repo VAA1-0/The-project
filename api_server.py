@@ -18,6 +18,7 @@ import json
 import io
 import zipfile
 import subprocess
+import wave
 from typing import Dict, Any, Optional, List
 import asyncio
 import csv
@@ -144,6 +145,149 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
 
 def csv_escape(value: Any) -> str:
     return str(value).replace('"', '""')
+
+
+def safe_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_wav_duration_seconds(audio_path: str | Path) -> Optional[float]:
+    path_obj = Path(audio_path)
+    if not path_obj.exists() or path_obj.suffix.lower() != ".wav":
+        return None
+
+    try:
+        with wave.open(str(path_obj), "rb") as handle:
+            frame_rate = handle.getframerate()
+            if frame_rate <= 0:
+                return None
+            return handle.getnframes() / float(frame_rate)
+    except Exception:
+        return None
+
+
+def build_transcript_quality_report(
+    transcript: Dict[str, Any],
+    *,
+    media_duration_seconds: Any = None,
+    audio_duration_seconds: Any = None,
+    trailing_gap_warn_seconds: float = 8.0,
+    trailing_gap_warn_ratio: float = 0.08,
+) -> Dict[str, Any]:
+    segments = transcript.get("segments") or []
+    last_end_seconds = max(
+        (safe_float(segment.get("end")) or 0.0 for segment in segments),
+        default=0.0,
+    )
+    media_duration = safe_float(media_duration_seconds)
+    audio_duration = safe_float(audio_duration_seconds)
+
+    target_duration = media_duration or audio_duration or last_end_seconds
+    trailing_uncovered_seconds = max(0.0, (target_duration or 0.0) - last_end_seconds)
+    coverage_ratio = (
+        min(1.0, max(0.0, last_end_seconds / target_duration))
+        if target_duration and target_duration > 0
+        else 1.0
+    )
+
+    coverage_shortfall = trailing_uncovered_seconds > max(
+        trailing_gap_warn_seconds,
+        (target_duration or 0.0) * trailing_gap_warn_ratio,
+    )
+
+    reasons: List[str] = []
+    if not segments:
+        reasons.append("no_transcript_segments")
+    if coverage_shortfall:
+        reasons.append("trailing_coverage_shortfall")
+
+    return {
+        "status": "degraded" if reasons else "ok",
+        "segment_count": len(segments),
+        "last_segment_end_seconds": round(last_end_seconds, 3),
+        "media_duration_seconds": round(media_duration, 3) if media_duration is not None else None,
+        "audio_duration_seconds": round(audio_duration, 3) if audio_duration is not None else None,
+        "coverage_target_seconds": round(target_duration, 3) if target_duration is not None else None,
+        "coverage_ratio": round(coverage_ratio, 4),
+        "trailing_uncovered_seconds": round(trailing_uncovered_seconds, 3),
+        "thresholds": {
+            "warn_gap_seconds": trailing_gap_warn_seconds,
+            "warn_gap_ratio": trailing_gap_warn_ratio,
+        },
+        "reasons": reasons,
+    }
+
+
+def build_transcript_timeline_segments(
+    transcript: Dict[str, Any],
+    *,
+    coverage_target_seconds: Any = None,
+) -> List[Dict[str, Any]]:
+    utterances = sorted(
+        [
+            {
+                **segment,
+                "start": safe_float(segment.get("start")) or 0.0,
+                "end": safe_float(segment.get("end")) or 0.0,
+            }
+            for segment in (transcript.get("segments") or [])
+        ],
+        key=lambda segment: (segment.get("start", 0.0), segment.get("end", 0.0)),
+    )
+
+    target_seconds = max(
+        safe_float(coverage_target_seconds) or 0.0,
+        max((segment.get("end", 0.0) for segment in utterances), default=0.0),
+    )
+    timeline_segments: List[Dict[str, Any]] = []
+    cursor = 0.0
+
+    for index, segment in enumerate(utterances):
+        start = max(0.0, float(segment.get("start") or 0.0))
+        end = max(start, float(segment.get("end") or start))
+        if start > cursor:
+            timeline_segments.append(
+                {
+                    "start": round(cursor, 3),
+                    "end": round(start, 3),
+                    "text": "[Unresolved audio interval]",
+                    "segment_type": "unresolved_interval",
+                    "synthetic": True,
+                    "timeline_index": len(timeline_segments),
+                    "source_segment_index": None,
+                }
+            )
+
+        timeline_segments.append(
+            {
+                **segment,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "segment_type": "utterance",
+                "synthetic": False,
+                "timeline_index": len(timeline_segments),
+                "source_segment_index": index,
+            }
+        )
+        cursor = max(cursor, end)
+
+    if target_seconds > cursor:
+        timeline_segments.append(
+            {
+                "start": round(cursor, 3),
+                "end": round(target_seconds, 3),
+                "text": "[Unresolved audio tail]",
+                "segment_type": "unresolved_tail",
+                "synthetic": True,
+                "timeline_index": len(timeline_segments),
+                "source_segment_index": None,
+            }
+        )
+
+    return timeline_segments
 
 
 def build_source_media_metadata_payload(
@@ -273,6 +417,7 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
         "updated_by": corrections.get("updated_by", "analyst"),
         "text_substitutions": corrections.get("text_substitutions", []),
         "label_overrides": corrections.get("label_overrides", []),
+        "manual_transcript_entries": corrections.get("manual_transcript_entries", []),
     }
 
 
@@ -1415,6 +1560,59 @@ def run_complete_analysis(
                     "Transcription relay engaged. Parsing spoken signal.",
                 )
                 transcript = audio_pipeline.run()
+                transcript_quality = build_transcript_quality_report(
+                    transcript,
+                    media_duration_seconds=(
+                        ingestion_result.get("metadata", {}) or {}
+                    ).get("duration"),
+                    audio_duration_seconds=get_wav_duration_seconds(audio_path),
+                )
+                if transcript_quality.get("status") != "ok":
+                    logger.warning(
+                        "Transcript coverage flagged as %s for %s: last_end=%ss target=%ss gap=%ss",
+                        transcript_quality.get("status"),
+                        analysis_id,
+                        transcript_quality.get("last_segment_end_seconds"),
+                        transcript_quality.get("coverage_target_seconds"),
+                        transcript_quality.get("trailing_uncovered_seconds"),
+                    )
+                    append_analysis_event(
+                        status,
+                        "transcript_quality_flagged",
+                        progress=status.get("progress"),
+                        stage="transcription",
+                        message="Transcript coverage flagged for review.",
+                        details=transcript_quality,
+                    )
+                    update_analysis_progress(
+                        status,
+                        64 if pipeline_type == "full" else 40,
+                        "transcription_fallback",
+                        "Transcript coverage degraded. Retrying with chunked relay windows.",
+                    )
+                    transcript = audio_pipeline.rerun_with_chunked_fallback(
+                        primary_transcript=transcript,
+                    )
+                    transcript_quality = build_transcript_quality_report(
+                        transcript,
+                        media_duration_seconds=(
+                            ingestion_result.get("metadata", {}) or {}
+                        ).get("duration"),
+                        audio_duration_seconds=get_wav_duration_seconds(audio_path),
+                    )
+                    append_analysis_event(
+                        status,
+                        "transcript_fallback_completed",
+                        progress=status.get("progress"),
+                        stage="transcription_fallback",
+                        message="Chunked transcript fallback completed.",
+                        details={
+                            "strategy": transcript.get("transcription_strategy"),
+                            "quality": transcript_quality,
+                            "comparison": transcript.get("fallback_comparison") or {},
+                        },
+                    )
+
                 transcript_text = " ".join(
                     seg["text"] for seg in transcript.get("segments", [])
                 )
@@ -1425,6 +1623,14 @@ def run_complete_analysis(
                 transcript["language"] = language_info["code"]
                 transcript["language_name"] = language_info["name"]
                 transcript["language_info"] = language_info
+                transcript["quality"] = transcript_quality
+                transcript["timeline_segments"] = build_transcript_timeline_segments(
+                    transcript,
+                    coverage_target_seconds=transcript_quality.get(
+                        "coverage_target_seconds"
+                    ),
+                )
+                status["transcript_quality"] = transcript_quality
 
                 # Step 2b: additionally run the Meta MMS language modeller and
                 # stash its raw text alongside the Whisper result.  This is a
@@ -1628,6 +1834,7 @@ def run_complete_analysis(
                     "quan_analysis": str(quan_path) if quan_path else None,
                     "audio_prosody": audio_prosody,
                     "transcript": transcript,
+                    "transcript_quality": transcript_quality,
                     "metadata": ingestion_result.get("metadata", {}),
                 }
 
@@ -2545,6 +2752,13 @@ async def update_annotation_corrections(
     else:
         corrections.setdefault("label_overrides", [])
 
+    if "manual_transcript_entries" in payload:
+        corrections["manual_transcript_entries"] = (
+            payload.get("manual_transcript_entries") or []
+        )
+    else:
+        corrections.setdefault("manual_transcript_entries", [])
+
     write_annotation_corrections_file(status)
     append_analysis_event(
         status,
@@ -2552,6 +2766,9 @@ async def update_annotation_corrections(
         details={
             "text_substitutions": len(corrections.get("text_substitutions", [])),
             "label_overrides": len(corrections.get("label_overrides", [])),
+            "manual_transcript_entries": len(
+                corrections.get("manual_transcript_entries", [])
+            ),
         },
     )
     persist_analysis_record_for_status(status)

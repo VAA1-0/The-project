@@ -306,6 +306,17 @@ export interface AnnotationCorrectionRule {
   updated_by?: string;
 }
 
+export interface ManualTranscriptEntry {
+  id: string;
+  start: number;
+  end: number;
+  text?: string;
+  status?: "confirmed" | "unconfirmed";
+  note?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
 export interface AnnotationCorrections {
   analysis_id?: string;
   version?: number;
@@ -313,6 +324,7 @@ export interface AnnotationCorrections {
   updated_by?: string;
   text_substitutions?: AnnotationCorrectionRule[];
   label_overrides?: AnnotationCorrectionRule[];
+  manual_transcript_entries?: ManualTranscriptEntry[];
 }
 
 export type WorkspacePathType = "results" | "imports";

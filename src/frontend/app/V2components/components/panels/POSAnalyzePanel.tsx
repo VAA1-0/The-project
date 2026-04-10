@@ -644,13 +644,13 @@ export default function POSAnalyzePanel() {
     onToggle: () => void,
     matrixKey: string,
   ) => (
-    <div className="border-b border-[#0a0a0a] shrink-0">
-      <div className="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-[#2a2a2a] transition-colors">
+    <div className="border-b border-white/8 shrink-0">
+      <div className="w-full px-3 py-2 flex items-center justify-between gap-2">
         <button
           onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-1 py-1 text-left transition-colors hover:bg-white/5"
         >
-          <span className="text-[#b8b8b8] text-[12px] font-medium">
+          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
             {label}
           </span>
           {open ? (
@@ -662,10 +662,10 @@ export default function POSAnalyzePanel() {
         <button
           type="button"
           onClick={() => toggleMatrixSection(matrixKey)}
-          className={`shrink-0 rounded-full px-2 py-1 text-[10px] ${
+          className={`shrink-0 rounded-full border px-2 py-1 text-[10px] ${
             matrixSections.includes(matrixKey) && currentAnalysisInMatrix
-              ? "bg-emerald-500/15 text-emerald-200"
-              : "bg-slate-700/40 text-slate-300 hover:bg-slate-700/60"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-white/10 bg-[#101010] text-slate-300 hover:bg-white/5"
           }`}
         >
           {matrixSections.includes(matrixKey) && currentAnalysisInMatrix
@@ -730,6 +730,19 @@ export default function POSAnalyzePanel() {
 
   */
 
+  const panelHeaderClass =
+    "border-b border-white/8 bg-[#141414] px-3 py-2 flex items-center justify-between shrink-0";
+  const panelSurfaceClass =
+    "rounded border border-white/8 bg-[#151515] px-3 py-3";
+  const panelSubtleSurfaceClass =
+    "rounded border border-white/8 bg-[#171717] px-3 py-3 text-slate-300";
+  const panelQuietNoteClass =
+    "rounded border border-white/8 bg-[#121212] px-3 py-2 text-sm text-slate-300";
+  const panelMetricTileClass =
+    "rounded border border-white/8 bg-[#111111] px-3 py-2 text-sm text-slate-200";
+  const panelChipClass =
+    "rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-[11px] text-slate-300";
+
   return (
     <main className="h-full flex flex-col overflow-hidden">
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
@@ -742,8 +755,10 @@ export default function POSAnalyzePanel() {
       ) : null}
       <div className="flex-1 overflow-y-auto">
         {/* Header */}
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
-          <span className="text-[#b8b8b8] text-[12px]">Analyze Results</span>
+        <div className={panelHeaderClass}>
+          <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+            POS governance
+          </span>
           <div className="relative flex items-center gap-1">
             <button className="p-1 hover:bg-[#2a2a2a] rounded">
               <Search className="size-3.5 text-[#b8b8b8]" />
@@ -795,38 +810,35 @@ export default function POSAnalyzePanel() {
         {showPosCounts && (
           <div className="space-y-2 px-3 py-2">
             {posError && (
-              <div className="p-3 rounded-lg bg-amber-500/10 text-amber-200">
+              <div className="rounded border border-amber-500/20 bg-amber-500/8 px-3 py-3 text-amber-200">
                 {posError}
               </div>
             )}
             {posSupportNote && (
-              <div className="p-3 rounded-lg bg-slate-700/30 text-slate-300">
+              <div className={panelQuietNoteClass}>
                 {posSupportNote}
               </div>
             )}
             {summaryChips.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {summaryChips.map((chip) => (
-                  <span
-                    key={chip}
-                    className="rounded-full bg-slate-700/35 px-2.5 py-1 text-[11px] text-slate-300"
-                  >
+                  <span key={chip} className={panelChipClass}>
                     {chip}
                   </span>
                 ))}
               </div>
             )}
             {posNotes.length > 0 && (
-              <div className="rounded-lg bg-slate-700/15 px-3 py-2 text-sm text-slate-300">
+              <div className={panelQuietNoteClass}>
                 {posNotes.join(" ")}
               </div>
             )}
             {Object.keys(pos_counts).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No content available
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 <SoftPosDonut counts={pos_counts} />
               </div>
             )}
@@ -842,43 +854,43 @@ export default function POSAnalyzePanel() {
         {showPosRatios && (
           <div className="space-y-2 px-3 py-2">
             {Object.keys(pos_ratios).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No content detected
               </div>
             ) : (
-                <div className="grid gap-2 rounded-lg bg-slate-700/30 p-3 md:grid-cols-2">
+                <div className={`${panelSurfaceClass} grid gap-2 md:grid-cols-2`}>
                 <button
                   type="button"
                   onClick={() => jumpToTime(transcriptSegments[0]?.start ?? 0)}
-                  className="text-left text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2 hover:bg-slate-800/55"
+                  className={`${panelMetricTileClass} text-left hover:bg-white/5`}
                 >
                   {"verb noun ratio: " + formatRatio(pos_ratios?.verb_noun_ratio)}
                 </button>
                 <button
                   type="button"
                   onClick={() => jumpToTime(transcriptSegments[0]?.start ?? 0)}
-                  className="text-left text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2 hover:bg-slate-800/55"
+                  className={`${panelMetricTileClass} text-left hover:bg-white/5`}
                 >
                   {"modal density: " + formatRatio(pos_ratios?.modal_density)}
                 </button>
                 <button
                   type="button"
                   onClick={() => jumpToTime(transcriptSegments[0]?.start ?? 0)}
-                  className="text-left text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2 hover:bg-slate-800/55"
+                  className={`${panelMetricTileClass} text-left hover:bg-white/5`}
                 >
                   {"pronoun share: " + formatRatio(pos_ratios?.pronoun_share)}
                 </button>
                 <button
                   type="button"
                   onClick={() => jumpToTime(transcriptSegments[0]?.start ?? 0)}
-                  className="text-left text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2 hover:bg-slate-800/55"
+                  className={`${panelMetricTileClass} text-left hover:bg-white/5`}
                 >
                   {"adj adv ratio: " + formatRatio(pos_ratios?.adj_adv_ratio)}
                 </button>
                 <button
                   type="button"
                   onClick={() => jumpToTime(transcriptSegments[0]?.start ?? 0)}
-                  className="text-left text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2 md:col-span-2 hover:bg-slate-800/55"
+                  className={`${panelMetricTileClass} text-left md:col-span-2 hover:bg-white/5`}
                 >
                   {"nominalization density: " +
                     formatRatio(pos_ratios?.nominalization_density)}
@@ -897,13 +909,13 @@ export default function POSAnalyzePanel() {
         {showGrammarFeatures && (
           <div className="space-y-2 px-3 py-2">
             {!grammarProfile?.content_words && !grammarProfile?.function_words ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No grammar profile available
               </div>
             ) : (
-              <div className="grid gap-2 rounded-lg bg-slate-700/30 p-3 md:grid-cols-2">
+              <div className={`${panelSurfaceClass} grid gap-2 md:grid-cols-2`}>
                 {POS_CATEGORY_GROUPS.map((group) => (
-                  <div key={group.key} className="rounded-md bg-slate-800/35 px-3 py-2">
+                  <div key={group.key} className={panelMetricTileClass}>
                     <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
                       {group.label}
                     </div>
@@ -919,7 +931,7 @@ export default function POSAnalyzePanel() {
                         return (
                           <div
                             key={category.key}
-                            className="w-full rounded-md bg-slate-900/25 px-2 py-2"
+                            className="w-full rounded border border-white/8 bg-[#161616] px-2 py-2"
                           >
                             <button
                               type="button"
@@ -953,17 +965,17 @@ export default function POSAnalyzePanel() {
         {showCaseProfile && (
           <div className="space-y-2 px-3 py-2">
             {!caseProfile?.available ? (
-              <div className="rounded-lg bg-slate-700/20 p-3 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 {caseProfile?.note || "No case profile available"}
               </div>
             ) : (
               <>
                 {caseProfile?.note && (
-                  <div className="rounded-lg bg-slate-700/15 px-3 py-2 text-sm text-slate-300">
+                  <div className={panelQuietNoteClass}>
                     {caseProfile.note}
                   </div>
                 )}
-                <div className="grid gap-2 rounded-lg bg-slate-700/30 p-3 md:grid-cols-2">
+                <div className={`${panelSurfaceClass} grid gap-2 md:grid-cols-2`}>
                   {Object.keys(caseProfile?.counts || {})
                     .sort((left, right) => {
                       const leftCount = caseProfile?.counts?.[left] || 0;
@@ -982,7 +994,7 @@ export default function POSAnalyzePanel() {
                       return (
                         <div
                           key={key}
-                          className="rounded-md bg-slate-800/35 px-3 py-2"
+                          className={panelMetricTileClass}
                         >
                           <button
                             type="button"
@@ -1015,11 +1027,11 @@ export default function POSAnalyzePanel() {
         {showInterrogatives && (
           <div className="space-y-2 px-3 py-2">
             {Object.keys(interrogative_lens || {}).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No interrogatives detected
               </div>
             ) : (
-              <div className="grid gap-2 rounded-lg bg-slate-700/30 p-3">
+              <div className={`${panelSurfaceClass} grid gap-2`}>
                 {interrogativeRows.map((row) => {
                   const confidence =
                     posConfidence?.interrogatives?.[row.key]?.level;
@@ -1029,7 +1041,7 @@ export default function POSAnalyzePanel() {
                   return (
                     <div
                       key={row.key}
-                      className="grid grid-cols-[18px_88px_1fr] items-start gap-2 rounded-md bg-slate-800/35 px-3 py-2 text-sm text-slate-200"
+                      className="grid grid-cols-[18px_88px_1fr] items-start gap-2 rounded border border-white/8 bg-[#111111] px-3 py-2 text-sm text-slate-200"
                     >
                       <span
                         className="pt-0.5 text-center text-slate-400"
@@ -1062,17 +1074,17 @@ export default function POSAnalyzePanel() {
         {showTenseProfile && (
           <div className="space-y-2 px-3 py-2">
             {!tenseProfile?.available ? (
-              <div className="rounded-lg bg-slate-700/20 p-3 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 {tenseProfile?.note || "No tense profile available"}
               </div>
             ) : (
               <>
                 {tenseProfile?.note && (
-                  <div className="rounded-lg bg-slate-700/15 px-3 py-2 text-sm text-slate-300">
+                  <div className={panelQuietNoteClass}>
                     {tenseProfile.note}
                   </div>
                 )}
-                <div className="space-y-3 rounded-lg bg-slate-700/30 p-3">
+                <div className={`${panelSurfaceClass} space-y-3`}>
                   {renderMorphologyGroup(
                     "tense",
                     "Tense",
@@ -1103,11 +1115,11 @@ export default function POSAnalyzePanel() {
         {showPosWords && (
           <div className="space-y-2 px-3 py-2">
             {Object.keys(pos_words || {}).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No POS words detected
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 {POS_WORD_ROWS.map(([key, label]) => (
                   <div key={key} className="text-sm text-slate-200">
                     <span className="mr-2">{`${label}:`}</span>

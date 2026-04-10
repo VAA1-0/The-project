@@ -2,6 +2,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import type {
   AnnotationCorrectionRule,
   AnnotationCorrections,
+  ManualTranscriptEntry,
 } from "./api-service";
 
 const POS_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
@@ -19,6 +20,7 @@ export function createEmptyCorrections(
     updated_by: "analyst",
     text_substitutions: [],
     label_overrides: [],
+    manual_transcript_entries: [],
   };
 }
 
@@ -206,6 +208,51 @@ export function removeCorrectionRule(
     ),
     label_overrides: (existing?.label_overrides || []).filter(
       (entry) => entry.id !== ruleId,
+    ),
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+  };
+}
+
+export function upsertManualTranscriptEntry(
+  existing: AnnotationCorrections | null | undefined,
+  entry: ManualTranscriptEntry,
+): AnnotationCorrections {
+  const next: AnnotationCorrections = {
+    ...(existing || {}),
+    version: 1,
+    updated_at: new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+  };
+
+  const current = [...(next.manual_transcript_entries || [])];
+  const index = current.findIndex((item) => item.id === entry.id);
+  if (index >= 0) {
+    current[index] = entry;
+  } else {
+    current.push(entry);
+  }
+  next.manual_transcript_entries = current.sort(
+    (left, right) => Number(left.start || 0) - Number(right.start || 0),
+  );
+  return next;
+}
+
+export function removeManualTranscriptEntry(
+  existing: AnnotationCorrections | null | undefined,
+  entryId: string,
+): AnnotationCorrections {
+  return {
+    ...(existing || {}),
+    version: 1,
+    updated_at: new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    manual_transcript_entries: (existing?.manual_transcript_entries || []).filter(
+      (entry) => entry.id !== entryId,
     ),
   };
 }

@@ -9,3 +9,7 @@ Do youtube links work?
 Structured review of `petteri` against `main`, grouped into merge blocks before any main-branch merge
 Detector calibration package:
 motion, scene, person, and object detector calibration; adaptive dense sampling; genre-specific object-detection build-up; separation of heuristic description from true genre-detection workflow
+Transcript integrity package:
+Bond trailer timestamp/transcript bug; full-duration transcript coverage; backend QA gating for short transcript spans; fallback retranscription strategy for degraded audio cases
+Panel maturation governance package:
+align remaining panels to the calmer evidence-register style already strongest in OCR, OBJ, Expressions, POS Matrix, and Quant Matrix; mature Download, Tools, TimeBank, Video Compare, Speech/Audio, and remaining Video-side governance surfaces

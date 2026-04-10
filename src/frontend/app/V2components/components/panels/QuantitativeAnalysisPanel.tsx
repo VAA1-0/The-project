@@ -927,13 +927,13 @@ export default function QuantitativeAnalysisPanel() {
     onToggleOpen: () => void,
     matrixKey: string,
   ) => (
-    <div className="border-b border-[#0a0a0a] shrink-0">
+    <div className="border-b border-white/8 shrink-0">
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           onClick={onToggleOpen}
-          className="flex min-w-0 flex-1 items-center justify-between hover:bg-[#2a2a2a] transition-colors rounded px-1 py-1"
+          className="flex min-w-0 flex-1 items-center justify-between rounded px-1 py-1 transition-colors hover:bg-white/5"
         >
-          <span className="text-[#b8b8b8] text-[12px] font-medium">
+          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">
             {title}
           </span>
           {open ? (
@@ -945,10 +945,10 @@ export default function QuantitativeAnalysisPanel() {
         <button
           type="button"
           onClick={() => toggleMatrixSection(matrixKey)}
-          className={`shrink-0 rounded-full px-2 py-1 text-[10px] ${
+          className={`shrink-0 rounded-full border px-2 py-1 text-[10px] ${
             matrixSections.includes(matrixKey) && currentAnalysisInMatrix
-              ? "bg-emerald-500/15 text-emerald-200"
-              : "bg-slate-700/40 text-slate-300 hover:bg-slate-700/60"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-white/10 bg-[#101010] text-slate-300 hover:bg-white/5"
           }`}
           title={matrixToggleLabel(matrixKey)}
         >
@@ -960,6 +960,17 @@ export default function QuantitativeAnalysisPanel() {
     </div>
   );
 
+  const panelHeaderClass =
+    "border-b border-white/8 bg-[#141414] px-3 py-2 flex items-center justify-between shrink-0";
+  const panelSurfaceClass =
+    "rounded border border-white/8 bg-[#151515] px-3 py-3";
+  const panelSubtleSurfaceClass =
+    "rounded border border-white/8 bg-[#171717] px-3 py-3 text-slate-300";
+  const panelMetricTileClass =
+    "rounded border border-white/8 bg-[#111111] px-3 py-2 text-sm text-slate-200";
+  const panelChipClass =
+    "rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-[11px] text-slate-300";
+
   return (
     <main className="h-full flex flex-col overflow-hidden">
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
@@ -967,8 +978,10 @@ export default function QuantitativeAnalysisPanel() {
       </div>
       <div className="flex-1 overflow-y-auto">
         {/* Header */}
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0a0a0a] flex items-center justify-between shrink-0">
-          <span className="text-[#b8b8b8] text-[12px]">Quant Detail</span>
+        <div className={panelHeaderClass}>
+          <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+            Quant governance
+          </span>
           <div className="relative flex items-center gap-1">
             <button className="p-1 hover:bg-[#2a2a2a] rounded">
               <Search className="size-3.5 text-[#b8b8b8]" />
@@ -1007,17 +1020,13 @@ export default function QuantitativeAnalysisPanel() {
                 type="button"
                 onClick={openTranscriptReference}
                 title={humanDocumentLabel}
-                className="rounded-full bg-slate-700/35 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-700/55 hover:text-slate-50"
+                className="rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-[11px] text-slate-200 hover:bg-white/5 hover:text-slate-50"
               >
                 source {displayDocumentLabel}
               </button>
             )}
             {summaryChips.map((chip) => (
-              <span
-                key={chip}
-                className="rounded-full bg-slate-700/35 px-2.5 py-1 text-[11px] text-slate-300"
-                title={chip ?? undefined}
-              >
+              <span key={chip} className={panelChipClass} title={chip ?? undefined}>
                 {chip}
               </span>
             ))}
@@ -1037,28 +1046,28 @@ export default function QuantitativeAnalysisPanel() {
           <div className="space-y-2 px-3 py-2">
             {!analysisDataquantAnalysis.token_info ||
             Object.keys(analysisDataquantAnalysis.token_info).length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No token information detected
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 <div className="grid gap-2 md:grid-cols-2">
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"Total tokens: " +
                     (analysisDataquantAnalysis.token_info.tokens?.length ?? 0)}
                 </div>
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"Filtered tokens: " +
                     (analysisDataquantAnalysis.token_info.tokens_filtered
                       ?.length ?? 0)}
                 </div>
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"Type-token ratio (TTR): " +
                     Number(analysisDataquantAnalysis.token_info.ttr)
                       .toFixed(3)
                       .replace(/\.?0+$/, "")}
                 </div>
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"Unique terms: " +
                     Object.keys(
                       analysisDataquantAnalysis.token_info.freq_dist ?? {},
@@ -1073,8 +1082,8 @@ export default function QuantitativeAnalysisPanel() {
                     <div className="mt-2 grid gap-2 md:grid-cols-2">
                       {topFrequencyTerms.map(([term, count]) => {
                         return (
-                          <div key={term} className="rounded-md bg-slate-800/20 px-2.5 py-2">
-                            <div className="rounded-full bg-slate-800/45 px-2.5 py-1 text-xs text-slate-200">
+                          <div key={term} className="rounded border border-white/8 bg-[#111111] px-2.5 py-2">
+                            <div className="rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-xs text-slate-200">
                               {term} ({String(count)})
                             </div>
                           </div>
@@ -1099,20 +1108,20 @@ export default function QuantitativeAnalysisPanel() {
           <div className="space-y-2 px-3 py-2">
             {!analysisDataquantAnalysis.stats_df ||
             analysisDataquantAnalysis.stats_df.length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No content detected
               </div>
             ) : (
-              <div className="grid gap-2 rounded-lg bg-slate-700/30 p-3 md:grid-cols-3">
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+              <div className={`${panelSurfaceClass} grid gap-2 md:grid-cols-3`}>
+                <div className={panelMetricTileClass}>
                   {"sentences: " +
                     analysisDataquantAnalysis.stats_df[0].Sentences}
                 </div>
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"words: " +
                     analysisDataquantAnalysis.stats_df[0].Words}
                 </div>
-                <div className="text-sm text-slate-200 rounded-md bg-slate-800/35 px-3 py-2">
+                <div className={panelMetricTileClass}>
                   {"avg sentence length: " +
                     (
                       analysisDataquantAnalysis.stats_df[0].Sentences > 0
@@ -1139,22 +1148,22 @@ export default function QuantitativeAnalysisPanel() {
           <div className="space-y-2 px-3 py-2">
             {!analysisDataquantAnalysis.tfidf_df ||
             analysisDataquantAnalysis.tfidf_df.length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No TFIDF Top Terms detected
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 <div className="mt-3 grid gap-2 md:grid-cols-2">
                   {analysisDataquantAnalysis.tfidf_df[0].TopTerms.map(
                     (term: string) => {
                       const evidence =
                         tfidfEvidence.find((item: any) => item?.term === term) || {};
                       return (
-                        <div key={term} className="rounded-md bg-slate-800/20 px-2.5 py-2">
+                        <div key={term} className="rounded border border-white/8 bg-[#111111] px-2.5 py-2">
                           <button
                             type="button"
                             onClick={() => jumpToTime(findTranscriptTimeForText(term))}
-                            className="rounded-full bg-slate-800/45 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-800/65"
+                            className="rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-xs text-slate-200 hover:bg-white/5"
                           >
                             {term}
                           </button>
@@ -1186,11 +1195,11 @@ export default function QuantitativeAnalysisPanel() {
           <div className="space-y-2 px-3 py-2">
             {!analysisDataquantAnalysis.sentence_tags ||
             analysisDataquantAnalysis.sentence_tags.length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No SentenceTagging detected
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 {analysisDataquantAnalysis.sentence_tags.map(
                   (
                     item: { sentence: string; WHO: boolean; WHY: boolean },
@@ -1247,11 +1256,11 @@ export default function QuantitativeAnalysisPanel() {
           <div className="space-y-2 px-3 py-2">
             {!analysisDataquantAnalysis.bigrams ||
             analysisDataquantAnalysis.bigrams.length === 0 ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No Bigrams detected
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 {analysisDataquantAnalysis.bigrams.map(
                   (bigram: string, index: number) => (
                     <div
@@ -1308,11 +1317,11 @@ export default function QuantitativeAnalysisPanel() {
         {showConcordance && (
           <div className="space-y-2 px-3 py-2">
             {!activeConcordanceKeyword ? (
-              <div className="p-3 rounded-lg bg-slate-700/20 text-slate-300">
+              <div className={panelSubtleSurfaceClass}>
                 No concordance available
               </div>
             ) : (
-              <div className="p-3 bg-slate-700/30 rounded-lg">
+              <div className={panelSurfaceClass}>
                 <div className="flex flex-col gap-3">
                   <div className="flex flex-col gap-2 md:flex-row md:items-center">
                     <label className="text-xs uppercase tracking-[0.14em] text-slate-400">
@@ -1322,7 +1331,7 @@ export default function QuantitativeAnalysisPanel() {
                       type="text"
                       value={selectedConcordanceKeyword}
                       onChange={(event) => setSelectedConcordanceKeyword(event.target.value)}
-                      className="rounded-md border border-slate-600 bg-slate-900/40 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      className="rounded border border-white/10 bg-[#111111] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                       placeholder="Type any word"
                     />
                   </div>
@@ -1335,8 +1344,8 @@ export default function QuantitativeAnalysisPanel() {
                           onClick={() => setSelectedConcordanceKeyword(term)}
                           className={`rounded-full px-2.5 py-1 text-[11px] ${
                             term.toLowerCase() === activeConcordanceKeyword.toLowerCase()
-                              ? "bg-amber-500/15 text-amber-200"
-                              : "bg-slate-800/45 text-slate-300 hover:bg-slate-700/60 hover:text-slate-100"
+                              ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
+                              : "border border-white/10 bg-[#101010] text-slate-300 hover:bg-white/5 hover:text-slate-100"
                           }`}
                         >
                           {term}
@@ -1358,7 +1367,7 @@ export default function QuantitativeAnalysisPanel() {
                       (entry: any, index: number) => (
                         <div
                           key={`${activeConcordanceKeyword}-${index}`}
-                          className="rounded-md bg-slate-800/40 px-3 py-2 text-sm text-slate-200"
+                          className="rounded border border-white/8 bg-[#111111] px-3 py-2 text-sm text-slate-200"
                         >
                           <button
                             type="button"
