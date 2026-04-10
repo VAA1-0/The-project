@@ -35,6 +35,7 @@ export const getCookies = () => ({
 });
 
 export const saveAuthToDisk = () => {
+    fs.mkdirSync(path.dirname(GlobalConstants.AUTH_FILE), { recursive: true });
     fs.writeFileSync(GlobalConstants.AUTH_FILE, JSON.stringify({
         token: GlobalState.token,
         sessionCookie: GlobalState.sessionCookie,
@@ -62,4 +63,3 @@ export const loadAuthFromDisk = () => {
         console.warn("⚠️ Could not parse CVAT auth file:", err);
     }
 };
-

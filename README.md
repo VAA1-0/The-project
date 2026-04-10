@@ -47,7 +47,7 @@ When you start VAA1 (installer or launcher), it will:
 
 * Verify **Docker Desktop** is installed and running
 * Verify **Python** and **Node.js** availability
-* Start CVAT engine, backend API, proxy, and frontend
+* Start CVAT engine, bridge backend, and frontend
 * Build Docker images if they do not exist
 * **Detect and safely free required ports**
 * Perform health checks on all services
@@ -63,7 +63,10 @@ The following ports are managed automatically:
 
 * **8000** — Backend API
 * **3000** — Frontend / Electron
-* **8091** — CVAT proxy
+* **3001** — Local CVAT bridge backend
+* **8080** — CVAT UI + API for local development
+* **8090** — Internal Traefik web entrypoint
+* **8091** — Internal Traefik dashboard / spare proxy port
 * Internal Docker ports used by CVAT
 
 If a port is already in use, the launcher will resolve it automatically when safe to do so.
@@ -170,6 +173,12 @@ cd src/cvat/cvat-engine
 docker compose up -d
 ```
 
+Verify:
+
+```bash
+curl -I http://localhost:8080
+```
+
 ### CVAT — Backend
 
 ```bash
@@ -177,21 +186,71 @@ cd src/cvat/backend
 npm run dev
 ```
 
+Verify:
+
+```bash
+curl http://localhost:3001/health/cvat
+```
+
 ---
 
-### Proxy
+### CVAT Frontend Wiring
 
-1. Create `.env.local` in `src/frontend`
-
-```bash
-NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8091
-```
-
-2. Run the proxy container (replace path):
+Create `.env.local` in `src/frontend`
 
 ```bash
-docker run --rm -p 8091:80 -v D:/work/the-project/cvat-proxy.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
+NEXT_PUBLIC_CVAT_BASE_URL=http://localhost:8080
 ```
+
+Notes:
+
+* Local development now serves CVAT directly on `8080` through the CVAT UI container.
+* The CVAT UI container also reverse-proxies the CVAT API for local use.
+* The core CVAT runtime chain is:
+  * Docker Desktop running
+  * CVAT UI + API on `8080`
+  * CVAT bridge backend on `3001`
+* If Docker Desktop is installed but not running, CVAT will not start even though VAA1 core may still work.
+* The legacy Traefik layer remains in the compose stack on backup ports, but local VAA1 no longer depends on it for the main CVAT URL.
+
+### CVAT Runtime Recovery
+
+If CVAT is unavailable:
+
+1. start Docker Desktop
+2. verify Docker responds:
+
+```bash
+docker ps
+```
+
+3. start the CVAT engine and local UI/API path:
+
+```bash
+cd src/cvat/cvat-engine
+docker compose up -d
+```
+
+4. start the CVAT backend:
+
+```bash
+cd src/cvat/backend
+npm run dev
+```
+
+5. verify both services:
+
+```bash
+curl -I http://localhost:8080
+curl http://localhost:8080/api/server/about
+curl http://localhost:3001/health/cvat
+```
+
+If these fail, VAA1 can still run without CVAT, but CVAT annotation will not function.
+
+For a fuller recurrence checklist, see:
+
+* `docs/vaa1_cvat_runtime_recovery_runbook_2026-04-10.md`
 
 ---
 

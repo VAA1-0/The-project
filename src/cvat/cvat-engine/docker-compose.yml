@@ -47,12 +47,11 @@ services:
       SOCIAL_AUTH_GOOGLE_CLIENT_SECRET: ""
       SOCIAL_AUTH_GITHUB_CLIENT_ID: ""
       SOCIAL_AUTH_GITHUB_CLIENT_SECRET: ""
-    entrypoint: ["/home/django/entrypoint.sh"]
+    entrypoint: ["bash", "/home/django/entrypoint.sh"]
     labels:
       - traefik.enable=true
       - traefik.http.services.cvat.loadbalancer.server.port=8080
-      - traefik.http.routers.cvat.rule=Host(`${CVAT_HOST:-localhost}`) &&
-        PathPrefix(`/api/`, `/git/`, `/opencv/`, `/static/`, `/admin`, `/documentation/`, `/django-rq`)
+      - traefik.http.routers.cvat.rule=PathPrefix(`/api/`, `/git/`, `/opencv/`, `/static/`, `/admin`, `/documentation/`, `/django-rq`)
       - traefik.http.routers.cvat.entrypoints=web
     volumes:
       - cvat_data:/home/django/data
@@ -153,23 +152,23 @@ services:
     restart: always
     depends_on:
       - cvat_server
-    labels:
-      - traefik.enable=true
-      - traefik.http.services.cvat-ui.loadbalancer.server.port=80
-      - traefik.http.routers.cvat-ui.rule=Host(`${CVAT_HOST:-localhost}`)
-      - traefik.http.routers.cvat-ui.entrypoints=web
+    ports:
+      - 8080:80
+    volumes:
+      - ./cvat-ui/local-default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - cvat
 
   traefik:
-    image: traefik:v2.9
+    image: traefik:v3.0
     container_name: traefik
     restart: always
+    environment:
+      DOCKER_API_VERSION: "1.44"
     command:
       - '--providers.docker.exposedByDefault=false'
       - '--providers.docker.network=cvat'
       - '--entryPoints.web.address=:8080'
-      - '--providers.file.directory=/etc/traefik/rules'
     # Uncomment to get Traefik dashboard
     #   - "--entryPoints.dashboard.address=:8090"
     #   - "--api.dashboard=true"
@@ -179,8 +178,8 @@ services:
     #   - traefik.http.routers.dashboard.service=api@internal
     #   - traefik.http.routers.dashboard.rule=Host(`${CVAT_HOST:-localhost}`)
     ports:
-      - 8080:8080
-      - 8090:8090
+      - 8090:8080
+      - 8091:8090
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -212,3 +211,4 @@ volumes:
 
 networks:
   cvat:
+    name: cvat
