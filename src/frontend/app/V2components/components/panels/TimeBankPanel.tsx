@@ -232,22 +232,24 @@ function buildEnvelopeFromAnalysisData(
   };
 }
 
-const SECTION_LABELS: Record<string, string> = {
+const SECTION_LABELS = {
   audio: "Audio",
   transcript: "Transcript",
   ocr: "OCR",
   objects: "Objects",
   expressions: "Expressions",
-};
+} as const;
 
-const DEFAULT_SECTIONS = (Object.keys(SECTION_LABELS) as Array<keyof typeof SECTION_LABELS>).sort(
+type TimeBankSection = keyof typeof SECTION_LABELS;
+
+const DEFAULT_SECTIONS = (Object.keys(SECTION_LABELS) as TimeBankSection[]).sort(
   (left, right) =>
     SECTION_LABELS[left].localeCompare(SECTION_LABELS[right], undefined, {
       sensitivity: "base",
     }),
 );
 
-const DEFAULT_SECTION_WIDTHS: Record<keyof typeof SECTION_LABELS, number> = {
+const DEFAULT_SECTION_WIDTHS: Record<TimeBankSection, number> = {
   audio: 380,
   expressions: 280,
   objects: 300,
@@ -346,7 +348,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
       return initialVideoId ? [initialVideoId] : [];
     }
   });
-  const [sections, setSections] = useState<Array<keyof typeof SECTION_LABELS>>(() => {
+  const [sections, setSections] = useState<TimeBankSection[]>(() => {
     if (typeof window === "undefined") {
       return DEFAULT_SECTIONS;
     }
@@ -359,14 +361,14 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
       if (!Array.isArray(parsed)) {
         return DEFAULT_SECTIONS;
       }
-      const filtered = parsed.filter((key): key is keyof typeof SECTION_LABELS => key in SECTION_LABELS);
+      const filtered = parsed.filter((key): key is TimeBankSection => key in SECTION_LABELS);
       const missing = DEFAULT_SECTIONS.filter((key) => !filtered.includes(key));
       return [...filtered, ...missing];
     } catch {
       return DEFAULT_SECTIONS;
     }
   });
-  const [sectionWidths, setSectionWidths] = useState<Record<keyof typeof SECTION_LABELS, number>>(
+  const [sectionWidths, setSectionWidths] = useState<Record<TimeBankSection, number>>(
     () => {
       if (typeof window === "undefined") {
         return DEFAULT_SECTION_WIDTHS;
@@ -388,7 +390,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
   );
   const [rows, setRows] = useState<TimeBankRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [draggedSection, setDraggedSection] = useState<keyof typeof SECTION_LABELS | null>(null);
+  const [draggedSection, setDraggedSection] = useState<TimeBankSection | null>(null);
   const currentIncluded = !!selectedVideoId && analysisIds.includes(selectedVideoId);
 
   useEffect(() => {
@@ -494,7 +496,12 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
           } satisfies TimeBankRow;
         }),
       );
-      const validRows = nextRows.filter((row): row is TimeBankRow => row !== null);
+      const validRows: TimeBankRow[] = [];
+      for (const row of nextRows) {
+        if (row !== null) {
+          validRows.push(row);
+        }
+      }
       const validIds = validRows.map((row) => row.id);
       if (validIds.length !== analysisIds.length) {
         setAnalysisIds(validIds.sort());
@@ -527,7 +534,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     setAnalysisIds((current) => current.filter((id) => id !== analysisId));
   };
 
-  const reorderSection = (targetSection: keyof typeof SECTION_LABELS) => {
+  const reorderSection = (targetSection: TimeBankSection) => {
     if (!draggedSection || draggedSection === targetSection) {
       return;
     }
@@ -539,7 +546,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
   };
 
   const adjustSectionWidth = (
-    section: keyof typeof SECTION_LABELS,
+    section: TimeBankSection,
     delta: number,
   ) => {
     setSectionWidths((current) => ({
@@ -554,7 +561,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
   };
 
   const renderCell = (
-    section: keyof typeof SECTION_LABELS,
+    section: TimeBankSection,
     row: TimeBankRow,
   ) => {
     const envelope = row.bank[section];

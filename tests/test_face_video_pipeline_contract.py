@@ -12,6 +12,7 @@ def _install_pipeline_stubs():
     cv2.CAP_PROP_FPS = 1
     cv2.CAP_PROP_FRAME_WIDTH = 2
     cv2.CAP_PROP_FRAME_HEIGHT = 3
+    cv2.CAP_PROP_FRAME_COUNT = 4
     cv2.COLOR_BGR2GRAY = 10
     cv2.COLOR_GRAY2RGB = 11
     cv2.THRESH_BINARY = 12
@@ -34,6 +35,7 @@ def _install_pipeline_stubs():
                 cv2.CAP_PROP_FPS: 2.0,
                 cv2.CAP_PROP_FRAME_WIDTH: 640,
                 cv2.CAP_PROP_FRAME_HEIGHT: 480,
+                cv2.CAP_PROP_FRAME_COUNT: len(self.frames),
             }
             return mapping[prop]
 
@@ -74,6 +76,7 @@ def _install_pipeline_stubs():
 
     numpy = types.ModuleType("numpy")
     numpy.int32 = int
+    numpy.ndarray = object
     numpy.array = lambda value, dtype=None: value
     sys.modules["numpy"] = numpy
 

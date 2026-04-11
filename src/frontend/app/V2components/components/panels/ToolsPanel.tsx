@@ -188,7 +188,7 @@ function describeSceneBasis(sceneCount: number, meanDuration: number): string {
 
 function describeMotionBasis(
   summary?: {
-    dominant_motion?: string;
+    dominant_motion?: string | null;
     sample_count?: number;
     high_motion_samples?: number;
     mean_occupancy_shift?: number;
@@ -1210,7 +1210,7 @@ export default function ToolsPanel() {
       disabled:
         !videoId ||
         ((metadata?.analysisTier === "quick_sweep" || metadata?.status === "completed") &&
-          !(analysisData?.detectedObjects?.length > 0)),
+          !(Number(analysisData?.detectedObjects?.length ?? 0) > 0)),
     },
     {
       icon: ScanSearch,
@@ -1222,7 +1222,7 @@ export default function ToolsPanel() {
       disabled:
         !videoId ||
         ((metadata?.analysisTier === "quick_sweep" || metadata?.status === "completed") &&
-          !(analysisData?.ocr?.length > 0)),
+          !(Number(analysisData?.ocr?.length ?? 0) > 0)),
     },
     {
       icon: ChartScatter,
@@ -1243,7 +1243,7 @@ export default function ToolsPanel() {
       disabled:
         !videoId ||
         ((metadata?.analysisTier === "quick_sweep" || metadata?.status === "completed") &&
-          !(analysisData?.expressionResults?.length > 0)),
+          !(Number(analysisData?.expressionResults?.length ?? 0) > 0)),
     },
     {
       icon: ScanEye,
@@ -1286,11 +1286,12 @@ export default function ToolsPanel() {
 
     console.log("Metadata found:", metadata);
     console.log("Using CVAT ID:", cvatID);
+    const resolvedCvatId = cvatID;
 
     // Update internal state (won’t be immediately available, but that's fine)
-    setTaskId(cvatID);
+    setTaskId(resolvedCvatId);
 
-    console.log(`📂 Opening CVAT task ${cvatID}...`);
+    console.log(`📂 Opening CVAT task ${resolvedCvatId}...`);
 
     // 2️⃣ Poll for jobs
     let attempts = 0;
@@ -1298,7 +1299,7 @@ export default function ToolsPanel() {
 
     async function pollJobs() {
       try {
-        const result = await listJobs(cvatID);
+        const result = await listJobs(resolvedCvatId);
         const jobList = Array.isArray(result) ? result : result.results || [];
 
         if (jobList.length === 0 && attempts < maxAttempts) {
@@ -1334,7 +1335,7 @@ export default function ToolsPanel() {
     // Navigate to the annotation page
     // router.push(`/annotate/${videoId}`);
     window.open(`/annotate/${videoId}`);
-    console.log("Selected Job:", metadata.cvatID);
+    console.log("Selected Job:", metadata?.cvatID ?? taskID ?? null);
     //window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
   };
 
@@ -2434,7 +2435,7 @@ export default function ToolsPanel() {
               )}
 
               {activeWorkspace === "expression" &&
-              analysisData?.expressionResults?.length > 0 && (
+              Number(analysisData?.expressionResults?.length ?? 0) > 0 && (
                 <Collapsible
                   open={showExpressionRecords}
                   onOpenChange={setShowExpressionRecords}
@@ -2460,7 +2461,10 @@ export default function ToolsPanel() {
                     <Slider
                       value={expressionPreviewCount}
                       min={1}
-                      max={Math.min(12, analysisData.expressionResults.length)}
+                      max={Math.min(
+                        12,
+                        Math.max(1, Number(analysisData?.expressionResults?.length ?? 1)),
+                      )}
                       step={1}
                       onValueChange={setExpressionPreviewCount}
                       aria-label="Expression preview depth"
@@ -2503,7 +2507,7 @@ export default function ToolsPanel() {
               )}
 
               {activeWorkspace === "expression" &&
-                !(analysisData?.expressionResults?.length > 0) && (
+                !(Number(analysisData?.expressionResults?.length ?? 0) > 0) && (
                   <div className="rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-500">
                     No expression records are available for this analysis yet.
                   </div>

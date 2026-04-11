@@ -7,13 +7,18 @@ import { createVideoTask } from "@/cvat-api/client";
 import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { Library } from "@/lib/local-library";
+import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
-  EXPERTISE_AXIS_OPTIONS,
+  getLearnedTaxonomyLabels,
+  getExpertiseAxisOptions,
+  getMediaGenreOptions,
   getMediaSubgenreOptions,
+  getPrivacyAxisOptions,
+  removeCustomTaxonomyLabel,
+  registerCustomTaxonomyLabel,
+  getSituationalGenreOptions,
   getSituationalSubgenreOptions,
-  MEDIA_GENRE_OPTIONS,
-  PRIVACY_AXIS_OPTIONS,
-  SITUATIONAL_GENRE_OPTIONS,
+  type CustomTaxonomyScope,
 } from "@/lib/metadata-taxonomy";
 
 const QUANT_MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
@@ -42,10 +47,16 @@ type UploadMetadataDraft = {
   performance_expression: string;
   genre: string;
   genre_subtype: string;
+  custom_genre: string;
+  custom_genre_subtype: string;
   situational_genre: string;
   situational_subtype: string;
+  custom_situational_genre: string;
+  custom_situational_subtype: string;
   privacy_axis: string;
+  custom_privacy_axis: string;
   expertise_axis: string;
+  custom_expertise_axis: string;
   references: string;
   reference_files: File[];
   reference_relation: string;
@@ -73,6 +84,7 @@ export function MenuBar() {
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
   const [showAdvancedUploadFields, setShowAdvancedUploadFields] =
     useState(false);
+  const [, setTaxonomyRefreshNonce] = useState(0);
 
   const buildUploadDraft = (file: File): UploadMetadataDraft => ({
     title: file.name.replace(/\.[^.]+$/, ""),
@@ -94,10 +106,16 @@ export function MenuBar() {
     performance_expression: "",
     genre: "",
     genre_subtype: "",
+    custom_genre: "",
+    custom_genre_subtype: "",
     situational_genre: "",
     situational_subtype: "",
+    custom_situational_genre: "",
+    custom_situational_subtype: "",
     privacy_axis: "",
+    custom_privacy_axis: "",
     expertise_axis: "",
+    custom_expertise_axis: "",
     references: "",
     reference_files: [],
     reference_relation: "",
@@ -138,6 +156,81 @@ export function MenuBar() {
         itemIndex === index ? { ...item, ...patch } : item,
       ),
     );
+  };
+
+  const applyCustomUploadTaxonomy = (
+    index: number,
+    field:
+      | "genre"
+      | "genre_subtype"
+      | "situational_genre"
+      | "situational_subtype"
+      | "privacy_axis"
+      | "expertise_axis",
+    customField:
+      | "custom_genre"
+      | "custom_genre_subtype"
+      | "custom_situational_genre"
+      | "custom_situational_subtype"
+      | "custom_privacy_axis"
+      | "custom_expertise_axis",
+    scope:
+      | "media_genre"
+      | "media_subgenre"
+      | "situational_genre"
+      | "situational_subgenre"
+      | "privacy_axis"
+      | "expertise_axis",
+    parentValue?: string,
+  ) => {
+    const draft = uploadMetadataDrafts[index];
+    const customValue = draft?.[customField]?.trim();
+    if (!customValue) {
+      return;
+    }
+
+    registerCustomTaxonomyLabel(scope, customValue, parentValue);
+    updateUploadDraft(index, {
+      [field]: customValue,
+      [customField]: "",
+    } as Partial<UploadMetadataDraft>);
+    setTaxonomyRefreshNonce((value) => value + 1);
+  };
+
+  const removeLearnedUploadTaxonomy = (
+    index: number,
+    scope: CustomTaxonomyScope,
+    label: string,
+    parentValue?: string,
+  ) => {
+    removeCustomTaxonomyLabel(scope, label, parentValue);
+    setTaxonomyRefreshNonce((value) => value + 1);
+    const draft = uploadMetadataDrafts[index];
+    if (!draft) {
+      return;
+    }
+    if (scope === "media_genre" && draft.genre === label) {
+      updateUploadDraft(index, { genre: "", genre_subtype: "" });
+    } else if (scope === "media_subgenre" && draft.genre_subtype === label) {
+      updateUploadDraft(index, { genre_subtype: "" });
+    } else if (
+      scope === "situational_genre" &&
+      draft.situational_genre === label
+    ) {
+      updateUploadDraft(index, {
+        situational_genre: "",
+        situational_subtype: "",
+      });
+    } else if (
+      scope === "situational_subgenre" &&
+      draft.situational_subtype === label
+    ) {
+      updateUploadDraft(index, { situational_subtype: "" });
+    } else if (scope === "privacy_axis" && draft.privacy_axis === label) {
+      updateUploadDraft(index, { privacy_axis: "" });
+    } else if (scope === "expertise_axis" && draft.expertise_axis === label) {
+      updateUploadDraft(index, { expertise_axis: "" });
+    }
   };
 
   // Upload handler: show file selector and upload video
@@ -1090,32 +1183,43 @@ export function MenuBar() {
                         <MetaHint>Three to seven important themes.</MetaHint>
                       </label>
                     </div>
-                    <label className="mt-3 block">
-                      <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                        Media genre
-                      </div>
-                      <select
+                    <div className="mt-3">
+                      <CustomizableSelectField
+                        label="Media genre"
                         value={draft.genre}
-                        onChange={(e) =>
+                        onChange={(nextValue) =>
                           updateUploadDraft(index, {
-                            genre: e.target.value,
+                            genre: nextValue,
                             genre_subtype: "",
                           })
                         }
-                        className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                      >
-                        <option value="">Not set</option>
-                        {MEDIA_GENRE_OPTIONS.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
+                        options={getMediaGenreOptions(draft.genre)}
+                        customValue={draft.custom_genre}
+                        onCustomValueChange={(value) =>
+                          updateUploadDraft(index, { custom_genre: value })
+                        }
+                        onAddCustom={() =>
+                          applyCustomUploadTaxonomy(
+                            index,
+                            "genre",
+                            "custom_genre",
+                            "media_genre",
+                          )
+                        }
+                        learnedLabels={getLearnedTaxonomyLabels("media_genre")}
+                        onRemoveLearnedLabel={(label) =>
+                          removeLearnedUploadTaxonomy(
+                            index,
+                            "media_genre",
+                            label,
+                          )
+                        }
+                      />
                       <MetaHint>
                         Choose the main media class, including broadcast,
                         webvideo, and webcall formats.
                       </MetaHint>
-                    </label>
+                    </div>
                     <label className="mt-3 block">
                       <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                         References
@@ -1249,7 +1353,7 @@ export function MenuBar() {
                             ["time_era", "Time: era"],
                             ["time_year", "Time: year"],
                             ["time_moment", "Time: moment"],
-                            ["situation_event", "Situation / event"],
+                            ["situation_event", "Scene / event"],
                           ].map(([key, label]) => (
                             <label key={key} className="block">
                               <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -1272,128 +1376,219 @@ export function MenuBar() {
                           ))}
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
-                          <label className="block">
-                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                              Genre subtype
-                            </div>
-                            <select
-                              value={draft.genre_subtype}
-                              onChange={(e) =>
-                                updateUploadDraft(index, {
-                                  genre_subtype: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
-                              disabled={!draft.genre}
-                            >
-                              <option value="">
-                                {draft.genre
-                                  ? "Select subtype"
-                                  : "Choose media genre first"}
-                              </option>
-                              {getMediaSubgenreOptions(draft.genre).map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block">
-                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                              Situational genre
-                            </div>
-                            <select
-                              value={draft.situational_genre}
-                              onChange={(e) =>
-                                updateUploadDraft(index, {
-                                  situational_genre: e.target.value,
-                                  situational_subtype: "",
-                                })
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                            >
-                              <option value="">Not set</option>
-                              {SITUATIONAL_GENRE_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block">
-                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                              Situational subtype
-                            </div>
-                            <select
-                              value={draft.situational_subtype}
-                              onChange={(e) =>
-                                updateUploadDraft(index, {
-                                  situational_subtype: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
-                              disabled={!draft.situational_genre}
-                            >
-                              <option value="">
-                                {draft.situational_genre
-                                  ? "Select subtype"
-                                  : "Choose situational genre first"}
-                              </option>
-                              {getSituationalSubgenreOptions(
+                          <CustomizableSelectField
+                            label="Genre subtype"
+                            value={draft.genre_subtype}
+                            onChange={(nextValue) =>
+                              updateUploadDraft(index, {
+                                genre_subtype: nextValue,
+                              })
+                            }
+                            options={getMediaSubgenreOptions(
+                              draft.genre,
+                              draft.genre_subtype,
+                            )}
+                            customValue={draft.custom_genre_subtype}
+                            onCustomValueChange={(value) =>
+                              updateUploadDraft(index, {
+                                custom_genre_subtype: value,
+                              })
+                            }
+                            onAddCustom={() =>
+                              applyCustomUploadTaxonomy(
+                                index,
+                                "genre_subtype",
+                                "custom_genre_subtype",
+                                "media_subgenre",
+                                draft.genre,
+                              )
+                            }
+                            disabled={!draft.genre}
+                            emptyLabel={
+                              draft.genre
+                                ? "Select subtype"
+                                : "Choose media genre first"
+                            }
+                            customPlaceholder={
+                              draft.genre
+                                ? "Add custom subtype if needed"
+                                : "Choose media genre first"
+                            }
+                            learnedLabels={getLearnedTaxonomyLabels(
+                              "media_subgenre",
+                              draft.genre,
+                            )}
+                            onRemoveLearnedLabel={(label) =>
+                              removeLearnedUploadTaxonomy(
+                                index,
+                                "media_subgenre",
+                                label,
+                                draft.genre,
+                              )
+                            }
+                          />
+                          <CustomizableSelectField
+                            label="Situation type"
+                            value={draft.situational_genre}
+                            onChange={(nextValue) =>
+                              updateUploadDraft(index, {
+                                situational_genre: nextValue,
+                                situational_subtype: "",
+                              })
+                            }
+                            options={getSituationalGenreOptions(
+                              draft.situational_genre,
+                            )}
+                            customValue={draft.custom_situational_genre}
+                            onCustomValueChange={(value) =>
+                              updateUploadDraft(index, {
+                                custom_situational_genre: value,
+                              })
+                            }
+                            onAddCustom={() =>
+                              applyCustomUploadTaxonomy(
+                                index,
+                                "situational_genre",
+                                "custom_situational_genre",
+                                "situational_genre",
+                              )
+                            }
+                            learnedLabels={getLearnedTaxonomyLabels(
+                              "situational_genre",
+                            )}
+                            onRemoveLearnedLabel={(label) =>
+                              removeLearnedUploadTaxonomy(
+                                index,
+                                "situational_genre",
+                                label,
+                              )
+                            }
+                          />
+                          <CustomizableSelectField
+                            label="Situation detail"
+                            value={draft.situational_subtype}
+                            onChange={(nextValue) =>
+                              updateUploadDraft(index, {
+                                situational_subtype: nextValue,
+                              })
+                            }
+                            options={getSituationalSubgenreOptions(
+                              draft.situational_genre,
+                              draft.situational_subtype,
+                            )}
+                            customValue={draft.custom_situational_subtype}
+                            onCustomValueChange={(value) =>
+                              updateUploadDraft(index, {
+                                custom_situational_subtype: value,
+                              })
+                            }
+                            onAddCustom={() =>
+                              applyCustomUploadTaxonomy(
+                                index,
+                                "situational_subtype",
+                                "custom_situational_subtype",
+                                "situational_subgenre",
                                 draft.situational_genre,
-                              ).map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block">
-                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                              Privacy axis
-                            </div>
-                            <select
-                              value={draft.privacy_axis}
-                              onChange={(e) =>
-                                updateUploadDraft(index, {
-                                  privacy_axis: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                            >
-                              <option value="">Not set</option>
-                              {PRIVACY_AXIS_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="block">
-                            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                              Expertise axis
-                            </div>
-                            <select
-                              value={draft.expertise_axis}
-                              onChange={(e) =>
-                                updateUploadDraft(index, {
-                                  expertise_axis: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                            >
-                              <option value="">Not set</option>
-                              {EXPERTISE_AXIS_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                              )
+                            }
+                            disabled={!draft.situational_genre}
+                            emptyLabel={
+                              draft.situational_genre
+                                ? "Select subtype"
+                                : "Choose situational genre first"
+                            }
+                            customPlaceholder={
+                              draft.situational_genre
+                                ? "Add custom subtype if needed"
+                                : "Choose situational genre first"
+                            }
+                            learnedLabels={getLearnedTaxonomyLabels(
+                              "situational_subgenre",
+                              draft.situational_genre,
+                            )}
+                            onRemoveLearnedLabel={(label) =>
+                              removeLearnedUploadTaxonomy(
+                                index,
+                                "situational_subgenre",
+                                label,
+                                draft.situational_genre,
+                              )
+                            }
+                          />
+                          <CustomizableSelectField
+                            label="Privacy"
+                            value={draft.privacy_axis}
+                            onChange={(nextValue) =>
+                              updateUploadDraft(index, {
+                                privacy_axis: nextValue,
+                              })
+                            }
+                            options={getPrivacyAxisOptions(draft.privacy_axis)}
+                            customValue={draft.custom_privacy_axis}
+                            onCustomValueChange={(value) =>
+                              updateUploadDraft(index, {
+                                custom_privacy_axis: value,
+                              })
+                            }
+                            onAddCustom={() =>
+                              applyCustomUploadTaxonomy(
+                                index,
+                                "privacy_axis",
+                                "custom_privacy_axis",
+                                "privacy_axis",
+                              )
+                            }
+                            learnedLabels={getLearnedTaxonomyLabels(
+                              "privacy_axis",
+                            )}
+                            onRemoveLearnedLabel={(label) =>
+                              removeLearnedUploadTaxonomy(
+                                index,
+                                "privacy_axis",
+                                label,
+                              )
+                            }
+                          />
+                          <CustomizableSelectField
+                            label="Expertise"
+                            value={draft.expertise_axis}
+                            onChange={(nextValue) =>
+                              updateUploadDraft(index, {
+                                expertise_axis: nextValue,
+                              })
+                            }
+                            options={getExpertiseAxisOptions(
+                              draft.expertise_axis,
+                            )}
+                            customValue={draft.custom_expertise_axis}
+                            onCustomValueChange={(value) =>
+                              updateUploadDraft(index, {
+                                custom_expertise_axis: value,
+                              })
+                            }
+                            onAddCustom={() =>
+                              applyCustomUploadTaxonomy(
+                                index,
+                                "expertise_axis",
+                                "custom_expertise_axis",
+                                "expertise_axis",
+                              )
+                            }
+                            learnedLabels={getLearnedTaxonomyLabels(
+                              "expertise_axis",
+                            )}
+                            onRemoveLearnedLabel={(label) =>
+                              removeLearnedUploadTaxonomy(
+                                index,
+                                "expertise_axis",
+                                label,
+                              )
+                            }
+                          />
                         </div>
                         <label className="block">
                           <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                            Interaction dynamics
+                            Interaction
                           </div>
                           <textarea
                             value={draft.interaction_dynamics}
@@ -1412,7 +1607,7 @@ export function MenuBar() {
                         </label>
                         <label className="block">
                           <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                            Narrative / situation development
+                            Development
                           </div>
                           <textarea
                             value={draft.narrative_development}
@@ -1431,7 +1626,7 @@ export function MenuBar() {
                         </label>
                         <label className="block">
                           <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                            Performance / expression
+                            Expression / delivery
                           </div>
                           <textarea
                             value={draft.performance_expression}

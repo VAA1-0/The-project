@@ -58,6 +58,7 @@ def _install_api_server_stubs():
     fastapi.UploadFile = object
     fastapi.HTTPException = HTTPException
     fastapi.BackgroundTasks = BackgroundTasks
+    fastapi.Body = lambda *args, **kwargs: None
     fastapi.Form = lambda *args, **kwargs: None
     sys.modules["fastapi"] = fastapi
 
@@ -111,6 +112,7 @@ def _install_api_server_stubs():
 
     pipeline_ingestion = types.ModuleType("src.backend.analysis.pipeline_ingestion")
     pipeline_ingestion.run_ingestion_pipeline = lambda *args, **kwargs: {}
+    pipeline_ingestion.validate_video = lambda *args, **kwargs: (True, None)
     sys.modules["src.backend.analysis.pipeline_ingestion"] = pipeline_ingestion
 
     audio_text = types.ModuleType("src.backend.analysis.pipeline_audio_text")
@@ -187,6 +189,9 @@ def _install_api_server_stubs():
             }
 
     quantitative_analysis.QuantitativeAnalysis = QuantitativeAnalysis
+    quantitative_analysis.attach_quant_evidence_to_transcript = (
+        lambda *args, **kwargs: args[0] if args else None
+    )
     sys.modules["src.backend.analysis.quantitative_analysis"] = (
         quantitative_analysis
     )

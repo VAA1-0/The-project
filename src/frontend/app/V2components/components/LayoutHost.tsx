@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef } from "react";
-import { GoldenLayout, JsonValue, LayoutConfig } from "golden-layout";
+import { ContentItem, GoldenLayout, JsonValue, LayoutConfig } from "golden-layout";
 import { ReactComponentWrapper } from "@/lib/golden-layout-lib/ReactComponentWrapper";
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
@@ -60,13 +60,21 @@ export default function LayoutHost({
     TimeBank: "Time Bank",
   };
 
+  const getLayoutItems = (item: ContentItem | undefined): ContentItem[] => {
+    if (!item) {
+      return [];
+    }
+
+    return [item, ...item.contentItems.flatMap((child) => getLayoutItems(child))];
+  };
+
   const activateExistingPanel = (panelType: string): boolean => {
     const layout = layoutRef.current;
     if (!layout) {
       return false;
     }
 
-    const items = layout.getAllContentItems();
+    const items = getLayoutItems(layout.rootItem);
     for (const item of items) {
       const candidate = item as {
         isComponent?: boolean;

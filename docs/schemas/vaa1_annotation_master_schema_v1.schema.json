@@ -1,0 +1,887 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vaa1.local/schemas/vaa1_annotation_master_schema_v1.schema.json",
+  "title": "VAA1 Annotation Master Schema v1",
+  "description": "Normalized VAA1-owned annotation package for CVAT-linked audiovisual analysis items.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "analysis_id",
+    "exchange_protocol_version",
+    "vaa1_schema_version",
+    "linkage",
+    "source_context_snapshot",
+    "raw_import_reference",
+    "genre_annotations",
+    "cinematic_cues",
+    "object_annotations",
+    "track_annotations",
+    "temporal_segments",
+    "expression_annotations",
+    "review_layer",
+    "validation"
+  ],
+  "properties": {
+    "analysis_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exchange_protocol_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "vaa1_schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "linkage": {
+      "$ref": "#/$defs/linkage"
+    },
+    "source_context_snapshot": {
+      "$ref": "#/$defs/sourceContextSnapshot"
+    },
+    "raw_import_reference": {
+      "$ref": "#/$defs/rawImportReference"
+    },
+    "genre_annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/genreAnnotation"
+      }
+    },
+    "cinematic_cues": {
+      "$ref": "#/$defs/cinematicCues"
+    },
+    "object_annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/objectAnnotation"
+      }
+    },
+    "track_annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trackAnnotation"
+      }
+    },
+    "temporal_segments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/temporalSegment"
+      }
+    },
+    "expression_annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/expressionAnnotation"
+      }
+    },
+    "review_layer": {
+      "$ref": "#/$defs/reviewLayer"
+    },
+    "mapping_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "validation": {
+      "$ref": "#/$defs/validationLayer"
+    }
+  },
+  "$defs": {
+    "nullableNumber": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_seconds",
+        "end_seconds"
+      ],
+      "properties": {
+        "start_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "start_frame": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "end_frame": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shape_type"
+      ],
+      "properties": {
+        "shape_type": {
+          "type": "string",
+          "enum": [
+            "rectangle",
+            "polygon",
+            "polyline",
+            "points",
+            "ellipse",
+            "cuboid",
+            "mask",
+            "skeleton",
+            "unknown"
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "x": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "y": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "width": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "height": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "rotation": {
+          "$ref": "#/$defs/nullableNumber"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_system",
+        "source_type"
+      ],
+      "properties": {
+        "source_system": {
+          "type": "string",
+          "enum": [
+            "cvat",
+            "vaa1",
+            "human_review",
+            "automated_mapping"
+          ]
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "raw_export",
+            "mapped",
+            "override",
+            "manual_entry"
+          ]
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "labelMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_label",
+        "mapped_label"
+      ],
+      "properties": {
+        "raw_label": {
+          "type": "string"
+        },
+        "mapped_label": {
+          "type": "string"
+        },
+        "mapping_family": {
+          "type": "string",
+          "enum": [
+            "object",
+            "track",
+            "event",
+            "expression"
+          ]
+        },
+        "mapping_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mapping_status": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "normalized",
+            "interpreted",
+            "unresolved"
+          ]
+        }
+      }
+    },
+    "linkage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analysis_id",
+        "cvat_task_id"
+      ],
+      "properties": {
+        "analysis_id": {
+          "type": "string"
+        },
+        "cvat_task_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cvat_job_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cvat_project_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "analysis_filename": {
+          "type": "string"
+        },
+        "linked_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "sourceContextSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "persons": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "relations": {
+          "type": "string"
+        },
+        "location_country": {
+          "type": "string"
+        },
+        "location_city": {
+          "type": "string"
+        },
+        "location_place": {
+          "type": "string"
+        },
+        "location_room": {
+          "type": "string"
+        },
+        "time_era": {
+          "type": "string"
+        },
+        "time_year": {
+          "type": "string"
+        },
+        "time_moment": {
+          "type": "string"
+        },
+        "situation_event": {
+          "type": "string"
+        },
+        "keywords": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "interaction_dynamics": {
+          "type": "string"
+        },
+        "narrative_development": {
+          "type": "string"
+        },
+        "performance_expression": {
+          "type": "string"
+        },
+        "genre": {
+          "type": "string"
+        },
+        "genre_subtype": {
+          "type": "string"
+        },
+        "situational_genre": {
+          "type": "string"
+        },
+        "situational_subtype": {
+          "type": "string"
+        },
+        "privacy_axis": {
+          "type": "string"
+        },
+        "expertise_axis": {
+          "type": "string"
+        },
+        "references": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "reference_relation": {
+          "type": "string"
+        },
+        "reference_source": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "rawImportReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "export_format",
+        "exported_at"
+      ],
+      "properties": {
+        "export_format": {
+          "type": "string"
+        },
+        "exported_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "artifact_path": {
+          "type": "string"
+        },
+        "artifact_sha256": {
+          "type": "string"
+        },
+        "artifact_media_type": {
+          "type": "string"
+        },
+        "import_status": {
+          "type": "string",
+          "enum": [
+            "exported_only",
+            "imported_raw",
+            "mapped",
+            "reviewed"
+          ]
+        }
+      }
+    },
+    "genreAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annotation_id",
+        "genre_label",
+        "annotation_level",
+        "provenance"
+      ],
+      "properties": {
+        "annotation_id": {
+          "type": "string"
+        },
+        "genre_label": {
+          "type": "string"
+        },
+        "genre_subtype": {
+          "type": "string"
+        },
+        "annotation_level": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary",
+            "intertextual",
+            "situational",
+            "stylistic"
+          ]
+        },
+        "weight": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "whole_media",
+            "segment",
+            "shot",
+            "frame_range"
+          ]
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timeInterval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_basis": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "note": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "cueSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dominant_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sample_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "distribution": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "interval_summaries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end",
+              "dominant_label"
+            ],
+            "properties": {
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              },
+              "dominant_label": {
+                "type": "string"
+              },
+              "distribution": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cueSample": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "timestamp",
+        "label"
+      ],
+      "properties": {
+        "timestamp": {
+          "type": "number",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "cueFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cueSample"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/cueSummary"
+        }
+      }
+    },
+    "cinematicCues": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shot_size": {
+          "$ref": "#/$defs/cueFamily"
+        },
+        "transition_clues": {
+          "$ref": "#/$defs/cueFamily"
+        },
+        "movement_hint": {
+          "$ref": "#/$defs/cueFamily"
+        },
+        "composition_hint": {
+          "$ref": "#/$defs/cueFamily"
+        },
+        "subject_arrangement_hint": {
+          "$ref": "#/$defs/cueFamily"
+        }
+      }
+    },
+    "objectAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annotation_id",
+        "label_mapping",
+        "interval",
+        "geometry",
+        "provenance"
+      ],
+      "properties": {
+        "annotation_id": {
+          "type": "string"
+        },
+        "track_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label_mapping": {
+          "$ref": "#/$defs/labelMapping"
+        },
+        "interval": {
+          "$ref": "#/$defs/timeInterval"
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "trackAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "track_id",
+        "label_mapping",
+        "interval",
+        "provenance"
+      ],
+      "properties": {
+        "track_id": {
+          "type": "string"
+        },
+        "label_mapping": {
+          "$ref": "#/$defs/labelMapping"
+        },
+        "interval": {
+          "$ref": "#/$defs/timeInterval"
+        },
+        "frame_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "temporalSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segment_id",
+        "interval",
+        "event_label",
+        "provenance"
+      ],
+      "properties": {
+        "segment_id": {
+          "type": "string"
+        },
+        "interval": {
+          "$ref": "#/$defs/timeInterval"
+        },
+        "event_label": {
+          "type": "string"
+        },
+        "event_family": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "expressionAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expression_id",
+        "interval",
+        "interpreted_label",
+        "provenance"
+      ],
+      "properties": {
+        "expression_id": {
+          "type": "string"
+        },
+        "track_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval": {
+          "$ref": "#/$defs/timeInterval"
+        },
+        "raw_signal": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "string",
+              "null"
+            ]
+          }
+        },
+        "interpreted_label": {
+          "type": "string"
+        },
+        "runner_up_labels": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "context_weights": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "annotationCorrectionRule": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "manualTranscriptEntry": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "reviewLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "annotation_corrections"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unreviewed",
+            "partially_reviewed",
+            "reviewed",
+            "approved"
+          ]
+        },
+        "reviewed_by": {
+          "type": "string"
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "annotation_corrections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "text_substitutions",
+            "label_overrides",
+            "manual_transcript_entries"
+          ],
+          "properties": {
+            "analysis_id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updated_by": {
+              "type": "string"
+            },
+            "text_substitutions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/annotationCorrectionRule"
+              }
+            },
+            "label_overrides": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/annotationCorrectionRule"
+              }
+            },
+            "manual_transcript_entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/manualTranscriptEntry"
+              }
+            }
+          }
+        }
+      }
+    },
+    "validationLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_valid",
+        "errors",
+        "warnings",
+        "unresolved_labels"
+      ],
+      "properties": {
+        "is_valid": {
+          "type": "boolean"
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "errors": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "warnings": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "unresolved_labels": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    }
+  }
+}

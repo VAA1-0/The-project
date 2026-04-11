@@ -15,9 +15,17 @@ import { parse } from "csv-parse/sync";
 export interface VideoMetadata {
   id: string;
   name: string;
+  tag?: string | null;
   length?: number;
   size?: number;
-  status: "uploaded" | "processing" | "completed" | "error";
+  status:
+    | "uploaded"
+    | "processing"
+    | "completed"
+    | "error"
+    | "pending"
+    | "synced"
+    | "failed";
   progress: number;
   error?: string;
   missionStage?: string;
@@ -2046,6 +2054,10 @@ export interface UploadResponse {
   duration?: number;
   size?: number;
   cvatID: number;
+  bundle_type?: "analysis" | "project";
+  imported_analysis_ids?: string[];
+  imported_count?: number;
+  project_name?: string;
 }
 
 // Updated AnalysisStatus with pipeline_type
@@ -2305,6 +2317,12 @@ export interface AnalysisStatus {
         age?: number | null;
         dominant_gender?: string | null;
         face_confidence?: number | null;
+        region?: {
+          x?: number;
+          y?: number;
+          w?: number;
+          h?: number;
+        } | null;
         warnings?: Array<{
           code?: string;
           technical_note?: string;
@@ -2390,7 +2408,6 @@ export class VideoService {
 
   static async updateCvatLink(id: string, cvatID: number): Promise<void> {
     await apiService.updateCvatLink(id, cvatID);
-    this.metadataCache.delete(id);
     this.analysisCache.delete(id);
     this.analysisPromiseCache.delete(id);
   }

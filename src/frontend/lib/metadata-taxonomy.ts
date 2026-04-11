@@ -252,10 +252,233 @@ export const EXPERTISE_AXIS_OPTIONS = [
   "lay / non-professional",
 ] as const;
 
-export function getMediaSubgenreOptions(genre: string): string[] {
-  return MEDIA_SUBGENRE_OPTIONS[genre] || [];
+export type CustomTaxonomyScope =
+  | "media_genre"
+  | "media_subgenre"
+  | "situational_genre"
+  | "situational_subgenre"
+  | "privacy_axis"
+  | "expertise_axis";
+
+const CUSTOM_TAXONOMY_STORAGE_KEY = "vaa1.custom_taxonomy_counts.v1";
+const CUSTOM_LABEL_PROMOTION_THRESHOLD = 1;
+
+type CustomTaxonomyEntry = {
+  label: string;
+  count: number;
+};
+
+export type LearnedTaxonomyLabel = {
+  label: string;
+  count: number;
+  promoted: boolean;
+};
+
+type CustomTaxonomyStore = Partial<
+  Record<CustomTaxonomyScope, Record<string, CustomTaxonomyEntry>>
+>;
+
+function normalizeLabel(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
 }
 
-export function getSituationalSubgenreOptions(genre: string): string[] {
-  return SITUATIONAL_SUBGENRE_OPTIONS[genre] || [];
+function makeScopedKey(value: string, parentValue?: string): string {
+  const normalizedValue = normalizeLabel(value).toLowerCase();
+  const normalizedParent = normalizeLabel(parentValue || "").toLowerCase();
+  return normalizedParent ? `${normalizedParent}::${normalizedValue}` : normalizedValue;
+}
+
+function readCustomTaxonomyStore(): CustomTaxonomyStore {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_TAXONOMY_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as CustomTaxonomyStore;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCustomTaxonomyStore(store: CustomTaxonomyStore) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      CUSTOM_TAXONOMY_STORAGE_KEY,
+      JSON.stringify(store),
+    );
+  } catch {
+    // Ignore localStorage write failures so metadata editing still works.
+  }
+}
+
+function mergeUniqueOptions(options: string[]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  options.forEach((option) => {
+    const normalized = normalizeLabel(option);
+    if (!normalized) {
+      return;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push(normalized);
+  });
+
+  return merged;
+}
+
+function getPromotedCustomOptions(
+  scope: CustomTaxonomyScope,
+  parentValue?: string,
+): string[] {
+  return getLearnedTaxonomyLabels(scope, parentValue)
+    .filter((entry) => entry.promoted)
+    .map((entry) => entry.label)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export function getLearnedTaxonomyLabels(
+  scope: CustomTaxonomyScope,
+  parentValue?: string,
+): LearnedTaxonomyLabel[] {
+  const store = readCustomTaxonomyStore();
+  const scopedStore = store[scope] || {};
+  const parentKey = normalizeLabel(parentValue || "").toLowerCase();
+
+  return Object.entries(scopedStore)
+    .filter(([key, entry]) => {
+      if (!entry) {
+        return false;
+      }
+      if (!parentKey) {
+        return !key.includes("::");
+      }
+      return key.startsWith(`${parentKey}::`);
+    })
+    .map(([, entry]) => ({
+      label: normalizeLabel(entry.label),
+      count: entry.count,
+      promoted: entry.count >= CUSTOM_LABEL_PROMOTION_THRESHOLD,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export function registerCustomTaxonomyLabel(
+  scope: CustomTaxonomyScope,
+  value: string,
+  parentValue?: string,
+) {
+  const normalized = normalizeLabel(value);
+  if (!normalized) {
+    return;
+  }
+
+  const store = readCustomTaxonomyStore();
+  const scopedStore = store[scope] || {};
+  const scopedKey = makeScopedKey(normalized, parentValue);
+  const existing = scopedStore[scopedKey];
+
+  scopedStore[scopedKey] = {
+    label: normalized,
+    count: (existing?.count || 0) + 1,
+  };
+  store[scope] = scopedStore;
+  writeCustomTaxonomyStore(store);
+}
+
+export function removeCustomTaxonomyLabel(
+  scope: CustomTaxonomyScope,
+  value: string,
+  parentValue?: string,
+) {
+  const normalized = normalizeLabel(value);
+  if (!normalized) {
+    return;
+  }
+
+  const store = readCustomTaxonomyStore();
+  const scopedStore = store[scope];
+  if (!scopedStore) {
+    return;
+  }
+
+  const scopedKey = makeScopedKey(normalized, parentValue);
+  if (!(scopedKey in scopedStore)) {
+    return;
+  }
+
+  delete scopedStore[scopedKey];
+  if (Object.keys(scopedStore).length === 0) {
+    delete store[scope];
+  } else {
+    store[scope] = scopedStore;
+  }
+  writeCustomTaxonomyStore(store);
+}
+
+export function getMediaGenreOptions(currentValue = ""): string[] {
+  return mergeUniqueOptions([
+    ...MEDIA_GENRE_OPTIONS,
+    ...getPromotedCustomOptions("media_genre"),
+    currentValue,
+  ]);
+}
+
+export function getMediaSubgenreOptions(
+  genre: string,
+  currentValue = "",
+): string[] {
+  return mergeUniqueOptions([
+    ...(MEDIA_SUBGENRE_OPTIONS[genre] || []),
+    ...getPromotedCustomOptions("media_subgenre", genre),
+    currentValue,
+  ]);
+}
+
+export function getSituationalGenreOptions(currentValue = ""): string[] {
+  return mergeUniqueOptions([
+    ...SITUATIONAL_GENRE_OPTIONS,
+    ...getPromotedCustomOptions("situational_genre"),
+    currentValue,
+  ]);
+}
+
+export function getSituationalSubgenreOptions(
+  genre: string,
+  currentValue = "",
+): string[] {
+  return mergeUniqueOptions([
+    ...(SITUATIONAL_SUBGENRE_OPTIONS[genre] || []),
+    ...getPromotedCustomOptions("situational_subgenre", genre),
+    currentValue,
+  ]);
+}
+
+export function getPrivacyAxisOptions(currentValue = ""): string[] {
+  return mergeUniqueOptions([
+    ...PRIVACY_AXIS_OPTIONS,
+    ...getPromotedCustomOptions("privacy_axis"),
+    currentValue,
+  ]);
+}
+
+export function getExpertiseAxisOptions(currentValue = ""): string[] {
+  return mergeUniqueOptions([
+    ...EXPERTISE_AXIS_OPTIONS,
+    ...getPromotedCustomOptions("expertise_axis"),
+    currentValue,
+  ]);
 }

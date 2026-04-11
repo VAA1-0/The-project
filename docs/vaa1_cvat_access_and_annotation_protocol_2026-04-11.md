@@ -354,3 +354,509 @@ The local system has crossed an important threshold:
 But the workflow is not yet mature enough for many users without a formal protocol.
 
 This document should therefore be treated as the design baseline for the next implementation steps.
+
+## Appendix: Current Taxonomy Snapshot For VAA1-CVAT Annotation
+
+This appendix is included for second-opinion review and workflow upgrading.
+
+It separates:
+
+- taxonomies that are already formalized in code
+- controlled vocabularies that are partially formalized
+- draft schemas that are still primarily defined in working notes
+
+This distinction matters because CVAT-facing dropdowns and VAA1-facing interpretation should not be confused with each other.
+
+### Status Key
+
+- `Formalized in code now`
+  Present as actual options or weighting structures in the current codebase.
+- `Controlled vocabulary, not yet full dropdown`
+  Present as a meaningful vocabulary, but not yet surfaced as a strict dropdown list.
+- `Draft schema`
+  Present in notes and protocol logic, but not yet fully encoded as a production taxonomy.
+
+## A. Media Genre Taxonomy With Subcategories
+
+Status:
+
+- `Formalized in code now`
+
+Current top-level media genres:
+
+- `news`
+  - breaking news
+  - studio anchor read
+  - field report
+  - panel discussion
+  - investigative segment
+- `interview`
+  - studio interview
+  - field interview
+  - profile interview
+  - vox pop
+  - interrogative interview
+- `documentary`
+  - tv documentary
+  - observational documentary
+  - explanatory documentary
+  - participatory documentary
+  - archival documentary
+  - docudrama
+  - biography documentary
+  - music documentary
+  - science documentary
+- `research video`
+  - experiment recording
+  - research interview
+  - counseling session
+  - fieldnotes video
+  - observation session
+  - lab demonstration
+- `drama / fiction`
+  - comedy
+  - tragedy
+  - suspense / thriller
+  - romance
+  - horror
+  - parody / satire
+  - epic / historical
+  - action / adventure
+  - crime / detective
+  - sci-fi
+  - fantasy
+  - melodrama
+- `advertising / promo`
+  - commercial spot
+  - brand film
+  - product demo
+  - campaign promo
+  - teaser
+- `music video`
+  - performance clip
+  - narrative clip
+  - lyric video
+  - live session
+  - dance-driven clip
+- `stand-up / performance`
+  - stand-up set
+  - monologue
+  - stage sketch
+  - spoken word
+  - live act
+- `vlog`
+  - daily vlog
+  - personal update
+  - travel vlog
+  - confessional vlog
+  - family vlog
+- `explainer / commentary`
+  - explainer
+  - commentary
+  - essay video
+  - analysis breakdown
+  - news commentary
+- `livestream / talk-to-camera`
+  - solo livestream
+  - chat stream
+  - creator monologue
+  - Q&A stream
+  - event stream
+- `podcast video`
+  - studio podcast
+  - remote podcast
+  - panel podcast
+  - interview podcast
+  - video essay conversation
+- `reaction video`
+  - live reaction
+  - duet / stitch reaction
+  - commentary reaction
+  - trailer reaction
+  - watch-along reaction
+- `tutorial / how-to`
+  - screen tutorial
+  - hands-on demo
+  - step-by-step guide
+  - lesson
+  - workshop
+- `short-form social clip`
+  - short skit
+  - trend clip
+  - micro-vlog
+  - promo clip
+  - highlight snippet
+- `meme / remix / edit`
+  - remix
+  - supercut
+  - meme edit
+  - mashup
+  - found-audio edit
+- `archive / found footage`
+  - newsreel
+  - advertisement archive
+  - newscast archive
+  - news archive
+  - home video archive
+  - surveillance clip
+  - historical footage
+  - recovered media
+- `institutional / campaign / public information`
+  - press conference
+  - campaign message
+  - public information notice
+  - ceremonial address
+  - organizational briefing
+- `webconferencing / meetings / webcalls`
+  - team meeting
+  - webinar
+  - remote interview
+  - panel call
+  - classroom session
+- `other / mixed`
+  - hybrid format
+  - unclear / mixed genre
+  - other
+
+## B. Expression Taxonomy Per Genre
+
+Status:
+
+- `Controlled vocabulary, not yet full dropdown`
+
+Important current reality:
+
+- `performance_expression` is currently a free-text field in the UI
+- the expression-weighting engine already uses a controlled family of interpretive labels
+- this family is the strongest current candidate for a standardized annotation vocabulary
+
+Current expression-family labels in code:
+
+- amused
+- assertive
+- composed
+- concerned
+- emphatic
+- focused
+- formal_neutral
+- reflective
+- reassuring
+- serious
+- skeptical
+- warm
+
+These are currently weighted by:
+
+- media genre
+- genre subtype
+- situational genre
+- situational subtype
+- privacy axis
+- expertise axis
+
+Examples of genre-sensitive expression tendencies already encoded:
+
+- `news`
+  - serious
+  - focused
+  - formal_neutral
+  - concerned
+  - composed
+- `interview`
+  - reflective
+  - focused
+  - skeptical
+  - serious
+- `institutional / campaign / public information`
+  - formal_neutral
+  - assertive
+  - serious
+  - reassuring
+- `drama / fiction`
+  - emphatic
+  - amused
+  - reflective
+  - assertive
+- `vlog`
+  - warm
+  - amused
+  - emphatic
+  - reflective
+
+Examples of subtype-sensitive expression tendencies already encoded:
+
+- `breaking news`
+  - concerned
+  - emphatic
+  - serious
+- `studio anchor read`
+  - formal_neutral
+  - serious
+  - composed
+- `profile interview`
+  - reflective
+  - warm
+  - focused
+- `interrogative interview`
+  - skeptical
+  - focused
+  - assertive
+- `campaign message`
+  - emphatic
+  - assertive
+  - warm
+- `confessional vlog`
+  - reflective
+  - warm
+  - concerned
+
+Recommended protocol position:
+
+- use the 12-label expression family above as the current controlled vocabulary
+- allow free-text only as analyst note or override rationale
+- do not treat raw detector emotions such as `happy`, `sad`, or `angry` as the final VAA1 annotation vocabulary
+
+## C. Objects Per Genre
+
+Status:
+
+- `Draft schema`
+
+Important current reality:
+
+- this is not yet a fully formalized dropdown taxonomy in the product
+- the most structured current source is the object build-up note
+- CVAT labels should eventually be narrowed to approved VAA1 object schemas rather than left generic
+
+Current genre-oriented object schema directions:
+
+- `Action / Spy / Thriller`
+  - firearm-likely object
+  - long-weapon-likely object
+  - tactical gear
+  - explosive / blast cue
+  - surveillance device
+  - command / control interface
+  - pursuit vehicle
+  - luxury-status prop
+  - security checkpoint cue
+- `Horror`
+  - blade / sharp-threat object
+  - ritual object
+  - masking / disguise object
+  - confinement cue
+  - body-remains cue
+  - medical / invasive instrument
+- `News / Journalism / Documentary`
+  - microphone
+  - press camera
+  - podium
+  - official document
+  - protest sign
+  - public-address equipment
+  - institutional emblem
+- `Domestic / Intimate / Everyday`
+  - dining prop
+  - childcare object
+  - grooming object
+  - cleaning object
+  - personal-device object
+  - leisure object
+- `Web / Social / Platform Video`
+  - ring light
+  - headset
+  - webcam setup
+  - streamer microphone
+  - chat / interface screen
+  - phone-as-recording-device
+
+Recommended protocol position:
+
+- treat this as the current draft schema for second-opinion upgrading
+- next implementation step should convert it into a controlled VAA1 object-label profile per annotation mode
+- CVAT should not expose a long uncontrolled label list if VAA1 only wants a small approved set
+
+## D. Scenery / Scenario / Situational Taxonomy
+
+Status:
+
+- `Formalized in code now` for situational genre and situational subtype
+- `Draft schema` for the deeper scenery / scenario model
+
+### D1. Current Situational Genre Dropdown
+
+Current top-level situational genres:
+
+- `briefing`
+  - press briefing
+  - status update
+  - organizational briefing
+  - explainer briefing
+- `confrontation`
+  - argument
+  - interrogation
+  - accusation
+  - disciplinary exchange
+- `celebration`
+  - party
+  - ceremony
+  - congratulation
+  - festive gathering
+- `mourning`
+  - memorial
+  - condolence
+  - grief response
+  - funeral-related scene
+- `negotiation`
+  - bargaining
+  - mediation
+  - diplomatic exchange
+  - decision-making
+- `confession`
+  - apology
+  - disclosure
+  - emotional admission
+  - private confession
+- `testimony`
+  - witness account
+  - statement to authority
+  - interview testimony
+  - documentary testimony
+- `instruction`
+  - tutorial
+  - coaching
+  - classroom instruction
+  - procedural guidance
+- `debate`
+  - formal debate
+  - panel debate
+  - argumentative exchange
+  - cross-talk
+- `interview`
+  - profile interview
+  - investigative interview
+  - webcall interview
+  - vox pop
+- `announcement`
+  - public announcement
+  - internal update
+  - launch reveal
+  - policy statement
+- `emergency response`
+  - crisis briefing
+  - rescue coordination
+  - urgent public warning
+  - on-scene response
+- `intimate interaction`
+  - romantic exchange
+  - family intimacy
+  - emotional support
+  - making love
+- `routine coordination`
+  - meeting
+  - scheduling
+  - teamwork
+  - administrative coordination
+- `leisure / socializing`
+  - hanging out
+  - chatting
+  - public leisure
+  - game / pastime
+- `performance / entertainment`
+  - performance
+  - rehearsal
+  - stand-up
+  - musical moment
+- `travel / mobility`
+  - commute
+  - transit update
+  - journey segment
+  - arrival / departure
+- `personal care / inner life`
+  - grooming
+  - self-talk
+  - reflection
+  - therapeutic / self-care moment
+
+### D2. Current Situational Axes Already Formalized In UI
+
+- `Privacy axis`
+  - public
+  - semi-public
+  - private
+- `Expertise axis`
+  - professional
+  - mixed professional-lay
+  - lay / non-professional
+
+### D3. Deeper Scenery / Scenario Model For Upgrade Work
+
+The situational-awareness note proposes a broader layered scenery / scenario structure that should inform later VAA1-CVAT protocol upgrades.
+
+Recommended deeper axes:
+
+- `Domain`
+  - at home
+  - at work or study
+  - in public / out and about
+  - social & relational scenes
+  - personal care & inner life
+  - mobility & transition
+  - leisure & cultural participation
+  - nature & outdoors
+  - consumption & bureaucracy
+- `Time band`
+  - morning
+  - daytime
+  - evening
+  - night
+- `Social mode`
+  - alone
+  - dyadic
+  - family
+  - group
+  - institutional
+  - private
+  - public
+- `Situational stance axes`
+  - private / semi-public / public
+  - lay / mixed professional-lay / professional
+  - formal / informal
+  - institutional / personal
+  - routine / exceptional
+  - staged / spontaneous
+
+Recommended protocol position:
+
+- current product can already use situational genre, subtype, privacy axis, and expertise axis
+- the deeper scenery / scenario ontology should be treated as the upgrade path for better analyst guidance and better CVAT-to-VAA1 mapping
+
+## Practical CVAT Relevance
+
+These taxonomy layers matter directly to CVAT workflow.
+
+Why:
+
+- CVAT label choices should align with approved VAA1 schema categories
+- VAA1 dropdowns should tell the analyst which interpretive context applies before annotation begins
+- annotation should not be produced in a taxonomy vacuum
+- exported or synchronized annotations should land in a stable VAA1 master-schema structure
+
+Immediate implication:
+
+- `Genre`
+- `Genre subtype`
+- `Situational genre`
+- `Situational subtype`
+- `Privacy axis`
+- `Expertise axis`
+
+should already be treated as required context fields for guided annotation.
+
+Near-term upgrade implication:
+
+- `Expression family`
+- `Object schema per genre`
+- `Scenery / scenario layers`
+
+should be tightened into a formal annotation-exchange contract so CVAT work and VAA1 interpretation use the same language.

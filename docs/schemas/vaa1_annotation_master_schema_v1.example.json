@@ -1,0 +1,371 @@
+{
+  "analysis_id": "f287a423-810a-4734-9109-7993e06cf054",
+  "exchange_protocol_version": "1.0",
+  "vaa1_schema_version": "1.0",
+  "created_at": "2026-04-11T12:30:00Z",
+  "updated_at": "2026-04-11T12:35:00Z",
+  "linkage": {
+    "analysis_id": "f287a423-810a-4734-9109-7993e06cf054",
+    "cvat_task_id": 8,
+    "cvat_job_id": 3,
+    "cvat_project_id": null,
+    "analysis_filename": "NO TIME TO DIE Trailer UK - James Bond 007 (720p, h264).mp4",
+    "linked_at": "2026-04-11T08:51:06Z"
+  },
+  "source_context_snapshot": {
+    "title": "NO TIME TO DIE Trailer UK - James Bond 007",
+    "scope": "short clip",
+    "description": "Trailer material with rapid scene changes, confrontational dialogue, and action cues.",
+    "persons": [
+      "Bond",
+      "supporting figures"
+    ],
+    "relations": "hero versus adversarial network",
+    "location_country": "",
+    "location_city": "",
+    "location_place": "",
+    "location_room": "",
+    "time_era": "contemporary",
+    "time_year": "",
+    "time_moment": "",
+    "situation_event": "trailer escalation sequence",
+    "keywords": [
+      "action",
+      "surveillance",
+      "confrontation"
+    ],
+    "interaction_dynamics": "alternates between threat, pursuit, and briefing-like exchanges",
+    "narrative_development": "tone escalates from controlled tension to action emphasis",
+    "performance_expression": "serious, assertive, concerned",
+    "genre": "drama / fiction",
+    "genre_subtype": "action / adventure",
+    "situational_genre": "confrontation",
+    "situational_subtype": "argument",
+    "privacy_axis": "public",
+    "expertise_axis": "professional",
+    "references": [],
+    "reference_relation": "",
+    "reference_source": "",
+    "confidence": "medium",
+    "notes": "Context snapshot imported from source media annotations."
+  },
+  "raw_import_reference": {
+    "export_format": "CVAT for video 1.1",
+    "exported_at": "2026-04-11T12:32:00Z",
+    "artifact_path": "outputs/f287a423-810a-4734-9109-7993e06cf054/cvat/raw_export_job_3.zip",
+    "artifact_sha256": "",
+    "artifact_media_type": "application/zip",
+    "import_status": "mapped"
+  },
+  "genre_annotations": [
+    {
+      "annotation_id": "genre-0001",
+      "genre_label": "drama / fiction",
+      "genre_subtype": "action / adventure",
+      "annotation_level": "primary",
+      "weight": 0.92,
+      "scope": "whole_media",
+      "interval": null,
+      "evidence_basis": [
+        "source_media_metadata",
+        "analyst_annotation"
+      ],
+      "note": "Primary genre assignment for the trailer as a whole.",
+      "provenance": {
+        "source_system": "vaa1",
+        "source_type": "mapped",
+        "created_by": "analyst",
+        "created_at": "2026-04-11T12:31:00Z",
+        "note": "Imported from source metadata."
+      }
+    },
+    {
+      "annotation_id": "genre-0002",
+      "genre_label": "advertising / promo",
+      "genre_subtype": "teaser",
+      "annotation_level": "intertextual",
+      "weight": 0.76,
+      "scope": "whole_media",
+      "interval": null,
+      "evidence_basis": [
+        "trailer_form",
+        "promotional_editing"
+      ],
+      "note": "Intertextual promotional layer: this is also a trailer and therefore promotional in form.",
+      "provenance": {
+        "source_system": "human_review",
+        "source_type": "override",
+        "created_by": "analyst",
+        "created_at": "2026-04-11T12:36:00Z",
+        "note": "Added to preserve intertextual genre reading."
+      }
+    }
+  ],
+  "cinematic_cues": {
+    "shot_size": {
+      "method": "vaa1-baseline-shot-size",
+      "samples": [
+        {
+          "timestamp": 0.0,
+          "label": "close-up",
+          "person_count": 1,
+          "dominant_area_share": 0.41,
+          "confidence": 0.81
+        }
+      ],
+      "summary": {
+        "dominant_label": "close-up",
+        "sample_count": 1,
+        "distribution": {
+          "close-up": 1.0
+        },
+        "interval_summaries": [
+          {
+            "start": 0.0,
+            "end": 3.2,
+            "dominant_label": "close-up",
+            "distribution": {
+              "close-up": 1.0
+            }
+          }
+        ]
+      }
+    },
+    "transition_clues": {
+      "method": "vaa1-transition-baseline",
+      "samples": [
+        {
+          "timestamp": 3.2,
+          "label": "hard cut",
+          "zone_tone_shift": 0.64,
+          "occupancy_shift": 0.58,
+          "frame_class": "transition"
+        }
+      ],
+      "summary": {
+        "dominant_label": "hard cut",
+        "sample_count": 1,
+        "distribution": {
+          "hard cut": 1.0
+        }
+      }
+    },
+    "movement_hint": {
+      "method": "vaa1-movement-baseline",
+      "samples": [
+        {
+          "timestamp": 4.1,
+          "label": "dynamic camera movement",
+          "zone_tone_shift": 0.33,
+          "occupancy_shift": 0.42,
+          "frame_class": "within_shot"
+        }
+      ],
+      "summary": {
+        "dominant_label": "dynamic camera movement",
+        "sample_count": 1,
+        "distribution": {
+          "dynamic camera movement": 1.0
+        }
+      }
+    },
+    "composition_hint": {
+      "method": "vaa1-composition-baseline",
+      "samples": [
+        {
+          "timestamp": 0.0,
+          "label": "center-weighted composition",
+          "left_occupancy": 0.19,
+          "center_occupancy": 0.55,
+          "right_occupancy": 0.26,
+          "frame_class": "stable"
+        }
+      ],
+      "summary": {
+        "dominant_label": "center-weighted composition",
+        "sample_count": 1,
+        "distribution": {
+          "center-weighted composition": 1.0
+        }
+      }
+    },
+    "subject_arrangement_hint": {
+      "method": "vaa1-subject-arrangement-baseline",
+      "samples": [
+        {
+          "timestamp": 0.0,
+          "label": "single dominant subject",
+          "person_count": 1,
+          "text_count": 0,
+          "frame_class": "stable"
+        }
+      ],
+      "summary": {
+        "dominant_label": "single dominant subject",
+        "sample_count": 1,
+        "distribution": {
+          "single dominant subject": 1.0
+        }
+      }
+    }
+  },
+  "object_annotations": [
+    {
+      "annotation_id": "obj-0001",
+      "track_id": "track-1",
+      "label_mapping": {
+        "raw_label": "Person",
+        "mapped_label": "person",
+        "mapping_family": "object",
+        "mapping_confidence": 1.0,
+        "mapping_status": "direct"
+      },
+      "interval": {
+        "start_seconds": 0.0,
+        "end_seconds": 3.2,
+        "start_frame": 0,
+        "end_frame": 76
+      },
+      "geometry": {
+        "shape_type": "rectangle",
+        "points": [],
+        "x": 448,
+        "y": 150,
+        "width": 292,
+        "height": 292,
+        "rotation": null
+      },
+      "attributes": {},
+      "provenance": {
+        "source_system": "cvat",
+        "source_type": "raw_export",
+        "created_by": "admin",
+        "created_at": "2026-04-11T12:32:00Z",
+        "note": "Imported from CVAT job export."
+      }
+    }
+  ],
+  "track_annotations": [
+    {
+      "track_id": "track-1",
+      "label_mapping": {
+        "raw_label": "Person",
+        "mapped_label": "person_primary",
+        "mapping_family": "track",
+        "mapping_confidence": 0.92,
+        "mapping_status": "normalized"
+      },
+      "interval": {
+        "start_seconds": 0.0,
+        "end_seconds": 8.5,
+        "start_frame": 0,
+        "end_frame": 204
+      },
+      "frame_count": 205,
+      "attributes": {
+        "visibility": "high"
+      },
+      "provenance": {
+        "source_system": "automated_mapping",
+        "source_type": "mapped",
+        "created_by": "vaa1-mapper",
+        "created_at": "2026-04-11T12:34:00Z",
+        "note": "Mapped from CVAT track."
+      }
+    }
+  ],
+  "temporal_segments": [
+    {
+      "segment_id": "seg-0001",
+      "interval": {
+        "start_seconds": 0.0,
+        "end_seconds": 8.5,
+        "start_frame": 0,
+        "end_frame": 204
+      },
+      "event_label": "confrontational action escalation",
+      "event_family": "narrative_event",
+      "confidence": 0.74,
+      "note": "Derived from trailer segment context and CVAT-linked visual evidence.",
+      "provenance": {
+        "source_system": "vaa1",
+        "source_type": "mapped",
+        "created_by": "analyst",
+        "created_at": "2026-04-11T12:35:00Z",
+        "note": "Initial mapped segment."
+      }
+    }
+  ],
+  "expression_annotations": [
+    {
+      "expression_id": "exp-0001",
+      "track_id": "track-1",
+      "interval": {
+        "start_seconds": 0.0,
+        "end_seconds": 3.2,
+        "start_frame": 0,
+        "end_frame": 76
+      },
+      "raw_signal": {
+        "angry": 0.11,
+        "fear": 0.31,
+        "sad": 0.30,
+        "neutral": 0.19
+      },
+      "interpreted_label": "serious",
+      "runner_up_labels": [
+        "assertive",
+        "concerned"
+      ],
+      "context_weights": {
+        "media_genre_weight": 1.0,
+        "genre_subtype_weight": 1.0,
+        "situational_genre_weight": 1.05,
+        "situational_subtype_weight": 1.0,
+        "privacy_weight": 1.1,
+        "expertise_weight": 1.05
+      },
+      "provenance": {
+        "source_system": "automated_mapping",
+        "source_type": "mapped",
+        "created_by": "vaa1-expression-layer",
+        "created_at": "2026-04-11T12:35:00Z",
+        "note": "Weighted from raw expression evidence plus metadata context."
+      }
+    }
+  ],
+  "review_layer": {
+    "status": "partially_reviewed",
+    "reviewed_by": "analyst",
+    "reviewed_at": "2026-04-11T12:36:00Z",
+    "annotation_corrections": {
+      "analysis_id": "f287a423-810a-4734-9109-7993e06cf054",
+      "version": 1,
+      "updated_at": "2026-04-11T12:36:00Z",
+      "updated_by": "analyst",
+      "text_substitutions": [],
+      "label_overrides": [
+        {
+          "target_id": "track-1",
+          "from_label": "person_primary",
+          "to_label": "person_primary",
+          "note": "No change, analyst confirmed mapping."
+        }
+      ],
+      "manual_transcript_entries": []
+    }
+  },
+  "mapping_notes": [
+    "Current example reflects the first normalized master schema draft.",
+    "Object mapping remains simple because current CVAT label set is still minimal."
+  ],
+  "validation": {
+    "is_valid": true,
+    "validated_at": "2026-04-11T12:37:00Z",
+    "errors": [],
+    "warnings": [
+      "Genre-specific object schema is still an evolving taxonomy."
+    ],
+    "unresolved_labels": []
+  }
+}

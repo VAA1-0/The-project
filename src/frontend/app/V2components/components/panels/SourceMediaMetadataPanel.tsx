@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
+import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
-  EXPERTISE_AXIS_OPTIONS,
+  getLearnedTaxonomyLabels,
+  getExpertiseAxisOptions,
+  getMediaGenreOptions,
   getMediaSubgenreOptions,
+  getPrivacyAxisOptions,
+  removeCustomTaxonomyLabel,
+  registerCustomTaxonomyLabel,
   getSituationalSubgenreOptions,
-  MEDIA_GENRE_OPTIONS,
-  PRIVACY_AXIS_OPTIONS,
-  SITUATIONAL_GENRE_OPTIONS,
+  getSituationalGenreOptions,
+  type CustomTaxonomyScope,
 } from "@/lib/metadata-taxonomy";
 
 function formatValue(value: unknown): string {
@@ -119,8 +124,17 @@ export default function SourceMediaMetadataPanel() {
   const [referenceSource, setReferenceSource] = useState("");
   const [confidence, setConfidence] = useState("");
   const [notes, setNotes] = useState("");
+  const [customTaxonomyInputs, setCustomTaxonomyInputs] = useState({
+    genre: "",
+    genreSubtype: "",
+    situationalGenre: "",
+    situationalSubtype: "",
+    privacyAxis: "",
+    expertiseAxis: "",
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [, setTaxonomyRefreshNonce] = useState(0);
 
   useEffect(() => {
     const handler = (id: string) => {
@@ -167,6 +181,14 @@ export default function SourceMediaMetadataPanel() {
         setReferenceSource("");
         setConfidence("");
         setNotes("");
+        setCustomTaxonomyInputs({
+          genre: "",
+          genreSubtype: "",
+          situationalGenre: "",
+          situationalSubtype: "",
+          privacyAxis: "",
+          expertiseAxis: "",
+        });
         return;
       }
 
@@ -214,6 +236,14 @@ export default function SourceMediaMetadataPanel() {
         setReferenceSource(nextMetadata.user_annotations?.reference_source || "");
         setConfidence(nextMetadata.user_annotations?.confidence || "");
         setNotes(nextMetadata.user_annotations?.notes || "");
+        setCustomTaxonomyInputs({
+          genre: "",
+          genreSubtype: "",
+          situationalGenre: "",
+          situationalSubtype: "",
+          privacyAxis: "",
+          expertiseAxis: "",
+        });
       } catch (error) {
         console.error("Failed to load source media metadata:", error);
         setMetadata(null);
@@ -280,6 +310,61 @@ export default function SourceMediaMetadataPanel() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const removeLearnedTaxonomy = (
+    scope: CustomTaxonomyScope,
+    label: string,
+    parentValue?: string,
+  ) => {
+    removeCustomTaxonomyLabel(scope, label, parentValue);
+    setTaxonomyRefreshNonce((value) => value + 1);
+    if (scope === "media_genre" && genre === label) {
+      setGenre("");
+      setGenreSubtype("");
+    } else if (scope === "media_subgenre" && genreSubtype === label) {
+      setGenreSubtype("");
+    } else if (scope === "situational_genre" && situationalGenre === label) {
+      setSituationalGenre("");
+      setSituationalSubtype("");
+    } else if (
+      scope === "situational_subgenre" &&
+      situationalSubtype === label
+    ) {
+      setSituationalSubtype("");
+    } else if (scope === "privacy_axis" && privacyAxis === label) {
+      setPrivacyAxis("");
+    } else if (scope === "expertise_axis" && expertiseAxis === label) {
+      setExpertiseAxis("");
+    }
+  };
+
+  const updateCustomTaxonomyInput = (
+    key: keyof typeof customTaxonomyInputs,
+    value: string,
+  ) => {
+    setCustomTaxonomyInputs((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const applyCustomTaxonomy = (
+    key: keyof typeof customTaxonomyInputs,
+    scope:
+      | "media_genre"
+      | "media_subgenre"
+      | "situational_genre"
+      | "situational_subgenre"
+      | "privacy_axis"
+      | "expertise_axis",
+    assign: (value: string) => void,
+    parentValue?: string,
+  ) => {
+    const customValue = customTaxonomyInputs[key].trim();
+    if (!customValue) {
+      return;
+    }
+    registerCustomTaxonomyLabel(scope, customValue, parentValue);
+    assign(customValue);
+    updateCustomTaxonomyInput(key, "");
   };
 
   const coreRows = [
@@ -580,7 +665,7 @@ export default function SourceMediaMetadataPanel() {
               </div>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Situation / event
+                  Scene / event
                 </div>
                 <input
                   value={situationEvent}
@@ -601,7 +686,7 @@ export default function SourceMediaMetadataPanel() {
               </label>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Interaction dynamics
+                  Interaction
                 </div>
                 <textarea
                   value={interactionDynamics}
@@ -612,7 +697,7 @@ export default function SourceMediaMetadataPanel() {
               </label>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Narrative / situation development
+                  Development
                 </div>
                 <textarea
                   value={narrativeDevelopment}
@@ -623,7 +708,7 @@ export default function SourceMediaMetadataPanel() {
               </label>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Performance / expression
+                  Expression / delivery
                 </div>
                 <textarea
                   value={performanceExpression}
@@ -632,123 +717,171 @@ export default function SourceMediaMetadataPanel() {
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
-              <label className="block">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Genre
-                </div>
-                <select
-                  value={genre}
-                  onChange={(e) => {
-                    setGenre(e.target.value);
+              <CustomizableSelectField
+                label="Genre"
+                value={genre}
+                onChange={(nextValue) => {
+                  setGenre(nextValue);
+                  setGenreSubtype("");
+                }}
+                options={getMediaGenreOptions(genre)}
+                customValue={customTaxonomyInputs.genre}
+                onCustomValueChange={(value) =>
+                  updateCustomTaxonomyInput("genre", value)
+                }
+                onAddCustom={() =>
+                  applyCustomTaxonomy("genre", "media_genre", (nextValue) => {
+                    setGenre(nextValue);
                     setGenreSubtype("");
-                  }}
-                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                >
-                  <option value="">Not set</option>
-                  {MEDIA_GENRE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Genre subtype
-                </div>
-                <select
-                  value={genreSubtype}
-                  onChange={(e) => setGenreSubtype(e.target.value)}
-                  disabled={!genre}
-                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
-                >
-                  <option value="">
-                    {genre ? "Select subtype" : "Choose genre first"}
-                  </option>
-                  {getMediaSubgenreOptions(genre).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Situational genre
-                </div>
-                <select
-                  value={situationalGenre}
-                  onChange={(e) => {
-                    setSituationalGenre(e.target.value);
-                    setSituationalSubtype("");
-                  }}
-                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                >
-                  <option value="">Not set</option>
-                  {SITUATIONAL_GENRE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                  Situational subtype
-                </div>
-                <select
-                  value={situationalSubtype}
-                  onChange={(e) => setSituationalSubtype(e.target.value)}
-                  disabled={!situationalGenre}
-                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500 disabled:text-slate-500"
-                >
-                  <option value="">
-                    {situationalGenre
-                      ? "Select subtype"
-                      : "Choose situational genre first"}
-                  </option>
-                  {getSituationalSubgenreOptions(situationalGenre).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  })
+                }
+                learnedLabels={getLearnedTaxonomyLabels("media_genre")}
+                onRemoveLearnedLabel={(label) =>
+                  removeLearnedTaxonomy("media_genre", label)
+                }
+              />
+              <CustomizableSelectField
+                label="Genre subtype"
+                value={genreSubtype}
+                onChange={setGenreSubtype}
+                options={getMediaSubgenreOptions(genre, genreSubtype)}
+                customValue={customTaxonomyInputs.genreSubtype}
+                onCustomValueChange={(value) =>
+                  updateCustomTaxonomyInput("genreSubtype", value)
+                }
+                onAddCustom={() =>
+                  applyCustomTaxonomy(
+                    "genreSubtype",
+                    "media_subgenre",
+                    setGenreSubtype,
+                    genre,
+                  )
+                }
+                disabled={!genre}
+                emptyLabel={genre ? "Select subtype" : "Choose genre first"}
+                customPlaceholder={
+                  genre
+                    ? "Add custom subtype if needed"
+                    : "Choose genre first"
+                }
+                learnedLabels={getLearnedTaxonomyLabels("media_subgenre", genre)}
+                onRemoveLearnedLabel={(label) =>
+                  removeLearnedTaxonomy("media_subgenre", label, genre)
+                }
+              />
+              <CustomizableSelectField
+                label="Situation type"
+                value={situationalGenre}
+                onChange={(nextValue) => {
+                  setSituationalGenre(nextValue);
+                  setSituationalSubtype("");
+                }}
+                options={getSituationalGenreOptions(situationalGenre)}
+                customValue={customTaxonomyInputs.situationalGenre}
+                onCustomValueChange={(value) =>
+                  updateCustomTaxonomyInput("situationalGenre", value)
+                }
+                onAddCustom={() =>
+                  applyCustomTaxonomy(
+                    "situationalGenre",
+                    "situational_genre",
+                    (nextValue) => {
+                      setSituationalGenre(nextValue);
+                      setSituationalSubtype("");
+                    },
+                  )
+                }
+                learnedLabels={getLearnedTaxonomyLabels("situational_genre")}
+                onRemoveLearnedLabel={(label) =>
+                  removeLearnedTaxonomy("situational_genre", label)
+                }
+              />
+              <CustomizableSelectField
+                label="Situation detail"
+                value={situationalSubtype}
+                onChange={setSituationalSubtype}
+                options={getSituationalSubgenreOptions(
+                  situationalGenre,
+                  situationalSubtype,
+                )}
+                customValue={customTaxonomyInputs.situationalSubtype}
+                onCustomValueChange={(value) =>
+                  updateCustomTaxonomyInput("situationalSubtype", value)
+                }
+                onAddCustom={() =>
+                  applyCustomTaxonomy(
+                    "situationalSubtype",
+                    "situational_subgenre",
+                    setSituationalSubtype,
+                    situationalGenre,
+                  )
+                }
+                disabled={!situationalGenre}
+                emptyLabel={
+                  situationalGenre
+                    ? "Select subtype"
+                    : "Choose situational genre first"
+                }
+                customPlaceholder={
+                  situationalGenre
+                    ? "Add custom subtype if needed"
+                    : "Choose situational genre first"
+                }
+                learnedLabels={getLearnedTaxonomyLabels(
+                  "situational_subgenre",
+                  situationalGenre,
+                )}
+                onRemoveLearnedLabel={(label) =>
+                  removeLearnedTaxonomy(
+                    "situational_subgenre",
+                    label,
+                    situationalGenre,
+                  )
+                }
+              />
               <div className="grid gap-3 md:grid-cols-2">
-                <label className="block">
-                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                    Privacy axis
-                  </div>
-                  <select
-                    value={privacyAxis}
-                    onChange={(e) => setPrivacyAxis(e.target.value)}
-                    className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                  >
-                    <option value="">Not set</option>
-                    {PRIVACY_AXIS_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                    Expertise axis
-                  </div>
-                  <select
-                    value={expertiseAxis}
-                    onChange={(e) => setExpertiseAxis(e.target.value)}
-                    className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
-                  >
-                    <option value="">Not set</option>
-                    {EXPERTISE_AXIS_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <CustomizableSelectField
+                  label="Privacy"
+                  value={privacyAxis}
+                  onChange={setPrivacyAxis}
+                  options={getPrivacyAxisOptions(privacyAxis)}
+                  customValue={customTaxonomyInputs.privacyAxis}
+                  onCustomValueChange={(value) =>
+                    updateCustomTaxonomyInput("privacyAxis", value)
+                  }
+                  onAddCustom={() =>
+                    applyCustomTaxonomy(
+                      "privacyAxis",
+                      "privacy_axis",
+                      setPrivacyAxis,
+                    )
+                  }
+                  learnedLabels={getLearnedTaxonomyLabels("privacy_axis")}
+                  onRemoveLearnedLabel={(label) =>
+                    removeLearnedTaxonomy("privacy_axis", label)
+                  }
+                />
+                <CustomizableSelectField
+                  label="Expertise"
+                  value={expertiseAxis}
+                  onChange={setExpertiseAxis}
+                  options={getExpertiseAxisOptions(expertiseAxis)}
+                  customValue={customTaxonomyInputs.expertiseAxis}
+                  onCustomValueChange={(value) =>
+                    updateCustomTaxonomyInput("expertiseAxis", value)
+                  }
+                  onAddCustom={() =>
+                    applyCustomTaxonomy(
+                      "expertiseAxis",
+                      "expertise_axis",
+                      setExpertiseAxis,
+                    )
+                  }
+                  learnedLabels={getLearnedTaxonomyLabels("expertise_axis")}
+                  onRemoveLearnedLabel={(label) =>
+                    removeLearnedTaxonomy("expertise_axis", label)
+                  }
+                />
               </div>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
