@@ -535,6 +535,31 @@ class ApiService {
     }
   }
 
+  async updateCvatLink(analysisId: string, cvatID: number): Promise<any> {
+    try {
+      const response = await fetch(`${this.baseURL}/api/status/${analysisId}/cvat-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cvatID,
+          origin: "annotate_page_recovery",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `CVAT link update failed: ${response.status} ${response.statusText} - ${errorText}`,
+        );
+      }
+
+      return response.json();
+    } catch (error) {
+      console.error("CVAT link update error:", error);
+      throw error;
+    }
+  }
+
   // Private helper methods for fallback data
   private getMockAnalyses(limit: number): any {
     const mockData: any = {

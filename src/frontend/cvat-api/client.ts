@@ -15,7 +15,7 @@ export async function loginToCvat(username: string, password: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
-    //credentials: "include"
+    credentials: "include",
   });
   
   const data = await res.json();
@@ -160,5 +160,4 @@ export function stopAllIntervals() {
   pollingIntervals.forEach(clearInterval);
   pollingIntervals = [];
 }
-
 

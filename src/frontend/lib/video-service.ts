@@ -2388,6 +2388,13 @@ export class VideoService {
     }
   }
 
+  static async updateCvatLink(id: string, cvatID: number): Promise<void> {
+    await apiService.updateCvatLink(id, cvatID);
+    this.metadataCache.delete(id);
+    this.analysisCache.delete(id);
+    this.analysisPromiseCache.delete(id);
+  }
+
   static async importSavedWork(file: File): Promise<UploadResponse> {
     try {
       return await apiService.importSavedWork(file);

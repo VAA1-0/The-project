@@ -2424,6 +2424,40 @@ async def get_source_media_metadata(analysis_id: str) -> dict:
     }
 
 
+@app.post("/api/status/{analysis_id}/cvat-link", response_model=dict)
+async def update_cvat_link(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    """Persist or update the CVAT task linkage for an analysis."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    raw_cvat_id = payload.get("cvatID")
+    try:
+        cvat_id = int(raw_cvat_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="cvatID must be an integer")
+
+    if cvat_id < 0:
+        raise HTTPException(status_code=400, detail="cvatID must be non-negative")
+
+    status["cvatID"] = cvat_id
+    append_analysis_event(
+        status,
+        "cvat_link_updated",
+        details={
+            "cvatID": cvat_id,
+            "origin": payload.get("origin", "manual_link"),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "cvatID": cvat_id,
+    }
+
+
 @app.post("/api/source-media/{analysis_id}", response_model=dict)
 async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
     """Update user-added source media metadata notes for an analysis."""

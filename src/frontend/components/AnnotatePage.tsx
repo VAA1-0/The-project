@@ -3,8 +3,15 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CvatCanvas } from "@/cvat-api/components/CvatCanvas";
-import { listJobs, listExportFormats } from "@/cvat-api/client";
+import {
+  createVideoTask,
+  getCvatHealth,
+  listExportFormats,
+  listJobs,
+  loginToCvat,
+} from "@/cvat-api/client";
 import { VideoService } from "@/lib/video-service";
+import { getVideoBlob } from "@/lib/blob-store";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { GameRunLogo } from "./ProjectLogo";
@@ -19,6 +26,7 @@ export default function AnnotatePage() {
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null);
 
   const [formats, setFormats] = useState<string[]>([]);
   const [exportFormat, setExportFormat] = useState("YOLO 1.1");
@@ -35,32 +43,33 @@ export default function AnnotatePage() {
         const videoMeta = await VideoService.get(id);
         setMetadata(videoMeta);
 
-        const cvatID = videoMeta?.cvatID;
-
-        if (!cvatID) {
-          setError("No CVAT task ID found for this video. Please upload the video again.");
-          setIsLoading(false);
-          return;
-        }
+        const resolvedCvatID = await ensureCvatTask(videoMeta);
+        setPendingTaskId(resolvedCvatID);
 
         // Fetch jobs for this CVAT task
-        console.log(`📂 Loading jobs for CVAT task ${cvatID}...`);
-        const result = await listJobs(cvatID);
-        const jobList = Array.isArray(result) ? result : result.results || [];
+        console.log(`📂 Loading jobs for CVAT task ${resolvedCvatID}...`);
+        const jobList = await waitForJobs(resolvedCvatID);
 
         setJobs(jobList);
 
         // Auto-select first job if available
         if (jobList.length > 0) {
           setSelectedJob(jobList[0]);
+          setPendingTaskId(null);
           console.log(`✅ Loaded ${jobList.length} job(s), selected job ${jobList[0].id}`);
         } else {
-          setError("No annotation jobs found for this task. The task may still be processing.");
+          setError(
+            `CVAT task ${resolvedCvatID} was created, but its annotation jobs are still being prepared. Wait a moment and open Annotations again.`,
+          );
         }
 
       } catch (err) {
         console.error("Failed to load annotation data:", err);
-        setError("Failed to load annotation jobs. Please try again.");
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to load annotation jobs. Please try again.",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -85,6 +94,69 @@ export default function AnnotatePage() {
     }
     loadFormats();
   }, []);
+
+  async function ensureCvatTask(videoMeta: any): Promise<number> {
+    if (videoMeta?.cvatID && Number(videoMeta.cvatID) > 0) {
+      return Number(videoMeta.cvatID);
+    }
+
+    const health = await getCvatHealth().catch(() => ({ ok: false, tokenValid: false }));
+    if (!health?.tokenValid) {
+      const auth = await loginToCvat("admin", "admin123");
+      if (!auth?.ok) {
+        throw new Error("CVAT is running, but automatic sign-in failed.");
+      }
+    }
+
+    const blob = await getVideoBlob(id);
+    if (!blob) {
+      throw new Error(
+        "No stored source video is available for this analysis. Re-link the source video before annotating.",
+      );
+    }
+
+    const filename = videoMeta?.name || `analysis-${id}.mp4`;
+    const file = new File([blob], filename, {
+      type: blob.type || "video/mp4",
+      lastModified: Date.now(),
+    });
+    const taskName = `VAA1-${filename.replace(/\.[^.]+$/, "")}-${id.slice(0, 8)}`;
+    const task = await createVideoTask(taskName, file);
+    const taskId = Number(task?.taskId);
+
+    if (!Number.isFinite(taskId) || taskId <= 0) {
+      throw new Error("CVAT task creation did not return a valid task ID.");
+    }
+
+    try {
+      await VideoService.updateCvatLink(id, taskId);
+    } catch (error) {
+      console.warn("Failed to persist CVAT link, continuing with in-memory task ID.", error);
+    }
+    setMetadata((previous: any) => ({
+      ...previous,
+      cvatID: taskId,
+    }));
+
+    return taskId;
+  }
+
+  async function waitForJobs(cvatID: number): Promise<any[]> {
+    const maxAttempts = 90;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const result = await listJobs(cvatID);
+      const jobList = Array.isArray(result) ? result : result.results || [];
+
+      if (jobList.length > 0) {
+        return jobList;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+
+    return [];
+  }
 
   // Handle going back to analysis page
   const handleBack = () => {
@@ -114,10 +186,13 @@ export default function AnnotatePage() {
             <CardTitle className="text-red-400">Error Loading Annotation</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-slate-300 mb-4">{error}</p>
-            <Button onClick={handleBack} className="w-full">
-              Back to Analysis
-            </Button>
+                <p className="text-slate-300 mb-4">{error}</p>
+                {pendingTaskId ? (
+                  <p className="text-sm text-slate-400 mb-4">Current CVAT task: {pendingTaskId}</p>
+                ) : null}
+                <Button onClick={handleBack} className="w-full">
+                  Back to Analysis
+                </Button>
           </CardContent>
         </Card>
       </div>
