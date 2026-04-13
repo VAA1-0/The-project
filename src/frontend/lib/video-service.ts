@@ -1,4 +1,23 @@
 // src/frontend/lib/video-service.ts
+
+/**
+ * Video Service (Business Logic Layer)
+ *
+ * This service acts as the primary business logic layer for the frontend application.
+ * It is responsible for orchestrating data flow and managing the application state
+ * related to video analysis.
+ *
+ * Its responsibilities include:
+ * - Using `apiService` to fetch raw data from the backend.
+ * - Transforming, normalizing, and enriching the raw API data into a format
+ *   that is easy for UI components to consume.
+ * - Applying annotation corrections and other business rules to the data.
+ * - Providing a clean, high-level interface for UI components to interact with.
+ *
+ * All application-specific data manipulation and business logic should reside here,
+ * not in the UI components or the low-level `apiService`.
+ */
+
 import { apiService } from "./api-service";
 import type {
   AnalysisEvent,

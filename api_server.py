@@ -82,6 +82,8 @@ AUDIO_DIR = Path("outputs/audio")
 TRANSCRIPTS_DIR = Path("outputs/transcripts")
 STATIC_DIR = Path("static")
 IMPORTED_WORK_DIR = Path("outputs/imported_work")
+TAXONOMY_DIR = Path("outputs/taxonomy")
+SHARED_TAXONOMY_PATH = TAXONOMY_DIR / "shared_taxonomy.json"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
@@ -89,16 +91,152 @@ AUDIO_DIR.mkdir(exist_ok=True)
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
 IMPORTED_WORK_DIR.mkdir(parents=True, exist_ok=True)
+TAXONOMY_DIR.mkdir(parents=True, exist_ok=True)
 
 # Serve static files (for downloaded files)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Store analysis status and results
 analysis_status: Dict[str, Dict[str, Any]] = {}
+ALLOWED_TAXONOMY_SCOPES = {
+    "media_genre",
+    "media_subgenre",
+    "situational_genre",
+    "situational_subgenre",
+    "privacy_axis",
+    "expertise_axis",
+}
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_taxonomy_label(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def get_shared_taxonomy_store() -> Dict[str, Any]:
+    if not SHARED_TAXONOMY_PATH.exists():
+        return {"version": 1, "updated_at": None, "labels": []}
+
+    try:
+        payload = json.loads(SHARED_TAXONOMY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "updated_at": None, "labels": []}
+
+    if not isinstance(payload, dict):
+        return {"version": 1, "updated_at": None, "labels": []}
+
+    labels = payload.get("labels")
+    if not isinstance(labels, list):
+        payload["labels"] = []
+    return payload
+
+
+def write_shared_taxonomy_store(store: Dict[str, Any]) -> None:
+    store["updated_at"] = utc_now_iso()
+    SHARED_TAXONOMY_PATH.write_text(
+        json.dumps(store, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def list_shared_taxonomy_labels(
+    *,
+    scope: Optional[str] = None,
+    parent_value: Optional[str] = None,
+    status: str = "approved_shared",
+) -> List[Dict[str, Any]]:
+    store = get_shared_taxonomy_store()
+    normalized_parent = normalize_taxonomy_label(parent_value).lower()
+    labels: List[Dict[str, Any]] = []
+    for entry in store.get("labels", []):
+        if not isinstance(entry, dict):
+            continue
+        if scope and entry.get("scope") != scope:
+            continue
+        if status and entry.get("status") != status:
+            continue
+        entry_parent = normalize_taxonomy_label(entry.get("parent_value")).lower()
+        if normalized_parent:
+            if entry_parent != normalized_parent:
+                continue
+        else:
+            if entry_parent:
+                continue
+        labels.append(entry)
+
+    labels.sort(
+        key=lambda entry: (
+            str(entry.get("scope", "")),
+            str(entry.get("parent_value", "")),
+            str(entry.get("label", "")).lower(),
+        )
+    )
+    return labels
+
+
+def upsert_shared_taxonomy_label(
+    *,
+    scope: str,
+    label: str,
+    parent_value: Optional[str] = None,
+    created_by: str = "analyst",
+    source: str = "manual_share",
+    notes: str = "",
+) -> Dict[str, Any]:
+    normalized_scope = normalize_taxonomy_label(scope)
+    if normalized_scope not in ALLOWED_TAXONOMY_SCOPES:
+        raise HTTPException(status_code=400, detail="Unsupported taxonomy scope")
+
+    normalized_label = normalize_taxonomy_label(label)
+    if not normalized_label:
+        raise HTTPException(status_code=400, detail="label is required")
+
+    normalized_parent = normalize_taxonomy_label(parent_value)
+    store = get_shared_taxonomy_store()
+    labels = store.setdefault("labels", [])
+    normalized_match = normalized_label.lower()
+    normalized_parent_match = normalized_parent.lower()
+
+    for entry in labels:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("scope") != normalized_scope:
+            continue
+        if normalize_taxonomy_label(entry.get("label")).lower() != normalized_match:
+            continue
+        if normalize_taxonomy_label(entry.get("parent_value")).lower() != normalized_parent_match:
+            continue
+
+        entry["status"] = "approved_shared"
+        entry["label"] = normalized_label
+        entry["parent_value"] = normalized_parent
+        entry["notes"] = notes or entry.get("notes", "")
+        entry["source"] = source or entry.get("source", "manual_share")
+        entry["approved_at"] = entry.get("approved_at") or utc_now_iso()
+        entry["approved_by"] = entry.get("approved_by") or created_by
+        write_shared_taxonomy_store(store)
+        return entry
+
+    entry = {
+        "id": uuid.uuid4().hex,
+        "scope": normalized_scope,
+        "label": normalized_label,
+        "normalized_label": normalized_match,
+        "parent_value": normalized_parent,
+        "status": "approved_shared",
+        "source": source,
+        "created_by": created_by,
+        "created_at": utc_now_iso(),
+        "approved_by": created_by,
+        "approved_at": utc_now_iso(),
+        "notes": notes,
+    }
+    labels.append(entry)
+    write_shared_taxonomy_store(store)
+    return entry
 
 
 def get_analysis_record_path(analysis_id: str) -> Path:
@@ -2621,6 +2759,39 @@ async def upload_source_media_references(
         "analysis_id": analysis_id,
         "reference_files": uploaded_items,
         "source_media_metadata": status.get("source_media_metadata", {}),
+    }
+
+
+@app.get("/api/taxonomy/shared", response_model=dict)
+async def get_shared_taxonomy(
+    scope: Optional[str] = None,
+    parent_value: Optional[str] = None,
+) -> dict:
+    if scope and scope not in ALLOWED_TAXONOMY_SCOPES:
+        raise HTTPException(status_code=400, detail="Unsupported taxonomy scope")
+
+    labels = list_shared_taxonomy_labels(scope=scope, parent_value=parent_value)
+    return {
+        "status": "ok",
+        "scope": scope,
+        "parent_value": parent_value or "",
+        "labels": labels,
+    }
+
+
+@app.post("/api/taxonomy/shared/labels", response_model=dict)
+async def save_shared_taxonomy_label(payload: Dict[str, Any] = Body(...)) -> dict:
+    entry = upsert_shared_taxonomy_label(
+        scope=str(payload.get("scope") or ""),
+        label=str(payload.get("label") or ""),
+        parent_value=payload.get("parent_value"),
+        created_by=str(payload.get("created_by") or "analyst"),
+        source=str(payload.get("source") or "manual_share"),
+        notes=str(payload.get("notes") or ""),
+    )
+    return {
+        "status": "saved",
+        "label": entry,
     }
 
 

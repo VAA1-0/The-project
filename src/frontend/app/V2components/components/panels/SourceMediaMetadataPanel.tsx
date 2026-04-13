@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
-import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
+import {
+  apiService,
+  type SharedTaxonomyLabel,
+  type SourceMediaMetadata,
+} from "@/lib/api-service";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
   getLearnedTaxonomyLabels,
@@ -13,6 +17,7 @@ import {
   getSituationalSubgenreOptions,
   getSituationalGenreOptions,
   type CustomTaxonomyScope,
+  type SharedTaxonomyOption,
 } from "@/lib/metadata-taxonomy";
 
 function formatValue(value: unknown): string {
@@ -135,6 +140,9 @@ export default function SourceMediaMetadataPanel() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [, setTaxonomyRefreshNonce] = useState(0);
+  const [sharedTaxonomyLabels, setSharedTaxonomyLabels] = useState<
+    SharedTaxonomyLabel[]
+  >([]);
 
   useEffect(() => {
     const handler = (id: string) => {
@@ -252,6 +260,18 @@ export default function SourceMediaMetadataPanel() {
     void load();
   }, [videoId]);
 
+  useEffect(() => {
+    async function loadSharedTaxonomy() {
+      try {
+        const labels = await apiService.listSharedTaxonomyLabels();
+        setSharedTaxonomyLabels(labels);
+      } catch (error) {
+        console.warn("Failed to load shared taxonomy labels:", error);
+      }
+    }
+    void loadSharedTaxonomy();
+  }, []);
+
   const saveMetadata = async () => {
     if (!videoId) {
       return;
@@ -366,6 +386,61 @@ export default function SourceMediaMetadataPanel() {
     assign(customValue);
     updateCustomTaxonomyInput(key, "");
   };
+
+  const shareCustomTaxonomy = async (
+    key: keyof typeof customTaxonomyInputs,
+    scope: CustomTaxonomyScope,
+    assign: (value: string) => void,
+    parentValue?: string,
+  ) => {
+    const customValue = customTaxonomyInputs[key].trim();
+    if (!customValue) {
+      return;
+    }
+
+    try {
+      const saved = await apiService.saveSharedTaxonomyLabel({
+        scope,
+        label: customValue,
+        parent_value: parentValue,
+        created_by: "analyst",
+        source: "manual_share",
+      });
+      registerCustomTaxonomyLabel(scope, customValue, parentValue);
+      assign(customValue);
+      updateCustomTaxonomyInput(key, "");
+      setSharedTaxonomyLabels((current) => {
+        const next = current.filter(
+          (entry) =>
+            !(
+              entry.scope === saved.scope &&
+              (entry.parent_value || "") === (saved.parent_value || "") &&
+              entry.label.trim().toLowerCase() === saved.label.trim().toLowerCase()
+            ),
+        );
+        next.push(saved);
+        return next.sort((left, right) =>
+          left.label.localeCompare(right.label, undefined, {
+            sensitivity: "base",
+          }),
+        );
+      });
+      setSaveMessage(`Shared taxonomy label saved: ${saved.label}`);
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to save shared taxonomy label:", error);
+      setSaveMessage("Could not save shared taxonomy label.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    }
+  };
+
+  const sharedTaxonomyOptions: SharedTaxonomyOption[] = sharedTaxonomyLabels.map(
+    (entry) => ({
+      scope: entry.scope,
+      label: entry.label,
+      parent_value: entry.parent_value,
+    }),
+  );
 
   const coreRows = [
     ["Original file", metadata?.original_filename],
@@ -724,13 +799,19 @@ export default function SourceMediaMetadataPanel() {
                   setGenre(nextValue);
                   setGenreSubtype("");
                 }}
-                options={getMediaGenreOptions(genre)}
+                options={getMediaGenreOptions(genre, sharedTaxonomyOptions)}
                 customValue={customTaxonomyInputs.genre}
                 onCustomValueChange={(value) =>
                   updateCustomTaxonomyInput("genre", value)
                 }
                 onAddCustom={() =>
                   applyCustomTaxonomy("genre", "media_genre", (nextValue) => {
+                    setGenre(nextValue);
+                    setGenreSubtype("");
+                  })
+                }
+                onShareCustom={() =>
+                  shareCustomTaxonomy("genre", "media_genre", (nextValue) => {
                     setGenre(nextValue);
                     setGenreSubtype("");
                   })
@@ -744,13 +825,25 @@ export default function SourceMediaMetadataPanel() {
                 label="Genre subtype"
                 value={genreSubtype}
                 onChange={setGenreSubtype}
-                options={getMediaSubgenreOptions(genre, genreSubtype)}
+                options={getMediaSubgenreOptions(
+                  genre,
+                  genreSubtype,
+                  sharedTaxonomyOptions,
+                )}
                 customValue={customTaxonomyInputs.genreSubtype}
                 onCustomValueChange={(value) =>
                   updateCustomTaxonomyInput("genreSubtype", value)
                 }
                 onAddCustom={() =>
                   applyCustomTaxonomy(
+                    "genreSubtype",
+                    "media_subgenre",
+                    setGenreSubtype,
+                    genre,
+                  )
+                }
+                onShareCustom={() =>
+                  shareCustomTaxonomy(
                     "genreSubtype",
                     "media_subgenre",
                     setGenreSubtype,
@@ -776,13 +869,26 @@ export default function SourceMediaMetadataPanel() {
                   setSituationalGenre(nextValue);
                   setSituationalSubtype("");
                 }}
-                options={getSituationalGenreOptions(situationalGenre)}
+                options={getSituationalGenreOptions(
+                  situationalGenre,
+                  sharedTaxonomyOptions,
+                )}
                 customValue={customTaxonomyInputs.situationalGenre}
                 onCustomValueChange={(value) =>
                   updateCustomTaxonomyInput("situationalGenre", value)
                 }
                 onAddCustom={() =>
                   applyCustomTaxonomy(
+                    "situationalGenre",
+                    "situational_genre",
+                    (nextValue) => {
+                      setSituationalGenre(nextValue);
+                      setSituationalSubtype("");
+                    },
+                  )
+                }
+                onShareCustom={() =>
+                  shareCustomTaxonomy(
                     "situationalGenre",
                     "situational_genre",
                     (nextValue) => {
@@ -803,6 +909,7 @@ export default function SourceMediaMetadataPanel() {
                 options={getSituationalSubgenreOptions(
                   situationalGenre,
                   situationalSubtype,
+                  sharedTaxonomyOptions,
                 )}
                 customValue={customTaxonomyInputs.situationalSubtype}
                 onCustomValueChange={(value) =>
@@ -810,6 +917,14 @@ export default function SourceMediaMetadataPanel() {
                 }
                 onAddCustom={() =>
                   applyCustomTaxonomy(
+                    "situationalSubtype",
+                    "situational_subgenre",
+                    setSituationalSubtype,
+                    situationalGenre,
+                  )
+                }
+                onShareCustom={() =>
+                  shareCustomTaxonomy(
                     "situationalSubtype",
                     "situational_subgenre",
                     setSituationalSubtype,
@@ -844,13 +959,23 @@ export default function SourceMediaMetadataPanel() {
                   label="Privacy"
                   value={privacyAxis}
                   onChange={setPrivacyAxis}
-                  options={getPrivacyAxisOptions(privacyAxis)}
+                  options={getPrivacyAxisOptions(
+                    privacyAxis,
+                    sharedTaxonomyOptions,
+                  )}
                   customValue={customTaxonomyInputs.privacyAxis}
                   onCustomValueChange={(value) =>
                     updateCustomTaxonomyInput("privacyAxis", value)
                   }
                   onAddCustom={() =>
                     applyCustomTaxonomy(
+                      "privacyAxis",
+                      "privacy_axis",
+                      setPrivacyAxis,
+                    )
+                  }
+                  onShareCustom={() =>
+                    shareCustomTaxonomy(
                       "privacyAxis",
                       "privacy_axis",
                       setPrivacyAxis,
@@ -865,13 +990,23 @@ export default function SourceMediaMetadataPanel() {
                   label="Expertise"
                   value={expertiseAxis}
                   onChange={setExpertiseAxis}
-                  options={getExpertiseAxisOptions(expertiseAxis)}
+                  options={getExpertiseAxisOptions(
+                    expertiseAxis,
+                    sharedTaxonomyOptions,
+                  )}
                   customValue={customTaxonomyInputs.expertiseAxis}
                   onCustomValueChange={(value) =>
                     updateCustomTaxonomyInput("expertiseAxis", value)
                   }
                   onAddCustom={() =>
                     applyCustomTaxonomy(
+                      "expertiseAxis",
+                      "expertise_axis",
+                      setExpertiseAxis,
+                    )
+                  }
+                  onShareCustom={() =>
+                    shareCustomTaxonomy(
                       "expertiseAxis",
                       "expertise_axis",
                       setExpertiseAxis,

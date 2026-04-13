@@ -13,6 +13,7 @@ type CustomizableSelectFieldProps = {
   customPlaceholder?: string;
   learnedLabels?: LearnedTaxonomyLabel[];
   onRemoveLearnedLabel?: (label: string) => void;
+  onShareCustom?: () => void;
 };
 
 export default function CustomizableSelectField({
@@ -28,6 +29,7 @@ export default function CustomizableSelectField({
   customPlaceholder = "Add custom label if needed",
   learnedLabels = [],
   onRemoveLearnedLabel,
+  onShareCustom,
 }: CustomizableSelectFieldProps) {
   return (
     <label className="block">
@@ -67,6 +69,15 @@ export default function CustomizableSelectField({
         >
           Use
         </button>
+        {onShareCustom ? (
+          <button
+            type="button"
+            onClick={onShareCustom}
+            className="rounded-md border border-emerald-700/70 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-200 transition hover:bg-emerald-800/30"
+          >
+            Share
+          </button>
+        ) : null}
       </div>
       <div className="mt-1 text-[10px] text-slate-500">
         Custom labels are saved on this browser until you remove them. A future shared workflow can promote approved labels system-wide.

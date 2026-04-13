@@ -1,4 +1,21 @@
 // src/frontend/lib/api-service.ts
+
+/**
+ * API Service
+ *
+ * This service is the low-level communication layer responsible for all direct
+ * HTTP requests to the backend FastAPI server.
+ *
+ * Its responsibilities include:
+ * - Defining the shapes of API requests and responses.
+ * - Handling fetch calls, headers, and the base URL.
+ * - Managing mock responses for development when the backend is unavailable.
+ *
+ * This service should NOT contain any application-specific business logic or data
+ * transformation. It simply delivers raw data to and from the backend. For
+ * application logic, see `video-service.ts`.
+ */
+
 import { buildAnalysisSearchParams } from "./analysis-request";
 
 export interface UploadResponse {
@@ -290,6 +307,27 @@ export interface SourceMediaMetadata {
     confidence?: string;
     notes?: string;
   };
+}
+
+export interface SharedTaxonomyLabel {
+  id: string;
+  scope:
+    | "media_genre"
+    | "media_subgenre"
+    | "situational_genre"
+    | "situational_subgenre"
+    | "privacy_axis"
+    | "expertise_axis";
+  label: string;
+  normalized_label?: string;
+  parent_value?: string;
+  status?: string;
+  source?: string;
+  created_by?: string;
+  created_at?: string;
+  approved_by?: string;
+  approved_at?: string;
+  notes?: string;
 }
 
 export interface AnnotationCorrectionRule {
@@ -998,6 +1036,56 @@ class ApiService {
 
     const data = await response.json();
     return data.source_media_metadata || {};
+  }
+
+  async listSharedTaxonomyLabels(
+    scope?: SharedTaxonomyLabel["scope"],
+    parentValue?: string,
+  ): Promise<SharedTaxonomyLabel[]> {
+    const params = new URLSearchParams();
+    if (scope) {
+      params.set("scope", scope);
+    }
+    if (parentValue) {
+      params.set("parent_value", parentValue);
+    }
+    const query = params.toString();
+    const response = await fetch(
+      `${this.baseURL}/api/taxonomy/shared${query ? `?${query}` : ""}`,
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Shared taxonomy fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const data = await response.json();
+    return Array.isArray(data.labels) ? data.labels : [];
+  }
+
+  async saveSharedTaxonomyLabel(payload: {
+    scope: SharedTaxonomyLabel["scope"];
+    label: string;
+    parent_value?: string;
+    created_by?: string;
+    source?: string;
+    notes?: string;
+  }): Promise<SharedTaxonomyLabel> {
+    const response = await fetch(`${this.baseURL}/api/taxonomy/shared/labels`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Shared taxonomy save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    const data = await response.json();
+    return data.label;
   }
 
   getSourceMediaReferenceUrl(downloadUrl?: string): string | null {

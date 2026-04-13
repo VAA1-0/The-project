@@ -274,6 +274,12 @@ export type LearnedTaxonomyLabel = {
   promoted: boolean;
 };
 
+export type SharedTaxonomyOption = {
+  label: string;
+  parent_value?: string;
+  scope: CustomTaxonomyScope;
+};
+
 type CustomTaxonomyStore = Partial<
   Record<CustomTaxonomyScope, Record<string, CustomTaxonomyEntry>>
 >;
@@ -429,28 +435,60 @@ export function removeCustomTaxonomyLabel(
   writeCustomTaxonomyStore(store);
 }
 
-export function getMediaGenreOptions(currentValue = ""): string[] {
-  return mergeUniqueOptions([
-    ...MEDIA_GENRE_OPTIONS,
-    ...getPromotedCustomOptions("media_genre"),
-    currentValue,
-  ]);
+export function getSharedTaxonomyOptions(
+  labels: SharedTaxonomyOption[],
+  scope: CustomTaxonomyScope,
+  parentValue?: string,
+): string[] {
+  const normalizedParent = normalizeLabel(parentValue || "").toLowerCase();
+  return labels
+    .filter((entry) => {
+      if (entry.scope !== scope) {
+        return false;
+      }
+      const entryParent = normalizeLabel(entry.parent_value || "").toLowerCase();
+      if (!normalizedParent) {
+        return !entryParent;
+      }
+      return entryParent === normalizedParent;
+    })
+    .map((entry) => normalizeLabel(entry.label))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 export function getMediaSubgenreOptions(
   genre: string,
   currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
 ): string[] {
   return mergeUniqueOptions([
     ...(MEDIA_SUBGENRE_OPTIONS[genre] || []),
+    ...getSharedTaxonomyOptions(sharedOptions, "media_subgenre", genre),
     ...getPromotedCustomOptions("media_subgenre", genre),
     currentValue,
   ]);
 }
 
-export function getSituationalGenreOptions(currentValue = ""): string[] {
+export function getMediaGenreOptions(
+  currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
+): string[] {
+  return mergeUniqueOptions([
+    ...MEDIA_GENRE_OPTIONS,
+    ...getSharedTaxonomyOptions(sharedOptions, "media_genre"),
+    ...getPromotedCustomOptions("media_genre"),
+    currentValue,
+  ]);
+}
+
+export function getSituationalGenreOptions(
+  currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
+): string[] {
   return mergeUniqueOptions([
     ...SITUATIONAL_GENRE_OPTIONS,
+    ...getSharedTaxonomyOptions(sharedOptions, "situational_genre"),
     ...getPromotedCustomOptions("situational_genre"),
     currentValue,
   ]);
@@ -459,25 +497,35 @@ export function getSituationalGenreOptions(currentValue = ""): string[] {
 export function getSituationalSubgenreOptions(
   genre: string,
   currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
 ): string[] {
   return mergeUniqueOptions([
     ...(SITUATIONAL_SUBGENRE_OPTIONS[genre] || []),
+    ...getSharedTaxonomyOptions(sharedOptions, "situational_subgenre", genre),
     ...getPromotedCustomOptions("situational_subgenre", genre),
     currentValue,
   ]);
 }
 
-export function getPrivacyAxisOptions(currentValue = ""): string[] {
+export function getPrivacyAxisOptions(
+  currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
+): string[] {
   return mergeUniqueOptions([
     ...PRIVACY_AXIS_OPTIONS,
+    ...getSharedTaxonomyOptions(sharedOptions, "privacy_axis"),
     ...getPromotedCustomOptions("privacy_axis"),
     currentValue,
   ]);
 }
 
-export function getExpertiseAxisOptions(currentValue = ""): string[] {
+export function getExpertiseAxisOptions(
+  currentValue = "",
+  sharedOptions: SharedTaxonomyOption[] = [],
+): string[] {
   return mergeUniqueOptions([
     ...EXPERTISE_AXIS_OPTIONS,
+    ...getSharedTaxonomyOptions(sharedOptions, "expertise_axis"),
     ...getPromotedCustomOptions("expertise_axis"),
     currentValue,
   ]);

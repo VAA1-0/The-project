@@ -1,6 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
-import { apiService } from "@/lib/api-service";
+import {
+  apiService,
+  type SharedTaxonomyLabel,
+} from "@/lib/api-service";
 import { VideoService, type VideoMetadata } from "@/lib/video-service";
 import { clearAllVideoBlobs, saveVideoBlob } from "@/lib/blob-store";
 import { createVideoTask } from "@/cvat-api/client";
@@ -14,6 +17,7 @@ import {
   getMediaGenreOptions,
   getMediaSubgenreOptions,
   getPrivacyAxisOptions,
+  type SharedTaxonomyOption,
   removeCustomTaxonomyLabel,
   registerCustomTaxonomyLabel,
   getSituationalGenreOptions,
@@ -85,6 +89,9 @@ export function MenuBar() {
   const [showAdvancedUploadFields, setShowAdvancedUploadFields] =
     useState(false);
   const [, setTaxonomyRefreshNonce] = useState(0);
+  const [sharedTaxonomyLabels, setSharedTaxonomyLabels] = useState<
+    SharedTaxonomyLabel[]
+  >([]);
 
   const buildUploadDraft = (file: File): UploadMetadataDraft => ({
     title: file.name.replace(/\.[^.]+$/, ""),
@@ -196,6 +203,86 @@ export function MenuBar() {
     } as Partial<UploadMetadataDraft>);
     setTaxonomyRefreshNonce((value) => value + 1);
   };
+
+  useEffect(() => {
+    async function loadSharedTaxonomy() {
+      try {
+        const labels = await apiService.listSharedTaxonomyLabels();
+        setSharedTaxonomyLabels(labels);
+      } catch (error) {
+        console.warn("Failed to load shared taxonomy labels:", error);
+      }
+    }
+    void loadSharedTaxonomy();
+  }, []);
+
+  const shareCustomUploadTaxonomy = async (
+    index: number,
+    field:
+      | "genre"
+      | "genre_subtype"
+      | "situational_genre"
+      | "situational_subtype"
+      | "privacy_axis"
+      | "expertise_axis",
+    customField:
+      | "custom_genre"
+      | "custom_genre_subtype"
+      | "custom_situational_genre"
+      | "custom_situational_subtype"
+      | "custom_privacy_axis"
+      | "custom_expertise_axis",
+    scope: CustomTaxonomyScope,
+    parentValue?: string,
+  ) => {
+    const draft = uploadMetadataDrafts[index];
+    const customValue = draft?.[customField]?.trim();
+    if (!customValue) {
+      return;
+    }
+
+    try {
+      const saved = await apiService.saveSharedTaxonomyLabel({
+        scope,
+        label: customValue,
+        parent_value: parentValue,
+        created_by: "analyst",
+        source: "manual_share",
+      });
+      registerCustomTaxonomyLabel(scope, customValue, parentValue);
+      updateUploadDraft(index, {
+        [field]: customValue,
+        [customField]: "",
+      } as Partial<UploadMetadataDraft>);
+      setSharedTaxonomyLabels((current) => {
+        const next = current.filter(
+          (entry) =>
+            !(
+              entry.scope === saved.scope &&
+              (entry.parent_value || "") === (saved.parent_value || "") &&
+              entry.label.trim().toLowerCase() === saved.label.trim().toLowerCase()
+            ),
+        );
+        next.push(saved);
+        return next.sort((left, right) =>
+          left.label.localeCompare(right.label, undefined, {
+            sensitivity: "base",
+          }),
+        );
+      });
+    } catch (error) {
+      console.error("Failed to save shared taxonomy label:", error);
+      alert("Could not save shared taxonomy label.");
+    }
+  };
+
+  const sharedTaxonomyOptions: SharedTaxonomyOption[] = sharedTaxonomyLabels.map(
+    (entry) => ({
+      scope: entry.scope,
+      label: entry.label,
+      parent_value: entry.parent_value,
+    }),
+  );
 
   const removeLearnedUploadTaxonomy = (
     index: number,
@@ -1193,13 +1280,24 @@ export function MenuBar() {
                             genre_subtype: "",
                           })
                         }
-                        options={getMediaGenreOptions(draft.genre)}
+                        options={getMediaGenreOptions(
+                          draft.genre,
+                          sharedTaxonomyOptions,
+                        )}
                         customValue={draft.custom_genre}
                         onCustomValueChange={(value) =>
                           updateUploadDraft(index, { custom_genre: value })
                         }
                         onAddCustom={() =>
                           applyCustomUploadTaxonomy(
+                            index,
+                            "genre",
+                            "custom_genre",
+                            "media_genre",
+                          )
+                        }
+                        onShareCustom={() =>
+                          shareCustomUploadTaxonomy(
                             index,
                             "genre",
                             "custom_genre",
@@ -1387,6 +1485,7 @@ export function MenuBar() {
                             options={getMediaSubgenreOptions(
                               draft.genre,
                               draft.genre_subtype,
+                              sharedTaxonomyOptions,
                             )}
                             customValue={draft.custom_genre_subtype}
                             onCustomValueChange={(value) =>
@@ -1396,6 +1495,15 @@ export function MenuBar() {
                             }
                             onAddCustom={() =>
                               applyCustomUploadTaxonomy(
+                                index,
+                                "genre_subtype",
+                                "custom_genre_subtype",
+                                "media_subgenre",
+                                draft.genre,
+                              )
+                            }
+                            onShareCustom={() =>
+                              shareCustomUploadTaxonomy(
                                 index,
                                 "genre_subtype",
                                 "custom_genre_subtype",
@@ -1438,6 +1546,7 @@ export function MenuBar() {
                             }
                             options={getSituationalGenreOptions(
                               draft.situational_genre,
+                              sharedTaxonomyOptions,
                             )}
                             customValue={draft.custom_situational_genre}
                             onCustomValueChange={(value) =>
@@ -1447,6 +1556,14 @@ export function MenuBar() {
                             }
                             onAddCustom={() =>
                               applyCustomUploadTaxonomy(
+                                index,
+                                "situational_genre",
+                                "custom_situational_genre",
+                                "situational_genre",
+                              )
+                            }
+                            onShareCustom={() =>
+                              shareCustomUploadTaxonomy(
                                 index,
                                 "situational_genre",
                                 "custom_situational_genre",
@@ -1475,6 +1592,7 @@ export function MenuBar() {
                             options={getSituationalSubgenreOptions(
                               draft.situational_genre,
                               draft.situational_subtype,
+                              sharedTaxonomyOptions,
                             )}
                             customValue={draft.custom_situational_subtype}
                             onCustomValueChange={(value) =>
@@ -1484,6 +1602,15 @@ export function MenuBar() {
                             }
                             onAddCustom={() =>
                               applyCustomUploadTaxonomy(
+                                index,
+                                "situational_subtype",
+                                "custom_situational_subtype",
+                                "situational_subgenre",
+                                draft.situational_genre,
+                              )
+                            }
+                            onShareCustom={() =>
+                              shareCustomUploadTaxonomy(
                                 index,
                                 "situational_subtype",
                                 "custom_situational_subtype",
@@ -1523,7 +1650,10 @@ export function MenuBar() {
                                 privacy_axis: nextValue,
                               })
                             }
-                            options={getPrivacyAxisOptions(draft.privacy_axis)}
+                            options={getPrivacyAxisOptions(
+                              draft.privacy_axis,
+                              sharedTaxonomyOptions,
+                            )}
                             customValue={draft.custom_privacy_axis}
                             onCustomValueChange={(value) =>
                               updateUploadDraft(index, {
@@ -1532,6 +1662,14 @@ export function MenuBar() {
                             }
                             onAddCustom={() =>
                               applyCustomUploadTaxonomy(
+                                index,
+                                "privacy_axis",
+                                "custom_privacy_axis",
+                                "privacy_axis",
+                              )
+                            }
+                            onShareCustom={() =>
+                              shareCustomUploadTaxonomy(
                                 index,
                                 "privacy_axis",
                                 "custom_privacy_axis",
@@ -1559,6 +1697,7 @@ export function MenuBar() {
                             }
                             options={getExpertiseAxisOptions(
                               draft.expertise_axis,
+                              sharedTaxonomyOptions,
                             )}
                             customValue={draft.custom_expertise_axis}
                             onCustomValueChange={(value) =>
@@ -1568,6 +1707,14 @@ export function MenuBar() {
                             }
                             onAddCustom={() =>
                               applyCustomUploadTaxonomy(
+                                index,
+                                "expertise_axis",
+                                "custom_expertise_axis",
+                                "expertise_axis",
+                              )
+                            }
+                            onShareCustom={() =>
+                              shareCustomUploadTaxonomy(
                                 index,
                                 "expertise_axis",
                                 "custom_expertise_axis",
