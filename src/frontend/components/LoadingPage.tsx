@@ -1,10 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Button } from "./ui/button";
 import { GameRunLogo } from "./ProjectLogo";
-import { loginToCvat } from "@/cvat-api/client";
 
 const Loader: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   <svg viewBox="0 0 50 50" {...props}>
@@ -40,44 +39,17 @@ const Loader: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   </svg>
 );
 
-type LoadingState = "loading" | "success" | "FailConnectToCVAT" | "error";
-
 export function LoadingPage() {
   const router = useRouter();
-  const [state, setState] = useState<LoadingState>("loading");
-  const [errorMessage, setErrorMessage] = useState("");
-
-  const continueWithoutCvat = () => router.push("/dashboard");
-
-  const attemptLogin = async () => {
-    setState("loading");
-    setErrorMessage("");
-
-    try {
-      const auth = await loginToCvat("admin", "admin123");
-      if (auth.ok) {
-        console.log("✅ Logged In");
-        setState("success");
-        // Navigate to dashboard after a short delay
-        setTimeout(() => {
-          router.push("/dashboard");
-        }, 400);
-      } else {
-        setState("FailConnectToCVAT");
-        setErrorMessage("Login failed. Please try again.");
-      }
-    } catch (err) {
-      console.error("Login error:", err);
-      setState("error");
-      setErrorMessage(
-        err instanceof Error ? err.message : "An unexpected error occurred",
-      );
-    }
-  };
+  const continueToWorkspace = () => router.push("/dashboard");
 
   useEffect(() => {
-    attemptLogin();
-  }, []);
+    const redirectTimer = window.setTimeout(() => {
+      router.push("/dashboard");
+    }, 400);
+
+    return () => window.clearTimeout(redirectTimer);
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-6">
@@ -87,119 +59,18 @@ export function LoadingPage() {
       </div>
 
       <div className="flex flex-col items-center justify-center gap-8 max-w-md w-full">
-        {state === "loading" && (
-          <>
-            <Loader className="w-16 h-16 text-blue-400" />
-            <div className="text-center space-y-2">
-              <h1 className="text-2xl font-bold text-white">Initializing</h1>
-              <p className="text-slate-400">Connecting to CVAT...</p>
-            </div>
-          </>
-        )}
+        <Loader className="w-16 h-16 text-blue-400" />
+        <div className="text-center space-y-2">
+          <h1 className="text-2xl font-bold text-white">Initializing VAA1</h1>
+          <p className="text-slate-400">Preparing your analysis workspace...</p>
+        </div>
 
-        {state === "success" && (
-          <>
-            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-green-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <div className="text-center space-y-2">
-              <h1 className="text-2xl font-bold text-white">Connected!</h1>
-              <p className="text-slate-400">Redirecting to dashboard...</p>
-            </div>
-          </>
-        )}
-
-        {state === "error" && (
-          <>
-            <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-red-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </div>
-            <div className="text-center space-y-4">
-              <div className="space-y-2">
-                <h1 className="text-2xl font-bold text-white">
-                  Connection Failed
-                </h1>
-                <p className="text-slate-400">{errorMessage}</p>
-              </div>
-              <Button
-                onClick={attemptLogin}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Retry
-              </Button>
-              <Button
-                onClick={continueWithoutCvat}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Continue without CVAT
-              </Button>
-            </div>
-          </>
-        )}
-
-        {state === "FailConnectToCVAT" && (
-          <>
-            <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-amber-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 9v2m0 4h.01m-.01-12a9 9 0 100 18 9 9 0 000-18z"
-                />
-              </svg>
-            </div>
-            <div className="text-center space-y-4">
-              <div className="space-y-2">
-                <h1 className="text-2xl font-bold text-white">
-                  Unable to connect to CVAT
-                </h1>
-                <p className="text-slate-400">{errorMessage}</p>
-              </div>
-              <Button
-                onClick={attemptLogin}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Retry
-              </Button>
-              <Button
-                onClick={continueWithoutCvat}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Continue without CVAT
-              </Button>
-            </div>
-          </>
-        )}
+        <Button
+          onClick={continueToWorkspace}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          Open VAA1 workspace
+        </Button>
       </div>
     </div>
   );

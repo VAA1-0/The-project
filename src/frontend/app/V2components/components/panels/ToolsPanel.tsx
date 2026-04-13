@@ -64,6 +64,7 @@ import { useLayoutHost } from "../LayoutHost";
 
 type ToolsWorkspace =
   | "analysis"
+  | "annotation"
   | "visual"
   | "morphology"
   | "face"
@@ -902,6 +903,9 @@ export default function ToolsPanel() {
         analysis: () => {
           setActiveWorkspace("analysis");
         },
+        annotation: () => {
+          setActiveWorkspace("annotation");
+        },
         visual: () => {
           setActiveWorkspace("visual");
           setActiveVisualView("cinematic");
@@ -1247,14 +1251,9 @@ export default function ToolsPanel() {
     },
     {
       icon: ScanEye,
-      label: "Annotations",
+      label: "Annotation workspace",
       onClick: () => {
-        if (!videoId) return;
-        if (jobReady) {
-          handleJobClick();
-        } else {
-          openTask();
-        }
+        setActiveWorkspace("annotation");
       },
       disabled: !videoId || isPolling || isAnalyzing,
     },
@@ -1417,9 +1416,15 @@ export default function ToolsPanel() {
                 Reference: <span className="font-mono">{videoId}</span>
               </div>
             )}
+            <div className="mt-2 text-xs text-slate-500">
+              {activeWorkspace === "annotation"
+                ? "Choose an annotation method from Annotation tools. CVAT is currently the optional manual visual annotation plugin."
+                : "Use Annotation workspace when you want to add optional manual annotation plugins alongside the core VAA1 workflow."}
+            </div>
             <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
               {[
                 ["analysis", "Analysis setup"],
+                ["annotation", "Annotation workspace"],
                 ["visual", "Visual cues"],
                 ["morphology", "Morphology catalog"],
                 ["face", "Face records"],
@@ -1445,6 +1450,40 @@ export default function ToolsPanel() {
 
           <div className="flex-1 overflow-y-auto px-4 py-3">
             <div className="space-y-3 pb-4">
+              {activeWorkspace === "annotation" && (
+                <div className="space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                    Annotation tools
+                  </div>
+                  <div className="space-y-2 rounded border border-white/10 bg-[#111111] p-3">
+                    <Button
+                      type="button"
+                      disabled={!videoId || isPolling || isAnalyzing}
+                      onClick={() => {
+                        if (!videoId) return;
+                        if (jobReady) {
+                          handleJobClick();
+                        } else {
+                          openTask();
+                        }
+                      }}
+                      className="w-full justify-start bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      CVAT plugin
+                    </Button>
+                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                      Native visual
+                    </div>
+                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                      LLM annotation
+                    </div>
+                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                      Atlas.ti
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {activeWorkspace === "visual" && (
                 <div className="space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
                   <div>

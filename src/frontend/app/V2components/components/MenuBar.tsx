@@ -6,7 +6,6 @@ import {
 } from "@/lib/api-service";
 import { VideoService, type VideoMetadata } from "@/lib/video-service";
 import { clearAllVideoBlobs, saveVideoBlob } from "@/lib/blob-store";
-import { createVideoTask } from "@/cvat-api/client";
 import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { Library } from "@/lib/local-library";
@@ -325,33 +324,12 @@ export function MenuBar() {
     files: File[],
     drafts: UploadMetadataDraft[],
   ) => {
-    let cvatID: number | null = null;
-
-    try {
-      console.log("Uploading to CVAT");
-
-      for (const video of files) {
-        const taskName = `Task-${Date.now()}`;
-        try {
-          const result = await createVideoTask(taskName, video);
-          cvatID = result.taskId;
-        } catch (err) {
-          console.warn("Create CVAT task failed:", err);
-          alert("Could not create CVAT task. Continuing without CVAT linkage.");
-          break;
-        }
-      }
-    } catch (err) {
-      console.warn("CVAT task creation encountered an error:", err);
-      alert("Could not create CVAT task. Continuing without CVAT linkage.");
-    }
-
     try {
       for (let index = 0; index < files.length; index += 1) {
         const f = files[index];
         const draft = drafts[index] || buildUploadDraft(f);
         const length = await getVideoDuration(f);
-        const res = await VideoService.upload(f, cvatID ?? 0, length);
+        const res = await VideoService.upload(f, 0, length);
 
         try {
           const videoBlob = new Blob([f], { type: f.type });

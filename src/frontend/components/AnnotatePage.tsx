@@ -10,6 +10,7 @@ import {
   listJobs,
   loginToCvat,
 } from "@/cvat-api/client";
+import { apiService } from "@/lib/api-service";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { Button } from "./ui/button";
@@ -27,6 +28,15 @@ export default function AnnotatePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null);
+  const [syncInfo, setSyncInfo] = useState<{
+    status?: string;
+    job_id?: number;
+    mapped_at?: string;
+    object_annotation_count?: number;
+    track_annotation_count?: number;
+  } | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const [formats, setFormats] = useState<string[]>([]);
   const [exportFormat, setExportFormat] = useState("YOLO 1.1");
@@ -42,6 +52,8 @@ export default function AnnotatePage() {
         // Load video metadata to get CVAT ID
         const videoMeta = await VideoService.get(id);
         setMetadata(videoMeta);
+        const statusSnapshot = await apiService.getStatus(id);
+        setSyncInfo(statusSnapshot?.cvat_ingest || null);
 
         const resolvedCvatID = await ensureCvatTask(videoMeta);
         setPendingTaskId(resolvedCvatID);
@@ -158,6 +170,39 @@ export default function AnnotatePage() {
     return [];
   }
 
+  async function handleSyncToVaa1() {
+    if (!id || !selectedJob?.id) {
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncMessage(null);
+    try {
+      const result = await apiService.syncCvatAnnotations(id, {
+        task_id: metadata?.cvatID,
+        job_id: selectedJob.id,
+      });
+      setSyncInfo({
+        status: result.status,
+        job_id: result.job_id,
+        mapped_at: new Date().toISOString(),
+        object_annotation_count: result.object_annotation_count,
+        track_annotation_count: result.track_annotation_count,
+      });
+      setSyncMessage(
+        `Synced to VAA1: ${result.object_annotation_count} object annotation(s), ${result.track_annotation_count} track annotation(s).`,
+      );
+    } catch (err: any) {
+      setSyncMessage(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not sync CVAT annotations to VAA1.",
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   // Handle going back to analysis page
   const handleBack = () => {
     router.push(`/dashboard/analyze-results/${id}`);
@@ -255,6 +300,23 @@ export default function AnnotatePage() {
 
             {/* Right section: Job selector (if multiple) + Download button */}
             <div className="flex items-center gap-3">
+              <div className="hidden rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-300 xl:block">
+                <div className="font-medium text-slate-100">CVAT annotation plugin</div>
+                <div>Visual annotation workspace linked to this VAA1 analysis</div>
+              </div>
+              <div className="hidden rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs text-slate-300 lg:block">
+                <div className="font-medium text-slate-100">VAA1 Sync</div>
+                <div>Status: {syncInfo?.status || "not yet synced"}</div>
+                <div>Objects: {syncInfo?.object_annotation_count ?? 0}</div>
+                <div>Tracks: {syncInfo?.track_annotation_count ?? 0}</div>
+              </div>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500 transition"
+                onClick={handleSyncToVaa1}
+                disabled={isSyncing}
+              >
+                {isSyncing ? "Syncing..." : "Sync CVAT to VAA1"}
+              </Button>
               {jobs.length > 1 && (
                 <>
                   <div className="flex items-center gap-2">
@@ -325,6 +387,11 @@ export default function AnnotatePage() {
 
       {/* CVAT Canvas - takes full remaining height */}
       <div className="flex-1 overflow-hidden">
+        {syncMessage ? (
+          <div className="border-b border-slate-800 bg-slate-950/80 px-6 py-2 text-sm text-slate-300">
+            {syncMessage}
+          </div>
+        ) : null}
         <CvatCanvas
           jobId={selectedJob.id}
           taskId={metadata?.cvatID}

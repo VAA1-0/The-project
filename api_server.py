@@ -19,6 +19,8 @@ import io
 import zipfile
 import subprocess
 import wave
+import urllib.parse
+import urllib.request
 from typing import Dict, Any, Optional, List
 import asyncio
 import csv
@@ -84,6 +86,7 @@ STATIC_DIR = Path("static")
 IMPORTED_WORK_DIR = Path("outputs/imported_work")
 TAXONOMY_DIR = Path("outputs/taxonomy")
 SHARED_TAXONOMY_PATH = TAXONOMY_DIR / "shared_taxonomy.json"
+CVAT_BRIDGE_BASE = os.getenv("CVAT_BRIDGE_URL", "http://localhost:3001")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
@@ -290,6 +293,60 @@ def safe_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def safe_int(value: Any) -> Optional[int]:
+    try:
+        if value in {None, ""}:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_object_label(value: Any) -> str:
+    normalized = normalize_taxonomy_label(value)
+    if not normalized:
+        return "unknown"
+    return normalized.lower().replace(" ", "_")
+
+
+def cvat_bridge_get_json(path: str, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = f"{CVAT_BRIDGE_BASE}{path}"
+    if query:
+        query_string = urllib.parse.urlencode(
+            {
+                key: value
+                for key, value in query.items()
+                if value not in {None, ""}
+            }
+        )
+        if query_string:
+            url = f"{url}?{query_string}"
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = response.read().decode("utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach CVAT bridge: {exc}",
+        ) from exc
+
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="CVAT bridge returned invalid JSON",
+        ) from exc
 
 
 def get_wav_duration_seconds(audio_path: str | Path) -> Optional[float]:
@@ -574,6 +631,379 @@ def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     )
     output_files = status.setdefault("output_files", {})
     output_files["annotation_corrections"] = str(json_path)
+
+
+def build_cvat_label_lookup(task_payload: Dict[str, Any]) -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    for label in task_payload.get("labels", []) or []:
+        label_id = safe_int(label.get("id"))
+        label_name = normalize_taxonomy_label(label.get("name"))
+        if label_id is None or not label_name:
+            continue
+        lookup[str(label_id)] = label_name
+    return lookup
+
+
+def build_interval_from_frames(
+    start_frame: Optional[int],
+    end_frame: Optional[int],
+    fps: Optional[float],
+) -> Dict[str, Any]:
+    safe_start = max(0, start_frame or 0)
+    safe_end = max(safe_start, end_frame if end_frame is not None else safe_start)
+    effective_fps = fps if fps and fps > 0 else None
+    return {
+        "start_seconds": round(safe_start / effective_fps, 6) if effective_fps else float(safe_start),
+        "end_seconds": round(safe_end / effective_fps, 6) if effective_fps else float(safe_end),
+        "start_frame": safe_start,
+        "end_frame": safe_end,
+    }
+
+
+def build_geometry_from_cvat_shape(shape: Dict[str, Any]) -> Dict[str, Any]:
+    points = shape.get("points") or []
+    shape_type = str(shape.get("type") or "unknown")
+    geometry: Dict[str, Any] = {
+        "shape_type": shape_type if shape_type else "unknown",
+        "points": points if isinstance(points, list) else [],
+        "x": None,
+        "y": None,
+        "width": None,
+        "height": None,
+        "rotation": safe_float(shape.get("rotation")),
+    }
+
+    if geometry["shape_type"] == "rectangle" and isinstance(points, list) and len(points) >= 4:
+        x1, y1, x2, y2 = points[:4]
+        geometry["x"] = round(float(x1), 3)
+        geometry["y"] = round(float(y1), 3)
+        geometry["width"] = round(float(x2) - float(x1), 3)
+        geometry["height"] = round(float(y2) - float(y1), 3)
+    elif geometry["shape_type"] == "ellipse" and isinstance(points, list) and len(points) >= 4:
+        x1, y1, x2, y2 = points[:4]
+        geometry["x"] = round(float(x1), 3)
+        geometry["y"] = round(float(y1), 3)
+        geometry["width"] = round(float(x2) - float(x1), 3)
+        geometry["height"] = round(float(y2) - float(y1), 3)
+
+    return geometry
+
+
+def build_attributes_from_cvat(item: Dict[str, Any]) -> Dict[str, Any]:
+    attributes: Dict[str, Any] = {}
+    for attribute in item.get("attributes", []) or []:
+        spec_id = attribute.get("spec_id")
+        value = attribute.get("value")
+        key = f"spec_{spec_id}" if spec_id not in {None, ""} else f"attribute_{len(attributes) + 1}"
+        attributes[key] = value
+    return attributes
+
+
+def build_provenance(
+    *,
+    source_system: str,
+    source_type: str,
+    created_by: str,
+    note: str,
+) -> Dict[str, Any]:
+    return {
+        "source_system": source_system,
+        "source_type": source_type,
+        "created_by": created_by,
+        "created_at": utc_now_iso(),
+        "note": note,
+    }
+
+
+def build_vaa1_master_schema_from_cvat(
+    *,
+    analysis_id: str,
+    status: Dict[str, Any],
+    task_id: int,
+    job_id: int,
+    cvat_annotations: Dict[str, Any],
+    label_lookup: Dict[str, str],
+) -> Dict[str, Any]:
+    user_annotations = status.get("source_media_annotations") or {}
+    source_metadata = status.get("source_media_metadata") or {}
+    fps = safe_float(source_metadata.get("fps"))
+    object_annotations: List[Dict[str, Any]] = []
+    track_annotations: List[Dict[str, Any]] = []
+    temporal_segments: List[Dict[str, Any]] = []
+    unresolved_labels: List[str] = []
+
+    def resolve_label(item: Dict[str, Any]) -> str:
+        label_id = item.get("label_id")
+        if label_id is None:
+            unresolved_labels.append("unknown")
+            return "unknown"
+        resolved = label_lookup.get(str(label_id))
+        if not resolved:
+            unresolved_labels.append(str(label_id))
+            return f"label_{label_id}"
+        return resolved
+
+    for index, shape in enumerate(cvat_annotations.get("shapes", []) or []):
+        frame = safe_int(shape.get("frame")) or 0
+        raw_label = resolve_label(shape)
+        object_annotations.append(
+            {
+                "annotation_id": f"obj-{index + 1:04d}",
+                "track_id": None,
+                "label_mapping": {
+                    "raw_label": raw_label,
+                    "mapped_label": normalize_object_label(raw_label),
+                    "mapping_family": "object",
+                    "mapping_confidence": 1.0,
+                    "mapping_status": "direct",
+                },
+                "interval": build_interval_from_frames(frame, frame, fps),
+                "geometry": build_geometry_from_cvat_shape(shape),
+                "attributes": build_attributes_from_cvat(shape),
+                "provenance": build_provenance(
+                    source_system="cvat",
+                    source_type="raw_export",
+                    created_by="cvat-job-sync",
+                    note=f"Imported from CVAT job {job_id} shape.",
+                ),
+            }
+        )
+
+    for index, track in enumerate(cvat_annotations.get("tracks", []) or []):
+        raw_label = resolve_label(track)
+        track_shapes = track.get("shapes", []) or []
+        track_frames = [
+            safe_int(track_shape.get("frame"))
+            for track_shape in track_shapes
+            if safe_int(track_shape.get("frame")) is not None
+        ]
+        start_frame = min(track_frames) if track_frames else 0
+        end_frame = max(track_frames) if track_frames else start_frame
+        track_id = f"track-{safe_int(track.get('id')) or index + 1}"
+        track_annotations.append(
+            {
+                "track_id": track_id,
+                "label_mapping": {
+                    "raw_label": raw_label,
+                    "mapped_label": normalize_object_label(raw_label),
+                    "mapping_family": "track",
+                    "mapping_confidence": 1.0,
+                    "mapping_status": "direct",
+                },
+                "interval": build_interval_from_frames(start_frame, end_frame, fps),
+                "frame_count": len(track_shapes),
+                "attributes": build_attributes_from_cvat(track),
+                "provenance": build_provenance(
+                    source_system="cvat",
+                    source_type="raw_export",
+                    created_by="cvat-job-sync",
+                    note=f"Imported from CVAT job {job_id} track.",
+                ),
+            }
+        )
+
+        temporal_segments.append(
+            {
+                "segment_id": f"seg-{index + 1:04d}",
+                "interval": build_interval_from_frames(start_frame, end_frame, fps),
+                "event_label": f"{normalize_object_label(raw_label)}_presence",
+                "event_family": "cvat_track_presence",
+                "confidence": 1.0,
+                "note": f"Derived from CVAT track interval for {raw_label}.",
+                "provenance": build_provenance(
+                    source_system="automated_mapping",
+                    source_type="mapped",
+                    created_by="vaa1-cvat-mapper",
+                    note=f"Derived from CVAT job {job_id} track interval.",
+                ),
+            }
+        )
+
+        for shape_index, track_shape in enumerate(track_shapes):
+            frame = safe_int(track_shape.get("frame")) or 0
+            object_annotations.append(
+                {
+                    "annotation_id": f"{track_id}-obj-{shape_index + 1:04d}",
+                    "track_id": track_id,
+                    "label_mapping": {
+                        "raw_label": raw_label,
+                        "mapped_label": normalize_object_label(raw_label),
+                        "mapping_family": "object",
+                        "mapping_confidence": 1.0,
+                        "mapping_status": "direct",
+                    },
+                    "interval": build_interval_from_frames(frame, frame, fps),
+                    "geometry": build_geometry_from_cvat_shape(track_shape),
+                    "attributes": build_attributes_from_cvat(track_shape),
+                    "provenance": build_provenance(
+                        source_system="cvat",
+                        source_type="raw_export",
+                        created_by="cvat-job-sync",
+                        note=f"Imported from CVAT job {job_id} track shape.",
+                    ),
+                }
+            )
+
+    genre_annotations: List[Dict[str, Any]] = []
+    if normalize_taxonomy_label(user_annotations.get("genre")):
+        genre_annotations.append(
+            {
+                "annotation_id": "genre-primary-0001",
+                "genre_label": normalize_taxonomy_label(user_annotations.get("genre")),
+                "genre_subtype": normalize_taxonomy_label(user_annotations.get("genre_subtype")),
+                "annotation_level": "primary",
+                "weight": 1.0,
+                "scope": "whole_media",
+                "interval": None,
+                "evidence_basis": ["source_media_annotations"],
+                "note": "Imported from VAA1 source media metadata.",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="manual_entry",
+                    created_by="analyst",
+                    note="Source media metadata snapshot.",
+                ),
+            }
+        )
+
+    if normalize_taxonomy_label(user_annotations.get("situational_genre")):
+        genre_annotations.append(
+            {
+                "annotation_id": "genre-situational-0001",
+                "genre_label": normalize_taxonomy_label(user_annotations.get("situational_genre")),
+                "genre_subtype": normalize_taxonomy_label(user_annotations.get("situational_subtype")),
+                "annotation_level": "situational",
+                "weight": 1.0,
+                "scope": "whole_media",
+                "interval": None,
+                "evidence_basis": ["source_media_annotations"],
+                "note": "Imported from VAA1 source media metadata.",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="manual_entry",
+                    created_by="analyst",
+                    note="Source media metadata snapshot.",
+                ),
+            }
+        )
+
+    return {
+        "analysis_id": analysis_id,
+        "exchange_protocol_version": "1.0",
+        "vaa1_schema_version": "1.0",
+        "created_at": utc_now_iso(),
+        "updated_at": utc_now_iso(),
+        "linkage": {
+            "analysis_id": analysis_id,
+            "cvat_task_id": task_id,
+            "cvat_job_id": job_id,
+        },
+        "source_context_snapshot": {
+            "title": user_annotations.get("title", ""),
+            "scope": user_annotations.get("scope", ""),
+            "description": user_annotations.get("description", ""),
+            "persons": user_annotations.get("persons", []),
+            "relations": user_annotations.get("relations", ""),
+            "location_country": user_annotations.get("location_country", ""),
+            "location_city": user_annotations.get("location_city", ""),
+            "location_place": user_annotations.get("location_place", ""),
+            "location_room": user_annotations.get("location_room", ""),
+            "time_era": user_annotations.get("time_era", ""),
+            "time_year": user_annotations.get("time_year", ""),
+            "time_moment": user_annotations.get("time_moment", ""),
+            "situation_event": user_annotations.get("situation_event", ""),
+            "keywords": user_annotations.get("keywords", []),
+            "interaction_dynamics": user_annotations.get("interaction_dynamics", ""),
+            "narrative_development": user_annotations.get("narrative_development", ""),
+            "performance_expression": user_annotations.get("performance_expression", ""),
+            "genre": user_annotations.get("genre", ""),
+            "genre_subtype": user_annotations.get("genre_subtype", ""),
+            "situational_genre": user_annotations.get("situational_genre", ""),
+            "situational_subtype": user_annotations.get("situational_subtype", ""),
+            "privacy_axis": user_annotations.get("privacy_axis", ""),
+            "expertise_axis": user_annotations.get("expertise_axis", ""),
+            "references": user_annotations.get("references", []),
+            "reference_relation": user_annotations.get("reference_relation", ""),
+            "reference_source": user_annotations.get("reference_source", ""),
+            "confidence": user_annotations.get("confidence", ""),
+            "notes": user_annotations.get("notes", ""),
+        },
+        "raw_import_reference": {
+            "export_format": "CVAT JSON",
+            "exported_at": utc_now_iso(),
+            "artifact_path": "",
+            "artifact_sha256": "",
+            "artifact_media_type": "application/json",
+            "import_status": "mapped",
+        },
+        "genre_annotations": genre_annotations,
+        "cinematic_cues": {},
+        "object_annotations": object_annotations,
+        "track_annotations": track_annotations,
+        "temporal_segments": temporal_segments,
+        "expression_annotations": [],
+        "review_layer": {
+            "status": "unreviewed",
+            "annotation_corrections": build_annotation_corrections_payload(status),
+        },
+        "mapping_notes": [
+            "Initial CVAT-to-VAA1 ingest slice maps raw CVAT shapes and tracks into object and track annotations.",
+            "Genre and situational context are currently copied from VAA1 source media metadata.",
+        ],
+        "validation": {
+            "is_valid": True,
+            "validated_at": utc_now_iso(),
+            "errors": [],
+            "warnings": [
+                "Expression annotations and cinematic cues are not derived in this first ingest slice.",
+            ],
+            "unresolved_labels": sorted(set(unresolved_labels)),
+        },
+    }
+
+
+def persist_cvat_ingest_artifacts(
+    status: Dict[str, Any],
+    *,
+    job_id: int,
+    raw_payload: Dict[str, Any],
+    master_schema_payload: Dict[str, Any],
+) -> Dict[str, str]:
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        raise HTTPException(status_code=400, detail="Analysis record is missing analysis_id")
+
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_path = analysis_dir / f"cvat_raw_annotations_job_{job_id}.json"
+    raw_path.write_text(
+        json.dumps(raw_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    master_path = analysis_dir / "vaa1_annotation_master_schema.json"
+    master_schema_payload["raw_import_reference"]["artifact_path"] = str(raw_path)
+    master_path.write_text(
+        json.dumps(master_schema_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    internal_artifacts["cvat_raw_annotations_json"] = str(raw_path)
+    internal_artifacts["vaa1_annotation_master_schema"] = str(master_path)
+    status["vaa1_annotation_master_schema"] = master_schema_payload
+    status["cvat_ingest"] = {
+        "status": "mapped",
+        "job_id": job_id,
+        "mapped_at": utc_now_iso(),
+        "object_annotation_count": len(master_schema_payload.get("object_annotations", [])),
+        "track_annotation_count": len(master_schema_payload.get("track_annotations", [])),
+    }
+    return {
+        "raw_path": str(raw_path),
+        "master_path": str(master_path),
+    }
 
 
 def build_media_ref_for_status(status: Dict[str, Any]) -> MediaRef:
@@ -2082,6 +2512,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_video_path": status.get("source_video_path"),
         "source_media_metadata": status.get("source_media_metadata"),
         "annotation_corrections": status.get("annotation_corrections"),
+        "cvat_ingest": status.get("cvat_ingest"),
+        "internal_artifacts": status.get("internal_artifacts"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -2593,6 +3025,99 @@ async def update_cvat_link(analysis_id: str, payload: Dict[str, Any] = Body(...)
         "status": "saved",
         "analysis_id": analysis_id,
         "cvatID": cvat_id,
+    }
+
+
+@app.post("/api/annotations/{analysis_id}/sync-cvat", response_model=dict)
+async def sync_cvat_annotations(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> dict:
+    """Fetch raw CVAT job annotations and map a first ingest slice into the VAA1 master schema."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    task_id = safe_int(payload.get("task_id")) or safe_int(status.get("cvatID"))
+    if task_id is None or task_id <= 0:
+        raise HTTPException(status_code=400, detail="No CVAT task is linked to this analysis")
+
+    requested_job_id = safe_int(payload.get("job_id"))
+
+    tasks_payload = cvat_bridge_get_json("/api/tasks")
+    task_payload = next(
+        (
+            task
+            for task in (tasks_payload.get("results") or [])
+            if safe_int(task.get("id")) == task_id
+        ),
+        None,
+    )
+    if task_payload is None:
+        raise HTTPException(status_code=404, detail=f"CVAT task {task_id} was not found")
+
+    jobs_payload = cvat_bridge_get_json(f"/api/tasks/{task_id}/jobs")
+    jobs = jobs_payload.get("results") or []
+    if not jobs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CVAT task {task_id} has no jobs available yet",
+        )
+
+    if requested_job_id is not None:
+        selected_job = next(
+            (job for job in jobs if safe_int(job.get("id")) == requested_job_id),
+            None,
+        )
+        if selected_job is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"CVAT job {requested_job_id} was not found for task {task_id}",
+            )
+    else:
+        selected_job = jobs[0]
+
+    job_id = safe_int(selected_job.get("id"))
+    if job_id is None:
+        raise HTTPException(status_code=502, detail="CVAT bridge returned a job without an id")
+
+    annotations_payload = cvat_bridge_get_json(f"/api/jobs/{job_id}/annotations")
+    label_lookup = build_cvat_label_lookup(task_payload)
+    master_schema_payload = build_vaa1_master_schema_from_cvat(
+        analysis_id=analysis_id,
+        status=status,
+        task_id=task_id,
+        job_id=job_id,
+        cvat_annotations=annotations_payload,
+        label_lookup=label_lookup,
+    )
+    artifact_paths = persist_cvat_ingest_artifacts(
+        status,
+        job_id=job_id,
+        raw_payload=annotations_payload,
+        master_schema_payload=master_schema_payload,
+    )
+
+    append_analysis_event(
+        status,
+        "cvat_annotations_synced",
+        details={
+            "task_id": task_id,
+            "job_id": job_id,
+            "raw_path": artifact_paths["raw_path"],
+            "master_path": artifact_paths["master_path"],
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "mapped",
+        "analysis_id": analysis_id,
+        "task_id": task_id,
+        "job_id": job_id,
+        "object_annotation_count": len(master_schema_payload.get("object_annotations", [])),
+        "track_annotation_count": len(master_schema_payload.get("track_annotations", [])),
+        "paths": artifact_paths,
     }
 
 

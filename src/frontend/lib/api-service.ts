@@ -182,6 +182,14 @@ export interface AnalysisStatus {
     }>;
   } | null;
   annotation_corrections?: AnnotationCorrections | null;
+  cvat_ingest?: {
+    status?: string;
+    job_id?: number;
+    mapped_at?: string;
+    object_annotation_count?: number;
+    track_annotation_count?: number;
+  } | null;
+  internal_artifacts?: Record<string, string> | null;
   download_links?: Record<string, string>;
   pipeline_type?: string;
   analysis_tier?: string;
@@ -1086,6 +1094,43 @@ class ApiService {
     }
     const data = await response.json();
     return data.label;
+  }
+
+  async syncCvatAnnotations(
+    analysisId: string,
+    payload?: {
+      task_id?: number;
+      job_id?: number;
+    },
+  ): Promise<{
+    status: string;
+    analysis_id: string;
+    task_id: number;
+    job_id: number;
+    object_annotation_count: number;
+    track_annotation_count: number;
+    paths: {
+      raw_path: string;
+      master_path: string;
+    };
+  }> {
+    const response = await fetch(
+      `${this.baseURL}/api/annotations/${analysisId}/sync-cvat`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload || {}),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `CVAT sync failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
   }
 
   getSourceMediaReferenceUrl(downloadUrl?: string): string | null {
