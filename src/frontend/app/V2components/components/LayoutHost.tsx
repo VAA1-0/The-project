@@ -9,6 +9,7 @@ import "golden-layout/dist/css/themes/goldenlayout-dark-theme.css";
 // Import your panel components here
 import ProjectPanel from "./panels/ProjectPanel";
 import VideoPanel from "./panels/VideoPanel";
+import CvatPluginPanel from "./panels/CvatPluginPanel";
 import VideoComparePanel from "./panels/VideoComparePanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import SpeechToTextPanel from "./panels/SpeechToTextPanel";
@@ -36,6 +37,189 @@ const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
 
 const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
 
+const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
+  settings: {
+    showMaximiseIcon: false,
+    showPopoutIcon: false,
+  },
+  root: {
+    type: "row",
+    content: [
+      {
+        type: "column",
+        width: 16,
+        content: [
+          {
+            type: "component",
+            componentType: "ProjectPanel",
+            title: "Project",
+            height: 28,
+          },
+          {
+            type: "component",
+            componentType: "DownloadPanel",
+            title: "Downloads",
+            height: 72,
+          },
+        ],
+      },
+      {
+        type: "column",
+        width: 56,
+        content: [
+          {
+            type: "component",
+            componentType: "VideoPanel",
+            title: "Video",
+            height: 64,
+          },
+          {
+            type: "row",
+            content: [
+              {
+                type: "component",
+                width: 32,
+                componentType: "ToolsPanel",
+                title: "Tools",
+              },
+              {
+                type: "component",
+                componentType: "Transcript",
+                title: "Transcript",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "stack",
+        id: "rightStack",
+        width: 28,
+        content: [
+          {
+            type: "component",
+            componentType: "OBJDetection",
+            title: "Objects",
+          },
+          {
+            type: "component",
+            componentType: "OCR",
+            title: "OCR",
+          },
+          {
+            type: "component",
+            componentType: "Expressions",
+            title: "Expressions",
+          },
+          {
+            type: "component",
+            componentType: "POS",
+            title: "POS",
+          },
+          {
+            type: "component",
+            componentType: "Quant",
+            title: "Quant",
+          },
+        ],
+      },
+    ],
+  },
+});
+
+const buildAnnotationWorkspaceLayout = (): import("golden-layout").LayoutConfig => ({
+  settings: {
+    showMaximiseIcon: false,
+    showPopoutIcon: false,
+  },
+  root: {
+    type: "row",
+    content: [
+      {
+        type: "stack",
+        width: 10,
+        content: [
+          {
+            type: "component",
+            componentType: "ProjectPanel",
+            title: "Project",
+          },
+          {
+            type: "component",
+            componentType: "DownloadPanel",
+            title: "Downloads",
+          },
+        ],
+      },
+      {
+        type: "column",
+        width: 62,
+        content: [
+          {
+            type: "row",
+            content: [
+              {
+                type: "component",
+                componentType: "VideoPanel",
+                title: "Video",
+                width: 50,
+              },
+              {
+                type: "component",
+                componentType: "ToolsPanel",
+                title: "Tools",
+                width: 50,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "stack",
+        id: "annotationRightStack",
+        width: 28,
+        content: [
+          {
+            type: "component",
+            componentType: "OBJDetection",
+            title: "Objects",
+          },
+          {
+            type: "component",
+            componentType: "OCR",
+            title: "OCR",
+          },
+          {
+            type: "component",
+            componentType: "Expressions",
+            title: "Expressions",
+          },
+          {
+            type: "component",
+            componentType: "SourceMediaMetadata",
+            title: "Source Media",
+          },
+          {
+            type: "component",
+            componentType: "TimeBank",
+            title: "Time Bank",
+          },
+          {
+            type: "component",
+            componentType: "Transcript",
+            title: "Transcript",
+          },
+          {
+            type: "component",
+            componentType: "Audio",
+            title: "Audio",
+          },
+        ],
+      },
+    ],
+  },
+});
+
 export function useLayoutHost() {
   const ctx = useContext(LayoutHostContext);
   if (!ctx)
@@ -53,6 +237,14 @@ export default function LayoutHost({
   const layoutRef = useRef<GoldenLayout | null>(null);
   const PANEL_TITLES: Record<string, string> = {
     Audio: "Audio",
+    CvatPluginPanel: "CVAT plugin",
+    Transcript: "Transcript",
+    ToolsPanel: "Tools",
+    OBJDetection: "Objects",
+    OCR: "OCR",
+    Expressions: "Expressions",
+    POS: "POS",
+    Quant: "Quant",
     VideoCompare: "Video compare",
     POSMatrix: "POS matrix",
     QuantMatrix: "Quant matrix",
@@ -108,95 +300,7 @@ export default function LayoutHost({
     return false;
   };
 
-  const layoutConfig: import("golden-layout").LayoutConfig = {
-    settings: {
-        showMaximiseIcon: false, 
-        showPopoutIcon: false,
-      },
-    root: {
-      type: "row",
-      content: [
-        {
-          type: "column",
-          width: 20,
-          content: [
-            {
-              type: "component",
-              componentType: "ProjectPanel",
-              title: "Project",
-              height: 28,
-            },
-            {
-              type: "component",
-              componentType: "DownloadPanel",
-              title: "Downloads",
-              height: 72,
-            },
-          ],
-        },
-        {
-          type: "column",
-          width: 54,
-          content: [
-            {
-              type: "component",
-              componentType: "VideoPanel",
-              title: "Video",
-              height: 64,
-            },
-            {
-              type: "row",
-              content: [
-                {
-                  type: "component",
-                  width: 32,
-                  componentType: "ToolsPanel",
-                  title: "Tools",
-                },
-                {
-                  type: "component",
-                  componentType: "Transcript",
-                  title: "Transcript",
-                },
-              ],
-            },
-          ],
-        },
-        {
-          type: "stack",
-          id: "rightStack",
-          width: 26,
-          content: [
-            {
-              type: "component",
-              componentType: "OBJDetection",
-              title: "Objects",
-            },
-            {
-              type: "component",
-              componentType: "OCR",
-              title: "OCR",
-            },
-            {
-              type: "component",
-              componentType: "Expressions",
-              title: "Expressions",
-            },
-            {
-              type: "component",
-              componentType: "POS",
-              title: "POS",
-            },
-            {
-              type: "component",
-              componentType: "Quant",
-              title: "Quant",
-            },
-          ],
-        },
-      ],
-    },
-  };
+  const layoutConfig = buildDefaultLayoutConfig();
 
   // --- openPanel function ---
   const openPanel = (panelType: string, panelProps?: JsonValue) => {
@@ -239,6 +343,18 @@ export default function LayoutHost({
       "VideoPanel",
       (container, state: JsonValue | undefined) => {
         new ReactComponentWrapper(container, VideoPanel, {}, ContextWrapper);
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "CvatPluginPanel",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          CvatPluginPanel,
+          {},
+          ContextWrapper,
+        );
       },
     );
 
@@ -419,10 +535,20 @@ export default function LayoutHost({
     };
 
     let initialLayout = layoutConfig;
+    let requestedAnalysisId = "";
+    let requestedWorkspace = "";
     try {
       const stored = window.localStorage.getItem(SAVED_LAYOUT_STORAGE_KEY);
       if (stored) {
         initialLayout = JSON.parse(stored) as import("golden-layout").LayoutConfig;
+      }
+      const params = new URLSearchParams(window.location.search);
+      requestedAnalysisId = params.get("analysis_id") || "";
+      requestedWorkspace = params.get("workspace") || "";
+      if (requestedWorkspace === "annotation") {
+        initialLayout = buildAnnotationWorkspaceLayout();
+      } else if (requestedWorkspace === "default") {
+        initialLayout = buildDefaultLayoutConfig();
       }
     } catch (error) {
       console.warn("Failed to restore saved workspace layout:", error);
@@ -443,10 +569,40 @@ export default function LayoutHost({
     };
     eventBus.on("openPanelRequest", openPanelRequestHandler);
 
+    const workspacePresetHandler = (preset: string) => {
+      if (!layoutRef.current) {
+        return;
+      }
+
+      if (preset === "annotation") {
+        layoutRef.current.loadLayout(buildAnnotationWorkspaceLayout());
+      } else if (preset === "default") {
+        layoutRef.current.loadLayout(buildDefaultLayoutConfig());
+      }
+      eventBus.emit("workspacePresetChanged", preset);
+      persistLayout();
+    };
+    eventBus.on<string>("workspacePresetRequest", workspacePresetHandler);
+
     // Define the initial layout configuration
     layout.loadLayout(initialLayout);
 
     layoutRef.current = layout;
+
+    if (requestedWorkspace) {
+      window.setTimeout(() => {
+        eventBus.emit("workspacePresetChanged", requestedWorkspace);
+        if (requestedWorkspace === "annotation") {
+          eventBus.emit("toolsSectionFocus", "annotation");
+        }
+      }, 60);
+    }
+
+    if (requestedAnalysisId) {
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", requestedAnalysisId);
+      }, 120);
+    }
 
     return () => {
       if (saveTimeout) {
@@ -456,6 +612,7 @@ export default function LayoutHost({
       layout.off("itemDestroyed", persistLayout);
       layout.off("itemCreated", persistLayout);
       eventBus.off("openPanelRequest", openPanelRequestHandler);
+      eventBus.off<string>("workspacePresetRequest", workspacePresetHandler);
       layout.destroy();
     };
   }, []);

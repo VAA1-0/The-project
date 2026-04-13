@@ -205,7 +205,7 @@ export default function AnnotatePage() {
 
   // Handle going back to analysis page
   const handleBack = () => {
-    router.push(`/dashboard/analyze-results/${id}`);
+    router.push(`/dashboard?analysis_id=${id}&workspace=annotation`);
   };
 
   if (isLoading) {

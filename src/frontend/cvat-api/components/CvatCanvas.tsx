@@ -5,9 +5,10 @@ import React, { useEffect, useRef, useState } from 'react';
 interface Props {
   jobId: number;
   taskId: number;
+  compact?: boolean;
 }
 
-export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
+export const CvatCanvas: React.FC<Props> = ({ jobId, taskId, compact = false }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
   const cvatBase = (process.env.NEXT_PUBLIC_CVAT_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
@@ -174,24 +175,33 @@ export const CvatCanvas: React.FC<Props> = ({ jobId, taskId }) => {
       style={{
         width: "100%",
         height: "100%",
-        backgroundColor: "#d4e2f6",
+        backgroundColor: "#1f232b",
         overflow: "hidden",
         position: "relative"
       }}
     >
-      <iframe
-        ref={iframeRef}
-        src={src}
-        onLoad={handleLoad}
-        sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+      <div
         style={{
           width: "100%",
           height: "100%",
-          border: "none",
-          display: "block"
+          overflow: "hidden",
         }}
-        title="CVAT Annotation Canvas"
-      />
+      >
+        <iframe
+          ref={iframeRef}
+          src={src}
+          onLoad={handleLoad}
+          sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+          style={{
+            width: "100%",
+            height: "100%",
+            border: "none",
+            display: "block",
+            backgroundColor: "#1f232b",
+          }}
+          title="CVAT Annotation Canvas"
+        />
+      </div>
       {!loaded && (
         <div
           style={{

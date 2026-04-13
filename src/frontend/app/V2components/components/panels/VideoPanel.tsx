@@ -794,6 +794,7 @@ export default function VideoPanel() {
   const [linkedComparePlayback, setLinkedComparePlayback] = useState(true);
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
 
   const lastObjectUrl = React.useRef<string | null>(null);
   const lastCompareObjectUrl = React.useRef<string | null>(null);
@@ -999,6 +1000,16 @@ export default function VideoPanel() {
     eventBus.on("videoTimeLineChanged", handler);
     return () => {
       eventBus.off("videoTimeLineChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = (preset: string) => {
+      setAnnotationWorkspaceActive(preset === "annotation");
+    };
+    eventBus.on<string>("workspacePresetChanged", handler);
+    return () => {
+      eventBus.off<string>("workspacePresetChanged", handler);
     };
   }, []);
 
@@ -2687,7 +2698,9 @@ export default function VideoPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-slate-800 px-4 py-2">
+      <div
+        className={`border-b border-slate-800 ${annotationWorkspaceActive ? "px-3 py-1.5" : "px-4 py-2"}`}
+      >
         <div className="flex items-center justify-between gap-3 text-sm">
           <div
             className="min-w-0 truncate text-[var(--ui-passive-text)]"
@@ -2721,11 +2734,17 @@ export default function VideoPanel() {
         )}
       </div>
 
-      <div className="flex-1 px-4 pt-3 pb-4 min-h-0">
-        <div className="flex h-full min-h-0 flex-col gap-3">
+      <div
+        className={`flex-1 min-h-0 overflow-y-auto ${annotationWorkspaceActive ? "px-3 pt-2 pb-3" : "px-4 pt-3 pb-4"}`}
+      >
+        <div className={`flex min-h-full flex-col ${annotationWorkspaceActive ? "gap-2" : "gap-3"}`}>
           <div
             ref={mediaFrameRef}
-            className={`relative min-h-[360px] shrink-0 overflow-hidden rounded-lg bg-black md:min-h-[420px] ${
+            className={`relative shrink-0 overflow-hidden rounded-lg bg-black ${
+              annotationWorkspaceActive
+                ? "min-h-[160px] md:min-h-[220px]"
+                : "min-h-[240px] md:min-h-[300px]"
+            } ${
               showCompareInPanel && compareSource ? "grid grid-cols-2 gap-2 bg-transparent" : "flex items-center justify-center"
             }`}
           >

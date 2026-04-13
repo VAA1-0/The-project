@@ -38,8 +38,8 @@ const VideoItem: React.FC<Props> = ({
   return (
     <>
       {renameMode ? (
-        <div className="flex items-center gap-2 mb-2">
-          <div className="flex items-stretch rounded-md overflow-hidden border border-slate-700">
+        <div className="mb-2 flex min-w-0 items-center gap-2 overflow-hidden">
+          <div className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-md border border-slate-700">
             <Input
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
@@ -54,7 +54,7 @@ const VideoItem: React.FC<Props> = ({
                 }
               }}
               placeholder={vid.name}
-              className="h-8 w-full rounded-none"
+              className="h-8 w-full min-w-0 rounded-none"
               autoFocus
             />
             <div className="px-3 py-1 bg-slate-700 text-slate-300 text-sm flex items-center">
@@ -108,9 +108,9 @@ const VideoItem: React.FC<Props> = ({
       ) : null
       }
 
-      <div className="flex gap-2">
+      <div className="flex min-w-0 flex-wrap gap-2 overflow-hidden">
         {tagEdit ? (
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
             <Input
               value={tagValue}
               onChange={(e) => setTagValue(e.target.value)}
@@ -124,7 +124,7 @@ const VideoItem: React.FC<Props> = ({
                   setTagValue(vid.tag ?? "");
                 }
               }}
-              className="h-8 w-40"
+              className="h-8 w-40 min-w-0 max-w-full"
               autoFocus
               aria-label="Edit tag"
             />

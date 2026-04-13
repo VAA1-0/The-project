@@ -603,6 +603,20 @@ export function MenuBar() {
     }, 80);
   };
 
+  const openAnnotationWorkspace = () => {
+    eventBus.emit("workspacePresetRequest", "annotation");
+
+    if (selectedVideoId) {
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", selectedVideoId);
+      }, 120);
+    }
+
+    window.setTimeout(() => {
+      eventBus.emit("toolsSectionFocus", "annotation");
+    }, 180);
+  };
+
   const handleSave = async () => {
     if (!selectedVideoId || !selectedVideo) {
       alert("Select an analysis first, then use Save Analysis.");
@@ -989,6 +1003,12 @@ export function MenuBar() {
     {
       label: "Tools",
       submenu: [
+        {
+          label: "Annotation workspace",
+          onClick: () => {
+            openAnnotationWorkspace();
+          },
+        },
         {
           label: "Analysis Setup",
           onClick: () => {

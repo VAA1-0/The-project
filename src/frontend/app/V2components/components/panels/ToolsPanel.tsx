@@ -61,6 +61,7 @@ import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
 import { useLayoutHost } from "../LayoutHost";
+import CvatPluginPanel from "./CvatPluginPanel";
 
 type ToolsWorkspace =
   | "analysis"
@@ -73,6 +74,7 @@ type ToolsWorkspace =
   | "expression";
 
 type VisualWorkspaceView = "cinematic" | "inspectors";
+type AnnotationPluginView = "menu" | "cvat";
 
 type CinematicTimelineEntry = {
   key: string;
@@ -326,6 +328,87 @@ export default function ToolsPanel() {
   const [showExpressionRecords, setShowExpressionRecords] = useState(false);
   const [activeWorkspace, setActiveWorkspace] =
     useState<ToolsWorkspace>("analysis");
+  const [activeAnnotationPlugin, setActiveAnnotationPlugin] =
+    useState<AnnotationPluginView>("menu");
+
+  const workspaceOptions: Array<{ key: ToolsWorkspace; label: string }> = [
+    { key: "analysis", label: "Analysis setup" },
+    { key: "annotation", label: "Annotation workspace" },
+    { key: "visual", label: "Visual cues" },
+    { key: "morphology", label: "Morphology catalog" },
+    { key: "face", label: "Face records" },
+    { key: "language", label: "Language records" },
+    { key: "mission", label: "Mission records" },
+    { key: "expression", label: "Expression records" },
+  ];
+
+  const activateWorkspaceSection = (section: ToolsWorkspace) => {
+    if (section !== "annotation") {
+      setActiveAnnotationPlugin("menu");
+    }
+
+    if (section === "analysis") {
+      setActiveWorkspace("analysis");
+      return;
+    }
+    if (section === "annotation") {
+      setActiveWorkspace("annotation");
+      return;
+    }
+    if (section === "visual") {
+      setActiveWorkspace("visual");
+      setActiveVisualView("cinematic");
+      return;
+    }
+    if (section === "morphology") {
+      setActiveWorkspace("morphology");
+      setShowMorphologyRecords(true);
+      window.setTimeout(() => {
+        morphologySectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 80);
+      return;
+    }
+    if (section === "face") {
+      setActiveWorkspace("face");
+      setShowFaceRecords(true);
+      window.setTimeout(() => {
+        faceSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 80);
+      return;
+    }
+    if (section === "language") {
+      setActiveWorkspace("language");
+      setShowLanguageRecords(true);
+      window.setTimeout(() => {
+        languageSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 80);
+      return;
+    }
+    if (section === "mission") {
+      setActiveWorkspace("mission");
+      setShowMissionRecords(true);
+      window.setTimeout(() => {
+        missionSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 80);
+      return;
+    }
+    if (section === "expression") {
+      setActiveWorkspace("expression");
+      setShowExpressionRecords(true);
+    }
+  };
 
   const expressionAggregate = React.useMemo(() => {
     const samples = analysisData?.expressionResults ?? [];
@@ -899,64 +982,10 @@ export default function ToolsPanel() {
 
   useEffect(() => {
     const focusSection = (section: string) => {
-      const targets: Record<string, () => void> = {
-        analysis: () => {
-          setActiveWorkspace("analysis");
-        },
-        annotation: () => {
-          setActiveWorkspace("annotation");
-        },
-        visual: () => {
-          setActiveWorkspace("visual");
-          setActiveVisualView("cinematic");
-        },
-        morphology: () => {
-          setActiveWorkspace("morphology");
-          setShowMorphologyRecords(true);
-          window.setTimeout(() => {
-            morphologySectionRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 80);
-        },
-        face: () => {
-          setActiveWorkspace("face");
-          setShowFaceRecords(true);
-          window.setTimeout(() => {
-            faceSectionRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 80);
-        },
-        language: () => {
-          setActiveWorkspace("language");
-          setShowLanguageRecords(true);
-          window.setTimeout(() => {
-            languageSectionRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 80);
-        },
-        mission: () => {
-          setActiveWorkspace("mission");
-          setShowMissionRecords(true);
-          window.setTimeout(() => {
-            missionSectionRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 80);
-        },
-        expression: () => {
-          setActiveWorkspace("expression");
-          setShowExpressionRecords(true);
-        },
-      };
-
-      targets[section]?.();
+      const nextSection = workspaceOptions.find((item) => item.key === section);
+      if (nextSection) {
+        activateWorkspaceSection(nextSection.key);
+      }
     };
 
     eventBus.on<string>("toolsSectionFocus", focusSection);
@@ -1400,87 +1429,75 @@ export default function ToolsPanel() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col bg-[#111111]">
-          <div className="border-b border-white/8 bg-[#141414] px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--ui-passive-text)]">
-              Analysis Desk
-            </div>
-            <div className="mt-1 text-sm text-[var(--ui-passive-text)]">
-              {metadata?.name
-                ? `Current analysis: ${metadata.name}`
-                : videoId
-                  ? "Current analysis selected"
-                  : "No analysis selected"}
-            </div>
-            {videoId && (
-              <div className="mt-1 text-xs text-slate-500">
-                Reference: <span className="font-mono">{videoId}</span>
-              </div>
-            )}
-            <div className="mt-2 text-xs text-slate-500">
-              {activeWorkspace === "annotation"
-                ? "Choose an annotation method from Annotation tools. CVAT is currently the optional manual visual annotation plugin."
-                : "Use Annotation workspace when you want to add optional manual annotation plugins alongside the core VAA1 workflow."}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
-              {[
-                ["analysis", "Analysis setup"],
-                ["annotation", "Annotation workspace"],
-                ["visual", "Visual cues"],
-                ["morphology", "Morphology catalog"],
-                ["face", "Face records"],
-                ["language", "Language records"],
-                ["mission", "Mission records"],
-                ["expression", "Expression records"],
-              ].map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`rounded border px-2 py-1 transition-colors ${
-                    activeWorkspace === key
-                      ? "border-slate-500/60 bg-[#161616] text-slate-100"
-                      : "border-white/10 bg-[#101010] text-slate-500 hover:bg-white/5 hover:text-slate-300"
-                  }`}
-                  onClick={() => setActiveWorkspace(key as ToolsWorkspace)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            <div className="space-y-3 pb-4">
+          <div
+            className={`flex-1 px-4 py-3 ${
+              activeWorkspace === "annotation"
+                ? "flex min-h-0 flex-col overflow-hidden"
+                : "overflow-y-auto"
+            }`}
+          >
+            <div
+              className={
+                activeWorkspace === "annotation"
+                  ? "flex min-h-0 flex-1 flex-col gap-3"
+                  : "space-y-3 pb-4"
+              }
+            >
               {activeWorkspace === "annotation" && (
-                <div className="space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
+                <div className="flex min-h-0 flex-1 flex-col space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
                   <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                     Annotation tools
                   </div>
-                  <div className="space-y-2 rounded border border-white/10 bg-[#111111] p-3">
-                    <Button
-                      type="button"
-                      disabled={!videoId || isPolling || isAnalyzing}
-                      onClick={() => {
-                        if (!videoId) return;
-                        if (jobReady) {
-                          handleJobClick();
-                        } else {
-                          openTask();
-                        }
-                      }}
-                      className="w-full justify-start bg-blue-600 text-white hover:bg-blue-700"
-                    >
-                      CVAT plugin
-                    </Button>
-                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
-                      Native visual
+                  {activeAnnotationPlugin === "cvat" ? (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-white/10 bg-[#111111]">
+                      <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                          CVAT annotator
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-7 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                          onClick={() => setActiveAnnotationPlugin("menu")}
+                        >
+                          Back
+                        </Button>
+                      </div>
+                      <div className="min-h-[320px] flex-1 overflow-hidden">
+                        <CvatPluginPanel
+                          forcedVideoId={videoId}
+                          compact
+                          hideHeader
+                        />
+                      </div>
                     </div>
-                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
-                      LLM annotation
+                  ) : (
+                    <div className="space-y-2 rounded border border-white/10 bg-[#111111] p-3">
+                      <Button
+                        type="button"
+                        disabled={!videoId || isPolling || isAnalyzing}
+                        onClick={() => {
+                          if (!videoId) return;
+                          setActiveAnnotationPlugin("cvat");
+                          if (!jobReady) {
+                            void openTask();
+                          }
+                        }}
+                        className="w-full justify-start bg-blue-600 text-white hover:bg-blue-700"
+                      >
+                        CVAT plugin
+                      </Button>
+                      <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                        Native visual
+                      </div>
+                      <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                        LLM annotation
+                      </div>
+                      <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
+                        Atlas.ti
+                      </div>
                     </div>
-                    <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
-                      Atlas.ti
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -2593,6 +2610,48 @@ export default function ToolsPanel() {
                 </Button>
               </div>
             )}
+          </div>
+
+          <div className="border-t border-white/8 bg-[#141414] px-4 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--ui-passive-text)]">
+              Analysis Desk
+            </div>
+            <div className="mt-1 text-sm text-[var(--ui-passive-text)]">
+              {metadata?.name
+                ? `Current analysis: ${metadata.name}`
+                : videoId
+                  ? "Current analysis selected"
+                  : "No analysis selected"}
+            </div>
+            {videoId && (
+              <div className="mt-1 text-xs text-slate-500">
+                Reference: <span className="font-mono">{videoId}</span>
+              </div>
+            )}
+            <div className="mt-2 text-xs text-slate-500">
+              {activeWorkspace === "annotation"
+                ? "Choose an annotation method from Annotation tools. CVAT is currently the optional manual visual annotation plugin."
+                : "Use Annotation workspace when you want to add optional manual annotation plugins alongside the core VAA1 workflow."}
+            </div>
+            <div className="mt-3 max-w-[240px]">
+              <Select
+                value={activeWorkspace}
+                onValueChange={(value) =>
+                  activateWorkspaceSection(value as ToolsWorkspace)
+                }
+              >
+                <SelectTrigger className={selectSurfaceClassName}>
+                  <SelectValue placeholder="Tools menu" />
+                </SelectTrigger>
+                <SelectContent className={selectContentClassName}>
+                  {workspaceOptions.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
       </div>

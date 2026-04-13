@@ -507,8 +507,8 @@ export default function ProjectPanel() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="bg-[#232323] flex-1 flex flex-col overflow-hidden h-full">
-        <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#0f0f0f] flex items-center gap-2">
+      <div className="bg-[#232323] flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="bg-[#1a1a1a] min-w-0 overflow-x-hidden px-3 py-2 border-b border-[#0f0f0f] flex items-center gap-2 overflow-hidden">
           <span className="text-[#8f8f8f] text-[11px] uppercase tracking-[0.14em]">
             Saved Work
           </span>
@@ -526,8 +526,8 @@ export default function ProjectPanel() {
               )}
             </button>
           )}
-          <div className="ml-auto">
-            <div className="flex items-center gap-2">
+          <div className="ml-auto min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -589,7 +589,7 @@ export default function ProjectPanel() {
                   key={item.key}
                   className="group flex items-center gap-2 rounded px-3 py-1.5 hover:bg-[#1d1d1d]"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 overflow-hidden">
                     <div className="text-[10px] uppercase tracking-[0.12em] text-[#919191]">
                       {item.label}
                     </div>
@@ -634,7 +634,7 @@ export default function ProjectPanel() {
             </CollapsibleContent>
           </Collapsible>
         )}
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
           <div className="border-b border-[#131313] bg-[#181818] px-3 py-2">
             <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#8d8d8d]">
               <span className="uppercase tracking-[0.12em] text-[#7a7a7a]">
@@ -687,7 +687,7 @@ export default function ProjectPanel() {
             </div>
           </div>
           {/* Scrollable Video list */}
-          <div className="space-y-2 flex-1 overflow-y-auto p-2 h-full max-h-full">
+          <div className="h-full max-h-full flex-1 space-y-2 overflow-x-hidden overflow-y-auto p-2">
             {/* Real mapped videos */}
             {filteredVideos.length === 0 && (
               <div className="p-3 text-[11px] text-[var(--ui-passive-text)]">
@@ -703,7 +703,7 @@ export default function ProjectPanel() {
                 role="button"
                 aria-label={`Select video ${vid.name}`}
                 tabIndex={0}
-                className={`p-2.5 rounded-md cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                className={`min-w-0 overflow-hidden p-2.5 rounded-md cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   videoId === vid.id
                     ? "bg-blue-950/25 ring-1 ring-blue-900/60"
                     : "bg-slate-950/20 hover:bg-slate-900/35"
@@ -734,13 +734,13 @@ export default function ProjectPanel() {
                 }}
               >
                 <div
-                  className="flex gap-2"
+                  className="flex min-w-0 gap-2 overflow-hidden"
                   onClick={(e) => {
                     selectVideo(vid.id);
                     e.stopPropagation();
                   }}
                 >
-                  <div className="flex-1 space-y-2">
+                  <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-xs font-medium text-slate-300">
