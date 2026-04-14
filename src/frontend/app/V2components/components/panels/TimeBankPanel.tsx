@@ -179,11 +179,17 @@ function buildEnvelopeFromAnalysisData(
         : {};
       return {
         id: `obj_event_${analysisId}_${index}`,
-        object_type: "object_detection",
+        object_type: item.sourceType === "manual_visual" ? "manual_visual_annotation" : "object_detection",
         anchor_id: anchors[index].anchor_id,
         payload: {
           label: item.displayLabel || item.class_name,
           bbox,
+          source_type: item.sourceType || "automated",
+          identity_affirmation: item.identityAffirmation,
+          role_affirmation: item.roleAffirmation,
+          audio_foley_note: item.audioFoleyNote,
+          open_note: item.openNote,
+          teaches_regime: item.teachesRegime,
         },
         confidence: item.confidence,
         created_by: "client_fallback",

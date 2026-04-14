@@ -19,14 +19,19 @@ import {
   buildDropCorrectionRule,
   mergeCorrectionRule,
   pushCorrectionSnapshot,
+  removeManualVisualAnnotation,
+  upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useLayoutHost } from "../LayoutHost";
+import type { ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
 
-type OverlayToggleKey = "objects" | "ocr" | "expressions";
+type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
 type RenderedVideoRect = {
   x: number;
@@ -57,7 +62,7 @@ type CompareVideoSource = {
 
 type OverlayBox = {
   key: string;
-  modality: "object" | "ocr" | "expression";
+  modality: "object" | "ocr" | "expression" | "manual";
   label: string;
   color: string;
   x: number;
@@ -65,6 +70,21 @@ type OverlayBox = {
   w: number;
   h: number;
   sourceItem?: any;
+};
+
+type ManualAnnotationDraft = {
+  label: string;
+  identityAffirmation: string;
+  roleAffirmation: string;
+  audioFoleyNote: string;
+  openNote: string;
+};
+
+type DraftBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 };
 
 type AudioTimelineMarker = {
@@ -120,6 +140,24 @@ function formatPreciseTime(value: number): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function buildBoxFromPoints(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): DraftBox {
+  const left = Math.min(startX, endX);
+  const top = Math.min(startY, endY);
+  const right = Math.max(startX, endX);
+  const bottom = Math.max(startY, endY);
+  return {
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
+  };
 }
 
 function classifyShotSize(heightRatio: number, widthRatio: number): string {
@@ -734,6 +772,7 @@ export default function VideoPanel() {
     objects: false,
     ocr: false,
     expressions: false,
+    manual: true,
   });
   const [shotSizeOpen, setShotSizeOpen] = useState(false);
   const [frameClassOpen, setFrameClassOpen] = useState(false);
@@ -795,6 +834,20 @@ export default function VideoPanel() {
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
+  const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
+  const [draftBox, setDraftBox] = useState<DraftBox | null>(null);
+  const [draftStartPoint, setDraftStartPoint] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [nativeAnnotationDraft, setNativeAnnotationDraft] =
+    useState<ManualAnnotationDraft>({
+      label: "",
+      identityAffirmation: "",
+      roleAffirmation: "",
+      audioFoleyNote: "",
+      openNote: "",
+    });
+  const [nativeSaveMessage, setNativeSaveMessage] = useState<string | null>(null);
 
   const lastObjectUrl = React.useRef<string | null>(null);
   const lastCompareObjectUrl = React.useRef<string | null>(null);
@@ -809,6 +862,7 @@ export default function VideoPanel() {
   const overlayArmedRef = React.useRef(false);
   const activeLoadTokenRef = React.useRef(0);
   const videoFrameCallbackIdRef = React.useRef<number | null>(null);
+  const nativeOverlayRef = React.useRef<HTMLDivElement | null>(null);
   const frameReadyTimeRef = React.useRef<number | null>(null);
   const usesFrameCallbackRef = React.useRef(false);
   const previousToneProbeRef = React.useRef<{
@@ -1597,6 +1651,15 @@ export default function VideoPanel() {
     () => findNearbyItems(expressionResults, 0.5),
     [expressionResults, findNearbyItems],
   );
+  const manualVisualAnnotations = useMemo(
+    () =>
+      (analysisData?.annotationCorrections?.manual_visual_annotations || []).filter(
+        (entry: ManualVisualAnnotation) =>
+          typeof entry.timestamp_seconds === "number" &&
+          Math.abs(entry.timestamp_seconds - currentTime) <= 0.5,
+      ),
+    [analysisData?.annotationCorrections?.manual_visual_annotations, currentTime],
+  );
 
   const overlayBoxes = useMemo(() => {
     const overlays: OverlayBox[] = [];
@@ -1680,13 +1743,189 @@ export default function VideoPanel() {
       });
     }
 
+    if (overlayToggles.manual) {
+      manualVisualAnnotations.forEach((item: ManualVisualAnnotation, index: number) => {
+        if (
+          item.geometry_type !== "box" ||
+          item.coordinates?.x === undefined ||
+          item.coordinates?.y === undefined ||
+          item.coordinates?.w === undefined ||
+          item.coordinates?.h === undefined
+        ) {
+          return;
+        }
+
+        overlays.push({
+          key: `manual-${item.id || index}`,
+          modality: "manual",
+          label: item.label || "manual annotation",
+          color: "border-amber-300/90 bg-amber-300/10",
+          x: item.coordinates.x * videoWidth,
+          y: item.coordinates.y * videoHeight,
+          w: item.coordinates.w * videoWidth,
+          h: item.coordinates.h * videoHeight,
+          sourceItem: item,
+        });
+      });
+    }
+
     return overlays;
-  }, [activeExpressions, activeOCR, activeRawObjects, overlayToggles, overlaysReady]);
+  }, [
+    activeExpressions,
+    activeOCR,
+    activeRawObjects,
+    manualVisualAnnotations,
+    overlayToggles,
+    overlaysReady,
+    videoHeight,
+    videoWidth,
+  ]);
 
   const selectedOverlay = useMemo(
     () => overlayBoxes.find((overlay) => overlay.key === selectedOverlayKey) || null,
     [overlayBoxes, selectedOverlayKey],
   );
+
+  const resetNativeAnnotationDraft = React.useCallback(() => {
+    setDraftBox(null);
+    setDraftStartPoint(null);
+    setNativeAnnotationDraft({
+      label: "",
+      identityAffirmation: "",
+      roleAffirmation: "",
+      audioFoleyNote: "",
+      openNote: "",
+    });
+  }, []);
+
+  const saveNativeVisualAnnotation = React.useCallback(async () => {
+    if (!videoId || !draftBox || !nativeAnnotationDraft.label.trim()) {
+      return;
+    }
+
+    const annotation: ManualVisualAnnotation = {
+      id: `${videoId}:${Date.now()}`,
+      label: nativeAnnotationDraft.label.trim(),
+      geometry_type: "box",
+      coordinates: draftBox,
+      timestamp_seconds: Number(currentTime.toFixed(3)),
+      start_seconds: Number(currentTime.toFixed(3)),
+      end_seconds: Number(currentTime.toFixed(3)),
+      identity_affirmation: nativeAnnotationDraft.identityAffirmation.trim() || undefined,
+      role_affirmation: nativeAnnotationDraft.roleAffirmation.trim() || undefined,
+      audio_foley_note: nativeAnnotationDraft.audioFoleyNote.trim() || undefined,
+      open_note: nativeAnnotationDraft.openNote.trim() || undefined,
+      teaches_regime: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      updated_by: "analyst",
+    };
+
+    const existingCorrections = analysisData?.annotationCorrections;
+    const nextCorrections = upsertManualVisualAnnotation(
+      existingCorrections,
+      annotation,
+    );
+    pushCorrectionSnapshot(videoId, existingCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setNativeAnnotationMode(false);
+    setSelectedOverlayKey(`manual-${annotation.id}`);
+    setNativeSaveMessage(`Saved native annotation: ${annotation.label}`);
+    resetNativeAnnotationDraft();
+    broadcastAnalysisCorrectionRefresh(videoId);
+  }, [
+    analysisData?.annotationCorrections,
+    currentTime,
+    draftBox,
+    nativeAnnotationDraft,
+    resetNativeAnnotationDraft,
+    videoId,
+  ]);
+
+  const removeNativeVisualAnnotation = React.useCallback(async () => {
+    if (!videoId || !selectedOverlay || selectedOverlay.modality !== "manual") {
+      return;
+    }
+    const annotation = selectedOverlay.sourceItem as ManualVisualAnnotation | undefined;
+    if (!annotation?.id) {
+      return;
+    }
+    const existingCorrections = analysisData?.annotationCorrections;
+    const nextCorrections = removeManualVisualAnnotation(
+      existingCorrections,
+      annotation.id,
+    );
+    pushCorrectionSnapshot(videoId, existingCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setSelectedOverlayKey(null);
+    setNativeSaveMessage("Removed native annotation.");
+    broadcastAnalysisCorrectionRefresh(videoId);
+  }, [analysisData?.annotationCorrections, selectedOverlay, videoId]);
+
+  const buildNormalizedDraftPoint = React.useCallback(
+    (clientX: number, clientY: number) => {
+      const overlayElement = nativeOverlayRef.current;
+      if (!overlayElement) {
+        return null;
+      }
+      const rect = overlayElement.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const x = clamp((clientX - rect.left) / rect.width, 0, 1);
+      const y = clamp((clientY - rect.top) / rect.height, 0, 1);
+      return { x, y };
+    },
+    [],
+  );
+
+  const handleNativeAnnotationPointerDown = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!nativeAnnotationMode) {
+        return;
+      }
+      const point = buildNormalizedDraftPoint(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      setSelectedOverlayKey(null);
+      setDraftStartPoint(point);
+      setDraftBox({ x: point.x, y: point.y, w: 0, h: 0 });
+    },
+    [buildNormalizedDraftPoint, nativeAnnotationMode],
+  );
+
+  const handleNativeAnnotationPointerMove = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!nativeAnnotationMode || !draftStartPoint) {
+        return;
+      }
+      const point = buildNormalizedDraftPoint(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      setDraftBox(
+        buildBoxFromPoints(
+          draftStartPoint.x,
+          draftStartPoint.y,
+          point.x,
+          point.y,
+        ),
+      );
+    },
+    [buildNormalizedDraftPoint, draftStartPoint, nativeAnnotationMode],
+  );
+
+  const handleNativeAnnotationPointerUp = React.useCallback(() => {
+    if (!draftBox || draftBox.w < 0.01 || draftBox.h < 0.01) {
+      setDraftBox(null);
+    }
+    setDraftStartPoint(null);
+  }, [draftBox]);
 
   const saveObjectBBoxCorrection = React.useCallback(async () => {
     if (!videoId || !selectedOverlay || selectedOverlay.modality !== "object") {
@@ -2827,7 +3066,9 @@ export default function VideoPanel() {
                             );
                           }}
                           className={`pointer-events-auto absolute overflow-hidden rounded border ${overlay.color} ${
-                            overlay.modality === "object" ? "cursor-pointer" : "pointer-events-none"
+                            overlay.modality === "object" || overlay.modality === "manual"
+                              ? "cursor-pointer"
+                              : "pointer-events-none"
                           } ${selectedOverlayKey === overlay.key ? "ring-2 ring-cyan-300/70" : ""}`}
                           style={{
                             left: `${(overlay.x / videoWidth) * 100}%`,
@@ -2836,7 +3077,7 @@ export default function VideoPanel() {
                             height: `${(overlay.h / videoHeight) * 100}%`,
                           }}
                           title={
-                            overlay.modality === "object"
+                            overlay.modality === "object" || overlay.modality === "manual"
                               ? "Click for bbox actions"
                               : overlay.label
                           }
@@ -2844,32 +3085,48 @@ export default function VideoPanel() {
                           <div className="truncate bg-black/60 px-1 py-0.5 text-[10px] text-slate-100">
                             {overlay.label}
                           </div>
-                          {selectedOverlayKey === overlay.key && overlay.modality === "object" && (
+                          {selectedOverlayKey === overlay.key &&
+                            (overlay.modality === "object" || overlay.modality === "manual") && (
                             <div className="absolute left-0 top-0 z-20 -translate-y-full rounded border border-slate-700 bg-[#111111] px-1.5 py-1 shadow-lg">
                               <div className="mb-1 text-[10px] text-slate-300">
                                 {overlay.label}
                               </div>
                               <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void saveObjectBBoxCorrection();
-                                  }}
-                                  className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700/80 hover:text-slate-50"
-                                >
-                                  Correct
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void dropObjectBBoxDetection();
-                                  }}
-                                  className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
-                                >
-                                  Drop
-                                </button>
+                                {overlay.modality === "object" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void saveObjectBBoxCorrection();
+                                      }}
+                                      className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700/80 hover:text-slate-50"
+                                    >
+                                      Correct
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void dropObjectBBoxDetection();
+                                      }}
+                                      className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                                    >
+                                      Drop
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void removeNativeVisualAnnotation();
+                                    }}
+                                    className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -2886,6 +3143,35 @@ export default function VideoPanel() {
                         </button>
                       );
                     })}
+                  </div>
+                )}
+
+                {renderedVideoRect && nativeAnnotationMode && (
+                  <div
+                    ref={nativeOverlayRef}
+                    className="absolute z-10 cursor-crosshair"
+                    style={{
+                      left: renderedVideoRect.x,
+                      top: renderedVideoRect.y,
+                      width: renderedVideoRect.width,
+                      height: renderedVideoRect.height,
+                    }}
+                    onPointerDown={handleNativeAnnotationPointerDown}
+                    onPointerMove={handleNativeAnnotationPointerMove}
+                    onPointerUp={handleNativeAnnotationPointerUp}
+                    onPointerLeave={handleNativeAnnotationPointerUp}
+                  >
+                    {draftBox && (
+                      <div
+                        className="absolute border-2 border-amber-300/90 bg-amber-300/10"
+                        style={{
+                          left: `${draftBox.x * 100}%`,
+                          top: `${draftBox.y * 100}%`,
+                          width: `${draftBox.w * 100}%`,
+                          height: `${draftBox.h * 100}%`,
+                        }}
+                      />
+                    )}
                   </div>
                 )}
               </>
@@ -3072,6 +3358,10 @@ export default function VideoPanel() {
                     key: "expressions" as const,
                     label: `Expressions ${expressionResults.length}`,
                   },
+                  {
+                    key: "manual" as const,
+                    label: `Native ${analysisData?.annotationCorrections?.manual_visual_annotations?.length || 0}`,
+                  },
                 ].map((toggle) => (
                   <button
                     key={toggle.key}
@@ -3091,8 +3381,129 @@ export default function VideoPanel() {
                     {toggle.label}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className={`rounded border px-2 py-1 text-[10px] transition ${
+                    nativeAnnotationMode
+                      ? "border-amber-400/70 bg-amber-400/15 text-amber-100"
+                      : "border-slate-800 text-[var(--ui-passive-text)] hover:bg-slate-800/40 hover:text-slate-300"
+                  }`}
+                  onClick={() => {
+                    if (nativeAnnotationMode) {
+                      setNativeAnnotationMode(false);
+                      resetNativeAnnotationDraft();
+                      return;
+                    }
+                    setSelectedOverlayKey(null);
+                    setNativeSaveMessage(null);
+                    setNativeAnnotationMode(true);
+                  }}
+                >
+                  {nativeAnnotationMode ? "Cancel native" : "Native annotate"}
+                </button>
               </div>
             </div>
+
+            {nativeAnnotationMode && (
+              <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] text-amber-100">
+                    Draw a box on the video, then save the correction into VAA1.
+                  </div>
+                  <div className="text-[10px] text-amber-200/80">
+                    Frame {formatPreciseTime(currentTime)}
+                  </div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Input
+                    value={nativeAnnotationDraft.label}
+                    onChange={(event) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        label: event.target.value,
+                      }))
+                    }
+                    placeholder="Object or scene label"
+                    className="border-amber-400/20 bg-[#111214] text-slate-100"
+                  />
+                  <Input
+                    value={nativeAnnotationDraft.identityAffirmation}
+                    onChange={(event) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        identityAffirmation: event.target.value,
+                      }))
+                    }
+                    placeholder="Identity affirmation"
+                    className="border-amber-400/20 bg-[#111214] text-slate-100"
+                  />
+                  <Input
+                    value={nativeAnnotationDraft.roleAffirmation}
+                    onChange={(event) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        roleAffirmation: event.target.value,
+                      }))
+                    }
+                    placeholder="Role affirmation"
+                    className="border-amber-400/20 bg-[#111214] text-slate-100"
+                  />
+                  <Input
+                    value={nativeAnnotationDraft.audioFoleyNote}
+                    onChange={(event) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        audioFoleyNote: event.target.value,
+                      }))
+                    }
+                    placeholder="Audio foley note"
+                    className="border-amber-400/20 bg-[#111214] text-slate-100"
+                  />
+                </div>
+                <Textarea
+                  value={nativeAnnotationDraft.openNote}
+                  onChange={(event) =>
+                    setNativeAnnotationDraft((current) => ({
+                      ...current,
+                      openNote: event.target.value,
+                    }))
+                  }
+                  placeholder="Open note"
+                  className="mt-2 min-h-[72px] border-amber-400/20 bg-[#111214] text-slate-100"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-amber-100/80">
+                  <span>
+                    {draftBox
+                      ? `box ${draftBox.w.toFixed(3)} × ${draftBox.h.toFixed(3)}`
+                      : "no box drawn yet"}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void saveNativeVisualAnnotation()}
+                    disabled={!draftBox || !nativeAnnotationDraft.label.trim()}
+                  >
+                    Save native annotation
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setNativeAnnotationMode(false);
+                      resetNativeAnnotationDraft();
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {nativeSaveMessage && (
+              <div className="mt-2 rounded border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-[11px] text-emerald-100">
+                {nativeSaveMessage}
+              </div>
+            )}
 
             <div className="relative mt-2 flex flex-wrap items-center gap-3 text-[10px] text-[var(--ui-passive-text)]">
               <button

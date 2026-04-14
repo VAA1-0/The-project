@@ -2,6 +2,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import type {
   AnnotationCorrectionRule,
   AnnotationCorrections,
+  ManualVisualAnnotation,
   ManualTranscriptEntry,
 } from "./api-service";
 
@@ -21,6 +22,7 @@ export function createEmptyCorrections(
     text_substitutions: [],
     label_overrides: [],
     manual_transcript_entries: [],
+    manual_visual_annotations: [],
   };
 }
 
@@ -89,6 +91,7 @@ export function mergeCorrectionRule(
     updated_by: "analyst",
     text_substitutions: [...(existing?.text_substitutions || [])],
     label_overrides: [...(existing?.label_overrides || [])],
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
   };
 
   const targetKey =
@@ -225,6 +228,7 @@ export function upsertManualTranscriptEntry(
     text_substitutions: [...(existing?.text_substitutions || [])],
     label_overrides: [...(existing?.label_overrides || [])],
     manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
   };
 
   const current = [...(next.manual_transcript_entries || [])];
@@ -252,6 +256,54 @@ export function removeManualTranscriptEntry(
     text_substitutions: [...(existing?.text_substitutions || [])],
     label_overrides: [...(existing?.label_overrides || [])],
     manual_transcript_entries: (existing?.manual_transcript_entries || []).filter(
+      (entry) => entry.id !== entryId,
+    ),
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
+  };
+}
+
+export function upsertManualVisualAnnotation(
+  existing: AnnotationCorrections | null | undefined,
+  entry: ManualVisualAnnotation,
+): AnnotationCorrections {
+  const next: AnnotationCorrections = {
+    ...(existing || {}),
+    version: 1,
+    updated_at: new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
+  };
+
+  const current = [...(next.manual_visual_annotations || [])];
+  const index = current.findIndex((item) => item.id === entry.id);
+  if (index >= 0) {
+    current[index] = entry;
+  } else {
+    current.push(entry);
+  }
+  next.manual_visual_annotations = current.sort(
+    (left, right) =>
+      Number(left.timestamp_seconds || 0) - Number(right.timestamp_seconds || 0),
+  );
+  return next;
+}
+
+export function removeManualVisualAnnotation(
+  existing: AnnotationCorrections | null | undefined,
+  entryId: string,
+): AnnotationCorrections {
+  return {
+    ...(existing || {}),
+    version: 1,
+    updated_at: new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+    manual_visual_annotations: (existing?.manual_visual_annotations || []).filter(
       (entry) => entry.id !== entryId,
     ),
   };

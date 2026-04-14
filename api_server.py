@@ -613,6 +613,7 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
         "text_substitutions": corrections.get("text_substitutions", []),
         "label_overrides": corrections.get("label_overrides", []),
         "manual_transcript_entries": corrections.get("manual_transcript_entries", []),
+        "manual_visual_annotations": corrections.get("manual_visual_annotations", []),
     }
 
 
@@ -3489,6 +3490,13 @@ async def update_annotation_corrections(
     else:
         corrections.setdefault("manual_transcript_entries", [])
 
+    if "manual_visual_annotations" in payload:
+        corrections["manual_visual_annotations"] = (
+            payload.get("manual_visual_annotations") or []
+        )
+    else:
+        corrections.setdefault("manual_visual_annotations", [])
+
     write_annotation_corrections_file(status)
     append_analysis_event(
         status,
@@ -3498,6 +3506,9 @@ async def update_annotation_corrections(
             "label_overrides": len(corrections.get("label_overrides", [])),
             "manual_transcript_entries": len(
                 corrections.get("manual_transcript_entries", [])
+            ),
+            "manual_visual_annotations": len(
+                corrections.get("manual_visual_annotations", [])
             ),
         },
     )

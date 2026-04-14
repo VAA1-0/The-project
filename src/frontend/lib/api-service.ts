@@ -352,6 +352,29 @@ export interface AnnotationCorrectionRule {
   updated_by?: string;
 }
 
+export interface ManualVisualAnnotation {
+  id: string;
+  label: string;
+  geometry_type: "box";
+  coordinates: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+  timestamp_seconds: number;
+  start_seconds?: number;
+  end_seconds?: number;
+  identity_affirmation?: string;
+  role_affirmation?: string;
+  audio_foley_note?: string;
+  open_note?: string;
+  teaches_regime?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
 export interface ManualTranscriptEntry {
   id: string;
   start: number;
@@ -371,6 +394,7 @@ export interface AnnotationCorrections {
   text_substitutions?: AnnotationCorrectionRule[];
   label_overrides?: AnnotationCorrectionRule[];
   manual_transcript_entries?: ManualTranscriptEntry[];
+  manual_visual_annotations?: ManualVisualAnnotation[];
 }
 
 export type WorkspacePathType = "results" | "imports";

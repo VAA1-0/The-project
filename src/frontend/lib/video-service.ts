@@ -24,6 +24,7 @@ import type {
   AnalysisStartOptions,
   AnnotationCorrections,
   AnnotationCorrectionRule,
+  ManualVisualAnnotation,
   ManualTranscriptEntry,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
@@ -183,6 +184,12 @@ export interface DetectedObject {
     rank: number;
     cues: string[];
   };
+  sourceType?: "automated" | "manual_visual";
+  identityAffirmation?: string;
+  roleAffirmation?: string;
+  audioFoleyNote?: string;
+  openNote?: string;
+  teachesRegime?: boolean;
 }
 
 export interface OCR {
@@ -605,6 +612,48 @@ function applyAnnotationCorrectionsToObjects(
       displayLabel: textAdjustedLabel,
     };
     });
+}
+
+function buildManualVisualObjects(
+  corrections?: AnnotationCorrections | null,
+): DetectedObject[] {
+  return (corrections?.manual_visual_annotations || []).map(
+    (entry: ManualVisualAnnotation, index: number): DetectedObject => {
+      const x = Number(entry.coordinates?.x || 0);
+      const y = Number(entry.coordinates?.y || 0);
+      const w = Number(entry.coordinates?.w || 0);
+      const h = Number(entry.coordinates?.h || 0);
+      const timestamp = Number(entry.timestamp_seconds || 0);
+      const startTimestamp = Number(entry.start_seconds ?? entry.timestamp_seconds ?? 0);
+      const endTimestamp = Number(entry.end_seconds ?? entry.timestamp_seconds ?? 0);
+      const label = String(entry.label || "manual annotation").trim() || "manual annotation";
+
+      return {
+        timestamp,
+        class_id: -1,
+        class_name: label,
+        raw_class_name: label,
+        confidence: 1,
+        bbox: {
+          x1: x,
+          y1: y,
+          x2: x + w,
+          y2: y + h,
+        },
+        startTimestamp,
+        endTimestamp,
+        occurrenceCount: 1,
+        trackId: 100000 + index,
+        displayLabel: `${label} [manual]`,
+        sourceType: "manual_visual",
+        identityAffirmation: entry.identity_affirmation,
+        roleAffirmation: entry.role_affirmation,
+        audioFoleyNote: entry.audio_foley_note,
+        openNote: entry.open_note,
+        teachesRegime: Boolean(entry.teaches_regime),
+      };
+    },
+  );
 }
 
 function applyAnnotationCorrectionsToRawObjects(
@@ -2646,6 +2695,31 @@ export class VideoService {
         expressionData.status === "fulfilled"
           ? applyAnnotationCorrectionsToExpressions(expressionData.value, corrections)
           : [];
+      const manualVisualObjects = buildManualVisualObjects(corrections);
+      const mergedProfiledObjects = [...profiledObjects, ...manualVisualObjects].sort(
+        (left, right) =>
+          Number(left.startTimestamp ?? left.timestamp ?? 0) -
+          Number(right.startTimestamp ?? right.timestamp ?? 0),
+      );
+      const mergedRawObjects = [...correctedRawObjects, ...manualVisualObjects].sort(
+        (left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0),
+      );
+      const nativeAnnotations = (corrections?.manual_visual_annotations || []).map(
+        (entry: ManualVisualAnnotation) => ({
+          id: entry.id,
+          type: "manual_visual_annotation",
+          label: entry.label,
+          timestamp_seconds: entry.timestamp_seconds,
+          start_seconds: entry.start_seconds,
+          end_seconds: entry.end_seconds,
+          coordinates: entry.coordinates,
+          identity_affirmation: entry.identity_affirmation,
+          role_affirmation: entry.role_affirmation,
+          audio_foley_note: entry.audio_foley_note,
+          open_note: entry.open_note,
+          teaches_regime: entry.teaches_regime,
+        }),
+      );
       const correctedCinematicClues = applyAnnotationCorrectionsToCinematicClues(
         status.summary?.cinematic_clues
           ? {
@@ -2694,15 +2768,15 @@ export class VideoService {
         posAnalysis: correctedPosAnalysis,
         transcript: correctedTranscript,
         transcriptTimeline: correctedTranscriptTimeline,
-        detectedObjects: profiledObjects,
-        rawDetectedObjects: correctedRawObjects,
+        detectedObjects: mergedProfiledObjects,
+        rawDetectedObjects: mergedRawObjects,
         faceResults: status.face_results,
         ocr: correctedOCR,
         expressionResults: correctedExpressions,
         audioProsody:
           audioProsodyData.status === "fulfilled" ? audioProsodyData.value : [],
-        quantityDetection: profiledObjects,
-        annotations: [], // Placeholder for future annotations
+        quantityDetection: mergedProfiledObjects,
+        annotations: nativeAnnotations,
         annotationCorrections: corrections,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
