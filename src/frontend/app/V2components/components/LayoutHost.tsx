@@ -23,6 +23,7 @@ import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
 import QuantMatrixPanel from "./panels/QuantMatrixPanel";
 import SourceMediaMetadataPanel from "./panels/SourceMediaMetadataPanel";
 import TimeBankPanel from "./panels/TimeBankPanel";
+import MasterSchemaPanel from "./panels/MasterSchemaPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
@@ -36,6 +37,62 @@ const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
 );
 
 const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
+
+const RIGHT_STACK_ANCHOR_TYPES = [
+  "MasterSchema",
+  "ManualScene",
+  "ManualAction",
+  "ManualIdentification",
+  "ManualAudio",
+  "ManualGenre",
+  "Expressions",
+  "OCR",
+  "OBJDetection",
+  "Audio",
+  "SourceMediaMetadata",
+  "TimeBank",
+  "Transcript",
+  "POS",
+  "Quant",
+];
+
+const MANUAL_LEAF_PANEL_CONFIGS = [
+  { componentType: "ManualAction", category: "Action", title: "Action" },
+  { componentType: "ManualAudio", category: "Audio", title: "Audio Leaf" },
+  {
+    componentType: "ManualCinematicCues",
+    category: "Cinematic Cues",
+    title: "Cinematic Cues",
+  },
+  {
+    componentType: "ManualExpressions",
+    category: "Expressions",
+    title: "Expressions Leaf",
+  },
+  { componentType: "ManualGenre", category: "Genre", title: "Genre" },
+  {
+    componentType: "ManualIdentification",
+    category: "Identification",
+    title: "Identification",
+  },
+  {
+    componentType: "ManualInteraction",
+    category: "Interaction",
+    title: "Interaction",
+  },
+  { componentType: "ManualMetadata", category: "Metadata", title: "Metadata" },
+  { componentType: "ManualMovement", category: "Movement", title: "Movement" },
+  { componentType: "ManualNotes", category: "Notes", title: "Notes" },
+  { componentType: "ManualOBJ", category: "OBJ", title: "OBJ Leaf" },
+  { componentType: "ManualOCR", category: "OCR", title: "OCR Leaf" },
+  { componentType: "ManualRole", category: "Role", title: "Role" },
+  { componentType: "ManualScene", category: "Scene", title: "Scene" },
+  {
+    componentType: "ManualTranscription",
+    category: "Transcription",
+    title: "Transcription Leaf",
+  },
+];
 
 const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
   settings: {
@@ -110,6 +167,11 @@ const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
             type: "component",
             componentType: "Expressions",
             title: "Expressions",
+          },
+          {
+            type: "component",
+            componentType: "MasterSchema",
+            title: "Master Schema",
           },
           {
             type: "component",
@@ -196,6 +258,11 @@ const buildAnnotationWorkspaceLayout = (): import("golden-layout").LayoutConfig 
           },
           {
             type: "component",
+            componentType: "MasterSchema",
+            title: "Master Schema",
+          },
+          {
+            type: "component",
             componentType: "SourceMediaMetadata",
             title: "Source Media",
           },
@@ -250,6 +317,10 @@ export default function LayoutHost({
     QuantMatrix: "Quant matrix",
     SourceMediaMetadata: "Source Media",
     TimeBank: "Time Bank",
+    MasterSchema: "Master Schema",
+    ...Object.fromEntries(
+      MANUAL_LEAF_PANEL_CONFIGS.map((item) => [item.componentType, item.title]),
+    ),
   };
 
   const getLayoutItems = (item: ContentItem | undefined): ContentItem[] => {
@@ -300,6 +371,40 @@ export default function LayoutHost({
     return false;
   };
 
+  const findPreferredRightStack = () => {
+    const layout = layoutRef.current;
+    if (!layout) {
+      return null;
+    }
+
+    const items = getLayoutItems(layout.rootItem);
+    for (const anchorType of RIGHT_STACK_ANCHOR_TYPES) {
+      const anchor = items.find((item) => {
+        const candidate = item as {
+          isComponent?: boolean;
+          componentType?: unknown;
+        };
+        return candidate.isComponent && candidate.componentType === anchorType;
+      }) as
+        | {
+            parent?: {
+              addComponent: (
+                componentType: JsonValue,
+                componentState?: JsonValue,
+                title?: string,
+              ) => number;
+            };
+          }
+        | undefined;
+
+      if (anchor?.parent?.addComponent) {
+        return anchor.parent;
+      }
+    }
+
+    return null;
+  };
+
   const layoutConfig = buildDefaultLayoutConfig();
 
   // --- openPanel function ---
@@ -308,11 +413,12 @@ export default function LayoutHost({
     if (activateExistingPanel(panelType)) {
       return;
     }
-    layoutRef.current.addComponent(
-      panelType,
-      panelProps || {},
-      PANEL_TITLES[panelType],
-    );
+    const rightStack = findPreferredRightStack();
+    if (rightStack) {
+      rightStack.addComponent(panelType, panelProps || {}, PANEL_TITLES[panelType]);
+      return;
+    }
+    layoutRef.current.addComponent(panelType, panelProps || {}, PANEL_TITLES[panelType]);
   };
   // --- End openPanel function ---
 
@@ -515,6 +621,38 @@ export default function LayoutHost({
         );
       },
     );
+
+    layout.registerComponentFactoryFunction(
+      "MasterSchema",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          MasterSchemaPanel,
+          {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    for (const leaf of MANUAL_LEAF_PANEL_CONFIGS) {
+      layout.registerComponentFactoryFunction(
+        leaf.componentType,
+        (container, state: JsonValue | undefined) => {
+          new ReactComponentWrapper(
+            container,
+            MasterSchemaPanel,
+            {
+              ...(state as Record<string, unknown> || {}),
+              category: leaf.category,
+              panelTitle: leaf.title,
+              panelDescription:
+                `Manual ${leaf.category} annotations live here as a dedicated leaf, while also remaining visible in the Master Schema.`,
+            },
+            ContextWrapper,
+          );
+        },
+      );
+    }
 
     const persistLayout = () => {
       if (saveTimeout) {

@@ -202,6 +202,8 @@ export default function ExpressionPanel() {
   };
 
   const canUndo = canUndoCorrectionSnapshot(videoId);
+  const manualExpressionAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Expressions || [];
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -261,12 +263,51 @@ export default function ExpressionPanel() {
                 <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
                   Loading expression results...
                 </div>
-              ) : expressionResults.length === 0 ? (
+              ) : expressionResults.length === 0 &&
+                manualExpressionAnnotations.length === 0 ? (
                 <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
                   No expression results
                 </div>
               ) : (
-                expressionResults.map((sample: any, idx: number) => {
+                <>
+                  {manualExpressionAnnotations.length > 0 && (
+                    <div className="mb-2 rounded border border-amber-400/20 bg-amber-400/5 px-3 py-2">
+                      <div className="mb-1 text-[10px] uppercase tracking-[0.14em] text-amber-100/80">
+                        Manual expression annotations
+                      </div>
+                      <div className="space-y-1">
+                        {manualExpressionAnnotations.map((item: any) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className="block w-full rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-left text-[10px] text-slate-200 hover:bg-slate-900/35"
+                            onClick={() =>
+                              eventBus.emit(
+                                "videoTimeLineChanged",
+                                Number(item.timestamp_seconds || 0),
+                              )
+                            }
+                          >
+                            <div className="font-medium">
+                              {item.label ||
+                                item.custom_label ||
+                                "Manual expression annotation"}
+                            </div>
+                            <div className="text-[var(--ui-passive-text)]">
+                              {Number(item.timestamp_seconds || 0).toFixed(2)}s
+                              {item.subcategory ? ` • ${item.subcategory}` : ""}
+                            </div>
+                            {item.open_note ? (
+                              <div className="mt-0.5 line-clamp-2 text-[var(--ui-passive-text)]">
+                                {item.open_note}
+                              </div>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {expressionResults.map((sample: any, idx: number) => {
                   const weighting = buildExpressionWeighting(sample, sourceMetadata);
                   const correctionKey = `${sample.timestamp}-${sample.face_id ?? idx}`;
                   return (
@@ -493,7 +534,8 @@ export default function ExpressionPanel() {
                       ) : null}
                     </div>
                   );
-                })
+                })}
+                </>
               )}
             </div>
           </div>

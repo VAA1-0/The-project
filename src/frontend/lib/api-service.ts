@@ -354,7 +354,25 @@ export interface AnnotationCorrectionRule {
 
 export interface ManualVisualAnnotation {
   id: string;
+  category:
+    | "Action"
+    | "Audio"
+    | "Cinematic Cues"
+    | "Expressions"
+    | "Genre"
+    | "Identification"
+    | "Interaction"
+    | "Metadata"
+    | "Movement"
+    | "Notes"
+    | "OBJ"
+    | "OCR"
+    | "Role"
+    | "Scene"
+    | "Transcription";
+  subcategory?: string;
   label: string;
+  custom_label?: string;
   geometry_type: "box";
   coordinates: {
     x: number;
@@ -369,6 +387,13 @@ export interface ManualVisualAnnotation {
   role_affirmation?: string;
   audio_foley_note?: string;
   open_note?: string;
+  metadata_correlation?: {
+    target_type?: string;
+    target_id?: string;
+    target_label?: string;
+    relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
+    note?: string;
+  } | null;
   teaches_regime?: boolean;
   created_at?: string;
   updated_at?: string;

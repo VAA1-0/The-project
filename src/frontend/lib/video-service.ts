@@ -26,6 +26,7 @@ import type {
   AnnotationCorrectionRule,
   ManualVisualAnnotation,
   ManualTranscriptEntry,
+  SourceMediaMetadata,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
 import { readFileSync } from "fs";
@@ -82,6 +83,13 @@ export interface VideoMetadata {
   sourceVideoExists?: boolean;
   sourceVideoMessage?: string;
 }
+
+export type SourceAnnotationContext = {
+  genre?: string;
+  genre_subtype?: string;
+  situational_genre?: string;
+  situational_subtype?: string;
+};
 
 export interface TranscriptSegment {
   t: string; // Formatted timestamp like "12.5s"
@@ -190,6 +198,10 @@ export interface DetectedObject {
   audioFoleyNote?: string;
   openNote?: string;
   teachesRegime?: boolean;
+  annotationCategory?: ManualVisualAnnotation["category"];
+  annotationSubcategory?: string;
+  customLabel?: string;
+  metadataCorrelation?: ManualVisualAnnotation["metadata_correlation"];
 }
 
 export interface OCR {
@@ -617,7 +629,9 @@ function applyAnnotationCorrectionsToObjects(
 function buildManualVisualObjects(
   corrections?: AnnotationCorrections | null,
 ): DetectedObject[] {
-  return (corrections?.manual_visual_annotations || []).map(
+  return (corrections?.manual_visual_annotations || [])
+    .filter((entry: ManualVisualAnnotation) => entry.category === "OBJ")
+    .map(
     (entry: ManualVisualAnnotation, index: number): DetectedObject => {
       const x = Number(entry.coordinates?.x || 0);
       const y = Number(entry.coordinates?.y || 0);
@@ -627,6 +641,16 @@ function buildManualVisualObjects(
       const startTimestamp = Number(entry.start_seconds ?? entry.timestamp_seconds ?? 0);
       const endTimestamp = Number(entry.end_seconds ?? entry.timestamp_seconds ?? 0);
       const label = String(entry.label || "manual annotation").trim() || "manual annotation";
+      const analystDetail = (
+        entry.identity_affirmation ||
+        entry.role_affirmation ||
+        entry.custom_label ||
+        ""
+      )
+        .trim();
+      const displayLabel = analystDetail
+        ? `${label} [manual] • ${analystDetail}`
+        : `${label} [manual]`;
 
       return {
         timestamp,
@@ -644,15 +668,36 @@ function buildManualVisualObjects(
         endTimestamp,
         occurrenceCount: 1,
         trackId: 100000 + index,
-        displayLabel: `${label} [manual]`,
+        displayLabel,
         sourceType: "manual_visual",
         identityAffirmation: entry.identity_affirmation,
         roleAffirmation: entry.role_affirmation,
         audioFoleyNote: entry.audio_foley_note,
         openNote: entry.open_note,
         teachesRegime: Boolean(entry.teaches_regime),
+        annotationCategory: entry.category,
+        annotationSubcategory: entry.subcategory,
+        customLabel: entry.custom_label,
+        metadataCorrelation: entry.metadata_correlation,
       };
     },
+  );
+}
+
+function groupManualVisualAnnotationsByCategory(
+  corrections?: AnnotationCorrections | null,
+): Partial<
+  Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
+> {
+  return (corrections?.manual_visual_annotations || []).reduce(
+    (groups, entry) => {
+      const category = entry.category || "Notes";
+      groups[category] = [...(groups[category] || []), entry];
+      return groups;
+    },
+    {} as Partial<
+      Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
+    >,
   );
 }
 
@@ -1424,6 +1469,9 @@ export interface AnalysisData {
   audioProsody: AudioProsodyCue[];
   quantityDetection: DetectedObject[];
   annotations: any[];
+  manualAnnotationsByCategory?: Partial<
+    Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
+  >;
   annotationCorrections?: AnnotationCorrections | null;
   summary: string;
   rawCsv: string;
@@ -1432,6 +1480,7 @@ export interface AnalysisData {
   downloadLinks?: Record<string, string>;
   metadata?: {
     sourceName?: string;
+    sourceAnnotations?: SourceAnnotationContext;
     yoloDetections: number;
     ocrDetections: number;
     transcriptQuality?: TranscriptDataBundle["quality"];
@@ -2148,6 +2197,7 @@ export interface AnalysisStatus {
   source_video_path?: string;
   source_video_exists?: boolean;
   source_video_message?: string;
+  source_media_metadata?: SourceMediaMetadata;
   annotation_corrections?: AnnotationCorrections | null;
   summary?: {
     yolo_detections: number;
@@ -2696,6 +2746,8 @@ export class VideoService {
           ? applyAnnotationCorrectionsToExpressions(expressionData.value, corrections)
           : [];
       const manualVisualObjects = buildManualVisualObjects(corrections);
+      const manualAnnotationsByCategory =
+        groupManualVisualAnnotationsByCategory(corrections);
       const mergedProfiledObjects = [...profiledObjects, ...manualVisualObjects].sort(
         (left, right) =>
           Number(left.startTimestamp ?? left.timestamp ?? 0) -
@@ -2707,8 +2759,11 @@ export class VideoService {
       const nativeAnnotations = (corrections?.manual_visual_annotations || []).map(
         (entry: ManualVisualAnnotation) => ({
           id: entry.id,
+          category: entry.category,
+          subcategory: entry.subcategory,
           type: "manual_visual_annotation",
           label: entry.label,
+          custom_label: entry.custom_label,
           timestamp_seconds: entry.timestamp_seconds,
           start_seconds: entry.start_seconds,
           end_seconds: entry.end_seconds,
@@ -2717,6 +2772,7 @@ export class VideoService {
           role_affirmation: entry.role_affirmation,
           audio_foley_note: entry.audio_foley_note,
           open_note: entry.open_note,
+          metadata_correlation: entry.metadata_correlation,
           teaches_regime: entry.teaches_regime,
         }),
       );
@@ -2777,6 +2833,7 @@ export class VideoService {
           audioProsodyData.status === "fulfilled" ? audioProsodyData.value : [],
         quantityDetection: mergedProfiledObjects,
         annotations: nativeAnnotations,
+        manualAnnotationsByCategory,
         annotationCorrections: corrections,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
@@ -2784,6 +2841,14 @@ export class VideoService {
         downloadLinks: status.download_links,
         metadata: {
           sourceName: status.filename,
+          sourceAnnotations: {
+            genre: status.source_media_metadata?.user_annotations?.genre,
+            genre_subtype: status.source_media_metadata?.user_annotations?.genre_subtype,
+            situational_genre:
+              status.source_media_metadata?.user_annotations?.situational_genre,
+            situational_subtype:
+              status.source_media_metadata?.user_annotations?.situational_subtype,
+          },
           yoloDetections: status.summary?.yolo_detections || 0,
           ocrDetections: status.summary?.ocr_detections || 0,
           transcriptQuality:

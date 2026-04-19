@@ -164,6 +164,10 @@ export default function SpeechToTextPanel({
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcriptTimeline ?? analysisData?.transcript ?? [];
   const audioProsody = analysisData?.audioProsody ?? [];
+  const manualAudioAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Audio ?? [];
+  const manualTranscriptionAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Transcription ?? [];
   const transcriptQuality = analysisData?.metadata?.transcriptQuality;
   const transcriptMissionNote =
     metadata?.missionMessage ||
@@ -491,10 +495,10 @@ export default function SpeechToTextPanel({
   const summaryText = analysisData?.summary ?? "…";
   const isAudioMode = panelMode === "audio";
   const prosodySectionClass = isAudioMode
-    ? "shrink min-h-[220px] max-h-[58%] overflow-y-auto space-y-2 pr-2 mb-4"
+    ? "shrink min-h-[190px] max-h-[50%] overflow-y-auto space-y-2 pr-2 mb-4"
     : "shrink-0 max-h-40 overflow-y-auto space-y-2 pr-2 mb-4";
   const transcriptSectionClass = isAudioMode
-    ? "min-h-[140px] max-h-[34%] overflow-y-auto space-y-2 pr-2"
+    ? "min-h-[170px] max-h-[42%] overflow-y-auto space-y-2 pr-2"
     : "flex-1 overflow-y-auto space-y-2 pr-2";
 
   const saveTextCorrection = async (rawValue: string) => {
@@ -865,12 +869,56 @@ export default function SpeechToTextPanel({
               Audio prosody
             </div>
             <div className={prosodySectionClass}>
+              {manualAudioAnnotations.length > 0 ? (
+                <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-cyan-100/80">
+                      Manual audio annotations
+                    </div>
+                    <div className="rounded border border-cyan-500/20 px-2 py-0.5 text-[10px] text-cyan-100/70">
+                      {manualAudioAnnotations.length}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {manualAudioAnnotations.map((item: any) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-xs text-slate-300 transition hover:bg-slate-800/30"
+                        onClick={() => {
+                          eventBus.emit(
+                            "videoTimeLineChanged",
+                            Number(item.timestamp_seconds || 0),
+                          );
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium text-slate-100">
+                            {item.label || "Manual audio cue"}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-slate-500">
+                            {formatSpeechSeconds(item.timestamp_seconds)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {item.subcategory || "Audio"}
+                        </div>
+                        {(item.audio_foley_note || item.open_note) && (
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {item.audio_foley_note || item.open_note}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {audioProsody.length === 0 ? (
                 <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-xs text-slate-400">
                   No prosody cues on channel yet.
                 </div>
               ) : (
-                audioProsody.slice(0, 8).map((cue: any) => (
+                audioProsody.map((cue: any) => (
                   <div
                     key={cue.cue_id || `${cue.start}-${cue.end}`}
                     className="cursor-pointer rounded border border-white/8 bg-[#171717] px-3 py-3 transition-colors hover:bg-slate-800/25"
@@ -984,6 +1032,47 @@ export default function SpeechToTextPanel({
               </div>
             ) : null}
             <div className={transcriptSectionClass}>
+              {manualTranscriptionAnnotations.length > 0 ? (
+                <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-cyan-100/80">
+                      Manual transcription annotations
+                    </div>
+                    <div className="rounded border border-cyan-500/20 px-2 py-0.5 text-[10px] text-cyan-100/70">
+                      {manualTranscriptionAnnotations.length}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {manualTranscriptionAnnotations.map((item: any) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-xs text-slate-300 transition hover:bg-slate-800/30"
+                        onClick={() => {
+                          eventBus.emit(
+                            "videoTimeLineChanged",
+                            Number(item.timestamp_seconds || 0),
+                          );
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium text-slate-100">
+                            {item.label || "Manual transcription cue"}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-slate-500">
+                            {formatSpeechSeconds(item.timestamp_seconds)}
+                          </span>
+                        </div>
+                        {(item.open_note || item.subcategory) && (
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {item.open_note || item.subcategory}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {transcript.length === 0 ? (
                 <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-slate-300">
                   <div>No transcript on channel yet.</div>

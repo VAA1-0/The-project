@@ -298,6 +298,8 @@ export default function OCRPanel() {
   }, [videoId, refreshNonce]);
 
   const ocrResults = analysisData?.ocr ?? [];
+  const manualOCRAnnotations =
+    analysisData?.manualAnnotationsByCategory?.OCR || [];
   const displayedOCRResults = useMemo(
     () => buildDisplayedOCRResults(ocrResults),
     [ocrResults],
@@ -433,6 +435,41 @@ export default function OCRPanel() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-2">
+              {manualOCRAnnotations.length > 0 && (
+                <div className="mb-2 rounded border border-amber-400/20 bg-amber-400/5 px-3 py-2">
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.14em] text-amber-100/80">
+                    Manual OCR annotations
+                  </div>
+                  <div className="space-y-1">
+                    {manualOCRAnnotations.map((item: any) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="block w-full rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-left text-[10px] text-slate-200 hover:bg-slate-900/35"
+                        onClick={() =>
+                          eventBus.emit(
+                            "videoTimeLineChanged",
+                            Number(item.timestamp_seconds || 0),
+                          )
+                        }
+                      >
+                        <div className="font-medium">
+                          {item.label || item.custom_label || "Manual OCR annotation"}
+                        </div>
+                        <div className="text-[var(--ui-passive-text)]">
+                          {Number(item.timestamp_seconds || 0).toFixed(2)}s
+                          {item.subcategory ? ` • ${item.subcategory}` : ""}
+                        </div>
+                        {item.open_note ? (
+                          <div className="mt-0.5 line-clamp-2 text-[var(--ui-passive-text)]">
+                            {item.open_note}
+                          </div>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {displayedOCRResults.length === 0 ? (
                 <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
                   No OCR Results

@@ -1,9 +1,18 @@
 export const MEDIA_GENRE_OPTIONS = [
+  "Television",
+  "Television series",
   "news",
   "interview",
   "documentary",
   "research video",
+  "movie drama / fiction",
   "drama / fiction",
+  "animation",
+  "musical",
+  "western",
+  "war",
+  "biopic",
+  "super hero",
   "advertising / promo",
   "music video",
   "stand-up / performance",
@@ -22,8 +31,40 @@ export const MEDIA_GENRE_OPTIONS = [
 ] as const;
 
 export const MEDIA_SUBGENRE_OPTIONS: Record<string, string[]> = {
+  Television: [
+    "Reality TV",
+    "Sports",
+    "Music and event",
+    "Lifestyle & Factual",
+    "News & Current Affairs",
+    "Talk shows",
+    "Game shows",
+    "Children's Programs",
+    "Animation",
+    "Teleplay",
+    "Documentary",
+  ],
+  "Television series": [
+    "Drama",
+    "Comedy",
+    "Sketch comedy",
+    "Sitcom",
+    "Crime/Mystery",
+    "Horror / Supernatural",
+    "Fantasy",
+    "Sci-Fi",
+    "Romance",
+    "Teen series",
+    "Soap Opera",
+    "Mini-Series",
+    "Hospital drama",
+    "Action series",
+    "Western",
+    "Costume drama",
+  ],
   news: [
     "breaking news",
+    "current affairs",
     "studio anchor read",
     "field report",
     "panel discussion",
@@ -41,6 +82,10 @@ export const MEDIA_SUBGENRE_OPTIONS: Record<string, string[]> = {
     "observational documentary",
     "explanatory documentary",
     "participatory documentary",
+    "poetic mode",
+    "reflexive mode",
+    "performative mode",
+    "historical documentary",
     "archival documentary",
     "docudrama",
     "biography documentary",
@@ -54,6 +99,20 @@ export const MEDIA_SUBGENRE_OPTIONS: Record<string, string[]> = {
     "fieldnotes video",
     "observation session",
     "lab demonstration",
+  ],
+  "movie drama / fiction": [
+    "comedy",
+    "tragedy",
+    "suspense / thriller",
+    "romance",
+    "horror / splatter",
+    "parody / satire",
+    "epic / historical",
+    "action / adventure",
+    "crime / detective",
+    "sci-fi",
+    "fantasy",
+    "melodrama",
   ],
   "drama / fiction": [
     "comedy",
@@ -69,12 +128,23 @@ export const MEDIA_SUBGENRE_OPTIONS: Record<string, string[]> = {
     "fantasy",
     "melodrama",
   ],
+  animation: ["children's animation", "animated feature", "animated series"],
+  musical: ["movie musical", "musical sequence", "stage musical capture"],
+  western: ["classic western", "modern western", "neo-western"],
+  war: ["combat drama", "military briefing", "war documentary"],
+  biopic: ["artist biopic", "political biopic", "sports biopic"],
+  "super hero": ["origin story", "team-up", "vigilante drama"],
   "advertising / promo": [
     "commercial spot",
+    "testimonial",
+    "lifestyle",
+    "educational",
+    "animation",
     "brand film",
     "product demo",
     "campaign promo",
     "teaser",
+    "movie trailer",
   ],
   "music video": [
     "performance clip",
@@ -174,6 +244,12 @@ export const MEDIA_SUBGENRE_OPTIONS: Record<string, string[]> = {
 };
 
 export const SITUATIONAL_GENRE_OPTIONS = [
+  "crisis",
+  "routine",
+  "institutional",
+  "turning_point",
+  "transition",
+  "season_change",
   "briefing",
   "confrontation",
   "celebration",
@@ -192,9 +268,40 @@ export const SITUATIONAL_GENRE_OPTIONS = [
   "performance / entertainment",
   "travel / mobility",
   "personal care / inner life",
+  "at home",
+  "at work",
+  "private time",
+  "public everyday",
+  "transit",
 ] as const;
 
 export const SITUATIONAL_SUBGENRE_OPTIONS: Record<string, string[]> = {
+  crisis: ["emergency", "threat escalation", "urgent response", "breakdown"],
+  routine: ["everyday repetition", "ordinary coordination", "habitual action", "maintenance"],
+  institutional: ["bureaucratic process", "formal authority", "organizational procedure", "public service"],
+  turning_point: ["revelation", "decision point", "narrative reversal", "threshold moment"],
+  transition: [
+    "arrival",
+    "departure",
+    "threshold crossing",
+    "between activities",
+    "waiting",
+    "preparation",
+    "handover",
+    "returning",
+  ],
+  season_change: [
+    "spring transition",
+    "summer transition",
+    "autumn transition",
+    "winter transition",
+    "first snow",
+    "thaw",
+    "heatwave",
+    "holiday season shift",
+    "school/work season change",
+    "seasonal routine change",
+  ],
   briefing: [
     "press briefing",
     "status update",
@@ -238,7 +345,284 @@ export const SITUATIONAL_SUBGENRE_OPTIONS: Record<string, string[]> = {
     "reflection",
     "therapeutic / self-care moment",
   ],
+  "at home": [
+    "home morning",
+    "home daytime",
+    "home evening",
+    "home night",
+    "domestic routine",
+    "family time",
+    "remote work at home",
+  ],
+  "at work": [
+    "work morning arrival",
+    "work daytime focused work",
+    "work daytime meeting",
+    "work daytime collaboration",
+    "work evening wrap-up",
+    "afterwork transition",
+  ],
+  "private time": [
+    "private morning",
+    "private daytime",
+    "private evening",
+    "private night",
+    "solitude",
+    "intimacy",
+    "decompression",
+    "self-care",
+  ],
+  "public everyday": [
+    "errands",
+    "shopping",
+    "appointment",
+    "bureaucracy",
+    "cafe visit",
+    "restaurant",
+    "street interaction",
+  ],
+  transit: [
+    "commute",
+    "walking route",
+    "public transport",
+    "car transit",
+    "arrival",
+    "departure",
+    "waiting in transit",
+  ],
 };
+
+export const SITUATION_SCHEMA_TAXONOMY = {
+  event: {
+    type: [
+      "crisis",
+      "routine",
+      "institutional",
+      "turning_point",
+      "transition",
+      "season_change",
+    ],
+  },
+  interaction: {
+    mode: ["conflict", "cooperation", "hierarchy", "intimacy", "solitude"],
+    actorRole: ["agent", "observer", "target"],
+    actorRelation: ["friend", "stranger", "family", "authority", "unknown"],
+  },
+  communication: {
+    type: ["informing", "persuading", "performing", "interviewing", "witnessing"],
+    channel: ["speech", "text", "gesture", "multimodal"],
+  },
+  experience: {
+    affect: ["joy", "tension", "fear", "calm", "intimacy", "ambiguity"],
+  },
+  context: {
+    space: ["home", "work", "public", "nature", "digital"],
+    socialDensity: ["alone", "pair", "group", "crowd"],
+  },
+  time: {
+    phase: ["morning", "daytime", "evening", "night"],
+    seasonalPhase: ["spring", "summer", "autumn", "winter", "season_change"],
+    narrativeRole: ["setup", "build", "climax", "aftermath", "loop"],
+  },
+  epistemic: {
+    state: ["known", "uncertain", "revealed", "contested"],
+    source: ["expert", "participant", "observer", "algorithm"],
+  },
+  normative: {
+    frame: ["moral", "legal", "neutral", "contested"],
+    evaluation: ["positive", "negative", "ambiguous"],
+  },
+  function: {
+    mediaRole: ["attention", "narrative", "context", "emotion", "identity"],
+  },
+  multimodal: {
+    composition: ["talking_head", "observational", "montage", "hybrid"],
+    elements: ["speech", "music", "text_overlay", "object_detection"],
+  },
+  personSituation: {
+    domain: [
+      "home",
+      "work",
+      "public",
+      "social_relational",
+      "inner_life",
+      "mobility",
+      "leisure",
+      "nature",
+      "consumption",
+    ],
+  },
+} as const;
+
+export const PERSON_SITUATION_TAXONOMY = {
+  home: {
+    morning: [
+      "waking_up",
+      "morning_hygiene",
+      "breakfast",
+      "getting_ready",
+      "schedule_coordination",
+    ],
+    daytime: [
+      "remote_work",
+      "domestic_chores",
+      "childcare",
+      "pet_care",
+      "receiving_deliveries",
+      "home_workout",
+      "gardening",
+    ],
+    evening: [
+      "decompression",
+      "cooking_dining",
+      "media_consumption",
+      "family_time",
+      "preparation_next_day",
+    ],
+    night: [
+      "relaxation_ritual",
+      "reading",
+      "journaling",
+      "intimacy",
+      "solitude",
+      "sleep_routine",
+    ],
+  },
+  work: {
+    morning: ["commuting", "arrival", "priority_setting", "morning_sync"],
+    daytime: [
+      "meetings",
+      "collaboration",
+      "focused_work",
+      "administration",
+      "lunch_social",
+    ],
+    evening: [
+      "reporting",
+      "wrap_up",
+      "afterwork_social",
+      "leaving_work",
+      "mental_decompression",
+    ],
+  },
+  public: {
+    morning: ["public_transport", "errands", "street_interaction"],
+    daytime: [
+      "shopping",
+      "appointments",
+      "bureaucracy",
+      "cafe_visit",
+      "restaurant",
+      "cultural_visit",
+      "public_exercise",
+    ],
+    evening: ["social_events", "cinema", "nightlife_transition"],
+    night: ["nightlife", "street_interaction", "returning_home", "urban_solitude"],
+  },
+  social_relational: [
+    "family_gathering",
+    "friend_meeting",
+    "romantic_date",
+    "parenting_event",
+    "community_participation",
+    "emotional_exchange",
+    "bonding",
+    "conflict_discussion",
+    "intimate_conversation",
+    "physical_intimacy",
+    "sexual_interaction",
+    "flirtation",
+    "seduction",
+    "shared_silence",
+  ],
+  inner_life: [
+    "exercise",
+    "gym",
+    "yoga",
+    "meditation",
+    "prayer",
+    "reflection",
+    "reading",
+    "creative_hobby",
+    "therapy",
+    "counseling",
+    "journaling",
+    "health_appointment",
+    "self_maintenance",
+    "self_intimacy",
+  ],
+  mobility: [
+    "commute",
+    "travel",
+    "airport_routine",
+    "train_station",
+    "hotel_checkin",
+    "errands_mobility",
+    "waiting",
+    "queueing",
+  ],
+  leisure: [
+    "concert",
+    "sports_event",
+    "theater",
+    "festival",
+    "volunteering",
+    "activism",
+    "club_participation",
+    "digital_leisure",
+    "gaming",
+    "streaming",
+    "hobby_activity",
+  ],
+  nature: [
+    "walking",
+    "hiking",
+    "running",
+    "swimming",
+    "forest_activity",
+    "gardening",
+    "outdoor_maintenance",
+    "picnic",
+    "seasonal_ritual",
+  ],
+  consumption: [
+    "shopping",
+    "banking",
+    "post_office",
+    "medical_visit",
+    "official_appointment",
+    "online_ordering",
+    "returns",
+    "paperwork",
+    "taxes",
+    "utilities_management",
+  ],
+} as const;
+
+function flattenPersonSituationTaxonomy(): string[] {
+  const options: string[] = [];
+
+  for (const [domain, value] of Object.entries(PERSON_SITUATION_TAXONOMY)) {
+    if (Array.isArray(value)) {
+      for (const activity of value) {
+        options.push(`${domain} / ${activity}`);
+      }
+      continue;
+    }
+
+    for (const [subcategory, activities] of Object.entries(value)) {
+      for (const activity of activities) {
+        options.push(`${domain} / ${subcategory} / ${activity}`);
+      }
+    }
+  }
+
+  return options.sort((left, right) =>
+    left.localeCompare(right, undefined, { sensitivity: "base" }),
+  );
+}
+
+export const SITUATIONAL_TAXONOMY_OPTIONS = flattenPersonSituationTaxonomy();
 
 export const PRIVACY_AXIS_OPTIONS = [
   "public",

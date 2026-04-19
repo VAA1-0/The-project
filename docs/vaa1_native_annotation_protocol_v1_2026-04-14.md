@@ -137,6 +137,27 @@ Each native VAA1 annotation item should minimally support:
   - `polygon`
 - `coordinates`
 
+### Category block
+
+- `category`
+  - `Action`
+  - `Audio`
+  - `Cinematic Cues`
+  - `Expressions`
+  - `Identification`
+  - `Interaction`
+  - `Metadata`
+  - `Movement`
+  - `Notes`
+  - `OBJ`
+  - `OCR`
+  - `Role`
+  - `Scene`
+  - `Transcription`
+- `subcategory`
+- `label`
+- `custom_label`
+
 ### Regime block
 
 - `object_label`
@@ -151,6 +172,12 @@ Each native VAA1 annotation item should minimally support:
 - `role_affirmation`
 - `audio_foley_note`
 - `open_note`
+- `metadata_correlation`
+  - `target_type`
+  - `target_id`
+  - `target_label`
+  - `relation`
+  - `note`
 
 ### Provenance block
 
@@ -205,6 +232,165 @@ It should cover the smallest serious spatiotemporal correction set:
 6. write into the VAA1 master annotation schema
 
 This is enough to make manual annotation useful inside VAA1 without waiting for a full enterprise annotation suite.
+
+## Main Categories And Panel Rule
+
+Each main category must have its own VAA1 panel.
+
+The authoritative main categories are:
+
+- `Action`
+- `Audio`
+- `Cinematic Cues`
+- `Expressions`
+- `Genre`
+- `Identification`
+- `Interaction`
+- `Metadata`
+- `Movement`
+- `Notes`
+- `OBJ`
+- `OCR`
+- `Role`
+- `Scene`
+- `Transcription`
+
+Subcategory entries should also remain accessible through those panels beneath the main categories.
+
+All entries must remain linked to source and navigable.
+
+For `Genre`, the current VAA1-native subcategories should be:
+
+- `Media genre`
+- `Media subgenre`
+- `Situational genre`
+- `Situational subgenre`
+- `Situational taxonomy`
+
+Genre logic should remain advised by the source metadata feed and available to all annotation categories as interpretive context.
+
+## Default Annotation Modes By Category
+
+The native annotation system should expose default annotation behavior by main category.
+
+- `Action`
+  - tracked geometry
+- `Audio`
+  - span
+- `Cinematic Cues`
+  - span
+- `Expressions`
+  - point or tracked geometry
+- `Genre`
+  - point or span
+- `Identification`
+  - point or tracked geometry
+- `Interaction`
+  - tracked geometry
+- `Metadata`
+  - point or span
+- `Movement`
+  - tracked geometry
+- `Notes`
+  - point or span
+- `OBJ`
+  - tracked geometry
+- `OCR`
+  - point or short span with geometry
+- `Role`
+  - point or span
+- `Scene`
+  - span, optionally tracked geometry
+- `Transcription`
+  - span
+
+All video annotation should support adjustable geometry because the camera and marked entities may move.
+
+For tracked categories, the user should be able to:
+
+1. mark in
+2. keep the box adjustable while video is running
+3. update the box by timeframe
+4. mark out
+
+This allows the annotation system to preserve one tracked marked entity with changing geometry over time.
+
+## User-Added Tags
+
+User-added tags should remain with the user unless deleted by the user.
+
+The shared learning and governance principles for these tags should be handled in a separate sprint.
+
+## Cross-Annotation Propagation And Narrative Ambiguity
+
+The first working native annotation order confirms that manual annotations can now be created, preserved, routed to the Master Schema, and surfaced in category-specific panels or mature mixed panels.
+
+The next design problem is cross-annotation propagation.
+
+In visual narrative material, one analyst act may reasonably imply several category records. For example:
+
+- an `Interaction` annotation between two characters may also imply `Identification` evidence for the participants
+- an `Identification` annotation may also imply a `Role` annotation
+- an `Action` annotation may imply an `Interaction` when more than one participant is involved
+- a `Scene` annotation may imply `Action`, `Movement`, or `Cinematic Cues` context
+
+This propagation must not be treated as a simple automatic duplication rule. It needs governance.
+
+The protocol should distinguish at least four propagation states:
+
+- `explicit`: the analyst directly entered this category
+- `derived_candidate`: VAA1 proposes this related category from another annotation
+- `analyst_confirmed`: the analyst accepted the proposed related category
+- `analyst_rejected`: the analyst rejected or suspended the proposed relation
+
+This matters especially for identity.
+
+Visual narrative cultures often stage identity as partial, delayed, implied, masked, insinuated, or narratively withheld. A person may be functionally identifiable before the narrative formally confirms them. For example, a “mystery person” may carry enough visual or contextual evidence to suggest Lyutsifer Safin, while still needing to remain marked as uncertain or provisional.
+
+Therefore the native annotation regime should support:
+
+- confirmed identity
+- suspected identity
+- insinuated identity
+- withheld identity
+- ambiguous identity
+- contested identity
+
+These should not be collapsed into either “known” or “unknown.”
+
+Recommended future schema additions:
+
+- `identity_status`
+  - `confirmed`
+  - `suspected`
+  - `insinuated`
+  - `withheld`
+  - `ambiguous`
+  - `contested`
+- `identity_candidate`
+- `identity_evidence_note`
+- `propagates_to`
+- `derived_from_annotation_id`
+- `propagation_status`
+
+Recommended UX principle:
+
+When an analyst saves an annotation that may imply another category, VAA1 should not silently create fully authoritative records. Instead it should present a calm data-governance prompt such as:
+
+“This Interaction includes identifiable participants. Add related Identification candidates?”
+
+The analyst should then be able to accept, edit, defer, or reject the proposed related annotation.
+
+This keeps the system constructive without flattening narrative ambiguity.
+
+## Metadata Harvesting
+
+The metadata harvesting protocol should be defined in a separate sprint.
+
+For the annotation protocol itself, the current rule is only that metadata must be operationally linkable through:
+
+- the `Metadata` main category
+- the `metadata_correlation` field in the master schema
 
 ## Relation To External Tools
 

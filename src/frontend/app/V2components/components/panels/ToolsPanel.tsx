@@ -47,7 +47,11 @@ import type {
   VideoMetadata,
 } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
-import type { AnalysisEvent, MorphologyCatalogItem } from "@/lib/api-service";
+import type {
+  AnalysisEvent,
+  ManualVisualAnnotation,
+  MorphologyCatalogItem,
+} from "@/lib/api-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { listJobs } from "@/cvat-api/client";
 import {
@@ -96,6 +100,54 @@ const CINEMATIC_SHOT_SIZE_OPTIONS = [
   "over-the-shoulder",
   "point of view",
   "establishing shot",
+];
+
+const MANUAL_LEAF_NAV_OPTIONS: Array<{
+  category: ManualVisualAnnotation["category"];
+  panelType: string;
+  label: string;
+  panelProps?: Record<string, unknown>;
+}> = [
+  { category: "Action", panelType: "ManualAction", label: "Action" },
+  {
+    category: "Audio",
+    panelType: "Audio",
+    label: "Audio",
+    panelProps: { panelMode: "audio" },
+  },
+  {
+    category: "Cinematic Cues",
+    panelType: "ManualCinematicCues",
+    label: "Cinematic Cues",
+  },
+  {
+    category: "Expressions",
+    panelType: "Expressions",
+    label: "Expressions",
+  },
+  { category: "Genre", panelType: "ManualGenre", label: "Genre" },
+  {
+    category: "Identification",
+    panelType: "ManualIdentification",
+    label: "Identification",
+  },
+  {
+    category: "Interaction",
+    panelType: "ManualInteraction",
+    label: "Interaction",
+  },
+  { category: "Metadata", panelType: "ManualMetadata", label: "Metadata" },
+  { category: "Movement", panelType: "ManualMovement", label: "Movement" },
+  { category: "Notes", panelType: "ManualNotes", label: "Notes" },
+  { category: "OBJ", panelType: "OBJDetection", label: "OBJ" },
+  { category: "OCR", panelType: "OCR", label: "OCR" },
+  { category: "Role", panelType: "ManualRole", label: "Role" },
+  { category: "Scene", panelType: "ManualScene", label: "Scene" },
+  {
+    category: "Transcription",
+    panelType: "Transcript",
+    label: "Transcription",
+  },
 ];
 
 function cinematicEntryId(entry: CinematicTimelineEntry): string {
@@ -161,6 +213,71 @@ function formatSeconds(value?: number | null): string {
   if (!Number.isFinite(safe)) return "0s";
   const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(3);
   return `${Number(rounded)}s`;
+}
+
+function ManualAnnotationLeafSection({
+  title,
+  categoryTone,
+  items,
+  videoId,
+}: {
+  title: string;
+  categoryTone: string;
+  items: ManualVisualAnnotation[];
+  videoId: string;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-cyan-100/80">
+            {title}
+          </div>
+          <div className="mt-1 text-[10px] text-slate-400">
+            {categoryTone}
+          </div>
+        </div>
+        <div className="rounded border border-cyan-500/20 px-2 py-0.5 text-[10px] text-cyan-100/70">
+          {items.length}
+        </div>
+      </div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-[11px] text-slate-300 transition hover:bg-slate-800/30"
+            onClick={() => {
+              eventBus.emit("videoIdChanged", videoId);
+              eventBus.emit(
+                "videoTimeLineChanged",
+                Number(item.timestamp_seconds || 0),
+              );
+            }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate font-medium text-slate-100">
+                {item.label || item.subcategory || title}
+              </span>
+              <span className="shrink-0 text-slate-500">
+                {formatSeconds(item.timestamp_seconds)}
+              </span>
+            </div>
+            <div className="mt-1 text-slate-400">
+              {item.subcategory || item.category}
+            </div>
+            {item.open_note ? (
+              <div className="mt-1 text-slate-400">{item.open_note}</div>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function classifySceneDensity(sceneCount: number, meanDuration: number): string {
@@ -431,6 +548,15 @@ export default function ToolsPanel() {
       .filter((sample: ExpressionSample) => sample?.dominant_emotion)
       .slice(0, expressionPreviewCount[0] ?? 4);
   }, [analysisData, expressionPreviewCount]);
+
+  const manualCinematicAnnotations =
+    analysisData?.manualAnnotationsByCategory?.["Cinematic Cues"] ?? [];
+  const manualSceneAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Scene ?? [];
+  const manualActionAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Action ?? [];
+  const manualIdentificationAnnotations =
+    analysisData?.manualAnnotationsByCategory?.Identification ?? [];
 
   const motionSceneBasis = analysisData?.metadata?.motionSceneBasis;
   const motionEvidenceSummary = motionSceneBasis?.motionEvidence?.summary;
@@ -1473,6 +1599,88 @@ export default function ToolsPanel() {
                     </div>
                   ) : (
                     <div className="space-y-2 rounded border border-white/10 bg-[#111111] p-3">
+                      <div className="rounded border border-white/10 bg-[#151515] px-3 py-3">
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-200">
+                              Native annotation console
+                            </div>
+                            <div className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                              One entry point for manual annotations: choose the category in
+                              the Video panel, draw the box, then review the saved cue in its
+                              leaf and in Master Schema.
+                            </div>
+                          </div>
+                          <div className="rounded border border-emerald-500/20 bg-emerald-950/10 px-2 py-0.5 text-[10px] text-emerald-100/80">
+                            Active
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          disabled={!videoId}
+                          onClick={() => {
+                            if (videoId) {
+                              eventBus.emit("videoIdChanged", videoId);
+                            }
+                            openPanel("VideoPanel");
+                            window.setTimeout(() => {
+                              if (videoId) {
+                                eventBus.emit("videoIdChanged", videoId);
+                              }
+                              eventBus.emit("nativeAnnotationOpen", null);
+                            }, 40);
+                          }}
+                          className="w-full justify-start border border-white/10 bg-[#202020] text-slate-100 hover:bg-[#2a2a2a]"
+                        >
+                          Open native annotator
+                        </Button>
+                        <div className="mt-3 rounded border border-white/10 bg-[#111111] px-3 py-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                            Manual data governance leaf
+                          </div>
+                          <Select
+                            onValueChange={(panelType) => {
+                              const selectedLeaf = MANUAL_LEAF_NAV_OPTIONS.find(
+                                (option) => option.panelType === panelType,
+                              );
+                              const panelProps = {
+                                ...(selectedLeaf?.panelProps || {}),
+                                ...(videoId ? { videoId } : {}),
+                              };
+                              if (videoId) {
+                                eventBus.emit("videoIdChanged", videoId);
+                              }
+                              openPanel(panelType, panelProps);
+                              if (videoId) {
+                                window.setTimeout(() => {
+                                  eventBus.emit("videoIdChanged", videoId);
+                                }, 0);
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-8 border-white/10 bg-[#171717] text-[11px] text-slate-200">
+                              <SelectValue placeholder="Open manual leaf or Master Schema" />
+                            </SelectTrigger>
+                            <SelectContent className="border-white/12 bg-[#202020] text-slate-200">
+                              <SelectItem value="MasterSchema">
+                                Master Schema (all manual annotations)
+                              </SelectItem>
+                              {MANUAL_LEAF_NAV_OPTIONS.map((option) => (
+                                <SelectItem
+                                  key={`${option.category}-${option.panelType}`}
+                                  value={option.panelType}
+                                >
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="rounded border border-white/10 bg-[#141414] px-3 py-3">
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                          External annotation bridge
+                        </div>
                       <Button
                         type="button"
                         disabled={!videoId || isPolling || isAnalyzing}
@@ -1483,12 +1691,10 @@ export default function ToolsPanel() {
                             void openTask();
                           }
                         }}
-                        className="w-full justify-start bg-blue-600 text-white hover:bg-blue-700"
+                        className="w-full justify-start border border-white/10 bg-[#202020] text-slate-200 hover:bg-[#2a2a2a]"
                       >
                         CVAT plugin
                       </Button>
-                      <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
-                        Native visual
                       </div>
                       <div className="rounded border border-dashed border-white/10 px-3 py-2 text-slate-600">
                         LLM annotation
@@ -1532,6 +1738,20 @@ export default function ToolsPanel() {
                   </div>
                   {activeVisualView === "cinematic" && (
                     <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[11px] text-slate-400">
+                      <div className="mb-3 grid gap-2 md:grid-cols-2">
+                        <ManualAnnotationLeafSection
+                          title="Manual cinematic cues"
+                          categoryTone="Analyst-added shot, framing, and cinematic evidence."
+                          items={manualCinematicAnnotations}
+                          videoId={videoId}
+                        />
+                        <ManualAnnotationLeafSection
+                          title="Manual scene annotations"
+                          categoryTone="Analyst scene calls alongside derived scene bands."
+                          items={manualSceneAnnotations}
+                          videoId={videoId}
+                        />
+                      </div>
                       {motionSceneBasis && (
                         <div className="mb-3 rounded-md border border-white/8 bg-[#151515] px-3 py-3">
                           <div className="mb-3 font-medium text-slate-200">
@@ -1846,6 +2066,20 @@ export default function ToolsPanel() {
                   )}
                   {activeVisualView === "inspectors" && (
                     <div className="space-y-3">
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <ManualAnnotationLeafSection
+                          title="Manual action annotations"
+                          categoryTone="Analyst-observed actions and event beats."
+                          items={manualActionAnnotations}
+                          videoId={videoId}
+                        />
+                        <ManualAnnotationLeafSection
+                          title="Manual identification annotations"
+                          categoryTone="Identity and role evidence kept separate from object detections."
+                          items={manualIdentificationAnnotations}
+                          videoId={videoId}
+                        />
+                      </div>
                       <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
                     {[
                       ["shot", "Shot size"],

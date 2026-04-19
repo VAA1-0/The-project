@@ -25,6 +25,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  getMediaGenreOptions,
+  getSituationalGenreOptions,
+  MEDIA_SUBGENRE_OPTIONS,
+  SITUATIONAL_SUBGENRE_OPTIONS,
+  SITUATIONAL_TAXONOMY_OPTIONS,
+} from "@/lib/metadata-taxonomy";
 import { useLayoutHost } from "../LayoutHost";
 import type { ManualVisualAnnotation } from "@/lib/api-service";
 
@@ -73,7 +87,12 @@ type OverlayBox = {
 };
 
 type ManualAnnotationDraft = {
+  category: ManualVisualAnnotation["category"];
+  subcategory: string;
+  readyLabel: string;
   label: string;
+  mediaGenreParent: string;
+  situationalGenreParent: string;
   identityAffirmation: string;
   roleAffirmation: string;
   audioFoleyNote: string;
@@ -85,6 +104,85 @@ type DraftBox = {
   y: number;
   w: number;
   h: number;
+};
+
+const CUSTOM_LABEL_VALUE = "__custom__";
+
+const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
+  "Action",
+  "Audio",
+  "Cinematic Cues",
+  "Expressions",
+  "Genre",
+  "Identification",
+  "Interaction",
+  "Metadata",
+  "Movement",
+  "Notes",
+  "OBJ",
+  "OCR",
+  "Role",
+  "Scene",
+  "Transcription",
+];
+
+const NATIVE_ANNOTATION_SUBCATEGORIES: Record<
+  ManualVisualAnnotation["category"],
+  string[]
+> = {
+  Action: ["Action"],
+  Audio: ["Ambience", "Foley", "Music", "Prosody", "Sound event", "Speaker-state"],
+  "Cinematic Cues": ["Composition", "Lighting", "Shot size", "Transition"],
+  Expressions: ["Emotion", "Expression"],
+  Genre: [
+    "Media genre",
+    "Media subgenre",
+    "Situational genre",
+    "Situational subgenre",
+    "Situational taxonomy",
+  ],
+  Identification: ["Character", "Identity"],
+  Interaction: ["Exchange", "Interaction"],
+  Metadata: ["Context", "Correlation"],
+  Movement: ["Camera movement", "Subject movement"],
+  Notes: ["Timestamped note"],
+  OBJ: ["Object label"],
+  OCR: ["Visible text"],
+  Role: ["Role affirmation"],
+  Scene: ["Location", "Scene type"],
+  Transcription: ["Speech content", "Transcript note"],
+};
+
+const NATIVE_ANNOTATION_LABELS: Record<string, string[]> = {
+  "Action::Action": ["Driving", "Entering", "Exiting", "Holding", "Running", "Sitting", "Standing", "Walking"],
+  "Audio::Ambience": ["Crowd noise", "Indoor hum", "Street noise", "Wind"],
+  "Audio::Foley": ["Door close", "Footsteps", "Glass impact", "Walking on snow"],
+  "Audio::Music": ["Background score", "Dissonant cue", "Suspense cue", "Theme cue"],
+  "Audio::Prosody": ["Emphasis", "Flat delivery", "Raised voice", "Whisper"],
+  "Audio::Sound event": ["Door slam", "Explosion", "Gun shot", "Phone ring"],
+  "Audio::Speaker-state": ["Agitated", "Calm", "Fearful", "Urgent"],
+  "Cinematic Cues::Composition": ["Center-weighted", "Foreground obstruction", "Symmetry", "Wide isolation"],
+  "Cinematic Cues::Lighting": ["Backlit", "Cold lighting", "High contrast", "Low-key lighting"],
+  "Cinematic Cues::Shot size": ["Close-up", "Extreme close-up", "Long shot", "Medium shot"],
+  "Cinematic Cues::Transition": ["Cut", "Dissolve", "Fade", "Match cut"],
+  "Expressions::Emotion": ["Anger", "Fear", "Joy", "Sadness", "Surprise"],
+  "Expressions::Expression": ["Concern", "Determination", "Neutral", "Tension"],
+  "Identification::Character": ["Character present", "Unidentified person"],
+  "Identification::Identity": ["Identity affirmed", "Identity uncertain"],
+  "Interaction::Exchange": ["Confrontation", "Conversation", "Observation", "Pursuit"],
+  "Interaction::Interaction": ["Assistance", "Conflict", "Contact", "Threat"],
+  "Metadata::Context": ["Metadata supports annotation", "Metadata updated from annotation"],
+  "Metadata::Correlation": ["Contradicts metadata", "Extends metadata", "Matches metadata", "Supports metadata"],
+  "Movement::Camera movement": ["Pan", "Static camera", "Tilt", "Zoom"],
+  "Movement::Subject movement": ["Approach", "Retreat", "Turn", "Walk"],
+  "Notes::Timestamped note": ["Analyst note", "Correction note", "Open note"],
+  "OBJ::Object label": ["Bag", "Car", "Door", "Person", "Phone", "Weapon"],
+  "OCR::Visible text": ["Name card", "On-screen caption", "Signage", "Subtitle"],
+  "Role::Role affirmation": ["Authority", "Customer service", "Driver", "Guard", "Police officer"],
+  "Scene::Location": ["Indoor", "Outdoor", "Street", "Waiting area"],
+  "Scene::Scene type": ["Arrival", "Checkpoint", "Conversation scene", "Transition scene"],
+  "Transcription::Speech content": ["Correct transcript", "Missing utterance", "Speaker overlap"],
+  "Transcription::Transcript note": ["Ambiguous phrase", "Manual clarification", "Timestamp note"],
 };
 
 type AudioTimelineMarker = {
@@ -841,7 +939,12 @@ export default function VideoPanel() {
   );
   const [nativeAnnotationDraft, setNativeAnnotationDraft] =
     useState<ManualAnnotationDraft>({
+      category: "OBJ",
+      subcategory: "Object label",
+      readyLabel: "",
       label: "",
+      mediaGenreParent: "",
+      situationalGenreParent: "",
       identityAffirmation: "",
       roleAffirmation: "",
       audioFoleyNote: "",
@@ -1064,6 +1167,20 @@ export default function VideoPanel() {
     eventBus.on<string>("workspacePresetChanged", handler);
     return () => {
       eventBus.off<string>("workspacePresetChanged", handler);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      setSelectedOverlayKey(null);
+      setNativeSaveMessage(null);
+      setNativeAnnotationMode(true);
+      setAnnotationWorkspaceActive(true);
+    };
+
+    eventBus.on("nativeAnnotationOpen", handler);
+    return () => {
+      eventBus.off("nativeAnnotationOpen", handler);
     };
   }, []);
 
@@ -1660,6 +1777,56 @@ export default function VideoPanel() {
       ),
     [analysisData?.annotationCorrections?.manual_visual_annotations, currentTime],
   );
+  const nativeSubcategoryOptions = useMemo(
+    () =>
+      [...(NATIVE_ANNOTATION_SUBCATEGORIES[nativeAnnotationDraft.category] || [])].sort(
+        (left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }),
+      ),
+    [nativeAnnotationDraft.category],
+  );
+  const nativeReadyLabelOptions = useMemo(() => {
+    let options: string[] = [];
+
+    if (nativeAnnotationDraft.category === "Genre") {
+      if (nativeAnnotationDraft.subcategory === "Media genre") {
+        options = getMediaGenreOptions();
+      } else if (nativeAnnotationDraft.subcategory === "Media subgenre") {
+        options = nativeAnnotationDraft.mediaGenreParent
+          ? [...(MEDIA_SUBGENRE_OPTIONS[nativeAnnotationDraft.mediaGenreParent] || [])].sort(
+              (left, right) =>
+                left.localeCompare(right, undefined, { sensitivity: "base" }),
+            )
+          : [];
+      } else if (nativeAnnotationDraft.subcategory === "Situational genre") {
+        options = getSituationalGenreOptions();
+      } else if (nativeAnnotationDraft.subcategory === "Situational subgenre") {
+        options = nativeAnnotationDraft.situationalGenreParent
+          ? [
+              ...(SITUATIONAL_SUBGENRE_OPTIONS[
+                nativeAnnotationDraft.situationalGenreParent
+              ] || []),
+            ].sort((left, right) =>
+              left.localeCompare(right, undefined, { sensitivity: "base" }),
+            )
+          : [];
+      } else if (nativeAnnotationDraft.subcategory === "Situational taxonomy") {
+        options = [...SITUATIONAL_TAXONOMY_OPTIONS];
+      }
+    } else {
+      const key = `${nativeAnnotationDraft.category}::${nativeAnnotationDraft.subcategory}`;
+      options = [...(NATIVE_ANNOTATION_LABELS[key] || [])].sort((left, right) =>
+        left.localeCompare(right, undefined, { sensitivity: "base" }),
+      );
+    }
+
+    options.push("Custom...");
+    return options;
+  }, [
+    nativeAnnotationDraft.category,
+    nativeAnnotationDraft.mediaGenreParent,
+    nativeAnnotationDraft.situationalGenreParent,
+    nativeAnnotationDraft.subcategory,
+  ]);
 
   const overlayBoxes = useMemo(() => {
     const overlays: OverlayBox[] = [];
@@ -1790,22 +1957,42 @@ export default function VideoPanel() {
     setDraftBox(null);
     setDraftStartPoint(null);
     setNativeAnnotationDraft({
+      category: "OBJ",
+      subcategory: "Object label",
+      readyLabel: "",
       label: "",
+      mediaGenreParent: analysisData?.metadata?.sourceAnnotations?.genre || "",
+      situationalGenreParent:
+        analysisData?.metadata?.sourceAnnotations?.situational_genre || "",
       identityAffirmation: "",
       roleAffirmation: "",
       audioFoleyNote: "",
       openNote: "",
     });
-  }, []);
+  }, [
+    analysisData?.metadata?.sourceAnnotations?.genre,
+    analysisData?.metadata?.sourceAnnotations?.situational_genre,
+  ]);
 
   const saveNativeVisualAnnotation = React.useCallback(async () => {
-    if (!videoId || !draftBox || !nativeAnnotationDraft.label.trim()) {
+    const resolvedLabel =
+      nativeAnnotationDraft.readyLabel &&
+      nativeAnnotationDraft.readyLabel !== CUSTOM_LABEL_VALUE
+        ? nativeAnnotationDraft.readyLabel
+        : nativeAnnotationDraft.label.trim();
+    if (!videoId || !draftBox || !resolvedLabel.trim()) {
       return;
     }
 
     const annotation: ManualVisualAnnotation = {
       id: `${videoId}:${Date.now()}`,
-      label: nativeAnnotationDraft.label.trim(),
+      category: nativeAnnotationDraft.category,
+      subcategory: nativeAnnotationDraft.subcategory,
+      label: resolvedLabel.trim(),
+      custom_label:
+        nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE
+          ? nativeAnnotationDraft.label.trim()
+          : undefined,
       geometry_type: "box",
       coordinates: draftBox,
       timestamp_seconds: Number(currentTime.toFixed(3)),
@@ -1815,6 +2002,7 @@ export default function VideoPanel() {
       role_affirmation: nativeAnnotationDraft.roleAffirmation.trim() || undefined,
       audio_foley_note: nativeAnnotationDraft.audioFoleyNote.trim() || undefined,
       open_note: nativeAnnotationDraft.openNote.trim() || undefined,
+      metadata_correlation: null,
       teaches_regime: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1832,7 +2020,17 @@ export default function VideoPanel() {
     setAnalysisData(refreshed);
     setNativeAnnotationMode(false);
     setSelectedOverlayKey(`manual-${annotation.id}`);
-    setNativeSaveMessage(`Saved native annotation: ${annotation.label}`);
+    const savedDetail = (
+      annotation.identity_affirmation ||
+      annotation.role_affirmation ||
+      annotation.custom_label ||
+      ""
+    ).trim();
+    setNativeSaveMessage(
+      savedDetail
+        ? `Saved native annotation: ${annotation.category} / ${annotation.label} / ${savedDetail}`
+        : `Saved native annotation: ${annotation.category} / ${annotation.label}`,
+    );
     resetNativeAnnotationDraft();
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [
@@ -3415,17 +3613,158 @@ export default function VideoPanel() {
                   </div>
                 </div>
                 <div className="grid gap-2 md:grid-cols-2">
-                  <Input
-                    value={nativeAnnotationDraft.label}
-                    onChange={(event) =>
+                  {nativeAnnotationDraft.category === "Genre" &&
+                    nativeAnnotationDraft.subcategory.startsWith("Situational") && (
+                      <div className="rounded border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-[11px] text-sky-100 md:col-span-2">
+                        Situational genre is under active schema review. Save the
+                        observation as evidence, but treat the label as analyst-provisional.
+                      </div>
+                    )}
+                  <Select
+                    value={nativeAnnotationDraft.category}
+                    onValueChange={(value: ManualVisualAnnotation["category"]) => {
+                      const nextSubcategory =
+                        NATIVE_ANNOTATION_SUBCATEGORIES[value]?.slice().sort((left, right) =>
+                          left.localeCompare(right, undefined, { sensitivity: "base" }),
+                        )[0] || "";
                       setNativeAnnotationDraft((current) => ({
                         ...current,
-                        label: event.target.value,
+                        category: value,
+                        subcategory: nextSubcategory,
+                        readyLabel: "",
+                        label: "",
+                        mediaGenreParent:
+                          value === "Genre"
+                            ? current.mediaGenreParent ||
+                              analysisData?.metadata?.sourceAnnotations?.genre ||
+                              ""
+                            : current.mediaGenreParent,
+                        situationalGenreParent:
+                          value === "Genre"
+                            ? current.situationalGenreParent ||
+                              analysisData?.metadata?.sourceAnnotations?.situational_genre ||
+                              ""
+                            : current.situationalGenreParent,
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      <SelectValue placeholder="Choose category" />
+                    </SelectTrigger>
+                    <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      {NATIVE_ANNOTATION_CATEGORIES.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={nativeAnnotationDraft.subcategory}
+                    onValueChange={(value) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        subcategory: value,
+                        readyLabel: "",
+                        label: "",
+                        mediaGenreParent:
+                          value === "Media subgenre" || value === "Media genre"
+                            ? current.mediaGenreParent
+                            : current.mediaGenreParent,
+                        situationalGenreParent:
+                          value === "Situational subgenre" ||
+                          value === "Situational genre" ||
+                          value === "Situational taxonomy"
+                            ? current.situationalGenreParent
+                            : current.situationalGenreParent,
                       }))
                     }
-                    placeholder="Object or scene label"
-                    className="border-amber-400/20 bg-[#111214] text-slate-100"
-                  />
+                  >
+                    <SelectTrigger className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      <SelectValue placeholder="Choose subcategory" />
+                    </SelectTrigger>
+                    <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      {nativeSubcategoryOptions.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={nativeAnnotationDraft.readyLabel}
+                    onValueChange={(value) =>
+                      setNativeAnnotationDraft((current) => ({
+                        ...current,
+                        readyLabel: value,
+                        label: value === CUSTOM_LABEL_VALUE ? current.label : "",
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      <SelectValue placeholder="Choose label" />
+                    </SelectTrigger>
+                    <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
+                      {nativeReadyLabelOptions.map((option) => (
+                        <SelectItem
+                          key={option}
+                          value={option === "Custom..." ? CUSTOM_LABEL_VALUE : option}
+                        >
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {nativeAnnotationDraft.category === "Genre" &&
+                    nativeAnnotationDraft.subcategory === "Media subgenre" && (
+                      <Select
+                        value={nativeAnnotationDraft.mediaGenreParent}
+                        onValueChange={(value) =>
+                          setNativeAnnotationDraft((current) => ({
+                            ...current,
+                            mediaGenreParent: value,
+                            readyLabel: "",
+                            label: "",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="border-amber-400/20 bg-[#111214] text-slate-100">
+                          <SelectValue placeholder="Choose media genre first" />
+                        </SelectTrigger>
+                        <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
+                          {getMediaGenreOptions().map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  {nativeAnnotationDraft.category === "Genre" &&
+                    nativeAnnotationDraft.subcategory === "Situational subgenre" && (
+                      <Select
+                        value={nativeAnnotationDraft.situationalGenreParent}
+                        onValueChange={(value) =>
+                          setNativeAnnotationDraft((current) => ({
+                            ...current,
+                            situationalGenreParent: value,
+                            readyLabel: "",
+                            label: "",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="border-amber-400/20 bg-[#111214] text-slate-100">
+                          <SelectValue placeholder="Choose situational genre first" />
+                        </SelectTrigger>
+                        <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
+                          {getSituationalGenreOptions().map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   <Input
                     value={nativeAnnotationDraft.identityAffirmation}
                     onChange={(event) =>
@@ -3437,6 +3776,19 @@ export default function VideoPanel() {
                     placeholder="Identity affirmation"
                     className="border-amber-400/20 bg-[#111214] text-slate-100"
                   />
+                  {nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE && (
+                    <Input
+                      value={nativeAnnotationDraft.label}
+                      onChange={(event) =>
+                        setNativeAnnotationDraft((current) => ({
+                          ...current,
+                          label: event.target.value,
+                        }))
+                      }
+                      placeholder="Add custom label"
+                      className="border-amber-400/20 bg-[#111214] text-slate-100 md:col-span-2"
+                    />
+                  )}
                   <Input
                     value={nativeAnnotationDraft.roleAffirmation}
                     onChange={(event) =>
@@ -3477,11 +3829,21 @@ export default function VideoPanel() {
                       ? `box ${draftBox.w.toFixed(3)} × ${draftBox.h.toFixed(3)}`
                       : "no box drawn yet"}
                   </span>
+                  <span>
+                    {nativeAnnotationDraft.category} / {nativeAnnotationDraft.subcategory}
+                  </span>
                   <Button
                     type="button"
                     variant="secondary"
                     onClick={() => void saveNativeVisualAnnotation()}
-                    disabled={!draftBox || !nativeAnnotationDraft.label.trim()}
+                    disabled={
+                      !draftBox ||
+                      !(
+                        (nativeAnnotationDraft.readyLabel &&
+                          nativeAnnotationDraft.readyLabel !== CUSTOM_LABEL_VALUE) ||
+                        nativeAnnotationDraft.label.trim()
+                      )
+                    }
                   >
                     Save native annotation
                   </Button>

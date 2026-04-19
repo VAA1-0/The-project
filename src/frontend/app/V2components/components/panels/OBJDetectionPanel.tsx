@@ -329,7 +329,11 @@ export default function OBJDetectionPanel() {
                 groupedObjects.map((obj: any, idx: number) => (
                   <div
                     key={`${obj.class_name}-${idx}`}
-                    className="cursor-pointer rounded border border-slate-800 bg-slate-950/20 px-3 py-2 transition hover:bg-slate-900/35"
+                    className={`cursor-pointer rounded border px-3 py-2 transition hover:bg-slate-900/35 ${
+                      obj.sourceType === "manual_visual"
+                        ? "border-emerald-700/60 bg-emerald-950/20"
+                        : "border-slate-800 bg-slate-950/20"
+                    }`}
                     onClick={() => {
                       const cueTime =
                         obj.startTimestamp ?? obj.timestamp ?? 0;
@@ -367,6 +371,13 @@ export default function OBJDetectionPanel() {
                         </span>
                       </div>
                     </div>
+                    {obj.sourceType === "manual_visual" && (
+                      <div className="mt-1 text-[10px] text-emerald-300/90">
+                        Native annotation
+                        {obj.annotationCategory ? ` • ${obj.annotationCategory}` : ""}
+                        {obj.annotationSubcategory ? ` • ${obj.annotationSubcategory}` : ""}
+                      </div>
+                    )}
                     {obj.raw_class_name &&
                       (obj.displayLabel || obj.class_name) &&
                       !String(obj.displayLabel || obj.class_name)
@@ -396,6 +407,21 @@ export default function OBJDetectionPanel() {
                         ? `${obj.occurrenceCount} detections grouped`
                         : ""}
                     </div>
+                    {obj.identityAffirmation && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Identification: {obj.identityAffirmation}
+                      </div>
+                    )}
+                    {obj.roleAffirmation && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Role: {obj.roleAffirmation}
+                      </div>
+                    )}
+                    {obj.openNote && (
+                      <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
+                        Note: {obj.openNote}
+                      </div>
+                    )}
                     {obj.screenPresenceProfile && (
                       <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
                         {obj.screenPresenceProfile.tier === "primary"

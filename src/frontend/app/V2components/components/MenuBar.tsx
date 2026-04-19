@@ -603,6 +603,18 @@ export function MenuBar() {
     }, 80);
   };
 
+  const openSchemaPanel = (panelType: string) => {
+    if (selectedVideoId) {
+      eventBus.emit("videoIdChanged", selectedVideoId);
+    }
+    openPanel(panelType, selectedVideoId ? { videoId: selectedVideoId } : {});
+    if (selectedVideoId) {
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", selectedVideoId);
+      }, 0);
+    }
+  };
+
   const openAnnotationWorkspace = () => {
     eventBus.emit("workspacePresetRequest", "annotation");
 
@@ -907,6 +919,30 @@ export function MenuBar() {
             openPanel("Expressions");
           },
         },
+        {
+          label: "Master Schema",
+          onClick: () => {
+            openSchemaPanel("MasterSchema");
+          },
+        },
+        {
+          label: "Scene Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualScene");
+          },
+        },
+        {
+          label: "Action Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualAction");
+          },
+        },
+        {
+          label: "Identification Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualIdentification");
+          },
+        },
       ],
     },
     {
@@ -998,6 +1034,36 @@ export function MenuBar() {
             openPanel("Expressions");
           },
         },
+        {
+          label: "Master Schema",
+          onClick: () => {
+            openSchemaPanel("MasterSchema");
+          },
+        },
+        {
+          label: "Scene",
+          onClick: () => {
+            openSchemaPanel("ManualScene");
+          },
+        },
+        {
+          label: "Action",
+          onClick: () => {
+            openSchemaPanel("ManualAction");
+          },
+        },
+        {
+          label: "Identification",
+          onClick: () => {
+            openSchemaPanel("ManualIdentification");
+          },
+        },
+        {
+          label: "Cinematic Cues",
+          onClick: () => {
+            openSchemaPanel("ManualCinematicCues");
+          },
+        },
       ],
     },
     {
@@ -1019,6 +1085,30 @@ export function MenuBar() {
           label: "Visual cues",
           onClick: () => {
             openToolsSection("visual");
+          },
+        },
+        {
+          label: "Master Schema",
+          onClick: () => {
+            openSchemaPanel("MasterSchema");
+          },
+        },
+        {
+          label: "Scene Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualScene");
+          },
+        },
+        {
+          label: "Action Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualAction");
+          },
+        },
+        {
+          label: "Identification Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualIdentification");
           },
         },
         {
