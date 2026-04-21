@@ -335,10 +335,28 @@ export interface ForensicRenderJob {
   output_video_path?: string;
   output_frame_dir?: string;
   output_json_path?: string;
+  traceback_record_path?: string;
+  artifact_sha256?: string | null;
   saved_frame_paths?: string[];
   rendered_frames?: number;
   status?: "completed" | "error";
   created_at?: string;
+}
+
+export interface ForensicTracebackRecord {
+  traceback_schema: string;
+  artifact_id: string;
+  artifact_type: string;
+  analysis_id: string;
+  created_at?: string;
+  source?: Record<string, unknown>;
+  region?: Record<string, unknown>;
+  render_parameters?: Record<string, unknown>;
+  evidence_chain?: Record<string, unknown>;
+  adopted_context_counts?: Record<string, number>;
+  reproducibility?: Record<string, unknown>;
+  warnings?: Array<{ code?: string; message?: string }>;
+  known_limitations?: string[];
 }
 
 export interface SourceSampleRequest {
@@ -843,6 +861,29 @@ class ApiService {
 
   getForensicRenderDownloadUrl(analysisId: string, renderJobId: string): string {
     return `${this.baseURL}/api/forensic-render/${analysisId}/jobs/${renderJobId}/download`;
+  }
+
+  getForensicRenderTracebackUrl(analysisId: string, renderJobId: string): string {
+    return `${this.baseURL}/api/forensic-render/${analysisId}/jobs/${renderJobId}/traceback`;
+  }
+
+  async getForensicRenderTraceback(
+    analysisId: string,
+    renderJobId: string,
+  ): Promise<ForensicTracebackRecord> {
+    const response = await fetch(
+      this.getForensicRenderTracebackUrl(analysisId, renderJobId),
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Forensic traceback failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.traceback;
   }
 
   async listSourceSamples(analysisId: string): Promise<SourceSample[]> {

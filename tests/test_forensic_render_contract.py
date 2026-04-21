@@ -123,6 +123,53 @@ class ForensicRenderContractTest(unittest.TestCase):
             (30, 16, {"x": 0, "y": 0, "w": 30, "h": 16}),
         )
 
+    def test_region_track_is_sorted_clamped_and_deduped(self):
+        track = forensic_render.normalize_region_track(
+            [
+                {"time": 2.0, "region": {"x": 60, "y": 40, "w": 20, "h": 20}, "intent": "object"},
+                {"time": -5.0, "region": {"x": -10, "y": 5, "w": 30, "h": 20}, "intent": "identification"},
+                {"time": 2.0, "region": {"x": 5, "y": 5, "w": 10, "h": 10}, "intent": "ocr"},
+                {"time": 99.0, "region": {"x": 1, "y": 2, "w": 3, "h": 4}},
+            ],
+            frame_width=64,
+            frame_height=48,
+            time_start=1.0,
+            time_end=3.0,
+        )
+
+        self.assertEqual([item["time"] for item in track], [1.0, 2.0, 3.0])
+        self.assertEqual(track[0]["region"], {"x": 0, "y": 5, "w": 30, "h": 20})
+        self.assertEqual(track[1]["region"], {"x": 5, "y": 5, "w": 10, "h": 10})
+        self.assertEqual(track[1]["intent"], "ocr")
+
+    def test_interpolate_region_between_keyframes(self):
+        region = forensic_render.interpolate_region(
+            [
+                {"time": 10.0, "region": {"x": 10, "y": 20, "w": 30, "h": 40}},
+                {"time": 12.0, "region": {"x": 30, "y": 40, "w": 50, "h": 60}},
+            ],
+            11.0,
+        )
+
+        self.assertEqual(region, {"x": 20, "y": 30, "w": 40, "h": 50})
+
+    def test_missing_source_video_raises_clear_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(
+                forensic_render.ForensicRenderError,
+                "Source video does not exist",
+            ):
+                forensic_render.create_forensic_render_job(
+                    analysis_id="analysis-1",
+                    source_video_path=Path(tmpdir) / "missing.mp4",
+                    output_root=Path(tmpdir) / "renders",
+                    request={
+                        "mode": "science_grade",
+                        "time_start": 0.0,
+                        "time_end": 1.0,
+                    },
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

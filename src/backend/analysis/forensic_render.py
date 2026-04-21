@@ -10,9 +10,21 @@ from __future__ import annotations
 import json
 import math
 import uuid
+import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+try:
+    from src.backend.analysis.traceback_tool import write_traceback_record
+except Exception:
+    traceback_path = Path(__file__).with_name("traceback_tool.py")
+    spec = importlib.util.spec_from_file_location("traceback_tool", traceback_path)
+    traceback_tool = importlib.util.module_from_spec(spec)
+    if spec is None or spec.loader is None:
+        raise
+    spec.loader.exec_module(traceback_tool)
+    write_traceback_record = traceback_tool.write_traceback_record
 
 
 VALID_FORENSIC_RENDER_MODES = {"science_grade", "forensic_accuracy"}
@@ -230,11 +242,11 @@ def create_forensic_render_job(
 ) -> Dict[str, Any]:
     """Render a governed time/region snippet and return the job ledger entry."""
 
-    import cv2
-
     source_path = Path(source_video_path)
     if not source_path.exists():
         raise ForensicRenderError(f"Source video does not exist: {source_path}")
+
+    import cv2
 
     mode = str(request.get("mode") or "science_grade")
     if mode not in VALID_FORENSIC_RENDER_MODES:
@@ -388,6 +400,18 @@ def create_forensic_render_job(
             "status": "completed",
             "created_at": utc_now_iso(),
         })
+        traceback_record_path = job_dir / "traceback_record.json"
+        job["traceback_record_path"] = str(traceback_record_path)
+        traceback_record = write_traceback_record(
+            job,
+            traceback_record_path,
+            known_limitations=[
+                "Traceback records preserve derivation and adopted evidence references; they do not independently verify identity claims.",
+            ],
+        )
+        job["artifact_sha256"] = traceback_record.get("reproducibility", {}).get(
+            "output_video_sha256"
+        )
 
         output_json_path.write_text(
             json.dumps(job, indent=2, ensure_ascii=False),

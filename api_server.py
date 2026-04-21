@@ -3107,6 +3107,31 @@ async def get_forensic_render_job(analysis_id: str, render_job_id: str) -> dict:
     raise HTTPException(status_code=404, detail="Forensic render job not found")
 
 
+@app.get("/api/forensic-render/{analysis_id}/jobs/{render_job_id}/traceback", response_model=dict)
+async def get_forensic_render_traceback(analysis_id: str, render_job_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    jobs = make_json_safe(load_forensic_render_jobs(get_forensic_render_root(analysis_id)))
+    for job in jobs:
+        if job.get("render_job_id") != render_job_id:
+            continue
+        traceback_path = Path(str(job.get("traceback_record_path") or ""))
+        if not traceback_path.exists():
+            raise HTTPException(status_code=404, detail="Forensic render traceback missing")
+        try:
+            record = json.loads(traceback_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Forensic render traceback could not be read: {exc}",
+            ) from exc
+        return make_json_safe({"analysis_id": analysis_id, "traceback": record})
+
+    raise HTTPException(status_code=404, detail="Forensic render job not found")
+
+
 @app.get("/api/source-samples/{analysis_id}", response_model=dict)
 async def list_source_samples(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)

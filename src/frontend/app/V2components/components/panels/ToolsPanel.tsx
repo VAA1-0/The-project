@@ -3262,6 +3262,19 @@ export default function ToolsPanel() {
                             Open in tab
                           </a>
                         ) : null}
+                        {forensicOpenAsset?.kind === "render" ? (
+                          <a
+                            className="inline-flex h-8 items-center rounded border border-sky-300/20 bg-sky-300/5 px-2 text-[10px] text-sky-100 transition hover:bg-sky-300/10"
+                            href={apiService.getForensicRenderTracebackUrl(
+                              forensicOpenAsset.job.analysis_id,
+                              forensicOpenAsset.job.render_job_id,
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Traceback
+                          </a>
+                        ) : null}
                         {forensicOpenAsset ? (
                           <Button
                             type="button"
@@ -3411,6 +3424,15 @@ export default function ToolsPanel() {
                           {forensicOpenAsset.job.reason ? (
                             <div className="rounded border border-white/8 bg-[#151515] px-3 py-2 text-[11px] text-slate-400">
                               {forensicOpenAsset.job.reason}
+                            </div>
+                          ) : null}
+                          {forensicOpenAsset.job.traceback_record_path ? (
+                            <div className="rounded border border-sky-300/10 bg-sky-300/5 px-3 py-2 text-[11px] text-sky-100/80">
+                              Traceback record linked. Artifact checksum{" "}
+                              {forensicOpenAsset.job.artifact_sha256
+                                ? forensicOpenAsset.job.artifact_sha256.slice(0, 16)
+                                : "pending"}
+                              .
                             </div>
                           ) : null}
                         </div>
