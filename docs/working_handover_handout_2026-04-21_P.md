@@ -157,6 +157,26 @@ Manual API smoke checks included:
 - Add stronger visual debugging for hidden overlay cases, for example a small count of active-but-not-rendered detections.
 - Continue the audio stack sprint with diarization, embeddings, VAD, reference upload, and later real-time `diart`.
 
+## Issues To Be Mitigated
+
+### Local Work Not Pushed
+
+After the sprint commit and push, the working tree still intentionally contains local artifacts that were not pushed:
+
+- `src/cvat/backend/.cvat_tokens/cvat_token.json`
+- `FILE_LIST.txt`
+- `session_file_list.txt`
+- `session_history.txt`
+
+The CVAT token file contains live operational credentials/session material and should not be committed as source work. The three session/list files appear to be local diagnostic or continuity dumps rather than application code, test code, or handout material.
+
+Mitigation:
+
+- Add or confirm `.gitignore` coverage for live token/session files.
+- Replace token material with a documented template if the CVAT bridge needs an example file.
+- Keep diagnostic session dumps outside Git unless they are intentionally converted into a curated handout.
+- Before the next push, run `git status -sb` and confirm that only intended source/docs/test changes are staged.
+
 ## Git Hygiene Note
 
 The live CVAT token file is intentionally not part of the sprint handout scope. It should not be committed as source work.
