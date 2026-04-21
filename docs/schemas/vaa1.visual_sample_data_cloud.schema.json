@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.visual_sample_data_cloud.schema.json",
+  "title": "VAA1 Visual Sample Data Cloud Profile",
+  "type": "object",
+  "required": [
+    "cloud_id",
+    "entity_type",
+    "entity_label",
+    "source_media_context",
+    "samples",
+    "cloud_summary",
+    "provenance"
+  ],
+  "properties": {
+    "cloud_id": {
+      "type": "string"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": ["character", "role", "unknown_person", "speaker_role"]
+    },
+    "entity_label": {
+      "type": "string"
+    },
+    "entity_status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "likely",
+        "suspected",
+        "ambiguous",
+        "contested",
+        "provided_reference"
+      ]
+    },
+    "source_media_context": {
+      "type": "object",
+      "properties": {
+        "analysis_id": { "type": "string" },
+        "source_media_id": { "type": "string" },
+        "genre": { "type": "string" },
+        "genre_subtype": { "type": "string" },
+        "situational_genre": { "type": "string" },
+        "situational_subtype": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sample_id",
+          "source_type",
+          "confidence",
+          "epistemic_status"
+        ],
+        "properties": {
+          "sample_id": { "type": "string" },
+          "timestamp_start": { "type": "number" },
+          "timestamp_end": { "type": "number" },
+          "frame_index": { "type": "integer" },
+          "bbox": {
+            "type": "object",
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "w": { "type": "number" },
+              "h": { "type": "number" }
+            },
+            "required": ["x", "y", "w", "h"],
+            "additionalProperties": false
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "manual_identification",
+              "metadata_reference",
+              "automatic_detection",
+              "multimodal_triangulation",
+              "forensic_render",
+              "analyst_promoted_candidate"
+            ]
+          },
+          "supporting_evidence_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "epistemic_status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "likely",
+              "suspected",
+              "ambiguous",
+              "contested",
+              "provided_reference"
+            ]
+          },
+          "review_state": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "unreviewed",
+              "confirmed",
+              "uncertain",
+              "contested",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "visibility_quality": {
+            "type": "object",
+            "properties": {
+              "visibility_score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "occlusion_score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "motion_blur_score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "lighting_quality_score": { "type": "number", "minimum": 0, "maximum": 1 }
+            },
+            "additionalProperties": false
+          },
+          "visual_features": {
+            "type": "object",
+            "properties": {
+              "face_embedding_ref": { "type": "string" },
+              "body_embedding_ref": { "type": "string" },
+              "silhouette_signature_ref": { "type": "string" },
+              "color_profile_ref": { "type": "string" },
+              "texture_signature_ref": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "cinematic_profile": {
+            "type": "object",
+            "properties": {
+              "shot_size": { "type": "string" },
+              "composition": { "type": "string" },
+              "lighting": { "type": "string" },
+              "foreground_priority": { "type": "number", "minimum": 0, "maximum": 1 },
+              "center_weight_score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "salience_score": { "type": "number", "minimum": 0, "maximum": 1 }
+            },
+            "additionalProperties": true
+          },
+          "role_hints": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "open_note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cloud_summary": {
+      "type": "object",
+      "properties": {
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "confirmed_sample_count": { "type": "integer", "minimum": 0 },
+        "metadata_reference_count": { "type": "integer", "minimum": 0 },
+        "average_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "dominant_visual_signature_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "screen_presence_profile": {
+          "type": "object"
+        },
+        "cinematic_salience_profile": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "created_by": { "type": "string" },
+        "updated_by": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

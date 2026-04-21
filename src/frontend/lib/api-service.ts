@@ -99,6 +99,7 @@ export interface AnalysisStatus {
     audio_language_confidence?: number;
     audio_error?: string;
     audio_prosody_error?: string;
+    audio_diarization_error?: string;
     pos_error?: string;
     quan_error?: string;
     language_support?: {
@@ -190,6 +191,10 @@ export interface AnalysisStatus {
     track_annotation_count?: number;
   } | null;
   internal_artifacts?: Record<string, string> | null;
+  forensic_render_jobs?: ForensicRenderJob[];
+  source_samples?: SourceSample[];
+  identity_refinement?: IdentityRefinementStatus | null;
+  audio_diarization?: AudioDiarizationScaffold | null;
   download_links?: Record<string, string>;
   pipeline_type?: string;
   analysis_tier?: string;
@@ -211,6 +216,165 @@ export interface AnalysisStatus {
     notes?: string[];
   };
   cvatID?: number;
+}
+
+export interface ForensicRenderRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ForensicRenderRegionKeyframe {
+  time: number;
+  region: ForensicRenderRegion;
+  intent?: string;
+  note?: string;
+}
+
+export interface IdentityCandidate {
+  candidate_id: string;
+  candidate_label?: string;
+  review_state?: "unreviewed" | "promoted" | string;
+  identity_status?: "candidate" | "confirmed" | string;
+  confidence?: number | null;
+  source?: string;
+  promoted_identity?: string;
+  evidence?: {
+    annotation_type?: "track" | "object" | string;
+    annotation_id?: string | number | null;
+    track_id?: string | number | null;
+    label?: string;
+    time_start?: number;
+    time_end?: number;
+    frame?: number;
+    bbox?: Record<string, unknown> | null;
+  };
+  future_modalities?: Record<string, string>;
+}
+
+export interface IdentityCandidateLedger {
+  analysis_id?: string;
+  status?: string;
+  source_master_schema?: string;
+  candidate_count?: number;
+  promoted_count?: number;
+  output_json_path?: string;
+  candidates?: IdentityCandidate[];
+  audio_stack_plan?: Record<string, string>;
+}
+
+export interface IdentityRefinementStatus {
+  status?: string;
+  candidate_count?: number;
+  output_json_path?: string;
+  master_json_path?: string;
+  updated_at?: string;
+  last_promoted_candidate_id?: string;
+  last_promoted_at?: string;
+}
+
+export interface AudioDiarizationScaffold {
+  analysis_id?: string;
+  status?: string;
+  audio_path?: string;
+  stack_plan?: Record<string, any>;
+  turn_count?: number;
+  speaker_turns?: Array<{
+    turn_id?: string;
+    speaker_label?: string;
+    start?: number;
+    end?: number;
+    text?: string;
+    diarization_status?: string;
+    embedding_ref?: string | null;
+    reference_match?: string | null;
+  }>;
+  reference_speakers?: unknown[];
+  embedding_index?: Record<string, any>;
+  vad_segments?: unknown[];
+  prosody_cue_count?: number;
+  notes?: string[];
+}
+
+export interface ForensicRenderRequest {
+  mode: "science_grade" | "forensic_accuracy";
+  time_start: number;
+  time_end: number;
+  region?: ForensicRenderRegion | null;
+  region_intent?: string;
+  region_track?: ForensicRenderRegionKeyframe[];
+  requested_fps?: number;
+  max_duration_seconds?: number;
+  reason?: string;
+  requested_by?: string;
+  input_evidence_ids?: string[];
+}
+
+export interface ForensicRenderJob {
+  render_job_id: string;
+  analysis_id: string;
+  source_video_path?: string;
+  requested_by?: string;
+  requested_at?: string;
+  reason?: string;
+  mode: "science_grade" | "forensic_accuracy";
+  source_fps?: number;
+  target_fps?: number;
+  frame_stride?: number;
+  time_start: number;
+  time_end: number;
+  frame_start?: number;
+  frame_end?: number;
+  region_type?: "full_frame" | "static_box" | "tracked_box";
+  region?: ForensicRenderRegion | null;
+  region_intent?: string;
+  region_track?: ForensicRenderRegionKeyframe[];
+  adopted_context?: Record<string, unknown>;
+  input_evidence_ids?: string[];
+  output_video_path?: string;
+  output_frame_dir?: string;
+  output_json_path?: string;
+  saved_frame_paths?: string[];
+  rendered_frames?: number;
+  status?: "completed" | "error";
+  created_at?: string;
+}
+
+export interface SourceSampleRequest {
+  sample_type: "visual" | "audio" | "visual_audio";
+  time_start: number;
+  time_end: number;
+  region?: ForensicRenderRegion | null;
+  label?: string;
+  purpose?: string;
+  requested_by?: string;
+}
+
+export interface SourceSample {
+  sample_id: string;
+  analysis_id: string;
+  sample_type: "visual" | "audio" | "visual_audio";
+  requested_by?: string;
+  requested_at?: string;
+  label?: string;
+  purpose?: string;
+  time_start: number;
+  time_end: number;
+  visual?: {
+    output_image_path?: string;
+    frame_index?: number;
+    source_fps?: number;
+    region?: ForensicRenderRegion | null;
+  } | null;
+  audio?: {
+    output_audio_path?: string;
+    audio_start_frame?: number;
+    audio_end_frame?: number;
+    sample_rate?: number;
+  } | null;
+  status?: "completed" | "error";
+  created_at?: string;
 }
 
 export interface AnalysisEvent {
@@ -309,6 +473,13 @@ export interface SourceMediaMetadata {
       media_type?: string;
       size_bytes?: number;
       download_url?: string;
+    }>;
+    reference_speakers?: Array<{
+      speaker_label?: string;
+      identity_label?: string;
+      relation?: string;
+      reference_file?: string;
+      notes?: string;
     }>;
     reference_relation?: string;
     reference_source?: string;
@@ -628,6 +799,151 @@ class ApiService {
       }
       throw error;
     }
+  }
+
+  async listForensicRenderJobs(analysisId: string): Promise<ForensicRenderJob[]> {
+    const response = await fetch(
+      `${this.baseURL}/api/forensic-render/${analysisId}/jobs`,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Forensic render jobs failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.jobs || [];
+  }
+
+  async createForensicRenderJob(
+    analysisId: string,
+    request: ForensicRenderRequest,
+  ): Promise<ForensicRenderJob> {
+    const response = await fetch(
+      `${this.baseURL}/api/forensic-render/${analysisId}/jobs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Forensic render failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.job;
+  }
+
+  getForensicRenderDownloadUrl(analysisId: string, renderJobId: string): string {
+    return `${this.baseURL}/api/forensic-render/${analysisId}/jobs/${renderJobId}/download`;
+  }
+
+  async listSourceSamples(analysisId: string): Promise<SourceSample[]> {
+    const response = await fetch(`${this.baseURL}/api/source-samples/${analysisId}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source samples failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.samples || [];
+  }
+
+  async createSourceSample(
+    analysisId: string,
+    request: SourceSampleRequest,
+  ): Promise<SourceSample> {
+    const response = await fetch(`${this.baseURL}/api/source-samples/${analysisId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source sample failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const payload = await response.json();
+    return payload.sample;
+  }
+
+  getSourceSampleAssetUrl(
+    analysisId: string,
+    sampleId: string,
+    assetType: "visual" | "audio",
+  ): string {
+    return `${this.baseURL}/api/source-samples/${analysisId}/${sampleId}/${assetType}`;
+  }
+
+  async runIdentityRefinement(analysisId: string): Promise<IdentityCandidateLedger> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/refine-identities`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Identity refinement failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async getIdentityCandidates(analysisId: string): Promise<IdentityCandidateLedger> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/identity-candidates`,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Identity candidates failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async promoteIdentityCandidate(
+    analysisId: string,
+    candidateId: string,
+    identityLabel: string,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/identity-candidates/${candidateId}/promote`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identity_label: identityLabel,
+          reviewer: "analyst",
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Identity promotion failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
   }
 
   async updateCvatLink(analysisId: string, cvatID: number): Promise<any> {
@@ -1042,6 +1358,13 @@ class ApiService {
       privacy_axis?: string;
       expertise_axis?: string;
       references?: string[];
+      reference_speakers?: Array<{
+        speaker_label?: string;
+        identity_label?: string;
+        relation?: string;
+        reference_file?: string;
+        notes?: string;
+      }>;
       reference_relation?: string;
       reference_source?: string;
       confidence?: string;
@@ -1407,6 +1730,7 @@ class ApiService {
       "summary_json",
       "audio",
       "transcript",
+      "audio_diarization",
       "annotation_corrections",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
@@ -1428,6 +1752,7 @@ class ApiService {
       summary_json: "Analysis Summary (JSON)",
       audio: "Extracted Audio",
       transcript: "Transcript (JSON)",
+      audio_diarization: "Audio Diarization Scaffold (JSON)",
       annotation_corrections: "Annotation Corrections (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
@@ -1451,6 +1776,7 @@ class ApiService {
       summary_json: ".json",
       audio: ".wav",
       transcript: ".json",
+      audio_diarization: ".json",
       annotation_corrections: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",

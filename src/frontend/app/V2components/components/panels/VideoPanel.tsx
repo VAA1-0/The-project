@@ -44,6 +44,8 @@ import type { ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
+const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
+const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -106,6 +108,54 @@ type DraftBox = {
   h: number;
 };
 
+type ForensicRegionSelectedPayload = {
+  videoId: string;
+  time: number;
+  intent?: ForensicRoiIntent;
+  label?: string;
+  region: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+  normalizedRegion: DraftBox;
+};
+
+type ForensicRoiIntent =
+  | "identification"
+  | "expression"
+  | "movement"
+  | "object"
+  | "ocr"
+  | "interaction"
+  | "other";
+
+const FORENSIC_ROI_INTENT_OPTIONS: Array<{
+  value: ForensicRoiIntent;
+  label: string;
+}> = [
+  { value: "identification", label: "Identification" },
+  { value: "expression", label: "Expressions" },
+  { value: "movement", label: "Movement" },
+  { value: "object", label: "Object" },
+  { value: "ocr", label: "OCR" },
+  { value: "interaction", label: "Interaction" },
+  { value: "other", label: "Other" },
+];
+
+type ForensicRegionDraftPayload = {
+  videoId?: string;
+  time?: number;
+  region?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+  normalizedRegion?: DraftBox;
+};
+
 const CUSTOM_LABEL_VALUE = "__custom__";
 
 const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
@@ -125,6 +175,27 @@ const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "Scene",
   "Transcription",
 ];
+
+const MANUAL_CATEGORY_PANEL_MAP: Record<
+  ManualVisualAnnotation["category"],
+  string
+> = {
+  Action: "ManualAction",
+  Audio: "ManualAudio",
+  "Cinematic Cues": "ManualCinematicCues",
+  Expressions: "ManualExpressions",
+  Genre: "ManualGenre",
+  Identification: "ManualIdentification",
+  Interaction: "ManualInteraction",
+  Metadata: "ManualMetadata",
+  Movement: "ManualMovement",
+  Notes: "ManualNotes",
+  OBJ: "ManualOBJ",
+  OCR: "ManualOCR",
+  Role: "ManualRole",
+  Scene: "ManualScene",
+  Transcription: "ManualTranscription",
+};
 
 const NATIVE_ANNOTATION_SUBCATEGORIES: Record<
   ManualVisualAnnotation["category"],
@@ -215,6 +286,17 @@ function getObjectOverlayConfidenceThreshold(className: string): number {
   }
 }
 
+function getObjectFallbackConfidenceThreshold(className: string): number {
+  return className === "person" ? 0.25 : getObjectOverlayConfidenceThreshold(className);
+}
+
+function isFallbackPersonDetection(item: DetectedObject): boolean {
+  return (
+    item.class_name === "person" &&
+    (item.confidence || 0) < getObjectOverlayConfidenceThreshold("person")
+  );
+}
+
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 0) {
     return "0:00";
@@ -238,6 +320,56 @@ function formatPreciseTime(value: number): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function resolveObjectOverlayBBox(
+  bbox: DetectedObject["bbox"],
+  videoWidth: number,
+  videoHeight: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (
+    !bbox ||
+    bbox.x1 === undefined ||
+    bbox.y1 === undefined ||
+    bbox.x2 === undefined ||
+    bbox.y2 === undefined
+  ) {
+    return null;
+  }
+
+  const values = [bbox.x1, bbox.y1, bbox.x2, bbox.y2].map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+
+  const [rawX1, rawY1, rawX2, rawY2] = values;
+  const appearsNormalized =
+    rawX1 >= 0 &&
+    rawY1 >= 0 &&
+    rawX2 >= 0 &&
+    rawY2 >= 0 &&
+    Math.max(rawX1, rawY1, rawX2, rawY2) <= 1.5;
+  const scaleX = appearsNormalized ? videoWidth : 1;
+  const scaleY = appearsNormalized ? videoHeight : 1;
+  const x1 = rawX1 * scaleX;
+  const y1 = rawY1 * scaleY;
+  const x2 = rawX2 * scaleX;
+  const y2 = rawY2 * scaleY;
+  const left = clamp(Math.min(x1, x2), 0, videoWidth);
+  const top = clamp(Math.min(y1, y2), 0, videoHeight);
+  const right = clamp(Math.max(x1, x2), 0, videoWidth);
+  const bottom = clamp(Math.max(y1, y2), 0, videoHeight);
+
+  if (right - left < 2 || bottom - top < 2) {
+    return null;
+  }
+
+  return {
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
+  };
 }
 
 function buildBoxFromPoints(
@@ -559,14 +691,29 @@ function buildLocalObjectOverlays(
   currentTime: number,
 ): DetectedObject[] {
   const candidates = items.filter(
-    (item) =>
-      item.bbox?.x1 !== undefined &&
-      item.bbox?.y1 !== undefined &&
-      item.bbox?.x2 !== undefined &&
-      item.bbox?.y2 !== undefined &&
-      (item.confidence || 0) >= getObjectOverlayConfidenceThreshold(item.class_name) &&
-      item.timestamp <= currentTime + 0.06 &&
-      currentTime - item.timestamp <= 0.55,
+    (item) => {
+      if (
+        item.bbox?.x1 === undefined ||
+        item.bbox?.y1 === undefined ||
+        item.bbox?.x2 === undefined ||
+        item.bbox?.y2 === undefined ||
+        (item.confidence || 0) < getObjectFallbackConfidenceThreshold(item.class_name)
+      ) {
+        return false;
+      }
+
+      const start = item.startTimestamp ?? item.timestamp;
+      const end = item.endTimestamp ?? item.timestamp;
+      if (typeof start !== "number" || typeof end !== "number") {
+        return false;
+      }
+      const spanStart = Math.min(start, end);
+      const spanEnd = Math.max(start, end);
+      if (spanEnd - spanStart > 0.001) {
+        return currentTime >= spanStart - 0.06 && currentTime <= spanEnd + 0.06;
+      }
+      return Math.abs((item.timestamp ?? spanStart) - currentTime) <= 0.35;
+    },
   );
 
   if (candidates.length === 0) {
@@ -588,14 +735,21 @@ function buildLocalObjectOverlays(
 
       const iou = calculateObjectBBoxIoU(existing.bbox, item.bbox);
       const distance = calculateObjectBBoxCenterDistance(existing.bbox, item.bbox);
-      return iou >= 0.45 || distance <= (item.class_name === "person" ? 90 : 70);
+      return iou >= 0.45 || (item.class_name !== "person" && distance <= 70);
     });
 
     if (duplicate) {
       continue;
     }
 
-    accepted.push(item);
+    accepted.push(
+      isFallbackPersonDetection(item)
+        ? {
+            ...item,
+            displayLabel: item.displayLabel || "person • fallback",
+          }
+        : item,
+    );
   }
 
   return accepted
@@ -867,7 +1021,7 @@ export default function VideoPanel() {
   const [overlayToggles, setOverlayToggles] = useState<
     Record<OverlayToggleKey, boolean>
   >({
-    objects: false,
+    objects: true,
     ocr: false,
     expressions: false,
     manual: true,
@@ -931,12 +1085,27 @@ export default function VideoPanel() {
   const [linkedComparePlayback, setLinkedComparePlayback] = useState(true);
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [selectedOverlayDurations, setSelectedOverlayDurations] = useState<Record<string, number>>({});
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
   const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
+  const [forensicRoiMode, setForensicRoiMode] = useState(false);
+  const [forensicRoiIntent, setForensicRoiIntent] =
+    useState<ForensicRoiIntent>("identification");
+  const [forensicRoiMenu, setForensicRoiMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [draftBox, setDraftBox] = useState<DraftBox | null>(null);
+  const [lockedForensicRoiBox, setLockedForensicRoiBox] =
+    useState<DraftBox | null>(null);
+  const [draftTimestamp, setDraftTimestamp] = useState<number | null>(null);
   const [draftStartPoint, setDraftStartPoint] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [forensicRoiDragOffset, setForensicRoiDragOffset] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [nativeAnnotationDraft, setNativeAnnotationDraft] =
     useState<ManualAnnotationDraft>({
       category: "OBJ",
@@ -1064,6 +1233,10 @@ export default function VideoPanel() {
         `${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`,
         JSON.stringify(nextMarks),
       );
+      eventBus.emit("singleSourceMarksChanged", {
+        videoId,
+        marks: nextMarks,
+      });
     },
     [videoId],
   );
@@ -1174,6 +1347,7 @@ export default function VideoPanel() {
     const handler = () => {
       setSelectedOverlayKey(null);
       setNativeSaveMessage(null);
+      setForensicRoiMode(false);
       setNativeAnnotationMode(true);
       setAnnotationWorkspaceActive(true);
     };
@@ -1183,6 +1357,92 @@ export default function VideoPanel() {
       eventBus.off("nativeAnnotationOpen", handler);
     };
   }, []);
+
+  useEffect(() => {
+    const handler = (payload?: ForensicRegionDraftPayload & { intent?: ForensicRoiIntent }) => {
+      setNativeAnnotationMode(false);
+      setForensicRoiMode(true);
+      if (payload?.intent) {
+        setForensicRoiIntent(payload.intent);
+      }
+      const videoElement = videoRef.current;
+      const naturalWidth = Math.max(1, videoElement?.videoWidth || 1);
+      const naturalHeight = Math.max(1, videoElement?.videoHeight || 1);
+      const normalizedRegion = payload?.normalizedRegion
+        ? payload.normalizedRegion
+        : payload?.region
+          ? {
+              x: clamp(payload.region.x / naturalWidth, 0, 1),
+              y: clamp(payload.region.y / naturalHeight, 0, 1),
+              w: clamp(payload.region.w / naturalWidth, 0, 1),
+              h: clamp(payload.region.h / naturalHeight, 0, 1),
+            }
+          : null;
+      if (normalizedRegion) {
+        setDraftBox(normalizedRegion);
+        setLockedForensicRoiBox(normalizedRegion);
+        setDraftTimestamp(
+          typeof payload?.time === "number"
+            ? Number(payload.time.toFixed(3))
+            : Number(currentTime.toFixed(3)),
+        );
+      } else {
+        setDraftTimestamp(null);
+      }
+      setForensicRoiMenu(null);
+      setSelectedOverlayKey(null);
+      setDraftStartPoint(null);
+      setForensicRoiDragOffset(null);
+    };
+
+    eventBus.on("forensicRoiToolOpen", handler);
+    return () => {
+      eventBus.off("forensicRoiToolOpen", handler);
+    };
+  }, [currentTime]);
+
+  useEffect(() => {
+    const handler = (payload: ForensicRegionDraftPayload) => {
+      if (payload?.videoId && payload.videoId !== videoId) {
+        return;
+      }
+      const videoElement = videoRef.current;
+      const naturalWidth = Math.max(1, videoElement?.videoWidth || 1);
+      const naturalHeight = Math.max(1, videoElement?.videoHeight || 1);
+      const normalizedRegion = payload?.normalizedRegion
+        ? payload.normalizedRegion
+        : payload?.region
+          ? {
+              x: clamp(payload.region.x / naturalWidth, 0, 1),
+              y: clamp(payload.region.y / naturalHeight, 0, 1),
+              w: clamp(payload.region.w / naturalWidth, 0, 1),
+              h: clamp(payload.region.h / naturalHeight, 0, 1),
+            }
+          : null;
+      if (!normalizedRegion) {
+        return;
+      }
+
+      setSelectedOverlayKey(null);
+      setForensicRoiMode(false);
+      setNativeAnnotationMode(true);
+      setAnnotationWorkspaceActive(true);
+      setDraftStartPoint(null);
+      setDraftTimestamp(
+        typeof payload?.time === "number"
+          ? Number(payload.time.toFixed(3))
+          : Number(currentTime.toFixed(3)),
+      );
+      setDraftBox(normalizedRegion);
+      setLockedForensicRoiBox(normalizedRegion);
+      setNativeSaveMessage("Forensic ROI loaded into native annotation.");
+    };
+
+    eventBus.on("forensicRegionDraftOpen", handler);
+    return () => {
+      eventBus.off("forensicRegionDraftOpen", handler);
+    };
+  }, [currentTime, videoId]);
 
   useEffect(() => {
     const handleVisualCueOpen = (cue: string) => {
@@ -1752,13 +2012,13 @@ export default function VideoPanel() {
     () =>
       alignActiveObjectLabelsWithGroupedTracks(
         refinePersonOverlaysWithFaces(
-          buildLocalObjectOverlays(rawDetectedObjects, currentTime),
+          buildLocalObjectOverlays(groupedDetectedObjects, currentTime),
           nearbyFaces,
         ),
         groupedDetectedObjects,
         currentTime,
       ),
-    [currentTime, groupedDetectedObjects, nearbyFaces, rawDetectedObjects],
+    [currentTime, groupedDetectedObjects, nearbyFaces],
   );
   const activeOCR = useMemo(
     () => buildLocalOCROverlays(ocrResults, currentTime, videoWidth, videoHeight),
@@ -1771,9 +2031,35 @@ export default function VideoPanel() {
   const manualVisualAnnotations = useMemo(
     () =>
       (analysisData?.annotationCorrections?.manual_visual_annotations || []).filter(
-        (entry: ManualVisualAnnotation) =>
-          typeof entry.timestamp_seconds === "number" &&
-          Math.abs(entry.timestamp_seconds - currentTime) <= 0.5,
+        (entry: ManualVisualAnnotation) => {
+          const rawStart =
+            typeof entry.start_seconds === "number"
+              ? entry.start_seconds
+              : entry.timestamp_seconds;
+          const rawEnd =
+            typeof entry.end_seconds === "number"
+              ? entry.end_seconds
+              : entry.timestamp_seconds;
+          if (typeof rawStart !== "number" || typeof rawEnd !== "number") {
+            return false;
+          }
+          const start = Math.min(rawStart, rawEnd);
+          const end = Math.max(rawStart, rawEnd);
+          const duration = end - start;
+          if (duration <= MANUAL_POINT_VISIBILITY_SECONDS) {
+            const timestamp =
+              typeof entry.timestamp_seconds === "number"
+                ? entry.timestamp_seconds
+                : (start + end) / 2;
+            return (
+              Math.abs(currentTime - timestamp) <= MANUAL_POINT_VISIBILITY_SECONDS
+            );
+          }
+          return (
+            currentTime >= start - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS &&
+            currentTime <= end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+          );
+        },
       ),
     [analysisData?.annotationCorrections?.manual_visual_annotations, currentTime],
   );
@@ -1831,18 +2117,14 @@ export default function VideoPanel() {
   const overlayBoxes = useMemo(() => {
     const overlays: OverlayBox[] = [];
 
-    if (!overlaysReady) {
+    if (!videoUrl || isLoading) {
       return overlays;
     }
 
     if (overlayToggles.objects) {
       activeRawObjects.forEach((item: DetectedObject, index: number) => {
-        if (
-          item.bbox?.x1 === undefined ||
-          item.bbox?.y1 === undefined ||
-          item.bbox?.x2 === undefined ||
-          item.bbox?.y2 === undefined
-        ) {
+        const resolvedBox = resolveObjectOverlayBBox(item.bbox, videoWidth, videoHeight);
+        if (!resolvedBox) {
           return;
         }
 
@@ -1850,11 +2132,13 @@ export default function VideoPanel() {
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
           label: item.displayLabel || item.class_name,
-          color: "border-cyan-300/70 bg-transparent",
-          x: item.bbox.x1,
-          y: item.bbox.y1,
-          w: item.bbox.x2 - item.bbox.x1,
-          h: item.bbox.y2 - item.bbox.y1,
+          color: isFallbackPersonDetection(item)
+            ? "border-amber-300/80 bg-amber-300/10"
+            : "border-cyan-300/70 bg-transparent",
+          x: resolvedBox.x,
+          y: resolvedBox.y,
+          w: resolvedBox.w,
+          h: resolvedBox.h,
           sourceItem: item,
         });
       });
@@ -1943,7 +2227,8 @@ export default function VideoPanel() {
     activeRawObjects,
     manualVisualAnnotations,
     overlayToggles,
-    overlaysReady,
+    isLoading,
+    videoUrl,
     videoHeight,
     videoWidth,
   ]);
@@ -1953,8 +2238,132 @@ export default function VideoPanel() {
     [overlayBoxes, selectedOverlayKey],
   );
 
+  const getOverlayTimestamp = React.useCallback(
+    (overlay: OverlayBox) => {
+      const source = overlay.sourceItem || {};
+      const timestamp =
+        typeof source.timestamp_seconds === "number"
+          ? source.timestamp_seconds
+          : typeof source.timestamp === "number"
+            ? source.timestamp
+            : typeof source.startTimestamp === "number"
+              ? source.startTimestamp
+              : currentTime;
+      return Number.isFinite(timestamp) ? Number(timestamp) : currentTime;
+    },
+    [currentTime],
+  );
+
+  const getOverlayDuration = React.useCallback(
+    (overlay: OverlayBox) => selectedOverlayDurations[overlay.key] ?? 1.5,
+    [selectedOverlayDurations],
+  );
+
+  const setOverlayDuration = React.useCallback((overlayKey: string, value: number) => {
+    const safeValue = clamp(value, 0.1, 8);
+    setSelectedOverlayDurations((current) => ({
+      ...current,
+      [overlayKey]: safeValue,
+    }));
+  }, []);
+
+  const openEvidencePanelForOverlay = React.useCallback(
+    (overlay: OverlayBox) => {
+      if (!videoId) {
+        return;
+      }
+
+      const source = overlay.sourceItem || {};
+      const timestamp = getOverlayTimestamp(overlay);
+
+      let panelType = "MasterSchema";
+      if (overlay.modality === "object") {
+        panelType = "OBJDetection";
+      } else if (overlay.modality === "ocr") {
+        panelType = "OCR";
+      } else if (overlay.modality === "expression") {
+        panelType = "Expressions";
+      } else if (overlay.modality === "manual") {
+        const annotation = source as ManualVisualAnnotation;
+        panelType = MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema";
+      }
+
+      openPanel(panelType, {
+        videoId,
+        source: "video_overlay",
+        evidenceKey: overlay.key,
+        timestamp,
+      });
+      eventBus.emit("videoIdChanged", videoId);
+      eventBus.emit("videoTimeLineChanged", timestamp);
+      eventBus.emit("videoEvidenceSelected", {
+        videoId,
+        panelType,
+        overlayKey: overlay.key,
+        modality: overlay.modality,
+        timestamp,
+        label: overlay.label,
+        sourceItem: source,
+      });
+    },
+    [getOverlayTimestamp, openPanel, videoId],
+  );
+
+  const seedForensicRoiFromOverlay = React.useCallback(
+    (overlay: OverlayBox, durationSeconds?: number) => {
+      if (!videoId || !videoRef.current) {
+        return;
+      }
+      const videoWidth = Math.max(1, videoRef.current.videoWidth || 1);
+      const videoHeight = Math.max(1, videoRef.current.videoHeight || 1);
+      const timestamp = getOverlayTimestamp(overlay);
+      const selectedDuration = durationSeconds ?? getOverlayDuration(overlay);
+      const intent: ForensicRoiIntent =
+        overlay.modality === "ocr"
+          ? "ocr"
+          : overlay.modality === "expression"
+            ? "expression"
+            : overlay.modality === "object"
+              ? "identification"
+              : "object";
+      const normalizedRegion = {
+        x: clamp(overlay.x / videoWidth, 0, 1),
+        y: clamp(overlay.y / videoHeight, 0, 1),
+        w: clamp(overlay.w / videoWidth, 0, 1),
+        h: clamp(overlay.h / videoHeight, 0, 1),
+      };
+      setDraftBox(normalizedRegion);
+      setLockedForensicRoiBox(normalizedRegion);
+      setDraftTimestamp(Number(timestamp.toFixed(3)));
+      openPanel("ToolsPanel", { videoId, workspace: "forensic" });
+      eventBus.emit("toolsWorkspaceOpen", { workspace: "forensic", videoId });
+      eventBus.emit("forensicRegionSelected", {
+        videoId,
+        time: Number(timestamp.toFixed(3)),
+        time_start: Number(Math.max(0, timestamp).toFixed(3)),
+        time_end: Number(Math.max(timestamp + 0.1, timestamp + selectedDuration).toFixed(3)),
+        intent,
+        label: overlay.label,
+        region: {
+          x: Math.round(overlay.x),
+          y: Math.round(overlay.y),
+          w: Math.round(overlay.w),
+          h: Math.round(overlay.h),
+        },
+        normalizedRegion,
+      });
+    },
+    [getOverlayDuration, getOverlayTimestamp, openPanel, videoId],
+  );
+
+  const getAuthoritativeVideoTime = React.useCallback(() => {
+    const videoTime = videoRef.current?.currentTime;
+    return Number.isFinite(videoTime) ? Number(videoTime) : currentTime;
+  }, [currentTime]);
+
   const resetNativeAnnotationDraft = React.useCallback(() => {
     setDraftBox(null);
+    setLockedForensicRoiBox(null);
     setDraftStartPoint(null);
     setNativeAnnotationDraft({
       category: "OBJ",
@@ -1984,6 +2393,9 @@ export default function VideoPanel() {
       return;
     }
 
+    const annotationTimestamp = Number(
+      (draftTimestamp ?? getAuthoritativeVideoTime()).toFixed(3),
+    );
     const annotation: ManualVisualAnnotation = {
       id: `${videoId}:${Date.now()}`,
       category: nativeAnnotationDraft.category,
@@ -1995,9 +2407,9 @@ export default function VideoPanel() {
           : undefined,
       geometry_type: "box",
       coordinates: draftBox,
-      timestamp_seconds: Number(currentTime.toFixed(3)),
-      start_seconds: Number(currentTime.toFixed(3)),
-      end_seconds: Number(currentTime.toFixed(3)),
+      timestamp_seconds: annotationTimestamp,
+      start_seconds: annotationTimestamp,
+      end_seconds: annotationTimestamp,
       identity_affirmation: nativeAnnotationDraft.identityAffirmation.trim() || undefined,
       role_affirmation: nativeAnnotationDraft.roleAffirmation.trim() || undefined,
       audio_foley_note: nativeAnnotationDraft.audioFoleyNote.trim() || undefined,
@@ -2018,6 +2430,7 @@ export default function VideoPanel() {
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
+    jumpToTime(annotationTimestamp);
     setNativeAnnotationMode(false);
     setSelectedOverlayKey(`manual-${annotation.id}`);
     const savedDetail = (
@@ -2035,8 +2448,10 @@ export default function VideoPanel() {
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [
     analysisData?.annotationCorrections,
-    currentTime,
     draftBox,
+    draftTimestamp,
+    getAuthoritativeVideoTime,
+    jumpToTime,
     nativeAnnotationDraft,
     resetNativeAnnotationDraft,
     videoId,
@@ -2083,27 +2498,73 @@ export default function VideoPanel() {
 
   const handleNativeAnnotationPointerDown = React.useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!nativeAnnotationMode) {
+      if (!nativeAnnotationMode && !forensicRoiMode) {
         return;
       }
+      event.preventDefault();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      videoRef.current?.pause();
       const point = buildNormalizedDraftPoint(event.clientX, event.clientY);
       if (!point) {
         return;
       }
       setSelectedOverlayKey(null);
+      setDraftTimestamp(Number(getAuthoritativeVideoTime().toFixed(3)));
+
+      const activeForensicBox = draftBox || lockedForensicRoiBox;
+      const pointerInsideActiveBox =
+        forensicRoiMode &&
+        activeForensicBox &&
+        point.x >= activeForensicBox.x &&
+        point.x <= activeForensicBox.x + activeForensicBox.w &&
+        point.y >= activeForensicBox.y &&
+        point.y <= activeForensicBox.y + activeForensicBox.h;
+
+      if (pointerInsideActiveBox && activeForensicBox) {
+        setDraftBox(activeForensicBox);
+        setLockedForensicRoiBox(null);
+        setDraftStartPoint(null);
+        setForensicRoiDragOffset({
+          x: point.x - activeForensicBox.x,
+          y: point.y - activeForensicBox.y,
+        });
+        return;
+      }
+
+      setForensicRoiDragOffset(null);
+      setLockedForensicRoiBox(null);
       setDraftStartPoint(point);
       setDraftBox({ x: point.x, y: point.y, w: 0, h: 0 });
     },
-    [buildNormalizedDraftPoint, nativeAnnotationMode],
+    [
+      buildNormalizedDraftPoint,
+      draftBox,
+      forensicRoiMode,
+      getAuthoritativeVideoTime,
+      lockedForensicRoiBox,
+      nativeAnnotationMode,
+    ],
   );
 
   const handleNativeAnnotationPointerMove = React.useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!nativeAnnotationMode || !draftStartPoint) {
+      if (!nativeAnnotationMode && !forensicRoiMode) {
         return;
       }
+      event.preventDefault();
       const point = buildNormalizedDraftPoint(event.clientX, event.clientY);
       if (!point) {
+        return;
+      }
+      if (forensicRoiMode && forensicRoiDragOffset && draftBox) {
+        setDraftBox({
+          ...draftBox,
+          x: clamp(point.x - forensicRoiDragOffset.x, 0, Math.max(0, 1 - draftBox.w)),
+          y: clamp(point.y - forensicRoiDragOffset.y, 0, Math.max(0, 1 - draftBox.h)),
+        });
+        return;
+      }
+      if (!draftStartPoint) {
         return;
       }
       setDraftBox(
@@ -2115,15 +2576,100 @@ export default function VideoPanel() {
         ),
       );
     },
-    [buildNormalizedDraftPoint, draftStartPoint, nativeAnnotationMode],
+    [
+      buildNormalizedDraftPoint,
+      draftBox,
+      draftStartPoint,
+      forensicRoiDragOffset,
+      forensicRoiMode,
+      nativeAnnotationMode,
+    ],
   );
 
-  const handleNativeAnnotationPointerUp = React.useCallback(() => {
+  const handleNativeAnnotationPointerUp = React.useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
+    event?.preventDefault();
+    if (event?.currentTarget && event.pointerId !== undefined) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
     if (!draftBox || draftBox.w < 0.01 || draftBox.h < 0.01) {
       setDraftBox(null);
+      setDraftTimestamp(null);
+      setDraftStartPoint(null);
+      setForensicRoiDragOffset(null);
+      return;
+    }
+
+    if (forensicRoiMode && videoId) {
+      const videoElement = videoRef.current;
+      const naturalWidth = Math.max(1, videoElement?.videoWidth || 1);
+      const naturalHeight = Math.max(1, videoElement?.videoHeight || 1);
+      const selectedTime = Number(
+        (draftTimestamp ?? getAuthoritativeVideoTime()).toFixed(3),
+      );
+      const intentLabel =
+        FORENSIC_ROI_INTENT_OPTIONS.find((option) => option.value === forensicRoiIntent)
+          ?.label || forensicRoiIntent;
+      const payload: ForensicRegionSelectedPayload = {
+        videoId,
+        time: selectedTime,
+        intent: forensicRoiIntent,
+        label: `${intentLabel} ROI`,
+        region: {
+          x: Math.round(draftBox.x * naturalWidth),
+          y: Math.round(draftBox.y * naturalHeight),
+          w: Math.round(draftBox.w * naturalWidth),
+          h: Math.round(draftBox.h * naturalHeight),
+        },
+        normalizedRegion: draftBox,
+      };
+      eventBus.emit("forensicRegionSelected", payload);
+      setLockedForensicRoiBox(draftBox);
+      setForensicRoiMode(false);
     }
     setDraftStartPoint(null);
-  }, [draftBox]);
+    setForensicRoiDragOffset(null);
+  }, [
+    draftBox,
+    draftTimestamp,
+    forensicRoiDragOffset,
+    forensicRoiIntent,
+    forensicRoiMode,
+    getAuthoritativeVideoTime,
+    videoId,
+  ]);
+
+  const handleForensicRoiContextMenu = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!forensicRoiMode && !lockedForensicRoiBox && !draftBox) {
+        return;
+      }
+      event.preventDefault();
+      const rect = event.currentTarget.getBoundingClientRect();
+      setForensicRoiMenu({
+        x: clamp(event.clientX - rect.left, 0, rect.width),
+        y: clamp(event.clientY - rect.top, 0, rect.height),
+      });
+    },
+    [draftBox, forensicRoiMode, lockedForensicRoiBox],
+  );
+
+  const chooseForensicRoiIntent = React.useCallback((intent: ForensicRoiIntent) => {
+    setForensicRoiIntent(intent);
+    setForensicRoiMenu(null);
+    eventBus.emit("forensicRoiIntentSelected", { intent });
+  }, []);
+
+  const handleForensicRoiWheel = React.useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (!forensicRoiMode) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? 1 : -1;
+      nudgeTime(direction * 0.04);
+    },
+    [forensicRoiMode, nudgeTime],
+  );
 
   const saveObjectBBoxCorrection = React.useCallback(async () => {
     if (!videoId || !selectedOverlay || selectedOverlay.modality !== "object") {
@@ -2681,6 +3227,7 @@ export default function VideoPanel() {
   }, [toneScanZones]);
   const currentHumanPresenceScan = useMemo(() => {
     const personCount = activeRawObjects.filter((item) => item.class_name === "person").length;
+    const fallbackCount = activeRawObjects.filter(isFallbackPersonDetection).length;
     return {
       label:
         personCount === 0
@@ -2689,6 +3236,7 @@ export default function VideoPanel() {
             ? "one person"
             : "multiple people",
       personCount,
+      fallbackCount,
       faceVisibility: nearbyFaces.length > 0 ? "face visible" : "no clear face",
     };
   }, [activeRawObjects, nearbyFaces.length]);
@@ -3242,7 +3790,7 @@ export default function VideoPanel() {
 
                 {renderedVideoRect && overlayBoxes.length > 0 && (
                   <div
-                    className="pointer-events-none absolute"
+                    className="pointer-events-none absolute z-20"
                     style={{
                       left: renderedVideoRect.x,
                       top: renderedVideoRect.y,
@@ -3253,21 +3801,41 @@ export default function VideoPanel() {
                     {overlayBoxes.map((overlay) => {
                       const videoWidth = videoRef.current?.videoWidth || 1;
                       const videoHeight = videoRef.current?.videoHeight || 1;
+                      const overlayStart = getOverlayTimestamp(overlay);
+                      const overlayDuration = getOverlayDuration(overlay);
+                      const overlayEnd = Math.min(
+                        duration || overlayStart + overlayDuration,
+                        overlayStart + overlayDuration,
+                      );
+                      const overlayScrubMax = Math.max(overlayStart + 0.001, overlayEnd);
+                      const overlayScrubValue = clamp(currentTime, overlayStart, overlayScrubMax);
+                      const selected = selectedOverlayKey === overlay.key;
                       return (
-                        <button
+                        <div
                           key={overlay.key}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={(event) => {
                             event.stopPropagation();
+                            openEvidencePanelForOverlay(overlay);
+                            setSelectedOverlayKey((current) =>
+                              current === overlay.key ? null : overlay.key,
+                            );
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openEvidencePanelForOverlay(overlay);
                             setSelectedOverlayKey((current) =>
                               current === overlay.key ? null : overlay.key,
                             );
                           }}
                           className={`pointer-events-auto absolute overflow-hidden rounded border ${overlay.color} ${
-                            overlay.modality === "object" || overlay.modality === "manual"
-                              ? "cursor-pointer"
-                              : "pointer-events-none"
-                          } ${selectedOverlayKey === overlay.key ? "ring-2 ring-cyan-300/70" : ""}`}
+                            "cursor-pointer"
+                          } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
                           style={{
                             left: `${(overlay.x / videoWidth) * 100}%`,
                             top: `${(overlay.y / videoHeight) * 100}%`,
@@ -3276,20 +3844,56 @@ export default function VideoPanel() {
                           }}
                           title={
                             overlay.modality === "object" || overlay.modality === "manual"
-                              ? "Click for bbox actions"
-                              : overlay.label
+                              ? "Click for evidence panel and bbox actions"
+                              : "Click for evidence panel"
                           }
                         >
                           <div className="truncate bg-black/60 px-1 py-0.5 text-[10px] text-slate-100">
                             {overlay.label}
                           </div>
-                          {selectedOverlayKey === overlay.key &&
-                            (overlay.modality === "object" || overlay.modality === "manual") && (
-                            <div className="absolute left-0 top-0 z-20 -translate-y-full rounded border border-slate-700 bg-[#111111] px-1.5 py-1 shadow-lg">
-                              <div className="mb-1 text-[10px] text-slate-300">
-                                {overlay.label}
+                          {selected && (
+                            <div
+                              className="absolute inset-x-1 bottom-1 z-20 rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
+                              onClick={(event) => event.stopPropagation()}
+                              onMouseDown={(event) => event.stopPropagation()}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            >
+                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
+                                <span className="truncate">{overlay.label}</span>
+                                <span className="shrink-0 text-slate-500">
+                                  {formatPreciseTime(overlayScrubValue)}
+                                </span>
                               </div>
-                              <div className="flex items-center gap-1">
+                              <input
+                                type="range"
+                                min={overlayStart}
+                                max={overlayScrubMax}
+                                step={0.001}
+                                value={overlayScrubValue}
+                                onClick={(event) => event.stopPropagation()}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onChange={(event) => jumpToTime(Number(event.target.value))}
+                                className="mb-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-cyan-300"
+                                aria-label="Selected bounding box timeline"
+                              />
+                              <div className="mb-1 flex items-center gap-1 text-[10px] text-slate-400">
+                                <span className="shrink-0">Span {overlayDuration.toFixed(1)}s</span>
+                                <input
+                                  type="range"
+                                  min="0.1"
+                                  max="8"
+                                  step="0.1"
+                                  value={overlayDuration}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onMouseDown={(event) => event.stopPropagation()}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onChange={(event) => setOverlayDuration(overlay.key, Number(event.target.value))}
+                                  className="h-4 min-w-0 flex-1"
+                                  aria-label="Selected bounding box duration"
+                                />
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1">
                                 {overlay.modality === "object" ? (
                                   <>
                                     <button
@@ -3313,7 +3917,7 @@ export default function VideoPanel() {
                                       Drop
                                     </button>
                                   </>
-                                ) : (
+                                ) : overlay.modality === "manual" ? (
                                   <button
                                     type="button"
                                     onClick={(event) => {
@@ -3324,7 +3928,17 @@ export default function VideoPanel() {
                                   >
                                     Delete
                                   </button>
-                                )}
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    seedForensicRoiFromOverlay(overlay, overlayDuration);
+                                  }}
+                                  className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
+                                >
+                                  Use ROI
+                                </button>
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -3338,37 +3952,110 @@ export default function VideoPanel() {
                               </div>
                             </div>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
                 )}
 
-                {renderedVideoRect && nativeAnnotationMode && (
+                {renderedVideoRect &&
+                  (nativeAnnotationMode || forensicRoiMode || lockedForensicRoiBox) && (
                   <div
                     ref={nativeOverlayRef}
-                    className="absolute z-10 cursor-crosshair"
+                    className={`absolute ${nativeAnnotationMode || forensicRoiMode ? "z-30" : "z-10"} cursor-crosshair`}
                     style={{
                       left: renderedVideoRect.x,
                       top: renderedVideoRect.y,
                       width: renderedVideoRect.width,
                       height: renderedVideoRect.height,
+                      pointerEvents:
+                        nativeAnnotationMode || forensicRoiMode
+                          ? "auto"
+                          : "none",
+                    }}
+                    onClick={(event) => {
+                      if (nativeAnnotationMode || forensicRoiMode || !lockedForensicRoiBox) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openPanel("ToolsPanel", { videoId, workspace: "forensic" });
+                      eventBus.emit("toolsWorkspaceOpen", { workspace: "forensic", videoId });
                     }}
                     onPointerDown={handleNativeAnnotationPointerDown}
                     onPointerMove={handleNativeAnnotationPointerMove}
                     onPointerUp={handleNativeAnnotationPointerUp}
                     onPointerLeave={handleNativeAnnotationPointerUp}
+                    onWheel={handleForensicRoiWheel}
+                    onContextMenu={handleForensicRoiContextMenu}
                   >
-                    {draftBox && (
+                    {forensicRoiMode && (
+                      <div className="pointer-events-none absolute left-2 top-2 rounded border border-cyan-300/40 bg-black/70 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-cyan-100">
+                        Forensic ROI armed / {forensicRoiIntent} / drag box or draw new
+                      </div>
+                    )}
+                    {(draftBox || lockedForensicRoiBox) && (
                       <div
-                        className="absolute border-2 border-amber-300/90 bg-amber-300/10"
+                        className={`absolute border-2 ${
+                          forensicRoiMode
+                            ? "border-cyan-300/90 bg-cyan-300/10"
+                            : "border-amber-300/90 bg-amber-300/10"
+                        }`}
                         style={{
-                          left: `${draftBox.x * 100}%`,
-                          top: `${draftBox.y * 100}%`,
-                          width: `${draftBox.w * 100}%`,
-                          height: `${draftBox.h * 100}%`,
+                          left: `${((draftBox || lockedForensicRoiBox)?.x ?? 0) * 100}%`,
+                          top: `${((draftBox || lockedForensicRoiBox)?.y ?? 0) * 100}%`,
+                          width: `${((draftBox || lockedForensicRoiBox)?.w ?? 0) * 100}%`,
+                          height: `${((draftBox || lockedForensicRoiBox)?.h ?? 0) * 100}%`,
                         }}
                       />
+                    )}
+                    {forensicRoiMenu && (
+                      <div
+                        className="absolute z-20 min-w-36 rounded border border-cyan-300/20 bg-[#101214] p-1 text-[11px] text-slate-200 shadow-xl"
+                        style={{
+                          left: forensicRoiMenu.x,
+                          top: forensicRoiMenu.y,
+                        }}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onPointerMove={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onPointerUp={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                      >
+                        {FORENSIC_ROI_INTENT_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`block w-full rounded px-2 py-1 text-left hover:bg-cyan-300/10 ${
+                              option.value === forensicRoiIntent
+                                ? "text-cyan-100"
+                                : "text-slate-300"
+                            }`}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              chooseForensicRoiIntent(option.value);
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}
@@ -3594,6 +4281,7 @@ export default function VideoPanel() {
                     }
                     setSelectedOverlayKey(null);
                     setNativeSaveMessage(null);
+                    setForensicRoiMode(false);
                     setNativeAnnotationMode(true);
                   }}
                 >
@@ -3991,6 +4679,9 @@ export default function VideoPanel() {
                       </div>
                       <div className="rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-[10px] text-[var(--ui-passive-text)]">
                         persons {currentHumanPresenceScan.personCount}
+                        {currentHumanPresenceScan.fallbackCount > 0
+                          ? ` / fallback ${currentHumanPresenceScan.fallbackCount}`
+                          : ""}
                       </div>
                     </>
                   )}

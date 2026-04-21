@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.audio_sample_data_cloud.schema.json",
+  "title": "VAA1 Audio Sample Data Cloud Profile",
+  "type": "object",
+  "required": [
+    "cloud_id",
+    "entity_type",
+    "entity_label",
+    "source_media_context",
+    "samples",
+    "cloud_summary",
+    "provenance"
+  ],
+  "properties": {
+    "cloud_id": {
+      "type": "string"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": ["speaker", "character_voice", "role_voice", "sound_role", "unknown_speaker"]
+    },
+    "entity_label": {
+      "type": "string"
+    },
+    "entity_status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "likely",
+        "suspected",
+        "ambiguous",
+        "contested",
+        "provided_reference"
+      ]
+    },
+    "source_media_context": {
+      "type": "object",
+      "properties": {
+        "analysis_id": { "type": "string" },
+        "source_media_id": { "type": "string" },
+        "genre": { "type": "string" },
+        "genre_subtype": { "type": "string" },
+        "situational_genre": { "type": "string" },
+        "situational_subtype": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sample_id",
+          "time_start",
+          "time_end",
+          "source_type",
+          "confidence",
+          "epistemic_status"
+        ],
+        "properties": {
+          "sample_id": { "type": "string" },
+          "time_start": { "type": "number" },
+          "time_end": { "type": "number" },
+          "transcript_text": { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "manual_identification",
+              "metadata_reference",
+              "automatic_detection",
+              "multimodal_triangulation",
+              "forensic_render",
+              "analyst_promoted_candidate"
+            ]
+          },
+          "supporting_evidence_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "epistemic_status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "likely",
+              "suspected",
+              "ambiguous",
+              "contested",
+              "provided_reference"
+            ]
+          },
+          "review_state": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "unreviewed",
+              "confirmed",
+              "uncertain",
+              "contested",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "audio_features": {
+            "type": "object",
+            "properties": {
+              "voice_embedding_ref": { "type": "string" },
+              "pitch_hz_mean": { "type": "number" },
+              "pitch_hz_range": { "type": "number" },
+              "energy_rms_mean": { "type": "number" },
+              "energy_dbfs_mean": { "type": "number" },
+              "pace_wps": { "type": "number" },
+              "rhythm_profile_label": { "type": "string" },
+              "tonality_profile_label": { "type": "string" },
+              "emphasis_score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "overlap_seconds": { "type": "number", "minimum": 0 },
+              "turn_transition_label": { "type": "string" },
+              "sound_environment_label": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "speech_role_hints": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "language_context": {
+            "type": "object",
+            "properties": {
+              "language": { "type": "string" },
+              "speaker_state": { "type": "string" },
+              "prosody_label": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "open_note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cloud_summary": {
+      "type": "object",
+      "properties": {
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "confirmed_sample_count": { "type": "integer", "minimum": 0 },
+        "metadata_reference_count": { "type": "integer", "minimum": 0 },
+        "average_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "dominant_voice_signature_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "prosody_profile": {
+          "type": "object"
+        },
+        "turn_taking_profile": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "created_by": { "type": "string" },
+        "updated_by": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

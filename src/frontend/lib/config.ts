@@ -99,6 +99,14 @@ export const API_CONFIG = {
       mimeType: "application/json",
       color: "text-amber-400",
     },
+    audio_diarization: {
+      name: "Audio Diarization Scaffold",
+      extension: ".json",
+      icon: "json",
+      description: "Speaker-turn and embedding contract for pyannote.audio, diart, and SpeechBrain readiness",
+      mimeType: "application/json",
+      color: "text-emerald-400",
+    },
     time_bank_audio: {
       name: "Time Bank Audio",
       extension: ".json",
@@ -217,6 +225,7 @@ export const API_CONFIG = {
     "transcript",
     "linked_transcript",
     "audio_prosody",
+    "audio_diarization",
     "time_bank_audio",
     "time_bank_ocr",
     "time_bank_objects",

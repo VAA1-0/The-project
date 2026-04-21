@@ -7,6 +7,8 @@
     "build": "next build",
     "start:electron": "cross-env NODE_ENV=development concurrently \"npm run dev\" \"npm run electron\"",
     "electron": "electron ../../electron.js",
+    "test": "node --test tests/*.test.mjs",
+    "test:governance": "node --test tests/manual-annotation-governance.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {

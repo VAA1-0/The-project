@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
-import type { ManualVisualAnnotation } from "@/lib/api-service";
+import { apiService } from "@/lib/api-service";
+import type {
+  IdentityCandidate,
+  IdentityCandidateLedger,
+  ManualVisualAnnotation,
+} from "@/lib/api-service";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "OBJ",
@@ -76,10 +81,135 @@ function getManualAnnotationDetail(item: ManualVisualAnnotation): string {
 function AutomaticEvidenceSection({
   category,
   analysisData,
+  identityLedger,
+  identityActionMessage,
+  isIdentityActionBusy,
+  identityDrafts,
+  onCreateIdentityCandidates,
+  onIdentityDraftChange,
+  onPromoteIdentityCandidate,
 }: {
   category?: ManualVisualAnnotation["category"];
   analysisData: any;
+  identityLedger?: IdentityCandidateLedger | null;
+  identityActionMessage?: string;
+  isIdentityActionBusy?: boolean;
+  identityDrafts?: Record<string, string>;
+  onCreateIdentityCandidates?: () => void;
+  onIdentityDraftChange?: (candidateId: string, value: string) => void;
+  onPromoteIdentityCandidate?: (candidate: IdentityCandidate, label: string) => void;
 }) {
+  if (category === "Identification") {
+    const candidates = identityLedger?.candidates || [];
+    return (
+      <section className="mb-2 rounded border border-slate-800 bg-slate-950/20">
+        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+          <h3 className="text-[11px] font-semibold text-slate-200">
+            Identity refinement candidates
+          </h3>
+          <span className="text-[10px] text-[var(--ui-passive-text)]">
+            {candidates.length}
+          </span>
+        </div>
+        <div className="space-y-2 p-2">
+          {candidates.length === 0 ? (
+            <div className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
+              No identity candidates prepared for this analysis.
+            </div>
+          ) : (
+            candidates.map((candidate) => (
+              <div
+                key={candidate.candidate_id}
+                className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-slate-200"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-medium">
+                      {candidate.promoted_identity ||
+                        candidate.candidate_label ||
+                        candidate.candidate_id}
+                    </div>
+                    <div className="mt-0.5 text-[var(--ui-passive-text)]">
+                      {candidate.evidence?.annotation_type || "annotation"}{" "}
+                      {candidate.evidence?.track_id
+                        ? `track ${candidate.evidence.track_id}`
+                        : candidate.evidence?.annotation_id || ""}
+                      {candidate.evidence?.time_start !== undefined
+                        ? ` • ${formatSeconds(candidate.evidence.time_start)}`
+                        : ""}
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300">
+                    {candidate.review_state || "unreviewed"}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <input
+                    value={
+                      identityDrafts?.[candidate.candidate_id] ??
+                      candidate.promoted_identity ??
+                      ""
+                    }
+                    onChange={(event) =>
+                      onIdentityDraftChange?.(
+                        candidate.candidate_id,
+                        event.target.value,
+                      )
+                    }
+                    disabled={
+                      isIdentityActionBusy || candidate.review_state === "promoted"
+                    }
+                    placeholder="Confirmed identity label"
+                    className="min-w-0 flex-1 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100 outline-none focus:border-emerald-500/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      isIdentityActionBusy ||
+                      candidate.review_state === "promoted" ||
+                      !(
+                        identityDrafts?.[candidate.candidate_id] ||
+                        candidate.promoted_identity ||
+                        ""
+                      ).trim()
+                    }
+                    className="shrink-0 rounded border border-emerald-500/30 bg-emerald-950/20 px-2 py-1 text-[10px] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() =>
+                      onPromoteIdentityCandidate?.(
+                        candidate,
+                        identityDrafts?.[candidate.candidate_id] ||
+                          candidate.promoted_identity ||
+                          "",
+                      )
+                    }
+                  >
+                    Promote
+                  </button>
+                </div>
+                <div className="mt-1 text-[var(--ui-passive-text)]">
+                  Visual, cinematic, speaker, and reference evidence slots are reserved.
+                </div>
+              </div>
+            ))
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-[var(--ui-passive-text)]">
+              {identityActionMessage || identityLedger?.status || "Candidate review ready."}
+            </span>
+            <button
+              type="button"
+              disabled={isIdentityActionBusy}
+              className="rounded border border-cyan-500/30 bg-cyan-950/20 px-2 py-1 text-[10px] text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onCreateIdentityCandidates}
+            >
+              Refresh candidates
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   if (category === "Audio") {
     const audioProsody = analysisData?.audioProsody || [];
     return (
@@ -186,6 +316,11 @@ export default function MasterSchemaPanel({
 }) {
   const [videoId, setVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const [identityLedger, setIdentityLedger] =
+    useState<IdentityCandidateLedger | null>(null);
+  const [identityActionMessage, setIdentityActionMessage] = useState("");
+  const [isIdentityActionBusy, setIsIdentityActionBusy] = useState(false);
+  const [identityDrafts, setIdentityDrafts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
@@ -233,6 +368,80 @@ export default function MasterSchemaPanel({
 
     void load();
   }, [videoId, refreshNonce]);
+
+  useEffect(() => {
+    async function loadIdentityLedger() {
+      if (!videoId || category !== "Identification") {
+        setIdentityLedger(null);
+        return;
+      }
+
+      try {
+        const nextLedger = await apiService.getIdentityCandidates(videoId);
+        setIdentityLedger(nextLedger);
+        setIdentityDrafts((current) => {
+          const next = { ...current };
+          for (const candidate of nextLedger.candidates || []) {
+            if (next[candidate.candidate_id] === undefined) {
+              next[candidate.candidate_id] = candidate.promoted_identity || "";
+            }
+          }
+          return next;
+        });
+      } catch (error) {
+        console.warn("Failed to load identity candidates:", error);
+        setIdentityLedger(null);
+      }
+    }
+
+    void loadIdentityLedger();
+  }, [videoId, category, refreshNonce]);
+
+  async function createIdentityCandidates() {
+    if (!videoId) return;
+    setIsIdentityActionBusy(true);
+    setIdentityActionMessage("Refreshing identity candidates...");
+    try {
+      await apiService.runIdentityRefinement(videoId);
+      setIdentityLedger(await apiService.getIdentityCandidates(videoId));
+      setIdentityActionMessage("Identity candidates refreshed.");
+      setRefreshNonce((current) => current + 1);
+    } catch (error) {
+      console.error("Failed to refresh identity candidates:", error);
+      setIdentityActionMessage("Identity candidate refresh failed.");
+    } finally {
+      setIsIdentityActionBusy(false);
+    }
+  }
+
+  function updateIdentityDraft(candidateId: string, value: string) {
+    setIdentityDrafts((current) => ({ ...current, [candidateId]: value }));
+  }
+
+  async function promoteIdentityCandidate(candidate: IdentityCandidate, label: string) {
+    if (!videoId) return;
+    const identityLabel = label.trim();
+    if (!identityLabel) return;
+
+    setIsIdentityActionBusy(true);
+    setIdentityActionMessage("Promoting identity candidate...");
+    try {
+      await apiService.promoteIdentityCandidate(
+        videoId,
+        candidate.candidate_id,
+        identityLabel,
+      );
+      setIdentityLedger(await apiService.getIdentityCandidates(videoId));
+      setIdentityActionMessage("Identity candidate promoted.");
+      setRefreshNonce((current) => current + 1);
+      eventBus.emit("analysisCorrectionsChanged", videoId);
+    } catch (error) {
+      console.error("Failed to promote identity candidate:", error);
+      setIdentityActionMessage("Identity promotion failed.");
+    } finally {
+      setIsIdentityActionBusy(false);
+    }
+  }
 
   const groupedAnnotations = useMemo(() => {
     const groups =
@@ -283,7 +492,14 @@ export default function MasterSchemaPanel({
             <AutomaticEvidenceSection
               category={category}
               analysisData={analysisData}
-            />
+          identityLedger={identityLedger}
+          identityActionMessage={identityActionMessage}
+          isIdentityActionBusy={isIdentityActionBusy}
+          identityDrafts={identityDrafts}
+          onCreateIdentityCandidates={createIdentityCandidates}
+          onIdentityDraftChange={updateIdentityDraft}
+          onPromoteIdentityCandidate={promoteIdentityCandidate}
+        />
             {groupedAnnotations.length === 0 ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
             No manual annotations in this schema view yet.

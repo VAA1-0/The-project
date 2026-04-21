@@ -24,9 +24,13 @@ import type {
   AnalysisStartOptions,
   AnnotationCorrections,
   AnnotationCorrectionRule,
+  AudioDiarizationScaffold,
+  ForensicRenderJob,
+  IdentityRefinementStatus,
   ManualVisualAnnotation,
   ManualTranscriptEntry,
   SourceMediaMetadata,
+  SourceSample,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
 import { readFileSync } from "fs";
@@ -1473,6 +1477,10 @@ export interface AnalysisData {
     Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
   >;
   annotationCorrections?: AnnotationCorrections | null;
+  forensicRenderJobs?: ForensicRenderJob[];
+  sourceSamples?: SourceSample[];
+  identityRefinement?: IdentityRefinementStatus | null;
+  audioDiarization?: AudioDiarizationScaffold | null;
   summary: string;
   rawCsv: string;
   rawJson?: any;
@@ -1639,6 +1647,8 @@ export interface AnalysisData {
     };
     audioSegments?: number;
     audioProsodyCues?: number;
+    audioDiarizationError?: string;
+    audioDiarizationTurns?: number;
     audioLanguage?: string;
     audioLanguageName?: string;
     audioLanguageSource?: string;
@@ -2423,6 +2433,7 @@ export interface AnalysisStatus {
     };
     audio_prosody_cues?: number;
     audio_prosody_error?: string;
+    audio_diarization_error?: string;
     face_frames_considered?: number;
     face_frames_selected?: number;
     face_frames_skipped_no_person?: number;
@@ -2455,6 +2466,10 @@ export interface AnalysisStatus {
     }>;
   } | null;
   download_links?: Record<string, string>;
+  forensic_render_jobs?: ForensicRenderJob[];
+  source_samples?: SourceSample[];
+  identity_refinement?: IdentityRefinementStatus | null;
+  audio_diarization?: AudioDiarizationScaffold | null;
   pipeline_type?: string; // This was missing
   analysis_tier?: string;
   modality_focus?: string;
@@ -2835,6 +2850,10 @@ export class VideoService {
         annotations: nativeAnnotations,
         manualAnnotationsByCategory,
         annotationCorrections: corrections,
+        forensicRenderJobs: status.forensic_render_jobs || [],
+        sourceSamples: status.source_samples || [],
+        identityRefinement: status.identity_refinement || null,
+        audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
         status: "completed",
@@ -2906,6 +2925,8 @@ export class VideoService {
               : undefined),
           audioError: status.summary?.audio_error,
           audioProsodyError: status.summary?.audio_prosody_error,
+          audioDiarizationError: status.summary?.audio_diarization_error,
+          audioDiarizationTurns: status.audio_diarization?.turn_count,
           posError: status.summary?.pos_error,
           quantError: status.summary?.quan_error,
           languageSupport:

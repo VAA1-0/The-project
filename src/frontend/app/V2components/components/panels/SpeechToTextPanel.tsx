@@ -869,6 +869,60 @@ export default function SpeechToTextPanel({
               Audio prosody
             </div>
             <div className={prosodySectionClass}>
+              {isAudioMode ? (
+                <div className="rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-emerald-100/80">
+                      Diarization stack
+                    </div>
+                    <div className="rounded border border-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-100/70">
+                      {analysisData?.audioDiarization?.status || "planned"}
+                    </div>
+                  </div>
+                  <div className="grid gap-2 text-[11px] text-slate-300 sm:grid-cols-2">
+                    <div className="rounded border border-white/8 bg-[#141414] px-2 py-2">
+                      VAD:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.vad?.provider ||
+                        "pyannote.audio"}
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-2 py-2">
+                      Diarization:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.diarization?.provider ||
+                        "pyannote.audio"}
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-2 py-2">
+                      Embeddings:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.speaker_embeddings
+                        ?.primary_provider || "pyannote.audio"}
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-2 py-2">
+                      Real-time:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.real_time?.provider ||
+                        "diart"}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                    <span>
+                      Turns: {analysisData?.audioDiarization?.turn_count ?? 0}
+                    </span>
+                    <span>
+                      Reference upload:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.reference_upload
+                        ?.provider || "custom"}
+                    </span>
+                    <span>
+                      Alternative embeddings:{" "}
+                      {analysisData?.audioDiarization?.stack_plan?.speaker_embeddings
+                        ?.alternative_provider || "SpeechBrain"}
+                    </span>
+                  </div>
+                  {analysisData?.metadata?.audioDiarizationError ? (
+                    <div className="mt-2 text-[10px] text-amber-200">
+                      {analysisData.metadata.audioDiarizationError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {manualAudioAnnotations.length > 0 ? (
                 <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
                   <div className="mb-2 flex items-center justify-between gap-3">

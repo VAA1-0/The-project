@@ -18,10 +18,6 @@ except Exception:  # pragma: no cover - fallback for lightweight test envs
     stopwords = None
 
 
-if nltk is not None:
-    nltk.download("stopwords", quiet=True)
-
-
 def _load_whisper_language_maps() -> tuple[dict[str, str], dict[str, str]]:
     try:
         from whisper.tokenizer import LANGUAGES, TO_LANGUAGE_CODE

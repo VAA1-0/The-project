@@ -9,6 +9,7 @@ import {
   ScanSearch,
   SmilePlus,
   Languages,
+  Crosshair,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,8 +50,11 @@ import type {
 import { apiService } from "@/lib/api-service";
 import type {
   AnalysisEvent,
+  ForensicRenderRegionKeyframe,
+  ForensicRenderJob,
   ManualVisualAnnotation,
   MorphologyCatalogItem,
+  SourceSample,
 } from "@/lib/api-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { listJobs } from "@/cvat-api/client";
@@ -75,10 +79,52 @@ type ToolsWorkspace =
   | "face"
   | "language"
   | "mission"
-  | "expression";
+  | "expression"
+  | "forensic";
 
 type VisualWorkspaceView = "cinematic" | "inspectors";
 type AnnotationPluginView = "menu" | "cvat";
+type SingleSourceMarks = { a?: number; b?: number };
+type ForensicRegionSelectedPayload = {
+  videoId?: string;
+  time?: number;
+  time_start?: number;
+  time_end?: number;
+  intent?: string;
+  label?: string;
+  region?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
+};
+
+type ForensicRoiIntent =
+  | "identification"
+  | "expression"
+  | "movement"
+  | "object"
+  | "ocr"
+  | "interaction"
+  | "other";
+
+const FORENSIC_ROI_INTENT_OPTIONS: Array<{
+  value: ForensicRoiIntent;
+  label: string;
+}> = [
+  { value: "identification", label: "Identification" },
+  { value: "expression", label: "Expressions" },
+  { value: "movement", label: "Movement" },
+  { value: "object", label: "Object" },
+  { value: "ocr", label: "OCR" },
+  { value: "interaction", label: "Interaction" },
+  { value: "other", label: "Other" },
+];
+
+type ForensicOpenAsset =
+  | { kind: "render"; job: ForensicRenderJob }
+  | { kind: "sample"; sample: SourceSample; assetType: "visual" | "audio" };
 
 type CinematicTimelineEntry = {
   key: string;
@@ -101,6 +147,8 @@ const CINEMATIC_SHOT_SIZE_OPTIONS = [
   "point of view",
   "establishing shot",
 ];
+
+const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 
 const MANUAL_LEAF_NAV_OPTIONS: Array<{
   category: ManualVisualAnnotation["category"];
@@ -213,6 +261,76 @@ function formatSeconds(value?: number | null): string {
   if (!Number.isFinite(safe)) return "0s";
   const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(3);
   return `${Number(rounded)}s`;
+}
+
+function parseSecondsInput(value: string): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function compactCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function formatForensicIntentLabel(intent?: string | null): string {
+  if (!intent) return "ROI";
+  const option = FORENSIC_ROI_INTENT_OPTIONS.find((item) => item.value === intent);
+  if (option) return option.label;
+  return intent
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildForensicJobLedgerTitle(job: ForensicRenderJob): string {
+  const reason = job.reason?.trim();
+  if (reason) return reason;
+  const intent = formatForensicIntentLabel(job.region_intent);
+  const region = job.region_type && job.region_type !== "full_frame" ? " ROI" : "";
+  return `${intent}${region} / ${formatSeconds(job.time_start)}-${formatSeconds(job.time_end)}`;
+}
+
+function buildForensicDefaultReason(
+  intent: ForensicRoiIntent,
+  timeStart: number,
+  timeEnd: number,
+): string {
+  return `${formatForensicIntentLabel(intent)} ROI / ${formatSeconds(timeStart)}-${formatSeconds(timeEnd)}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function compactLabels(value: unknown, limit = 5): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function contextRefLabels(value: unknown, limit = 5): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = asRecord(item);
+      return String(
+        record.identity_affirmation ||
+          record.custom_label ||
+          record.enriched_label ||
+          record.raw_label ||
+          record.label ||
+          record.class_name ||
+          "",
+      ).trim();
+    })
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function ManualAnnotationLeafSection({
@@ -419,6 +537,42 @@ export default function ToolsPanel() {
   const [pendingShotSizeTimestamp, setPendingShotSizeTimestamp] = useState("");
   const [shotAdditionSelectKey, setShotAdditionSelectKey] = useState(0);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const [forensicMode, setForensicMode] = useState<
+    "science_grade" | "forensic_accuracy"
+  >("science_grade");
+  const [forensicStart, setForensicStart] = useState("");
+  const [forensicEnd, setForensicEnd] = useState("");
+  const [forensicRequestedFps, setForensicRequestedFps] = useState("");
+  const [forensicReason, setForensicReason] = useState("");
+  const [forensicRegionEnabled, setForensicRegionEnabled] = useState(false);
+  const [forensicRegion, setForensicRegion] = useState({
+    x: "",
+    y: "",
+    w: "",
+    h: "",
+  });
+  const [forensicRegionIntent, setForensicRegionIntent] =
+    useState<ForensicRoiIntent>("identification");
+  const [forensicRegionTrack, setForensicRegionTrack] = useState<
+    ForensicRenderRegionKeyframe[]
+  >([]);
+  const [forensicJobs, setForensicJobs] = useState<ForensicRenderJob[]>([]);
+  const [forensicJobsLoading, setForensicJobsLoading] = useState(false);
+  const [forensicJobsError, setForensicJobsError] = useState<string | null>(null);
+  const [forensicCreating, setForensicCreating] = useState(false);
+  const [sourceSamples, setSourceSamples] = useState<SourceSample[]>([]);
+  const [sourceSamplesLoading, setSourceSamplesLoading] = useState(false);
+  const [sourceSampleCreating, setSourceSampleCreating] = useState(false);
+  const [sourceSampleType, setSourceSampleType] = useState<
+    "visual" | "audio" | "visual_audio"
+  >("visual_audio");
+  const [sourceSampleLabel, setSourceSampleLabel] = useState("");
+  const [sourceSamplePurpose, setSourceSamplePurpose] = useState("");
+  const [forensicOpenAsset, setForensicOpenAsset] =
+    useState<ForensicOpenAsset | null>(null);
+  const [forensicSourceMarks, setForensicSourceMarks] =
+    useState<SingleSourceMarks>({});
+  const [forensicRegionSource, setForensicRegionSource] = useState("");
 
   const lastObjectUrl = React.useRef<string | null>(null);
   const pollingIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -457,6 +611,7 @@ export default function ToolsPanel() {
     { key: "language", label: "Language records" },
     { key: "mission", label: "Mission records" },
     { key: "expression", label: "Expression records" },
+    { key: "forensic", label: "Forensic render" },
   ];
 
   const activateWorkspaceSection = (section: ToolsWorkspace) => {
@@ -524,6 +679,10 @@ export default function ToolsPanel() {
     if (section === "expression") {
       setActiveWorkspace("expression");
       setShowExpressionRecords(true);
+      return;
+    }
+    if (section === "forensic") {
+      setActiveWorkspace("forensic");
     }
   };
 
@@ -740,6 +899,421 @@ export default function ToolsPanel() {
     },
     [openPanel, videoId],
   );
+
+  const loadForensicRenderJobs = React.useCallback(
+    async (targetAnalysisId = videoId) => {
+      if (!targetAnalysisId) {
+        setForensicJobs([]);
+        return;
+      }
+
+      try {
+        setForensicJobsLoading(true);
+        setForensicJobsError(null);
+        const jobs = await apiService.listForensicRenderJobs(targetAnalysisId);
+        setForensicJobs(
+          [...jobs].sort((left, right) =>
+            String(right.created_at || right.requested_at || "").localeCompare(
+              String(left.created_at || left.requested_at || ""),
+            ),
+          ),
+        );
+      } catch (error) {
+        setForensicJobsError(
+          error instanceof Error
+            ? error.message
+            : "Forensic render jobs could not be loaded.",
+        );
+      } finally {
+        setForensicJobsLoading(false);
+      }
+    },
+    [videoId],
+  );
+
+  const loadSourceSamples = React.useCallback(
+    async (targetAnalysisId = videoId) => {
+      if (!targetAnalysisId) {
+        setSourceSamples([]);
+        return;
+      }
+
+      try {
+        setSourceSamplesLoading(true);
+        setForensicJobsError(null);
+        const samples = await apiService.listSourceSamples(targetAnalysisId);
+        setSourceSamples(
+          [...samples].sort((left, right) =>
+            String(right.created_at || "").localeCompare(String(left.created_at || "")),
+          ),
+        );
+      } catch (error) {
+        setForensicJobsError(
+          error instanceof Error
+            ? error.message
+            : "Source samples could not be loaded.",
+        );
+      } finally {
+        setSourceSamplesLoading(false);
+      }
+    },
+    [videoId],
+  );
+
+  const setForensicWindowFromCurrentTime = React.useCallback(() => {
+    const start = Math.max(0, currentVideoTime);
+    setForensicStart(start.toFixed(3));
+    setForensicEnd((start + 5).toFixed(3));
+  }, [currentVideoTime]);
+
+  const setForensicWindowFromMarks = React.useCallback(() => {
+    if (
+      typeof forensicSourceMarks.a !== "number" ||
+      typeof forensicSourceMarks.b !== "number"
+    ) {
+      setForensicJobsError("Set Mark A and Mark B in the Video panel first.");
+      return;
+    }
+
+    const start = Math.max(0, Math.min(forensicSourceMarks.a, forensicSourceMarks.b));
+    const end = Math.max(forensicSourceMarks.a, forensicSourceMarks.b);
+    if (end <= start) {
+      setForensicJobsError("Mark A and Mark B need to define a non-empty window.");
+      return;
+    }
+
+    setForensicJobsError(null);
+    setForensicStart(start.toFixed(3));
+    setForensicEnd(end.toFixed(3));
+    openVideoAtTime(start);
+  }, [forensicSourceMarks.a, forensicSourceMarks.b, openVideoAtTime]);
+
+  const openForensicRoiTool = React.useCallback(() => {
+    if (!videoId) return;
+    const region = forensicRegionEnabled
+      ? {
+          x: Number(forensicRegion.x),
+          y: Number(forensicRegion.y),
+          w: Number(forensicRegion.w),
+          h: Number(forensicRegion.h),
+        }
+      : null;
+    eventBus.emit("videoIdChanged", videoId);
+    openPanel("VideoPanel");
+    window.setTimeout(() => {
+      eventBus.emit("videoIdChanged", videoId);
+      eventBus.emit("forensicRoiToolOpen", {
+        intent: forensicRegionIntent,
+        region:
+          region &&
+          Number.isFinite(region.x) &&
+          Number.isFinite(region.y) &&
+          Number.isFinite(region.w) &&
+          Number.isFinite(region.h) &&
+          region.w > 0 &&
+          region.h > 0
+            ? region
+            : undefined,
+        time: currentVideoTime,
+      });
+    }, 60);
+  }, [
+    currentVideoTime,
+    forensicRegion,
+    forensicRegionEnabled,
+    forensicRegionIntent,
+    openPanel,
+    videoId,
+  ]);
+
+  const addForensicRegionKeyframe = React.useCallback(
+    (timeOverride?: number) => {
+      const region = {
+        x: Number(forensicRegion.x),
+        y: Number(forensicRegion.y),
+        w: Number(forensicRegion.w),
+        h: Number(forensicRegion.h),
+      };
+      const keyframeTime =
+        typeof timeOverride === "number"
+          ? timeOverride
+          : currentVideoTime;
+      if (
+        !Number.isFinite(region.x) ||
+        !Number.isFinite(region.y) ||
+        !Number.isFinite(region.w) ||
+        !Number.isFinite(region.h) ||
+        region.w <= 0 ||
+        region.h <= 0
+      ) {
+        setForensicJobsError("Draw or enter a valid ROI before adding a keyframe.");
+        return;
+      }
+      const nextKeyframe: ForensicRenderRegionKeyframe = {
+        time: Number(Math.max(0, keyframeTime).toFixed(3)),
+        region,
+        intent: forensicRegionIntent,
+      };
+      setForensicRegionTrack((current) => {
+        const withoutSameTime = current.filter(
+          (item) => Math.abs(item.time - nextKeyframe.time) > 0.0005,
+        );
+        return [...withoutSameTime, nextKeyframe].sort((left, right) => left.time - right.time);
+      });
+      setForensicJobsError(null);
+    },
+    [currentVideoTime, forensicRegion, forensicRegionIntent, forensicStart],
+  );
+
+  const trimForensicEndToCurrentTime = React.useCallback(() => {
+    const start = parseSecondsInput(forensicStart);
+    const end = Number(Math.max(0, currentVideoTime).toFixed(3));
+    if (start !== null && end <= start) {
+      setForensicJobsError("Current time must be after the render start.");
+      return;
+    }
+    setForensicEnd(end.toFixed(3));
+    setForensicJobsError(null);
+  }, [currentVideoTime, forensicStart]);
+
+  const fitForensicWindowToRoiKeyframes = React.useCallback(() => {
+    if (forensicRegionTrack.length === 0) {
+      setForensicJobsError("Save at least one ROI keyframe first.");
+      return;
+    }
+    const times = forensicRegionTrack
+      .map((item) => Number(item.time))
+      .filter(Number.isFinite);
+    if (times.length === 0) {
+      setForensicJobsError("ROI keyframes do not contain valid timestamps.");
+      return;
+    }
+    const start = Math.min(...times);
+    const end = Math.max(...times);
+    setForensicStart(start.toFixed(3));
+    setForensicEnd((end > start ? end : start + 0.125).toFixed(3));
+    setForensicJobsError(null);
+  }, [forensicRegionTrack]);
+
+  const openRenderForNativeAnnotation = React.useCallback(
+    (job: ForensicRenderJob) => {
+      if (!job?.analysis_id) return;
+      setForensicStart(String(job.time_start ?? ""));
+      setForensicEnd(String(job.time_end ?? ""));
+      if (job.region) {
+        setForensicRegionEnabled(true);
+        setForensicRegion({
+          x: String(job.region.x),
+          y: String(job.region.y),
+          w: String(job.region.w),
+          h: String(job.region.h),
+        });
+      }
+      setForensicRegionIntent(
+        (job.region_intent as ForensicRoiIntent) || forensicRegionIntent,
+      );
+      setForensicRegionTrack(job.region_track || []);
+      openVideoAtTime(job.time_start ?? 0);
+      window.setTimeout(() => {
+        eventBus.emit("nativeAnnotationOpen", null);
+        if (job.region) {
+          eventBus.emit("forensicRegionDraftOpen", {
+            videoId: job.analysis_id,
+            time: job.time_start,
+            region: job.region,
+          });
+        }
+      }, 80);
+    },
+    [forensicRegionIntent, openVideoAtTime],
+  );
+
+  const createForensicRenderJob = React.useCallback(async () => {
+    if (!videoId || forensicCreating) return;
+
+    const timeStart = parseSecondsInput(forensicStart);
+    const timeEnd = parseSecondsInput(forensicEnd);
+    if (timeStart === null || timeEnd === null || timeEnd <= timeStart) {
+      setForensicJobsError("Use a valid time window with end after start.");
+      return;
+    }
+
+    const requestedFps = forensicRequestedFps.trim()
+      ? Number(forensicRequestedFps)
+      : undefined;
+    if (
+      requestedFps !== undefined &&
+      (!Number.isFinite(requestedFps) || requestedFps <= 0)
+    ) {
+      setForensicJobsError("Requested FPS must be a positive number.");
+      return;
+    }
+
+    const region = forensicRegionEnabled
+      ? {
+          x: Number(forensicRegion.x),
+          y: Number(forensicRegion.y),
+          w: Number(forensicRegion.w),
+          h: Number(forensicRegion.h),
+        }
+      : null;
+
+    if (
+      region &&
+      (!Number.isFinite(region.x) ||
+        !Number.isFinite(region.y) ||
+        !Number.isFinite(region.w) ||
+        !Number.isFinite(region.h) ||
+        region.w <= 0 ||
+        region.h <= 0)
+    ) {
+      setForensicJobsError("Static region needs numeric x, y, width, and height.");
+      return;
+    }
+
+    try {
+      setForensicCreating(true);
+      setForensicJobsError(null);
+      const job = await apiService.createForensicRenderJob(videoId, {
+        mode: forensicMode,
+        time_start: timeStart,
+        time_end: timeEnd,
+        requested_fps: requestedFps,
+        region,
+        region_intent: forensicRegionEnabled ? forensicRegionIntent : undefined,
+        region_track:
+          forensicRegionEnabled && forensicRegionTrack.length > 0
+            ? forensicRegionTrack
+            : undefined,
+        reason:
+          forensicReason.trim() ||
+          (forensicRegionEnabled
+            ? buildForensicDefaultReason(forensicRegionIntent, timeStart, timeEnd)
+            : undefined),
+        requested_by: "vaa1_frontend",
+      });
+      setForensicJobs((current) => [job, ...current]);
+      setForensicOpenAsset({ kind: "render", job });
+    } catch (error) {
+      setForensicJobsError(
+        error instanceof Error
+          ? error.message
+          : "Forensic render job could not be created.",
+      );
+    } finally {
+      setForensicCreating(false);
+    }
+  }, [
+    forensicCreating,
+    forensicEnd,
+    forensicMode,
+    forensicReason,
+    forensicRegion,
+    forensicRegionEnabled,
+    forensicRegionIntent,
+    forensicRegionTrack,
+    forensicRequestedFps,
+    forensicStart,
+    videoId,
+  ]);
+
+  const createSourceSample = React.useCallback(async () => {
+    if (!videoId || sourceSampleCreating) return;
+
+    const timeStart = parseSecondsInput(forensicStart);
+    const timeEnd = parseSecondsInput(forensicEnd);
+    if (timeStart === null || timeEnd === null || timeEnd <= timeStart) {
+      setForensicJobsError("Use a valid time window with end after start.");
+      return;
+    }
+
+    const region = forensicRegionEnabled
+      ? {
+          x: Number(forensicRegion.x),
+          y: Number(forensicRegion.y),
+          w: Number(forensicRegion.w),
+          h: Number(forensicRegion.h),
+        }
+      : null;
+
+    if (
+      region &&
+      (!Number.isFinite(region.x) ||
+        !Number.isFinite(region.y) ||
+        !Number.isFinite(region.w) ||
+        !Number.isFinite(region.h) ||
+        region.w <= 0 ||
+        region.h <= 0)
+    ) {
+      setForensicJobsError("Static region needs numeric x, y, width, and height.");
+      return;
+    }
+
+    try {
+      setSourceSampleCreating(true);
+      setForensicJobsError(null);
+      const sample = await apiService.createSourceSample(videoId, {
+        sample_type: sourceSampleType,
+        time_start: timeStart,
+        time_end: timeEnd,
+        region,
+        label: sourceSampleLabel.trim() || undefined,
+        purpose: sourceSamplePurpose.trim() || undefined,
+        requested_by: "vaa1_frontend",
+      });
+      setSourceSamples((current) => [sample, ...current]);
+      if (sample.visual) {
+        setForensicOpenAsset({ kind: "sample", sample, assetType: "visual" });
+      } else if (sample.audio) {
+        setForensicOpenAsset({ kind: "sample", sample, assetType: "audio" });
+      }
+    } catch (error) {
+      setForensicJobsError(
+        error instanceof Error ? error.message : "Source sample could not be created.",
+      );
+    } finally {
+      setSourceSampleCreating(false);
+    }
+  }, [
+    forensicEnd,
+    forensicRegion,
+    forensicRegionEnabled,
+    forensicStart,
+    sourceSampleCreating,
+    sourceSampleLabel,
+    sourceSamplePurpose,
+    sourceSampleType,
+    videoId,
+  ]);
+
+  const getForensicOpenAssetTitle = React.useCallback(() => {
+    if (!forensicOpenAsset) {
+      return "No artifact open";
+    }
+    if (forensicOpenAsset.kind === "render") {
+      const { job } = forensicOpenAsset;
+      return buildForensicJobLedgerTitle(job);
+    }
+    const { sample, assetType } = forensicOpenAsset;
+    return `${assetType === "visual" ? "Visual" : "Audio"} sample ${sample.sample_id}`;
+  }, [forensicOpenAsset]);
+
+  const getForensicOpenAssetUrl = React.useCallback(() => {
+    if (!forensicOpenAsset) {
+      return "";
+    }
+    if (forensicOpenAsset.kind === "render") {
+      return apiService.getForensicRenderDownloadUrl(
+        forensicOpenAsset.job.analysis_id,
+        forensicOpenAsset.job.render_job_id,
+      );
+    }
+    return apiService.getSourceSampleAssetUrl(
+      forensicOpenAsset.sample.analysis_id,
+      forensicOpenAsset.sample.sample_id,
+      forensicOpenAsset.assetType,
+    );
+  }, [forensicOpenAsset]);
 
   const getCorrectedCinematicEntry = React.useCallback(
     (entry: CinematicTimelineEntry) => {
@@ -1076,7 +1650,146 @@ export default function ToolsPanel() {
     if (!pendingShotSizeTimestamp) {
       setPendingShotSizeTimestamp(currentVideoTime.toFixed(1));
     }
-  }, [currentVideoTime, pendingShotSizeTimestamp]);
+    if (!forensicStart && !forensicEnd) {
+      setForensicStart(currentVideoTime.toFixed(3));
+      setForensicEnd((currentVideoTime + 5).toFixed(3));
+    }
+  }, [currentVideoTime, forensicEnd, forensicStart, pendingShotSizeTimestamp]);
+
+  useEffect(() => {
+    if (!videoId) {
+      setForensicJobs([]);
+      return;
+    }
+    void loadForensicRenderJobs(videoId);
+    void loadSourceSamples(videoId);
+  }, [loadForensicRenderJobs, loadSourceSamples, videoId]);
+
+  useEffect(() => {
+    if (!videoId) {
+      setForensicSourceMarks({});
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(
+        `${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`,
+      );
+      setForensicSourceMarks(raw ? JSON.parse(raw) : {});
+    } catch {
+      setForensicSourceMarks({});
+    }
+  }, [videoId]);
+
+  useEffect(() => {
+    const handleMarksChanged = (payload: {
+      videoId?: string;
+      marks?: SingleSourceMarks;
+    }) => {
+      if (!payload?.videoId || payload.videoId !== videoId) {
+        return;
+      }
+      setForensicSourceMarks(payload.marks || {});
+    };
+
+    eventBus.on("singleSourceMarksChanged", handleMarksChanged);
+    return () => {
+      eventBus.off("singleSourceMarksChanged", handleMarksChanged);
+    };
+  }, [videoId]);
+
+  useEffect(() => {
+    const handleToolsWorkspaceOpen = (payload?: { workspace?: ToolsWorkspace }) => {
+      if (!payload?.workspace) {
+        return;
+      }
+      setActiveWorkspace(payload.workspace);
+    };
+
+    eventBus.on("toolsWorkspaceOpen", handleToolsWorkspaceOpen);
+    return () => {
+      eventBus.off("toolsWorkspaceOpen", handleToolsWorkspaceOpen);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleForensicRegionSelected = (
+      payload: ForensicRegionSelectedPayload,
+    ) => {
+      if (!payload?.videoId || payload.videoId !== videoId || !payload.region) {
+        return;
+      }
+
+      setForensicRegionEnabled(true);
+      setForensicRegion({
+        x: String(payload.region.x),
+        y: String(payload.region.y),
+        w: String(payload.region.w),
+        h: String(payload.region.h),
+      });
+      const intent = (payload.intent || forensicRegionIntent) as ForensicRoiIntent;
+      setForensicRegionIntent(intent);
+      let selectedStart = parseSecondsInput(forensicStart);
+      let selectedEnd = parseSecondsInput(forensicEnd);
+      if (
+        typeof payload.time_start === "number" &&
+        typeof payload.time_end === "number" &&
+        payload.time_end > payload.time_start
+      ) {
+        selectedStart = payload.time_start;
+        selectedEnd = payload.time_end;
+        setForensicStart(payload.time_start.toFixed(3));
+        setForensicEnd(payload.time_end.toFixed(3));
+      } else if (!forensicStart && !forensicEnd && typeof payload.time === "number") {
+        selectedStart = payload.time;
+        selectedEnd = payload.time + 5;
+        setForensicStart(payload.time.toFixed(3));
+        setForensicEnd((payload.time + 5).toFixed(3));
+      }
+      if (typeof payload.time === "number") {
+        const keyframe = {
+          time: Number(payload.time.toFixed(3)),
+          region: payload.region,
+          intent,
+        };
+        setForensicRegionTrack((current) => {
+          const withoutSameTime = current.filter(
+            (item) => Math.abs(item.time - keyframe.time) > 0.0005,
+          );
+          return [...withoutSameTime, keyframe].sort((left, right) => left.time - right.time);
+        });
+      }
+      setForensicRegionSource(
+        typeof payload.time === "number"
+          ? `ROI keyframe saved at ${formatSeconds(payload.time)} for ${payload.label || formatForensicIntentLabel(intent)}`
+          : "ROI selected from Video panel",
+      );
+      if (!forensicReason.trim()) {
+        const label = payload.label?.trim() || formatForensicIntentLabel(intent);
+        setForensicReason(
+          selectedStart !== null && selectedEnd !== null && selectedEnd > selectedStart
+            ? `${label} / ${formatSeconds(selectedStart)}-${formatSeconds(selectedEnd)}`
+            : label,
+        );
+      }
+      setForensicJobsError(null);
+    };
+
+    eventBus.on("forensicRegionSelected", handleForensicRegionSelected);
+    return () => {
+      eventBus.off("forensicRegionSelected", handleForensicRegionSelected);
+    };
+  }, [forensicEnd, forensicReason, forensicRegionIntent, forensicStart, videoId]);
+
+  useEffect(() => {
+    const handleIntentSelected = (payload?: { intent?: ForensicRoiIntent }) => {
+      if (!payload?.intent) return;
+      setForensicRegionIntent(payload.intent);
+    };
+    eventBus.on("forensicRoiIntentSelected", handleIntentSelected);
+    return () => {
+      eventBus.off("forensicRoiIntentSelected", handleIntentSelected);
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1411,6 +2124,14 @@ export default function ToolsPanel() {
         setActiveWorkspace("annotation");
       },
       disabled: !videoId || isPolling || isAnalyzing,
+    },
+    {
+      icon: Crosshair,
+      label: "Forensic render",
+      onClick: () => {
+        setActiveWorkspace("forensic");
+      },
+      disabled: !videoId || isAnalyzing,
     },
     {
       icon: Languages,
@@ -2118,6 +2839,816 @@ export default function ToolsPanel() {
                   </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {activeWorkspace === "forensic" && (
+                <div className="space-y-3 rounded border border-white/8 bg-[#151515] p-3 text-xs text-slate-300">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                        Forensic render
+                      </div>
+                      <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                        Governed snippet rendering for selected source windows.
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                      disabled={!videoId || forensicJobsLoading}
+                      onClick={() => void loadForensicRenderJobs()}
+                    >
+                      Refresh jobs
+                    </Button>
+                  </div>
+
+                  <div className="rounded border border-white/10 bg-[#111111] p-3">
+                    <div className="mb-3 grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="forensic-mode">Mode</Label>
+                        <Select
+                          value={forensicMode}
+                          onValueChange={(value: "science_grade" | "forensic_accuracy") =>
+                            setForensicMode(value)
+                          }
+                          disabled={!videoId || forensicCreating}
+                        >
+                          <SelectTrigger
+                            id="forensic-mode"
+                            className={selectSurfaceClassName}
+                          >
+                            <SelectValue placeholder="Render mode" />
+                          </SelectTrigger>
+                          <SelectContent className={selectContentClassName}>
+                            <SelectItem value="science_grade">Science grade</SelectItem>
+                            <SelectItem value="forensic_accuracy">
+                              Forensic accuracy
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="forensic-fps">Requested FPS</Label>
+                        <Input
+                          id="forensic-fps"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={forensicRequestedFps}
+                          onChange={(event) => setForensicRequestedFps(event.target.value)}
+                          disabled={!videoId || forensicCreating}
+                          className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                          placeholder="Preset"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                      <div className="space-y-1">
+                        <Label htmlFor="forensic-start">Start seconds</Label>
+                        <Input
+                          id="forensic-start"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={forensicStart}
+                          onChange={(event) => setForensicStart(event.target.value)}
+                          disabled={!videoId || forensicCreating}
+                          className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="forensic-end">End seconds</Label>
+                        <Input
+                          id="forensic-end"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={forensicEnd}
+                          onChange={(event) => setForensicEnd(event.target.value)}
+                          disabled={!videoId || forensicCreating}
+                          className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                          disabled={!videoId || forensicCreating}
+                          onClick={setForensicWindowFromCurrentTime}
+                        >
+                          Use time
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                        disabled={
+                          !videoId ||
+                          forensicCreating ||
+                          typeof forensicSourceMarks.a !== "number" ||
+                          typeof forensicSourceMarks.b !== "number"
+                        }
+                        onClick={setForensicWindowFromMarks}
+                      >
+                        Use A/B
+                      </Button>
+                      {typeof forensicSourceMarks.a === "number" ? (
+                        <span>A {formatSeconds(forensicSourceMarks.a)}</span>
+                      ) : (
+                        <span>A not set</span>
+                      )}
+                      {typeof forensicSourceMarks.b === "number" ? (
+                        <span>B {formatSeconds(forensicSourceMarks.b)}</span>
+                      ) : (
+                        <span>B not set</span>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 border-amber-300/20 bg-amber-300/5 px-2 text-[10px] text-amber-100 hover:bg-amber-300/10"
+                        disabled={!videoId || forensicCreating}
+                        onClick={trimForensicEndToCurrentTime}
+                      >
+                        End at current time
+                      </Button>
+                    </div>
+
+                    <div className="mt-3 rounded border border-white/8 bg-[#151515] p-3">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <Label htmlFor="forensic-region" className="text-slate-300">
+                          Static region
+                        </Label>
+                        <Switch
+                          id="forensic-region"
+                          checked={forensicRegionEnabled}
+                          onCheckedChange={setForensicRegionEnabled}
+                          disabled={!videoId || forensicCreating}
+                        />
+                      </div>
+                      {forensicRegionEnabled && (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-2 md:grid-cols-[1fr_1fr_1fr_1fr_1.4fr]">
+                            {(["x", "y", "w", "h"] as const).map((key) => (
+                              <Input
+                                key={key}
+                                aria-label={`Region ${key}`}
+                                type="number"
+                                min={key === "w" || key === "h" ? "1" : "0"}
+                                step="1"
+                                value={forensicRegion[key]}
+                                onChange={(event) =>
+                                  setForensicRegion((current) => ({
+                                    ...current,
+                                    [key]: event.target.value,
+                                  }))
+                                }
+                                disabled={!videoId || forensicCreating}
+                                className="h-8 border-white/10 bg-[#171717] text-slate-200"
+                                placeholder={key}
+                              />
+                            ))}
+                            <Select
+                              value={forensicRegionIntent}
+                              onValueChange={(value: ForensicRoiIntent) =>
+                                setForensicRegionIntent(value)
+                              }
+                              disabled={!videoId || forensicCreating}
+                            >
+                              <SelectTrigger className={selectSurfaceClassName}>
+                                <SelectValue placeholder="Intent" />
+                              </SelectTrigger>
+                              <SelectContent className={selectContentClassName}>
+                                {FORENSIC_ROI_INTENT_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-cyan-300/30 bg-cyan-300/10 px-2 text-[10px] text-cyan-100 hover:bg-cyan-300/15"
+                              disabled={!videoId || forensicCreating}
+                              onClick={() => addForensicRegionKeyframe()}
+                            >
+                              Save current ROI keyframe
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                              disabled={forensicRegionTrack.length === 0 || forensicCreating}
+                              onClick={() => setForensicRegionTrack([])}
+                            >
+                              Clear path
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                              disabled={forensicRegionTrack.length === 0 || forensicCreating}
+                              onClick={fitForensicWindowToRoiKeyframes}
+                            >
+                              Fit window to path
+                            </Button>
+                            <span>
+                              {forensicRegionTrack.length > 0
+                                ? `${forensicRegionTrack.length} ROI keyframe${
+                                    forensicRegionTrack.length === 1 ? "" : "s"
+                                  } saved`
+                                : "No ROI keyframes saved yet"}
+                            </span>
+                          </div>
+                          {forensicRegionTrack.length > 0 ? (
+                            <div className="flex flex-wrap gap-1 text-[10px] text-cyan-100/80">
+                              {forensicRegionTrack.map((keyframe) => (
+                                <button
+                                  key={`${keyframe.time}-${keyframe.region.x}-${keyframe.region.y}`}
+                                  type="button"
+                                  className="rounded border border-cyan-400/20 px-2 py-1 hover:bg-cyan-400/10"
+                                  onClick={() => {
+                                    setForensicRegion({
+                                      x: String(keyframe.region.x),
+                                      y: String(keyframe.region.y),
+                                      w: String(keyframe.region.w),
+                                      h: String(keyframe.region.h),
+                                    });
+                                    openVideoAtTime(keyframe.time);
+                                  }}
+                                >
+                                  {formatSeconds(keyframe.time)} / {keyframe.intent || forensicRegionIntent}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                          disabled={!videoId || forensicCreating}
+                          onClick={openForensicRoiTool}
+                        >
+                          Draw ROI
+                        </Button>
+                        {forensicRegionSource ? (
+                          <span>{forensicRegionSource}</span>
+                        ) : (
+                          <span>Draw on the Video panel to fill this region.</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 space-y-1">
+                      <Label htmlFor="forensic-reason">Reason</Label>
+                      <Input
+                        id="forensic-reason"
+                        value={forensicReason}
+                        onChange={(event) => setForensicReason(event.target.value)}
+                        disabled={!videoId || forensicCreating}
+                        className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                        placeholder="Analyst note for the render ledger"
+                      />
+                    </div>
+
+                    {forensicJobsError && (
+                      <div className="mt-3 rounded border border-red-500/20 bg-red-950/10 px-3 py-2 text-[11px] text-red-200/80">
+                        {forensicJobsError}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        disabled={!videoId || forensicCreating}
+                        onClick={() => void createForensicRenderJob()}
+                        className="bg-slate-200 text-slate-950 hover:bg-white"
+                      >
+                        {forensicCreating ? "Rendering..." : "Create render job"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!videoId}
+                        className="border-white/10 bg-transparent text-slate-300 hover:bg-white/5"
+                        onClick={() => openVideoAtTime(parseSecondsInput(forensicStart) ?? 0)}
+                      >
+                        Open source time
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded border border-emerald-500/20 bg-emerald-950/10 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-100/75">
+                          Source sampler
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Capture governed visual/audio samples from the same source window.
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 border-emerald-500/20 bg-transparent px-2 text-[10px] text-emerald-100 hover:bg-emerald-900/20"
+                        disabled={!videoId || sourceSamplesLoading}
+                        onClick={() => void loadSourceSamples()}
+                      >
+                        Refresh samples
+                      </Button>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="source-sample-type">Sample type</Label>
+                        <Select
+                          value={sourceSampleType}
+                          onValueChange={(value: "visual" | "audio" | "visual_audio") =>
+                            setSourceSampleType(value)
+                          }
+                          disabled={!videoId || sourceSampleCreating}
+                        >
+                          <SelectTrigger
+                            id="source-sample-type"
+                            className={selectSurfaceClassName}
+                          >
+                            <SelectValue placeholder="Sample type" />
+                          </SelectTrigger>
+                          <SelectContent className={selectContentClassName}>
+                            <SelectItem value="visual_audio">Visual + audio</SelectItem>
+                            <SelectItem value="visual">Visual still</SelectItem>
+                            <SelectItem value="audio">Audio snippet</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="source-sample-label">Label</Label>
+                        <Input
+                          id="source-sample-label"
+                          value={sourceSampleLabel}
+                          onChange={(event) => setSourceSampleLabel(event.target.value)}
+                          disabled={!videoId || sourceSampleCreating}
+                          className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                          placeholder="Person, voice, or scene"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="source-sample-purpose">Purpose</Label>
+                        <Input
+                          id="source-sample-purpose"
+                          value={sourceSamplePurpose}
+                          onChange={(event) => setSourceSamplePurpose(event.target.value)}
+                          disabled={!videoId || sourceSampleCreating}
+                          className="h-9 border-white/10 bg-[#171717] text-slate-200"
+                          placeholder="Reference, comparison, identity"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Button
+                        type="button"
+                        disabled={!videoId || sourceSampleCreating}
+                        onClick={() => void createSourceSample()}
+                        className="bg-emerald-200 text-emerald-950 hover:bg-emerald-100"
+                      >
+                        {sourceSampleCreating ? "Sampling..." : "Create source sample"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded border border-sky-500/20 bg-[#101214]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-500/10 px-3 py-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.14em] text-sky-100/75">
+                          Artifact inspector
+                        </div>
+                        <div className="mt-0.5 max-w-full truncate text-[11px] text-slate-400">
+                          {getForensicOpenAssetTitle()}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!forensicOpenAsset && forensicJobs[0] ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                            onClick={() =>
+                              setForensicOpenAsset({ kind: "render", job: forensicJobs[0] })
+                            }
+                          >
+                            Latest
+                          </Button>
+                        ) : null}
+                        {forensicOpenAsset ? (
+                          <a
+                            className="inline-flex h-8 items-center rounded border border-white/10 px-2 text-[10px] text-slate-300 transition hover:bg-white/5"
+                            href={getForensicOpenAssetUrl()}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open in tab
+                          </a>
+                        ) : null}
+                        {forensicOpenAsset ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                            onClick={() => setForensicOpenAsset(null)}
+                          >
+                            Close
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      {!forensicOpenAsset ? (
+                        <div className="rounded border border-white/8 bg-[#151515] px-3 py-4 text-[11px] text-slate-500">
+                          Open a render job or source sample from the ledgers below.
+                        </div>
+                      ) : forensicOpenAsset.kind === "render" ? (
+                        <div className="space-y-3">
+                          <video
+                            key={getForensicOpenAssetUrl()}
+                            controls
+                            className="max-h-[420px] w-full rounded border border-white/10 bg-black"
+                            src={getForensicOpenAssetUrl()}
+                          />
+                          <div className="grid gap-2 text-[11px] text-slate-400 md:grid-cols-3">
+                            <div>Window {formatSeconds(forensicOpenAsset.job.time_start)}-{formatSeconds(forensicOpenAsset.job.time_end)}</div>
+                            <div>Frames {forensicOpenAsset.job.rendered_frames ?? "n/a"}</div>
+                            <div>
+                              Region {forensicOpenAsset.job.region_type || "n/a"}
+                              {forensicOpenAsset.job.region_intent
+                                ? ` / ${forensicOpenAsset.job.region_intent}`
+                                : ""}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                              onClick={() =>
+                                openVideoAtTime(forensicOpenAsset.job.time_start ?? 0)
+                              }
+                            >
+                              Source time
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-amber-300/20 bg-amber-300/5 px-2 text-[10px] text-amber-100 hover:bg-amber-300/10"
+                              onClick={() =>
+                                openRenderForNativeAnnotation(forensicOpenAsset.job)
+                              }
+                            >
+                              Annotate source ROI
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                              onClick={() => {
+                                setForensicStart(
+                                  String(forensicOpenAsset.job.time_start ?? ""),
+                                );
+                                setForensicEnd(String(forensicOpenAsset.job.time_end ?? ""));
+                                if (forensicOpenAsset.job.region) {
+                                  setForensicRegionEnabled(true);
+                                  setForensicRegion({
+                                    x: String(forensicOpenAsset.job.region.x),
+                                    y: String(forensicOpenAsset.job.region.y),
+                                    w: String(forensicOpenAsset.job.region.w),
+                                    h: String(forensicOpenAsset.job.region.h),
+                                  });
+                                }
+                                setForensicRegionIntent(
+                                  (forensicOpenAsset.job.region_intent as ForensicRoiIntent) ||
+                                    forensicRegionIntent,
+                                );
+                                setForensicRegionTrack(
+                                  forensicOpenAsset.job.region_track || [],
+                                );
+                              }}
+                            >
+                              Use settings
+                            </Button>
+                          </div>
+                          {(() => {
+                            const adoptedContext = asRecord(
+                              forensicOpenAsset.job.adopted_context,
+                            );
+                            const summary = asRecord(adoptedContext.summary);
+                            const metadata = asRecord(adoptedContext.metadata_refs);
+                            const activeIdentities = compactLabels(
+                              summary.active_identity_labels,
+                            );
+                            const metadataPersons = Array.isArray(metadata.persons)
+                              ? metadata.persons
+                                  .map((item) => {
+                                    const record = asRecord(item);
+                                    return String(
+                                      record.name || record.label || item || "",
+                                    ).trim();
+                                  })
+                                  .filter(Boolean)
+                                  .slice(0, 5)
+                              : [];
+                            const objectLabels = contextRefLabels(
+                              adoptedContext.object_track_refs,
+                            );
+                            const manualLabels = contextRefLabels(
+                              adoptedContext.manual_annotation_refs,
+                            );
+                            return (
+                              <div className="rounded border border-white/8 bg-[#151515] px-3 py-2 text-[11px] text-slate-400">
+                                <div className="mb-1 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                                  Adopted context
+                                </div>
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  <div>
+                                    Identity{" "}
+                                    {activeIdentities.length
+                                      ? activeIdentities.join(", ")
+                                      : "none linked"}
+                                  </div>
+                                  <div>
+                                    Persons{" "}
+                                    {metadataPersons.length
+                                      ? metadataPersons.join(", ")
+                                      : "none listed"}
+                                  </div>
+                                  <div>
+                                    Objects{" "}
+                                    {objectLabels.length
+                                      ? objectLabels.join(", ")
+                                      : "none in ROI/time"}
+                                  </div>
+                                  <div>
+                                    Manual{" "}
+                                    {manualLabels.length
+                                      ? manualLabels.join(", ")
+                                      : "none in window"}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {forensicOpenAsset.job.reason ? (
+                            <div className="rounded border border-white/8 bg-[#151515] px-3 py-2 text-[11px] text-slate-400">
+                              {forensicOpenAsset.job.reason}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : forensicOpenAsset.assetType === "visual" ? (
+                        <div className="space-y-3">
+                          <img
+                            key={getForensicOpenAssetUrl()}
+                            src={getForensicOpenAssetUrl()}
+                            alt={forensicOpenAsset.sample.label || "Source visual sample"}
+                            className="max-h-[520px] w-full rounded border border-white/10 bg-black object-contain"
+                          />
+                          <div className="grid gap-2 text-[11px] text-slate-400 md:grid-cols-3">
+                            <div>Window {formatSeconds(forensicOpenAsset.sample.time_start)}-{formatSeconds(forensicOpenAsset.sample.time_end)}</div>
+                            <div>Frame {forensicOpenAsset.sample.visual?.frame_index ?? "n/a"}</div>
+                            <div>FPS {forensicOpenAsset.sample.visual?.source_fps ?? "n/a"}</div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <audio
+                            key={getForensicOpenAssetUrl()}
+                            controls
+                            className="w-full"
+                            src={getForensicOpenAssetUrl()}
+                          />
+                          <div className="grid gap-2 text-[11px] text-slate-400 md:grid-cols-3">
+                            <div>Window {formatSeconds(forensicOpenAsset.sample.time_start)}-{formatSeconds(forensicOpenAsset.sample.time_end)}</div>
+                            <div>Sample rate {forensicOpenAsset.sample.audio?.sample_rate ?? "n/a"}</div>
+                            <div>Frames {forensicOpenAsset.sample.audio?.audio_start_frame ?? "n/a"}-{forensicOpenAsset.sample.audio?.audio_end_frame ?? "n/a"}</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded border border-white/10 bg-[#111111]">
+                    <div className="flex items-center justify-between border-b border-white/8 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                        Render job ledger
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {forensicJobsLoading
+                          ? "Loading"
+                          : `${forensicJobs.length} job${forensicJobs.length === 1 ? "" : "s"}`}
+                      </div>
+                    </div>
+                    {forensicJobs.length > 0 ? (
+                      <div className="divide-y divide-white/8">
+                        {forensicJobs.map((job) => {
+                          const adoptedContext = job.adopted_context || {};
+                          const ledgerTitle = buildForensicJobLedgerTitle(job);
+                          return (
+                            <div
+                              key={job.render_job_id}
+                              className="grid gap-3 px-3 py-3 text-[11px] text-slate-400 md:grid-cols-[1fr_auto]"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-slate-100">
+                                    {ledgerTitle}
+                                  </span>
+                                  <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-300">
+                                    {job.mode === "science_grade"
+                                      ? "Science grade"
+                                      : "Forensic accuracy"}
+                                  </span>
+                                  <span className="text-slate-500">
+                                    {job.status || "recorded"}
+                                  </span>
+                                </div>
+                                <div className="mt-1 truncate font-mono text-[10px] text-slate-600">
+                                  job {job.render_job_id}
+                                </div>
+                                <div className="mt-1">
+                                  {formatSeconds(job.time_start)}-{formatSeconds(job.time_end)}
+                                  {job.target_fps ? ` / ${job.target_fps} FPS` : ""}
+                                  {job.rendered_frames
+                                    ? ` / ${job.rendered_frames} frames`
+                                    : ""}
+                                  {job.region_track?.length
+                                    ? ` / ${job.region_track.length} ROI keyframes`
+                                    : ""}
+                                </div>
+                                {job.region_intent ? (
+                                  <div className="mt-1 truncate text-slate-500">
+                                    Intent {formatForensicIntentLabel(job.region_intent)}
+                                  </div>
+                                ) : null}
+                                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                                  <span>
+                                    Metadata {compactCount(adoptedContext.metadata_refs)}
+                                  </span>
+                                  <span>
+                                    Manual {compactCount(adoptedContext.manual_annotation_refs)}
+                                  </span>
+                                  <span>
+                                    Identity {compactCount(adoptedContext.identity_refs)}
+                                  </span>
+                                  <span>
+                                    Transcript {compactCount(adoptedContext.transcript_refs)}
+                                  </span>
+                                  <span>OCR {compactCount(adoptedContext.ocr_refs)}</span>
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                                  onClick={() => setForensicOpenAsset({ kind: "render", job })}
+                                >
+                                  Open
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                                  onClick={() => openVideoAtTime(job.time_start)}
+                                >
+                                  Source
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-8 border-amber-300/20 bg-amber-300/5 px-2 text-[10px] text-amber-100 hover:bg-amber-300/10"
+                                  onClick={() => openRenderForNativeAnnotation(job)}
+                                >
+                                  Annotate
+                                </Button>
+                                <a
+                                  className="inline-flex h-8 items-center rounded border border-white/10 px-2 text-[10px] text-slate-300 transition hover:bg-white/5"
+                                  href={apiService.getForensicRenderDownloadUrl(
+                                    job.analysis_id,
+                                    job.render_job_id,
+                                  )}
+                                >
+                                  Download
+                                </a>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-4 text-[11px] text-slate-500">
+                        No forensic render jobs are recorded for this analysis yet.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="overflow-hidden rounded border border-emerald-500/20 bg-[#111111]">
+                    <div className="flex items-center justify-between border-b border-emerald-500/10 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-[0.14em] text-emerald-100/70">
+                        Source sample ledger
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {sourceSamplesLoading
+                          ? "Loading"
+                          : `${sourceSamples.length} sample${sourceSamples.length === 1 ? "" : "s"}`}
+                      </div>
+                    </div>
+                    {sourceSamples.length > 0 ? (
+                      <div className="divide-y divide-white/8">
+                        {sourceSamples.map((sample) => (
+                          <div
+                            key={sample.sample_id}
+                            className="grid gap-3 px-3 py-3 text-[11px] text-slate-400 md:grid-cols-[1fr_auto]"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-slate-200">
+                                  {sample.sample_id}
+                                </span>
+                                <span className="rounded border border-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-100/80">
+                                  {sample.sample_type}
+                                </span>
+                                <span>{sample.status || "recorded"}</span>
+                              </div>
+                              <div className="mt-1">
+                                {formatSeconds(sample.time_start)}-
+                                {formatSeconds(sample.time_end)}
+                                {sample.label ? ` / ${sample.label}` : ""}
+                              </div>
+                              {sample.purpose ? (
+                                <div className="mt-1 text-slate-500">{sample.purpose}</div>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                                onClick={() => openVideoAtTime(sample.time_start)}
+                              >
+                                Source
+                              </Button>
+                              {sample.visual ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                                  onClick={() =>
+                                    setForensicOpenAsset({
+                                      kind: "sample",
+                                      sample,
+                                      assetType: "visual",
+                                    })
+                                  }
+                                >
+                                  Visual
+                                </Button>
+                              ) : null}
+                              {sample.audio ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-transparent px-2 text-[10px] text-slate-300 hover:bg-white/5"
+                                  onClick={() =>
+                                    setForensicOpenAsset({
+                                      kind: "sample",
+                                      sample,
+                                      assetType: "audio",
+                                    })
+                                  }
+                                >
+                                  Audio
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-4 text-[11px] text-slate-500">
+                        No source samples are recorded for this analysis yet.
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

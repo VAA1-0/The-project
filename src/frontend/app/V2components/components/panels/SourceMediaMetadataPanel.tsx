@@ -95,6 +95,14 @@ function deriveCharacterDetectionSupport(metadata: SourceMediaMetadata | null) {
   return { score, level, supporting, constraining };
 }
 
+type ReferenceSpeakerDraft = {
+  speaker_label: string;
+  identity_label: string;
+  relation: string;
+  reference_file: string;
+  notes: string;
+};
+
 export default function SourceMediaMetadataPanel() {
   const [videoId, setVideoId] = useState("");
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
@@ -125,6 +133,9 @@ export default function SourceMediaMetadataPanel() {
   const [privacyAxis, setPrivacyAxis] = useState("");
   const [expertiseAxis, setExpertiseAxis] = useState("");
   const [references, setReferences] = useState("");
+  const [referenceSpeakers, setReferenceSpeakers] = useState<ReferenceSpeakerDraft[]>([]);
+  const [referenceUploadFiles, setReferenceUploadFiles] = useState<File[]>([]);
+  const [isUploadingReferences, setIsUploadingReferences] = useState(false);
   const [referenceRelation, setReferenceRelation] = useState("");
   const [referenceSource, setReferenceSource] = useState("");
   const [confidence, setConfidence] = useState("");
@@ -185,6 +196,8 @@ export default function SourceMediaMetadataPanel() {
         setPrivacyAxis("");
         setExpertiseAxis("");
         setReferences("");
+        setReferenceSpeakers([]);
+        setReferenceUploadFiles([]);
         setReferenceRelation("");
         setReferenceSource("");
         setConfidence("");
@@ -240,6 +253,15 @@ export default function SourceMediaMetadataPanel() {
         setPrivacyAxis(nextMetadata.user_annotations?.privacy_axis || "");
         setExpertiseAxis(nextMetadata.user_annotations?.expertise_axis || "");
         setReferences((nextMetadata.user_annotations?.references || []).join("\n"));
+        setReferenceSpeakers(
+          (nextMetadata.user_annotations?.reference_speakers || []).map((speaker) => ({
+            speaker_label: speaker.speaker_label || "",
+            identity_label: speaker.identity_label || "",
+            relation: speaker.relation || "",
+            reference_file: speaker.reference_file || "",
+            notes: speaker.notes || "",
+          })),
+        );
         setReferenceRelation(nextMetadata.user_annotations?.reference_relation || "");
         setReferenceSource(nextMetadata.user_annotations?.reference_source || "");
         setConfidence(nextMetadata.user_annotations?.confidence || "");
@@ -316,6 +338,21 @@ export default function SourceMediaMetadataPanel() {
           .split("\n")
           .map((value) => value.trim())
           .filter(Boolean),
+        reference_speakers: referenceSpeakers
+          .map((speaker) => ({
+            speaker_label: speaker.speaker_label.trim(),
+            identity_label: speaker.identity_label.trim(),
+            relation: speaker.relation.trim(),
+            reference_file: speaker.reference_file.trim(),
+            notes: speaker.notes.trim(),
+          }))
+          .filter(
+            (speaker) =>
+              speaker.speaker_label ||
+              speaker.identity_label ||
+              speaker.reference_file ||
+              speaker.notes,
+          ),
         reference_relation: referenceRelation,
         reference_source: referenceSource,
         confidence,
@@ -329,6 +366,58 @@ export default function SourceMediaMetadataPanel() {
       setSaveMessage("Could not save metadata notes.");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const addReferenceSpeaker = () => {
+    setReferenceSpeakers((current) => [
+      ...current,
+      {
+        speaker_label: "",
+        identity_label: "",
+        relation: "",
+        reference_file: "",
+        notes: "",
+      },
+    ]);
+  };
+
+  const updateReferenceSpeaker = (
+    index: number,
+    key: keyof ReferenceSpeakerDraft,
+    value: string,
+  ) => {
+    setReferenceSpeakers((current) =>
+      current.map((speaker, speakerIndex) =>
+        speakerIndex === index ? { ...speaker, [key]: value } : speaker,
+      ),
+    );
+  };
+
+  const removeReferenceSpeaker = (index: number) => {
+    setReferenceSpeakers((current) =>
+      current.filter((_, speakerIndex) => speakerIndex !== index),
+    );
+  };
+
+  const uploadReferenceFiles = async () => {
+    if (!videoId || referenceUploadFiles.length === 0) return;
+    setIsUploadingReferences(true);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.uploadSourceMediaReferences(
+        videoId,
+        referenceUploadFiles,
+      );
+      setMetadata(saved);
+      setReferenceUploadFiles([]);
+      setSaveMessage("Reference files uploaded.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to upload reference files:", error);
+      setSaveMessage("Could not upload reference files.");
+    } finally {
+      setIsUploadingReferences(false);
     }
   };
 
@@ -509,6 +598,34 @@ export default function SourceMediaMetadataPanel() {
           <div className="mt-3 rounded-lg bg-slate-700/20 p-3">
             <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
               Reference Files
+            </div>
+            <div className="mt-3 rounded-md border border-slate-700/70 bg-[#151515] px-3 py-3">
+              <input
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.txt,.jpeg,.jpg,.png,.webp,.wav,.mp3,.m4a,.aac,.flac,.ogg"
+                onChange={(event) =>
+                  setReferenceUploadFiles(Array.from(event.target.files || []))
+                }
+                className="block w-full text-xs text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-xs file:text-slate-200"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="text-[11px] text-slate-500">
+                  {referenceUploadFiles.length} selected
+                </div>
+                <button
+                  type="button"
+                  disabled={
+                    isUploadingReferences || referenceUploadFiles.length === 0
+                  }
+                  onClick={() => {
+                    void uploadReferenceFiles();
+                  }}
+                  className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isUploadingReferences ? "Uploading..." : "Upload References"}
+                </button>
+              </div>
             </div>
             {referenceFiles.length === 0 ? (
               <div className="mt-2 text-sm text-slate-400">
@@ -1030,6 +1147,115 @@ export default function SourceMediaMetadataPanel() {
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
+              <div className="rounded-md border border-emerald-500/20 bg-emerald-950/10 px-3 py-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-emerald-100/75">
+                    Reference speakers
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addReferenceSpeaker}
+                    className="rounded border border-emerald-500/30 px-2 py-1 text-[10px] text-emerald-100 transition hover:bg-emerald-900/20"
+                  >
+                    Add speaker
+                  </button>
+                </div>
+                {referenceSpeakers.length === 0 ? (
+                  <div className="text-[11px] text-slate-400">
+                    Add speaker reference rows after attaching voice samples or source references.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {referenceSpeakers.map((speaker, index) => (
+                      <div
+                        key={index}
+                        className="rounded border border-white/8 bg-[#141414] p-2"
+                      >
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <input
+                            value={speaker.speaker_label}
+                            onChange={(event) =>
+                              updateReferenceSpeaker(
+                                index,
+                                "speaker_label",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Speaker label"
+                            className="rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
+                          />
+                          <input
+                            value={speaker.identity_label}
+                            onChange={(event) =>
+                              updateReferenceSpeaker(
+                                index,
+                                "identity_label",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Person identity"
+                            className="rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
+                          />
+                          <input
+                            value={speaker.relation}
+                            onChange={(event) =>
+                              updateReferenceSpeaker(
+                                index,
+                                "relation",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Relation to source"
+                            className="rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
+                          />
+                          <select
+                            value={speaker.reference_file}
+                            onChange={(event) =>
+                              updateReferenceSpeaker(
+                                index,
+                                "reference_file",
+                                event.target.value,
+                              )
+                            }
+                            className="rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
+                          >
+                            <option value="">Reference file</option>
+                            {referenceFiles.map((file) => (
+                              <option
+                                key={file.stored_filename || file.filename}
+                                value={file.stored_filename || file.filename || ""}
+                              >
+                                {file.filename || file.stored_filename}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={speaker.notes}
+                            onChange={(event) =>
+                              updateReferenceSpeaker(
+                                index,
+                                "notes",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Reference note"
+                            className="min-w-0 flex-1 rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeReferenceSpeaker(index)}
+                            className="rounded border border-rose-500/30 px-2 py-1 text-[10px] text-rose-200 transition hover:bg-rose-900/20"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   Reference relation

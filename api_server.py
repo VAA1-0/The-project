@@ -30,6 +30,7 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline, validate_video
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.analysis.audio_prosody import analyze_audio_prosody
+from src.backend.analysis.audio_diarization import write_audio_diarization_scaffold
 from src.backend.analysis.language_modeller import MMSASRTranscriber, DEFAULT_MMS_MODEL_ID
 from src.backend.analysis.expression_detector import ExpressionDetectorDeepFace
 from src.backend.utils.logger import get_logger
@@ -37,6 +38,17 @@ from src.backend.analysis.pos_analysis import POSAnalysis
 from src.backend.analysis.quantitative_analysis import (
     QuantitativeAnalysis,
     attach_quant_evidence_to_transcript,
+)
+from src.backend.analysis.forensic_render import (
+    ForensicRenderError,
+    create_forensic_render_job,
+    load_forensic_render_jobs,
+    make_json_safe,
+)
+from src.backend.analysis.source_sampler import (
+    SourceSamplerError,
+    create_source_sample,
+    load_source_samples,
 )
 from src.backend.analysis.language_pack_policy import (
     MORPHOLOGY_PACK_LIMITS,
@@ -52,6 +64,11 @@ from src.backend.analysis.evidence_linker import (
     link_ocr_csv_to_trace,
 )
 from src.backend.analysis.timestamp_schema import MediaProfile, MediaRef
+from src.backend.analysis.identification_refinery import (
+    load_identity_candidate_ledger,
+    promote_identity_candidate,
+    refine_identities,
+)
 from fastapi import Form
 
 
@@ -288,11 +305,11 @@ def csv_escape(value: Any) -> str:
     return str(value).replace('"', '""')
 
 
-def safe_float(value: Any) -> Optional[float]:
+def safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return None
+        return default
 
 
 def safe_int(value: Any) -> Optional[int]:
@@ -550,6 +567,7 @@ def build_source_media_metadata_payload(
             "expertise_axis": user_annotations.get("expertise_axis", ""),
             "references": user_annotations.get("references", []),
             "reference_files": status.get("source_media_reference_files", []),
+            "reference_speakers": user_annotations.get("reference_speakers", []),
             "reference_relation": user_annotations.get("reference_relation", ""),
             "reference_source": user_annotations.get("reference_source", ""),
             "confidence": user_annotations.get("confidence", ""),
@@ -632,6 +650,295 @@ def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     )
     output_files = status.setdefault("output_files", {})
     output_files["annotation_corrections"] = str(json_path)
+
+
+def intervals_overlap(
+    item_start: Any,
+    item_end: Any,
+    window_start: float,
+    window_end: float,
+) -> bool:
+    start = safe_float(item_start)
+    end = safe_float(item_end)
+    if start is None and end is None:
+        return False
+    if start is None:
+        start = end
+    if end is None:
+        end = start
+    if start is None or end is None:
+        return False
+    if end < start:
+        start, end = end, start
+    return start <= window_end and end >= window_start
+
+
+def point_in_window(timestamp: Any, window_start: float, window_end: float) -> bool:
+    value = safe_float(timestamp)
+    return value is not None and window_start <= value <= window_end
+
+
+def bbox_region_overlap(
+    item: Dict[str, Any],
+    region: Optional[Dict[str, Any]],
+) -> Optional[float]:
+    if not region:
+        return None
+
+    x1 = safe_float(item.get("bbox_x1"))
+    y1 = safe_float(item.get("bbox_y1"))
+    x2 = safe_float(item.get("bbox_x2"))
+    y2 = safe_float(item.get("bbox_y2"))
+    rx = safe_float(region.get("x"))
+    ry = safe_float(region.get("y"))
+    rw = safe_float(region.get("w"))
+    rh = safe_float(region.get("h"))
+    if None in (x1, y1, x2, y2, rx, ry, rw, rh):
+        return None
+
+    left, right = sorted((float(x1), float(x2)))
+    top, bottom = sorted((float(y1), float(y2)))
+    region_right = float(rx) + max(0.0, float(rw))
+    region_bottom = float(ry) + max(0.0, float(rh))
+    overlap_w = max(0.0, min(right, region_right) - max(left, float(rx)))
+    overlap_h = max(0.0, min(bottom, region_bottom) - max(top, float(ry)))
+    overlap_area = overlap_w * overlap_h
+    if overlap_area <= 0:
+        return 0.0
+
+    item_area = max(0.0, right - left) * max(0.0, bottom - top)
+    region_area = max(0.0, float(rw)) * max(0.0, float(rh))
+    denominator = min(item_area, region_area)
+    if denominator <= 0:
+        return None
+    return overlap_area / denominator
+
+
+def compact_dict(item: Dict[str, Any], keys: List[str]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for key in keys:
+        value = item.get(key)
+        if value is None or value == "" or value == []:
+            continue
+        compact[key] = value
+    return compact
+
+
+def limit_items(items: List[Dict[str, Any]], limit: int = 12) -> List[Dict[str, Any]]:
+    return items[: max(0, limit)]
+
+
+def build_forensic_adopted_context(
+    status: Dict[str, Any],
+    *,
+    time_start: float,
+    time_end: float,
+    region: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Collect already-known VAA1 evidence for a forensic render window."""
+
+    source_metadata = status.get("source_media_metadata") or {}
+    source_annotations = source_metadata.get("user_annotations") or {}
+    corrections = build_annotation_corrections_payload(status)
+    results = status.get("results") or {}
+    visual = results.get("visual_analysis") or {}
+    audio = results.get("audio_analysis") or {}
+    transcript = audio.get("transcript") or {}
+    audio_prosody = audio.get("audio_prosody") or {}
+
+    manual_annotations: List[Dict[str, Any]] = []
+    identity_refs: List[Dict[str, Any]] = []
+    interaction_refs: List[Dict[str, Any]] = []
+    role_refs: List[Dict[str, Any]] = []
+    expression_refs: List[Dict[str, Any]] = []
+    object_track_refs: List[Dict[str, Any]] = []
+    transcript_refs: List[Dict[str, Any]] = []
+    prosody_refs: List[Dict[str, Any]] = []
+    ocr_refs: List[Dict[str, Any]] = []
+
+    for entry in corrections.get("manual_visual_annotations", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        start = entry.get("start_seconds", entry.get("timestamp_seconds"))
+        end = entry.get("end_seconds", entry.get("timestamp_seconds"))
+        if not intervals_overlap(start, end, time_start, time_end):
+            continue
+
+        compact = compact_dict(
+            entry,
+            [
+                "id",
+                "category",
+                "subcategory",
+                "label",
+                "custom_label",
+                "timestamp_seconds",
+                "start_seconds",
+                "end_seconds",
+                "identity_affirmation",
+                "role_affirmation",
+                "open_note",
+                "teaches_regime",
+            ],
+        )
+        manual_annotations.append(compact)
+        category = entry.get("category")
+        if category == "Identification" or entry.get("identity_affirmation"):
+            identity_refs.append(compact)
+        if category == "Interaction":
+            interaction_refs.append(compact)
+        if category == "Role" or entry.get("role_affirmation"):
+            role_refs.append(compact)
+
+    for entry in visual.get("expression_results", []) or []:
+        if not isinstance(entry, dict) or not point_in_window(entry.get("timestamp"), time_start, time_end):
+            continue
+        expression_refs.append(
+            compact_dict(
+                entry,
+                [
+                    "frame_index",
+                    "timestamp",
+                    "face_id",
+                    "dominant_emotion",
+                    "emotion",
+                    "top_emotion_score",
+                    "score_margin",
+                    "quality",
+                    "bbox",
+                    "face_signal",
+                    "expression_evidence",
+                    "affect_hints",
+                    "detector",
+                    "error",
+                ],
+            )
+        )
+
+    for entry in visual.get("tracked_objects", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        start = entry.get("start_timestamp", entry.get("timestamp"))
+        end = entry.get("end_timestamp", entry.get("timestamp"))
+        if not intervals_overlap(start, end, time_start, time_end):
+            continue
+        raw_label = entry.get("class_name") or entry.get("raw_class_name") or "object"
+        enriched_label = entry.get("display_label") or raw_label
+        region_overlap = bbox_region_overlap(entry, region)
+        if region and region_overlap is not None and region_overlap <= 0:
+            continue
+        object_track_refs.append(
+            {
+                **compact_dict(
+                    entry,
+                    [
+                        "track_id",
+                        "timestamp",
+                        "start_timestamp",
+                        "end_timestamp",
+                        "class_id",
+                        "class_name",
+                        "confidence",
+                        "bbox_x1",
+                        "bbox_y1",
+                        "bbox_x2",
+                        "bbox_y2",
+                        "occurrence_count",
+                    ],
+                ),
+                "raw_label": raw_label,
+                "enriched_label": enriched_label,
+                "region_overlap": region_overlap,
+            }
+        )
+
+    for entry in visual.get("ocr_results", []) or []:
+        if not isinstance(entry, dict) or not point_in_window(entry.get("timestamp"), time_start, time_end):
+            continue
+        ocr_refs.append(compact_dict(entry, ["timestamp", "text", "confidence", "bbox"]))
+
+    for entry in transcript.get("timeline_segments") or transcript.get("segments") or []:
+        if not isinstance(entry, dict):
+            continue
+        if not intervals_overlap(entry.get("start"), entry.get("end"), time_start, time_end):
+            continue
+        transcript_refs.append(compact_dict(entry, ["id", "start", "end", "text", "speaker"]))
+
+    for entry in audio_prosody.get("cues", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        if not intervals_overlap(entry.get("start"), entry.get("end"), time_start, time_end):
+            continue
+        prosody_refs.append(entry)
+
+    metadata_refs = {
+        "title": source_annotations.get("title"),
+        "source_context": source_annotations.get("source_context"),
+        "persons": source_annotations.get("persons") or [],
+        "relations": source_annotations.get("relations"),
+        "situation_event": source_annotations.get("situation_event"),
+        "interaction_dynamics": source_annotations.get("interaction_dynamics"),
+        "narrative_development": source_annotations.get("narrative_development"),
+        "performance_expression": source_annotations.get("performance_expression"),
+        "genre": source_annotations.get("genre"),
+        "genre_subtype": source_annotations.get("genre_subtype"),
+        "situational_genre": source_annotations.get("situational_genre"),
+        "situational_subtype": source_annotations.get("situational_subtype"),
+        "confidence": source_annotations.get("confidence"),
+        "notes": source_annotations.get("notes"),
+    }
+
+    active_identity_labels = [
+        value
+        for item in identity_refs
+        for value in [
+            item.get("identity_affirmation"),
+            item.get("custom_label"),
+            item.get("label"),
+        ]
+        if value
+    ]
+    active_role_labels = [
+        value
+        for item in role_refs
+        for value in [item.get("role_affirmation"), item.get("custom_label"), item.get("label")]
+        if value
+    ]
+
+    return {
+        "time_window": {
+            "time_start": time_start,
+            "time_end": time_end,
+            "region": region,
+        },
+        "metadata_refs": metadata_refs,
+        "manual_annotation_refs": limit_items(manual_annotations),
+        "identity_refs": limit_items(identity_refs),
+        "interaction_refs": limit_items(interaction_refs),
+        "role_refs": limit_items(role_refs),
+        "expression_refs": limit_items(expression_refs),
+        "object_track_refs": limit_items(object_track_refs),
+        "transcript_refs": limit_items(transcript_refs),
+        "prosody_refs": limit_items(prosody_refs),
+        "ocr_refs": limit_items(ocr_refs),
+        "summary": {
+            "manual_annotations": len(manual_annotations),
+            "identities": len(identity_refs),
+            "interactions": len(interaction_refs),
+            "roles": len(role_refs),
+            "expressions": len(expression_refs),
+            "object_tracks": len(object_track_refs),
+            "transcript_segments": len(transcript_refs),
+            "prosody_cues": len(prosody_refs),
+            "ocr_cues": len(ocr_refs),
+            "active_identity_labels": sorted(set(map(str, active_identity_labels))),
+            "active_role_labels": sorted(set(map(str, active_role_labels))),
+        },
+        "notes": [
+            "Adopted context preserves existing VAA1 metadata, annotations, and detections for the forensic render window.",
+            "Raw detector labels remain separate from enriched identity or role labels.",
+        ],
+    }
 
 
 def build_cvat_label_lookup(task_payload: Dict[str, Any]) -> Dict[str, str]:
@@ -924,6 +1231,7 @@ def build_vaa1_master_schema_from_cvat(
             "privacy_axis": user_annotations.get("privacy_axis", ""),
             "expertise_axis": user_annotations.get("expertise_axis", ""),
             "references": user_annotations.get("references", []),
+            "reference_speakers": user_annotations.get("reference_speakers", []),
             "reference_relation": user_annotations.get("reference_relation", ""),
             "reference_source": user_annotations.get("reference_source", ""),
             "confidence": user_annotations.get("confidence", ""),
@@ -2230,11 +2538,13 @@ def run_complete_analysis(
                 transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
+                audio_diarization_filename = f"{analysis_id}_audio_diarization_scaffold.json"
 
                 organized_audio_path = AUDIO_DIR / audio_filename
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
                 organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
                 organized_audio_prosody_path = TRANSCRIPTS_DIR / audio_prosody_filename
+                organized_audio_diarization_path = TRANSCRIPTS_DIR / audio_diarization_filename
 
                 # Ensure dirs exist
                 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -2280,6 +2590,20 @@ def run_complete_analysis(
                     logger.warning("Audio prosody analysis failed: %s", prosody_error)
                     results["audio_prosody_error"] = str(prosody_error)
                     audio_prosody = None
+
+                try:
+                    audio_diarization = write_audio_diarization_scaffold(
+                        analysis_id,
+                        audio_path=organized_audio_path,
+                        output_json_path=organized_audio_diarization_path,
+                        transcript=transcript,
+                        audio_prosody=audio_prosody,
+                    )
+                    output_files["audio_diarization"] = str(organized_audio_diarization_path)
+                except Exception as diarization_error:
+                    logger.warning("Audio diarization scaffold failed: %s", diarization_error)
+                    results["audio_diarization_error"] = str(diarization_error)
+                    audio_diarization = None
 
                 # write the language model text to its own file
                 if lm_text is not None:
@@ -2398,10 +2722,14 @@ def run_complete_analysis(
                     "audio_prosody_path": str(organized_audio_prosody_path)
                     if output_files.get("audio_prosody")
                     else None,
+                    "audio_diarization_path": str(organized_audio_diarization_path)
+                    if output_files.get("audio_diarization")
+                    else None,
                     "lm_transcript_path": str(organized_lm_path) if lm_text is not None else None,
                     "pos_analysis": str(pos_path) if pos_path else None,
                     "quan_analysis": str(quan_path) if quan_path else None,
                     "audio_prosody": audio_prosody,
+                    "audio_diarization": audio_diarization,
                     "transcript": transcript,
                     "transcript_quality": transcript_quality,
                     "metadata": ingestion_result.get("metadata", {}),
@@ -2481,6 +2809,126 @@ def run_complete_analysis(
         )
         persist_analysis_record_for_status(analysis_status[analysis_id])
 
+@app.post("/api/analysis/{analysis_id}/refine-identities", response_model=dict)
+async def run_identity_refinement(analysis_id: str) -> dict:
+    """
+    Run iterative identification refinement loop to embed character/role tracking
+    into the existing track and object annotations.
+    """
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    analysis_dir = RESULTS_DIR / analysis_id
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    master_json_path = internal_artifacts.get("vaa1_annotation_master_schema")
+    if not master_json_path:
+        master_json_path = str(analysis_dir / "vaa1_annotation_master_schema.json")
+
+    output_json_path = analysis_dir / "identity_refinement_candidates.json"
+
+    result = refine_identities(
+        analysis_id,
+        master_json_path=master_json_path,
+        output_json_path=output_json_path,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("message"))
+
+    internal_artifacts["identity_refinement_candidates"] = result.get("output_json_path")
+    status["identity_refinement"] = {
+        "status": "candidate_review_required",
+        "candidate_count": result.get("candidate_count", 0),
+        "output_json_path": result.get("output_json_path"),
+        "master_json_path": result.get("master_json_path"),
+        "updated_at": utc_now_iso(),
+    }
+    append_analysis_event(
+        status,
+        "identity_refinement_candidates_created",
+        details={
+            "candidate_count": result.get("candidate_count", 0),
+            "output_json_path": result.get("output_json_path"),
+            "master_json_path": result.get("master_json_path"),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return make_json_safe(result)
+
+
+@app.get("/api/analysis/{analysis_id}/identity-candidates", response_model=dict)
+async def get_identity_candidates(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    output_json_path = (
+        status.get("internal_artifacts", {}).get("identity_refinement_candidates")
+        or RESULTS_DIR / analysis_id / "identity_refinement_candidates.json"
+    )
+    ledger = load_identity_candidate_ledger(
+        analysis_id,
+        output_json_path=output_json_path,
+    )
+    return make_json_safe(ledger)
+
+
+@app.post("/api/analysis/{analysis_id}/identity-candidates/{candidate_id}/promote", response_model=dict)
+async def promote_identity_candidate_endpoint(
+    analysis_id: str,
+    candidate_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    identity_label = str(payload.get("identity_label") or "").strip()
+    reviewer = str(payload.get("reviewer") or "analyst").strip() or "analyst"
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    analysis_dir = RESULTS_DIR / analysis_id
+    master_json_path = (
+        internal_artifacts.get("vaa1_annotation_master_schema")
+        or analysis_dir / "vaa1_annotation_master_schema.json"
+    )
+    output_json_path = (
+        internal_artifacts.get("identity_refinement_candidates")
+        or analysis_dir / "identity_refinement_candidates.json"
+    )
+
+    promoted_at = utc_now_iso()
+    result = promote_identity_candidate(
+        analysis_id,
+        candidate_id=candidate_id,
+        identity_label=identity_label,
+        reviewer=reviewer,
+        promoted_at=promoted_at,
+        master_json_path=master_json_path,
+        output_json_path=output_json_path,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message"))
+
+    status["vaa1_annotation_master_schema"] = json.loads(
+        Path(str(master_json_path)).read_text(encoding="utf-8")
+    )
+    status.setdefault("identity_refinement", {})["last_promoted_candidate_id"] = candidate_id
+    status.setdefault("identity_refinement", {})["last_promoted_at"] = promoted_at
+    append_analysis_event(
+        status,
+        "identity_candidate_promoted",
+        details={
+            "candidate_id": candidate_id,
+            "identity_label": identity_label,
+            "master_json_path": str(master_json_path),
+            "output_json_path": str(output_json_path),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return make_json_safe(result)
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -2515,6 +2963,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "annotation_corrections": status.get("annotation_corrections"),
         "cvat_ingest": status.get("cvat_ingest"),
         "internal_artifacts": status.get("internal_artifacts"),
+        "forensic_render_jobs": status.get("forensic_render_jobs", []),
+        "source_samples": status.get("source_samples", []),
+        "identity_refinement": status.get("identity_refinement"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -2572,6 +3023,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
 
         if "audio_analysis" in results:
             aa = results["audio_analysis"]
+            response_data["audio_diarization"] = aa.get("audio_diarization")
             # Whisper transcript summary
             response_data["summary"]["audio_segments"] = len(
                 aa.get("transcript", {}).get("segments", [])
@@ -2608,6 +3060,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["audio_error"] = results.get("audio_error")
         if results.get("audio_prosody_error"):
             response_data["summary"]["audio_prosody_error"] = results.get("audio_prosody_error")
+        if results.get("audio_diarization_error"):
+            response_data["summary"]["audio_diarization_error"] = results.get("audio_diarization_error")
         if results.get("pos_error"):
             response_data["summary"]["pos_error"] = results.get("pos_error")
         if results.get("quan_error"):
@@ -2616,6 +3070,241 @@ async def get_analysis_status(analysis_id: str) -> dict:
         # Add download links
         response_data["download_links"] = build_download_links(analysis_id, output_files)
     return response_data
+
+
+def get_forensic_render_root(analysis_id: str) -> Path:
+    return RESULTS_DIR / analysis_id / "forensic_renders"
+
+
+def get_source_sample_root(analysis_id: str) -> Path:
+    return RESULTS_DIR / analysis_id / "source_samples"
+
+
+@app.get("/api/forensic-render/{analysis_id}/jobs", response_model=dict)
+async def list_forensic_render_jobs(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    render_root = get_forensic_render_root(analysis_id)
+    jobs = make_json_safe(load_forensic_render_jobs(render_root))
+    status["forensic_render_jobs"] = jobs
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "jobs": jobs}
+
+
+@app.get("/api/forensic-render/{analysis_id}/jobs/{render_job_id}", response_model=dict)
+async def get_forensic_render_job(analysis_id: str, render_job_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    jobs = make_json_safe(load_forensic_render_jobs(get_forensic_render_root(analysis_id)))
+    for job in jobs:
+        if job.get("render_job_id") == render_job_id:
+            return {"analysis_id": analysis_id, "job": job}
+
+    raise HTTPException(status_code=404, detail="Forensic render job not found")
+
+
+@app.get("/api/source-samples/{analysis_id}", response_model=dict)
+async def list_source_samples(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    samples = make_json_safe(load_source_samples(get_source_sample_root(analysis_id)))
+    status["source_samples"] = samples
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "samples": samples}
+
+
+@app.post("/api/source-samples/{analysis_id}", response_model=dict)
+async def create_source_sample_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    try:
+        status = get_analysis_entry(analysis_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+        source_video_path = status.get("source_video_path") or status.get("file_path")
+        if not source_video_path:
+            raise HTTPException(status_code=400, detail="Analysis has no source video path")
+        if not Path(source_video_path).exists():
+            raise HTTPException(status_code=404, detail="Source video is missing on server")
+
+        output_files = status.get("output_files", {})
+        source_audio_path = output_files.get("audio")
+        sample = create_source_sample(
+            analysis_id=analysis_id,
+            source_video_path=source_video_path,
+            source_audio_path=source_audio_path,
+            output_root=get_source_sample_root(analysis_id),
+            request={
+                **payload,
+                "max_duration_seconds": payload.get("max_duration_seconds", 30.0),
+            },
+        )
+
+        samples = make_json_safe(load_source_samples(get_source_sample_root(analysis_id)))
+        status["source_samples"] = samples
+        status.setdefault("internal_artifacts", {})["source_samples"] = str(
+            get_source_sample_root(analysis_id) / "samples.json"
+        )
+        append_analysis_event(
+            status,
+            "source_sample_created",
+            details={
+                "sample_id": sample.get("sample_id"),
+                "sample_type": sample.get("sample_type"),
+                "time_start": sample.get("time_start"),
+                "time_end": sample.get("time_end"),
+            },
+        )
+        persist_analysis_record_for_status(status)
+        return make_json_safe({"analysis_id": analysis_id, "sample": sample, "samples": samples})
+    except HTTPException:
+        raise
+    except SourceSamplerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Source sample failed for analysis %s", analysis_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": type(exc).__name__,
+                "error": str(exc),
+                "phase": "create_source_sample_endpoint",
+            },
+        ) from exc
+
+
+@app.api_route(
+    "/api/source-samples/{analysis_id}/{sample_id}/{asset_type}",
+    methods=["GET", "HEAD"],
+)
+async def download_source_sample_asset(
+    analysis_id: str,
+    sample_id: str,
+    asset_type: str,
+):
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    samples = load_source_samples(get_source_sample_root(analysis_id))
+    sample = next((item for item in samples if item.get("sample_id") == sample_id), None)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Source sample not found")
+
+    if asset_type == "visual":
+        asset_path = Path(str(sample.get("visual", {}).get("output_image_path") or ""))
+        media_type = "image/jpeg"
+        filename = f"{sample_id}_visual_sample.jpg"
+    elif asset_type == "audio":
+        asset_path = Path(str(sample.get("audio", {}).get("output_audio_path") or ""))
+        media_type = "audio/wav"
+        filename = f"{sample_id}_audio_sample.wav"
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported source sample asset")
+
+    if not asset_path.exists():
+        raise HTTPException(status_code=404, detail="Source sample asset missing")
+    return FileResponse(path=asset_path, media_type=media_type, filename=filename)
+
+
+@app.post("/api/forensic-render/{analysis_id}/jobs", response_model=dict)
+async def create_forensic_render_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    try:
+        status = get_analysis_entry(analysis_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+        source_video_path = status.get("source_video_path") or status.get("file_path")
+        if not source_video_path:
+            raise HTTPException(status_code=400, detail="Analysis has no source video path")
+        if not Path(source_video_path).exists():
+            raise HTTPException(status_code=404, detail="Source video is missing on server")
+
+        time_start = max(0.0, safe_float(payload.get("time_start"), 0.0) or 0.0)
+        time_end = max(time_start, safe_float(payload.get("time_end"), time_start) or time_start)
+        enriched_payload = {
+            **payload,
+            "adopted_context": build_forensic_adopted_context(
+                status,
+                time_start=time_start,
+                time_end=time_end,
+                region=payload.get("region"),
+            ),
+        }
+
+        job = create_forensic_render_job(
+            analysis_id=analysis_id,
+            source_video_path=source_video_path,
+            output_root=get_forensic_render_root(analysis_id),
+            request=enriched_payload,
+        )
+
+        jobs = make_json_safe(load_forensic_render_jobs(get_forensic_render_root(analysis_id)))
+        status["forensic_render_jobs"] = jobs
+        status.setdefault("internal_artifacts", {})["forensic_render_jobs"] = str(
+            get_forensic_render_root(analysis_id) / "jobs.json"
+        )
+        append_analysis_event(
+            status,
+            "forensic_render_created",
+            details={
+                "render_job_id": job.get("render_job_id"),
+                "mode": job.get("mode"),
+                "time_start": job.get("time_start"),
+                "time_end": job.get("time_end"),
+                "region_type": job.get("region_type"),
+            },
+        )
+        persist_analysis_record_for_status(status)
+        return make_json_safe({"analysis_id": analysis_id, "job": job, "jobs": jobs})
+    except HTTPException:
+        raise
+    except ForensicRenderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Forensic render failed for analysis %s", analysis_id)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": type(exc).__name__,
+                "error": str(exc),
+                "phase": "create_forensic_render_endpoint",
+            },
+        ) from exc
+
+
+@app.get("/api/forensic-render/{analysis_id}/jobs/{render_job_id}/download")
+async def download_forensic_render_job(analysis_id: str, render_job_id: str):
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    jobs = load_forensic_render_jobs(get_forensic_render_root(analysis_id))
+    for job in jobs:
+        if job.get("render_job_id") != render_job_id:
+            continue
+        output_path = Path(str(job.get("output_video_path") or ""))
+        if not output_path.exists():
+            raise HTTPException(status_code=404, detail="Forensic render video missing")
+        base_name = Path(status.get("original_filename") or analysis_id).stem
+        return FileResponse(
+            path=output_path,
+            media_type="video/mp4",
+            filename=f"{base_name}_forensic_{render_job_id}.mp4",
+        )
+
+    raise HTTPException(status_code=404, detail="Forensic render job not found")
 
 
 @app.get("/api/morphology/catalog", response_model=dict)
@@ -2636,7 +3325,7 @@ async def download_file(analysis_id: str, file_type: str):
     """
     Download analysis results
     Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript,
-    linked_transcript, audio_prosody, time_bank_audio, lm_transcript, pos_analysis, expression_json, quan_analysis, face_anonymization_manifest
+    linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json, quan_analysis, face_anonymization_manifest
     """
     status = get_analysis_entry(analysis_id)
     if status is None:
@@ -2660,6 +3349,7 @@ async def download_file(analysis_id: str, file_type: str):
         "transcript": ("transcript.json", "application/json"),
         "linked_transcript": ("linked_transcript.json", "application/json"),
         "audio_prosody": ("audio_prosody.json", "application/json"),
+        "audio_diarization": ("audio_diarization_scaffold.json", "application/json"),
         "time_bank_audio": ("time_bank_audio.json", "application/json"),
         "time_bank_ocr": ("time_bank_ocr.json", "application/json"),
         "time_bank_objects": ("time_bank_objects.json", "application/json"),
@@ -2728,6 +3418,7 @@ async def download_bundle(analysis_id: str):
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
+        "audio_diarization": "audio_diarization_scaffold.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -2793,6 +3484,7 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
+        "audio_diarization": "audio_diarization_scaffold.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -3158,6 +3850,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "privacy_axis",
         "expertise_axis",
         "references",
+        "reference_speakers",
         "reference_relation",
         "reference_source",
         "confidence",
@@ -3165,7 +3858,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
     ):
         if key in payload:
             value = payload.get(key)
-            if key in ("persons", "keywords", "references"):
+            if key in ("persons", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
             else:
                 annotations[key] = value or ""
@@ -3205,6 +3898,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "privacy_axis",
                     "expertise_axis",
                     "references",
+                    "reference_speakers",
                     "reference_relation",
                     "reference_source",
                     "confidence",
@@ -3242,6 +3936,12 @@ async def upload_source_media_references(
         ".jpg",
         ".png",
         ".webp",
+        ".wav",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".flac",
+        ".ogg",
     }
     analysis_dir = RESULTS_DIR / analysis_id
     references_dir = analysis_dir / "reference_materials"

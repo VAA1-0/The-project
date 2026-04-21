@@ -15,3 +15,9 @@ Panel maturation governance package:
 align remaining panels to the calmer evidence-register style already strongest in OCR, OBJ, Expressions, POS Matrix, and Quant Matrix; mature Download, Tools, TimeBank, Video Compare, Speech/Audio, and remaining Video-side governance surfaces
 CVAT base workflow package:
 runtime now works locally; next implement one-click VAA1 handoff: create CVAT task if missing, store cvatID, and open the correct job without re-upload or manual route knowledge
+Release readiness test protocol:
+when frontend and backend are fully configured and VAA1 is ready for the first release, set and run a determined internal test protocol before release freeze; include backend health, frontend smoke, native annotation governance, Master Schema routing, CVAT bridge boundary, export safety, timestamp navigation, and representative media checks
+Traceback, forensic rendering, and report package:
+next strategic spine is evidence provenance and traceback first, then Quick Sweep to Forensic Deepening, forensic render job ledger, report claim weighting, workflow phases, final UI layout, and multimodal report package; see docs/vaa1_traceback_forensic_reporting_roadmap_2026-04-20.md
+Forensic tool sprint:
+backend preparation slice creates governed forensic render jobs, job ledger, static ROI/full-frame snippets, science-grade and forensic-accuracy FPS presets, and API client preparation; next step is calm UI surface, evidence traceback linkage, and adopted-context enrichment from metadata, manual annotations, identities, interactions, roles, expressions, transcript, prosody, OCR, and object/person tracks; see docs/vaa1_forensic_tool_sprint_2026-04-20.md

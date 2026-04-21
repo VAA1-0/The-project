@@ -58,13 +58,6 @@ from src.backend.analysis.language_utils import (
 )
 
 
-# Ensure basic NLTK resources are available.
-nltk.download("punkt", quiet=True)
-nltk.download("stopwords", quiet=True)
-
-nltk.download('punkt_tab')
-
-
 WHY_PATTERNS = {
     "english": re.compile(r"\b(because|in order to|so that)\b", flags=re.IGNORECASE),
     "finnish": re.compile(

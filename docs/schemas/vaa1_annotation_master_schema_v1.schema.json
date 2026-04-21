@@ -643,6 +643,9 @@
             ]
           }
         },
+        "identity_affirmation": {
+          "type": "string"
+        },
         "provenance": {
           "$ref": "#/$defs/provenance"
         }
@@ -684,6 +687,9 @@
               "null"
             ]
           }
+        },
+        "identity_affirmation": {
+          "type": "string"
         },
         "provenance": {
           "$ref": "#/$defs/provenance"
