@@ -118,6 +118,13 @@ type DraftBox = {
   h: number;
 };
 
+type OverlayGeometryDrag = {
+  overlayKey: string;
+  mode: "move" | "resize-se";
+  startPoint: { x: number; y: number };
+  startBox: DraftBox;
+};
+
 type ForensicRegionSelectedPayload = {
   videoId: string;
   time: number;
@@ -1131,6 +1138,11 @@ export default function VideoPanel() {
   const [selectedIndicationEdits, setSelectedIndicationEdits] = useState<
     Record<string, SelectedIndicationEdit>
   >({});
+  const [overlayGeometryDrafts, setOverlayGeometryDrafts] = useState<
+    Record<string, DraftBox>
+  >({});
+  const [overlayGeometryDrag, setOverlayGeometryDrag] =
+    useState<OverlayGeometryDrag | null>(null);
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
   const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
   const [forensicRoiMode, setForensicRoiMode] = useState(false);
@@ -2310,6 +2322,120 @@ export default function VideoPanel() {
     [overlayBoxes, selectedOverlayKey],
   );
 
+  const getOverlayNormalizedBox = React.useCallback(
+    (overlay: OverlayBox): DraftBox => {
+      const videoWidth = Math.max(1, videoRef.current?.videoWidth || 1);
+      const videoHeight = Math.max(1, videoRef.current?.videoHeight || 1);
+      const fallback = {
+        x: clamp(overlay.x / videoWidth, 0, 1),
+        y: clamp(overlay.y / videoHeight, 0, 1),
+        w: clamp(overlay.w / videoWidth, 0.002, 1),
+        h: clamp(overlay.h / videoHeight, 0.002, 1),
+      };
+      return overlayGeometryDrafts[overlay.key] || fallback;
+    },
+    [overlayGeometryDrafts],
+  );
+
+  const getRenderedVideoPoint = React.useCallback(
+    (clientX: number, clientY: number) => {
+      if (!renderedVideoRect || renderedVideoRect.width <= 0 || renderedVideoRect.height <= 0) {
+        return null;
+      }
+      return {
+        x: clamp((clientX - renderedVideoRect.x) / renderedVideoRect.width, 0, 1),
+        y: clamp((clientY - renderedVideoRect.y) / renderedVideoRect.height, 0, 1),
+      };
+    },
+    [renderedVideoRect],
+  );
+
+  const beginOverlayGeometryDrag = React.useCallback(
+    (
+      event: React.PointerEvent<HTMLElement>,
+      overlay: OverlayBox,
+      mode: OverlayGeometryDrag["mode"],
+    ) => {
+      const startPoint = getRenderedVideoPoint(event.clientX, event.clientY);
+      if (!startPoint) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      videoRef.current?.pause();
+      setSelectedOverlayKey(overlay.key);
+      setOverlayGeometryDrag({
+        overlayKey: overlay.key,
+        mode,
+        startPoint,
+        startBox: getOverlayNormalizedBox(overlay),
+      });
+    },
+    [getOverlayNormalizedBox, getRenderedVideoPoint],
+  );
+
+  useEffect(() => {
+    if (!overlayGeometryDrag) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const point = getRenderedVideoPoint(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      const minSize = 0.015;
+      const dx = point.x - overlayGeometryDrag.startPoint.x;
+      const dy = point.y - overlayGeometryDrag.startPoint.y;
+      const nextBox =
+        overlayGeometryDrag.mode === "move"
+          ? {
+              ...overlayGeometryDrag.startBox,
+              x: clamp(
+                overlayGeometryDrag.startBox.x + dx,
+                0,
+                Math.max(0, 1 - overlayGeometryDrag.startBox.w),
+              ),
+              y: clamp(
+                overlayGeometryDrag.startBox.y + dy,
+                0,
+                Math.max(0, 1 - overlayGeometryDrag.startBox.h),
+              ),
+            }
+          : {
+              ...overlayGeometryDrag.startBox,
+              w: clamp(
+                overlayGeometryDrag.startBox.w + dx,
+                minSize,
+                1 - overlayGeometryDrag.startBox.x,
+              ),
+              h: clamp(
+                overlayGeometryDrag.startBox.h + dy,
+                minSize,
+                1 - overlayGeometryDrag.startBox.y,
+              ),
+            };
+
+      setOverlayGeometryDrafts((current) => ({
+        ...current,
+        [overlayGeometryDrag.overlayKey]: nextBox,
+      }));
+    };
+
+    const handlePointerUp = () => {
+      setOverlayGeometryDrag(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [getRenderedVideoPoint, overlayGeometryDrag]);
+
   const getOverlayTimestamp = React.useCallback(
     (overlay: OverlayBox) => {
       const source = overlay.sourceItem || {};
@@ -2502,12 +2628,7 @@ export default function VideoPanel() {
                   : indication.category === "OBJ"
                     ? "object"
                     : "other";
-      const normalizedRegion = {
-        x: clamp(overlay.x / videoWidth, 0, 1),
-        y: clamp(overlay.y / videoHeight, 0, 1),
-        w: clamp(overlay.w / videoWidth, 0, 1),
-        h: clamp(overlay.h / videoHeight, 0, 1),
-      };
+      const normalizedRegion = getOverlayNormalizedBox(overlay);
       setDraftBox(normalizedRegion);
       setLockedForensicRoiBox(normalizedRegion);
       setDraftTimestamp(Number(timestamp.toFixed(3)));
@@ -2521,15 +2642,15 @@ export default function VideoPanel() {
         intent,
         label: resolveIndicationLabel(indication.category, indication.label),
         region: {
-          x: Math.round(overlay.x),
-          y: Math.round(overlay.y),
-          w: Math.round(overlay.w),
-          h: Math.round(overlay.h),
+          x: Math.round(normalizedRegion.x * videoWidth),
+          y: Math.round(normalizedRegion.y * videoHeight),
+          w: Math.round(normalizedRegion.w * videoWidth),
+          h: Math.round(normalizedRegion.h * videoHeight),
         },
         normalizedRegion,
       });
     },
-    [duration, getSelectedIndicationEdit, openPanel, videoId],
+    [duration, getOverlayNormalizedBox, getSelectedIndicationEdit, openPanel, videoId],
   );
 
   const getAuthoritativeVideoTime = React.useCallback(() => {
@@ -2660,8 +2781,6 @@ export default function VideoPanel() {
       if (!videoId || !videoRef.current) {
         return;
       }
-      const videoWidth = Math.max(1, videoRef.current.videoWidth || 1);
-      const videoHeight = Math.max(1, videoRef.current.videoHeight || 1);
       const start = clamp(edit.start, 0, duration || Number.MAX_SAFE_INTEGER);
       const end = clamp(
         Math.max(edit.end, start + 0.001),
@@ -2674,6 +2793,7 @@ export default function VideoPanel() {
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined;
       const source = overlay.sourceItem || {};
+      const normalizedBox = getOverlayNormalizedBox(overlay);
       const annotationId =
         existingManual?.id ||
         `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
@@ -2686,10 +2806,10 @@ export default function VideoPanel() {
         custom_label: edit.label.trim() || undefined,
         geometry_type: "box",
         coordinates: {
-          x: clamp(overlay.x / videoWidth, 0, 1),
-          y: clamp(overlay.y / videoHeight, 0, 1),
-          w: clamp(overlay.w / videoWidth, 0, 1),
-          h: clamp(overlay.h / videoHeight, 0, 1),
+          x: clamp(normalizedBox.x, 0, 1),
+          y: clamp(normalizedBox.y, 0, 1),
+          w: clamp(normalizedBox.w, 0.002, 1),
+          h: clamp(normalizedBox.h, 0.002, 1),
         },
         timestamp_seconds: Number(start.toFixed(3)),
         start_seconds: Number(start.toFixed(3)),
@@ -2725,6 +2845,13 @@ export default function VideoPanel() {
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
       setSelectedOverlayKey(`manual-${annotation.id}`);
+      setOverlayGeometryDrafts((current) => {
+        const next = { ...current, [`manual-${annotation.id}`]: normalizedBox };
+        if (overlay.key !== `manual-${annotation.id}`) {
+          delete next[overlay.key];
+        }
+        return next;
+      });
       setSelectedIndicationEdits((current) => ({
         ...current,
         [`manual-${annotation.id}`]: edit,
@@ -2747,7 +2874,13 @@ export default function VideoPanel() {
       });
       broadcastAnalysisCorrectionRefresh(videoId);
     },
-    [analysisData?.annotationCorrections, duration, openPanel, videoId],
+    [
+      analysisData?.annotationCorrections,
+      duration,
+      getOverlayNormalizedBox,
+      openPanel,
+      videoId,
+    ],
   );
 
   const buildNormalizedDraftPoint = React.useCallback(
@@ -4070,10 +4203,9 @@ export default function VideoPanel() {
                     }}
                   >
                     {overlayBoxes.map((overlay) => {
-                      const videoWidth = videoRef.current?.videoWidth || 1;
-                      const videoHeight = videoRef.current?.videoHeight || 1;
                       const selected = selectedOverlayKey === overlay.key;
                       const edit = getSelectedIndicationEdit(overlay);
+                      const normalizedBox = getOverlayNormalizedBox(overlay);
                       const scrubMax = Math.max(0.001, duration || edit.end || currentTime + 0.001);
                       const scrubValue = clamp(currentTime, 0, scrubMax);
                       return (
@@ -4099,10 +4231,10 @@ export default function VideoPanel() {
                             "cursor-pointer"
                           } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
                           style={{
-                            left: `${(overlay.x / videoWidth) * 100}%`,
-                            top: `${(overlay.y / videoHeight) * 100}%`,
-                            width: `${(overlay.w / videoWidth) * 100}%`,
-                            height: `${(overlay.h / videoHeight) * 100}%`,
+                            left: `${normalizedBox.x * 100}%`,
+                            top: `${normalizedBox.y * 100}%`,
+                            width: `${normalizedBox.w * 100}%`,
+                            height: `${normalizedBox.h * 100}%`,
                           }}
                           title={
                             overlay.modality === "object" || overlay.modality === "manual"
@@ -4114,187 +4246,213 @@ export default function VideoPanel() {
                             {overlay.label}
                           </div>
                           {selected && (
-                            <div
-                              className="absolute inset-x-1 bottom-1 z-20 rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
-                              onClick={(event) => event.stopPropagation()}
-                              onMouseDown={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => event.stopPropagation()}
-                            >
-                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
-                                <span className="truncate">{overlay.label}</span>
-                                <span className="shrink-0 text-slate-500">
-                                  {formatPreciseTime(scrubValue)}
-                                </span>
-                              </div>
-                              <input
-                                type="range"
-                                min={0}
-                                max={scrubMax}
-                                step={0.001}
-                                value={scrubValue}
+                            <>
+                              <button
+                                type="button"
+                                title="Move indication box"
+                                aria-label="Move indication box"
+                                onPointerDown={(event) =>
+                                  beginOverlayGeometryDrag(event, overlay, "move")
+                                }
+                                onClick={(event) => event.stopPropagation()}
+                                className="absolute right-1 top-1 z-30 h-4 w-4 rounded border border-cyan-300/60 bg-black/80 text-[10px] leading-3 text-cyan-100 hover:bg-cyan-950"
+                              >
+                                +
+                              </button>
+                              <div
+                                className="absolute inset-x-1 bottom-1 z-20 rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
                                 onClick={(event) => event.stopPropagation()}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => event.stopPropagation()}
-                                onChange={(event) => jumpToTime(Number(event.target.value))}
-                                className="mb-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-cyan-300"
-                                aria-label="Video timeline for selected indication"
-                              />
-                              <div className="mb-1 grid grid-cols-[1fr_1fr_1.35fr] gap-1">
+                              >
+                                <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
+                                  <span className="truncate">{overlay.label}</span>
+                                  <span className="shrink-0 text-slate-500">
+                                    {formatPreciseTime(scrubValue)}
+                                  </span>
+                                </div>
                                 <input
-                                  type="number"
+                                  type="range"
                                   min={0}
                                   max={scrubMax}
                                   step={0.001}
-                                  value={Number(edit.start.toFixed(3))}
-                                  onChange={(event) =>
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      start: Number(event.target.value),
-                                    })
-                                  }
-                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                  aria-label="Indication start time"
+                                  value={scrubValue}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onMouseDown={(event) => event.stopPropagation()}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onChange={(event) => jumpToTime(Number(event.target.value))}
+                                  className="mb-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-cyan-300"
+                                  aria-label="Video timeline for selected indication"
                                 />
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={scrubMax}
-                                  step={0.001}
-                                  value={Number(edit.end.toFixed(3))}
-                                  onChange={(event) =>
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      end: Number(event.target.value),
-                                    })
-                                  }
-                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                  aria-label="Indication end time"
-                                />
-                                <select
-                                  value={edit.category}
-                                  onChange={(event) =>
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      category: event.target.value as ManualVisualAnnotation["category"],
-                                    })
-                                  }
-                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                  aria-label="Indication category"
-                                >
-                                  {NATIVE_ANNOTATION_CATEGORIES.map((category) => (
-                                    <option key={category} value={category}>
-                                      {category}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-1">
-                                <input
-                                  type="text"
-                                  value={edit.label}
-                                  onChange={(event) =>
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      label: event.target.value,
-                                      identityAffirmation:
-                                        edit.category === "Identification"
-                                          ? event.target.value
-                                          : edit.identityAffirmation,
-                                    })
-                                  }
-                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                  placeholder="Label or identity"
-                                  aria-label="Indication label"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      start: currentTime,
-                                    });
-                                  }}
-                                  className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
-                                >
-                                  In
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    updateSelectedIndicationEdit(overlay.key, {
-                                      end: currentTime,
-                                    });
-                                  }}
-                                  className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
-                                >
-                                  Out
-                                </button>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void saveSelectedIndication(overlay, edit);
-                                  }}
-                                  className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
-                                >
-                                  Save
-                                </button>
-                                {overlay.modality === "object" ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        void saveObjectBBoxCorrection();
-                                      }}
-                                      className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700/80 hover:text-slate-50"
-                                    >
-                                      Correct
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        void dropObjectBBoxDetection();
-                                      }}
-                                      className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
-                                    >
-                                      Drop
-                                    </button>
-                                  </>
-                                ) : overlay.modality === "manual" ? (
+                                <div className="mb-1 grid grid-cols-[1fr_1fr_1.35fr] gap-1">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={scrubMax}
+                                    step={0.001}
+                                    value={Number(edit.start.toFixed(3))}
+                                    onChange={(event) =>
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        start: Number(event.target.value),
+                                      })
+                                    }
+                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                    aria-label="Indication start time"
+                                  />
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={scrubMax}
+                                    step={0.001}
+                                    value={Number(edit.end.toFixed(3))}
+                                    onChange={(event) =>
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        end: Number(event.target.value),
+                                      })
+                                    }
+                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                    aria-label="Indication end time"
+                                  />
+                                  <select
+                                    value={edit.category}
+                                    onChange={(event) =>
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        category: event.target.value as ManualVisualAnnotation["category"],
+                                      })
+                                    }
+                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                    aria-label="Indication category"
+                                  >
+                                    {NATIVE_ANNOTATION_CATEGORIES.map((category) => (
+                                      <option key={category} value={category}>
+                                        {category}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-1">
+                                  <input
+                                    type="text"
+                                    value={edit.label}
+                                    onChange={(event) =>
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        label: event.target.value,
+                                        identityAffirmation:
+                                          edit.category === "Identification"
+                                            ? event.target.value
+                                            : edit.identityAffirmation,
+                                      })
+                                    }
+                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                    placeholder="Label or identity"
+                                    aria-label="Indication label"
+                                  />
                                   <button
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      void removeNativeVisualAnnotation();
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        start: currentTime,
+                                      });
                                     }}
-                                    className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                                    className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
                                   >
-                                    Delete
+                                    In
                                   </button>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    seedForensicRoiFromOverlay(overlay, edit);
-                                  }}
-                                  className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
-                                >
-                                  Use ROI
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setSelectedOverlayKey(null);
-                                  }}
-                                  className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
-                                >
-                                  Cancel
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      updateSelectedIndicationEdit(overlay.key, {
+                                        end: currentTime,
+                                      });
+                                    }}
+                                    className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
+                                  >
+                                    Out
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void saveSelectedIndication(overlay, edit);
+                                    }}
+                                    className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
+                                  >
+                                    Save
+                                  </button>
+                                  {overlay.modality === "object" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void saveObjectBBoxCorrection();
+                                        }}
+                                        className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700/80 hover:text-slate-50"
+                                      >
+                                        Correct
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void dropObjectBBoxDetection();
+                                        }}
+                                        className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                                      >
+                                        Drop
+                                      </button>
+                                    </>
+                                  ) : overlay.modality === "manual" ? (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void removeNativeVisualAnnotation();
+                                      }}
+                                      className="rounded bg-rose-900/40 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-800/55 hover:text-rose-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      seedForensicRoiFromOverlay(overlay, edit);
+                                    }}
+                                    className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
+                                  >
+                                    Use ROI
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedOverlayKey(null);
+                                    }}
+                                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
                               </div>
-                            </div>
+                              <button
+                                type="button"
+                                title="Resize indication box"
+                                aria-label="Resize indication box"
+                                onPointerDown={(event) =>
+                                  beginOverlayGeometryDrag(event, overlay, "resize-se")
+                                }
+                                onClick={(event) => event.stopPropagation()}
+                                className="absolute bottom-0 right-0 z-30 h-4 w-4 cursor-nwse-resize rounded-tl border border-cyan-300/60 bg-black/80 text-[10px] leading-3 text-cyan-100 hover:bg-cyan-950"
+                              >
+                                /
+                              </button>
+                            </>
                           )}
                         </div>
                       );
