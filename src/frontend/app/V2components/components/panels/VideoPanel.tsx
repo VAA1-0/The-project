@@ -88,6 +88,16 @@ type OverlayBox = {
   sourceItem?: any;
 };
 
+type SelectedIndicationEdit = {
+  category: ManualVisualAnnotation["category"];
+  subcategory: string;
+  label: string;
+  identityAffirmation: string;
+  start: number;
+  end: number;
+  note: string;
+};
+
 type ManualAnnotationDraft = {
   category: ManualVisualAnnotation["category"];
   subcategory: string;
@@ -295,6 +305,39 @@ function isFallbackPersonDetection(item: DetectedObject): boolean {
     item.class_name === "person" &&
     (item.confidence || 0) < getObjectOverlayConfidenceThreshold("person")
   );
+}
+
+function getDefaultCategoryForOverlay(
+  overlay: OverlayBox,
+): ManualVisualAnnotation["category"] {
+  if (overlay.modality === "ocr") return "OCR";
+  if (overlay.modality === "expression") return "Expressions";
+  if (overlay.modality === "manual") {
+    const annotation = overlay.sourceItem as ManualVisualAnnotation | undefined;
+    return annotation?.category || "OBJ";
+  }
+  const className = String(
+    overlay.sourceItem?.class_name || overlay.sourceItem?.raw_class_name || overlay.label || "",
+  ).toLowerCase();
+  return className === "person" ? "Identification" : "OBJ";
+}
+
+function getFirstSubcategoryForCategory(
+  category: ManualVisualAnnotation["category"],
+): string {
+  return NATIVE_ANNOTATION_SUBCATEGORIES[category]?.[0] || "";
+}
+
+function resolveIndicationLabel(
+  category: ManualVisualAnnotation["category"],
+  label: string,
+): string {
+  const trimmed = label.trim();
+  if (trimmed) return trimmed;
+  if (category === "Identification") return "Character present";
+  if (category === "OBJ") return "Object present";
+  if (category === "OCR") return "Visible text";
+  return `${category} indication`;
 }
 
 function formatTime(value: number): string {
@@ -1085,7 +1128,9 @@ export default function VideoPanel() {
   const [linkedComparePlayback, setLinkedComparePlayback] = useState(true);
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
-  const [selectedOverlayDurations, setSelectedOverlayDurations] = useState<Record<string, number>>({});
+  const [selectedIndicationEdits, setSelectedIndicationEdits] = useState<
+    Record<string, SelectedIndicationEdit>
+  >({});
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
   const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
   const [forensicRoiMode, setForensicRoiMode] = useState(false);
@@ -2254,18 +2299,111 @@ export default function VideoPanel() {
     [currentTime],
   );
 
-  const getOverlayDuration = React.useCallback(
-    (overlay: OverlayBox) => selectedOverlayDurations[overlay.key] ?? 1.5,
-    [selectedOverlayDurations],
+  const getOverlayTimeBounds = React.useCallback(
+    (overlay: OverlayBox) => {
+      const source = overlay.sourceItem || {};
+      const timestamp = getOverlayTimestamp(overlay);
+      const rawStart =
+        typeof source.start_seconds === "number"
+          ? source.start_seconds
+          : typeof source.startTimestamp === "number"
+            ? source.startTimestamp
+            : typeof source.start_timestamp === "number"
+              ? source.start_timestamp
+              : timestamp;
+      const rawEnd =
+        typeof source.end_seconds === "number"
+          ? source.end_seconds
+          : typeof source.endTimestamp === "number"
+            ? source.endTimestamp
+            : typeof source.end_timestamp === "number"
+              ? source.end_timestamp
+              : timestamp;
+      const start = Number.isFinite(rawStart) ? Number(rawStart) : timestamp;
+      const end = Number.isFinite(rawEnd) ? Number(rawEnd) : timestamp;
+      return {
+        start: clamp(Math.min(start, end), 0, duration || Number.MAX_SAFE_INTEGER),
+        end: clamp(Math.max(start, end, timestamp + 0.1), 0, duration || Number.MAX_SAFE_INTEGER),
+      };
+    },
+    [duration, getOverlayTimestamp],
   );
 
-  const setOverlayDuration = React.useCallback((overlayKey: string, value: number) => {
-    const safeValue = clamp(value, 0.1, 8);
-    setSelectedOverlayDurations((current) => ({
-      ...current,
-      [overlayKey]: safeValue,
-    }));
-  }, []);
+  const buildIndicationEditForOverlay = React.useCallback(
+    (overlay: OverlayBox): SelectedIndicationEdit => {
+      const source = overlay.sourceItem || {};
+      const bounds = getOverlayTimeBounds(overlay);
+      const category = getDefaultCategoryForOverlay(overlay);
+      const manual = overlay.modality === "manual" ? (source as ManualVisualAnnotation) : null;
+      const label =
+        manual?.custom_label ||
+        manual?.identity_affirmation ||
+        manual?.role_affirmation ||
+        manual?.label ||
+        overlay.label ||
+        "";
+      return {
+        category: manual?.category || category,
+        subcategory:
+          manual?.subcategory ||
+          getFirstSubcategoryForCategory(manual?.category || category),
+        label,
+        identityAffirmation: manual?.identity_affirmation || "",
+        start: bounds.start,
+        end: bounds.end,
+        note: manual?.open_note || "",
+      };
+    },
+    [getOverlayTimeBounds],
+  );
+
+  const getSelectedIndicationEdit = React.useCallback(
+    (overlay: OverlayBox) =>
+      selectedIndicationEdits[overlay.key] || buildIndicationEditForOverlay(overlay),
+    [buildIndicationEditForOverlay, selectedIndicationEdits],
+  );
+
+  const updateSelectedIndicationEdit = React.useCallback(
+    (overlayKey: string, patch: Partial<SelectedIndicationEdit>) => {
+      setSelectedIndicationEdits((current) => {
+        const overlay = overlayBoxes.find((item) => item.key === overlayKey);
+        const base =
+          current[overlayKey] || (overlay ? buildIndicationEditForOverlay(overlay) : null);
+        if (!base) return current;
+        const next = { ...base, ...patch };
+        if (patch.category && patch.category !== base.category) {
+          next.subcategory = getFirstSubcategoryForCategory(patch.category);
+          next.label = resolveIndicationLabel(patch.category, next.label);
+        }
+        next.start = clamp(Number(next.start), 0, duration || Number.MAX_SAFE_INTEGER);
+        next.end = clamp(
+          Math.max(Number(next.end), next.start + 0.001),
+          0,
+          duration || Number.MAX_SAFE_INTEGER,
+        );
+        return {
+          ...current,
+          [overlayKey]: next,
+        };
+      });
+    },
+    [buildIndicationEditForOverlay, duration, overlayBoxes],
+  );
+
+  const selectOverlayForEditing = React.useCallback(
+    (overlay: OverlayBox) => {
+      setSelectedIndicationEdits((current) =>
+        current[overlay.key]
+          ? current
+          : {
+              ...current,
+              [overlay.key]: buildIndicationEditForOverlay(overlay),
+            },
+      );
+      setSelectedOverlayKey((current) => (current === overlay.key ? null : overlay.key));
+    },
+    [buildIndicationEditForOverlay],
+  );
 
   const openEvidencePanelForOverlay = React.useCallback(
     (overlay: OverlayBox) => {
@@ -2310,22 +2448,33 @@ export default function VideoPanel() {
   );
 
   const seedForensicRoiFromOverlay = React.useCallback(
-    (overlay: OverlayBox, durationSeconds?: number) => {
+    (overlay: OverlayBox, edit?: SelectedIndicationEdit) => {
       if (!videoId || !videoRef.current) {
         return;
       }
       const videoWidth = Math.max(1, videoRef.current.videoWidth || 1);
       const videoHeight = Math.max(1, videoRef.current.videoHeight || 1);
-      const timestamp = getOverlayTimestamp(overlay);
-      const selectedDuration = durationSeconds ?? getOverlayDuration(overlay);
+      const indication = edit || getSelectedIndicationEdit(overlay);
+      const timestamp = clamp(indication.start, 0, duration || Number.MAX_SAFE_INTEGER);
+      const endTimestamp = clamp(
+        Math.max(indication.end, timestamp + 0.001),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
       const intent: ForensicRoiIntent =
-        overlay.modality === "ocr"
+        indication.category === "OCR" || overlay.modality === "ocr"
           ? "ocr"
-          : overlay.modality === "expression"
+          : indication.category === "Expressions" || overlay.modality === "expression"
             ? "expression"
-            : overlay.modality === "object"
+            : indication.category === "Identification"
               ? "identification"
-              : "object";
+              : indication.category === "Movement"
+                ? "movement"
+                : indication.category === "Interaction"
+                  ? "interaction"
+                  : indication.category === "OBJ"
+                    ? "object"
+                    : "other";
       const normalizedRegion = {
         x: clamp(overlay.x / videoWidth, 0, 1),
         y: clamp(overlay.y / videoHeight, 0, 1),
@@ -2341,9 +2490,9 @@ export default function VideoPanel() {
         videoId,
         time: Number(timestamp.toFixed(3)),
         time_start: Number(Math.max(0, timestamp).toFixed(3)),
-        time_end: Number(Math.max(timestamp + 0.1, timestamp + selectedDuration).toFixed(3)),
+        time_end: Number(Math.max(timestamp + 0.001, endTimestamp).toFixed(3)),
         intent,
-        label: overlay.label,
+        label: resolveIndicationLabel(indication.category, indication.label),
         region: {
           x: Math.round(overlay.x),
           y: Math.round(overlay.y),
@@ -2353,7 +2502,7 @@ export default function VideoPanel() {
         normalizedRegion,
       });
     },
-    [getOverlayDuration, getOverlayTimestamp, openPanel, videoId],
+    [duration, getSelectedIndicationEdit, openPanel, videoId],
   );
 
   const getAuthoritativeVideoTime = React.useCallback(() => {
@@ -2478,6 +2627,101 @@ export default function VideoPanel() {
     setNativeSaveMessage("Removed native annotation.");
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [analysisData?.annotationCorrections, selectedOverlay, videoId]);
+
+  const saveSelectedIndication = React.useCallback(
+    async (overlay: OverlayBox, edit: SelectedIndicationEdit) => {
+      if (!videoId || !videoRef.current) {
+        return;
+      }
+      const videoWidth = Math.max(1, videoRef.current.videoWidth || 1);
+      const videoHeight = Math.max(1, videoRef.current.videoHeight || 1);
+      const start = clamp(edit.start, 0, duration || Number.MAX_SAFE_INTEGER);
+      const end = clamp(
+        Math.max(edit.end, start + 0.001),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const label = resolveIndicationLabel(edit.category, edit.label);
+      const existingManual =
+        overlay.modality === "manual"
+          ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
+          : undefined;
+      const source = overlay.sourceItem || {};
+      const annotationId =
+        existingManual?.id ||
+        `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
+      const annotation: ManualVisualAnnotation = {
+        ...(existingManual || {}),
+        id: annotationId,
+        category: edit.category,
+        subcategory: edit.subcategory || getFirstSubcategoryForCategory(edit.category),
+        label,
+        custom_label: edit.label.trim() || undefined,
+        geometry_type: "box",
+        coordinates: {
+          x: clamp(overlay.x / videoWidth, 0, 1),
+          y: clamp(overlay.y / videoHeight, 0, 1),
+          w: clamp(overlay.w / videoWidth, 0, 1),
+          h: clamp(overlay.h / videoHeight, 0, 1),
+        },
+        timestamp_seconds: Number(start.toFixed(3)),
+        start_seconds: Number(start.toFixed(3)),
+        end_seconds: Number(end.toFixed(3)),
+        identity_affirmation:
+          edit.category === "Identification"
+            ? (edit.identityAffirmation.trim() || label)
+            : edit.identityAffirmation.trim() || undefined,
+        role_affirmation:
+          edit.category === "Role" ? edit.label.trim() || undefined : undefined,
+        audio_foley_note: existingManual?.audio_foley_note,
+        open_note: edit.note.trim() || existingManual?.open_note,
+        metadata_correlation: existingManual?.metadata_correlation || {
+          target_type: overlay.modality,
+          target_id: String(source.trackId ?? source.track_id ?? overlay.key),
+          target_label: overlay.label,
+          relation: "extends",
+          note: "Adopted from video overlay indication editor.",
+        },
+        teaches_regime: true,
+        created_at: existingManual?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        updated_by: "analyst",
+      };
+
+      const existingCorrections = analysisData?.annotationCorrections;
+      const nextCorrections = upsertManualVisualAnnotation(
+        existingCorrections,
+        annotation,
+      );
+      pushCorrectionSnapshot(videoId, existingCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      setSelectedOverlayKey(`manual-${annotation.id}`);
+      setSelectedIndicationEdits((current) => ({
+        ...current,
+        [`manual-${annotation.id}`]: edit,
+      }));
+      setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
+      openPanel(MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema", {
+        videoId,
+        source: "indication_editor",
+        evidenceKey: annotation.id,
+        timestamp: start,
+      });
+      eventBus.emit("videoEvidenceSelected", {
+        videoId,
+        panelType: MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema",
+        overlayKey: `manual-${annotation.id}`,
+        modality: "manual",
+        timestamp: start,
+        label,
+        sourceItem: annotation,
+      });
+      broadcastAnalysisCorrectionRefresh(videoId);
+    },
+    [analysisData?.annotationCorrections, duration, openPanel, videoId],
+  );
 
   const buildNormalizedDraftPoint = React.useCallback(
     (clientX: number, clientY: number) => {
@@ -3801,15 +4045,10 @@ export default function VideoPanel() {
                     {overlayBoxes.map((overlay) => {
                       const videoWidth = videoRef.current?.videoWidth || 1;
                       const videoHeight = videoRef.current?.videoHeight || 1;
-                      const overlayStart = getOverlayTimestamp(overlay);
-                      const overlayDuration = getOverlayDuration(overlay);
-                      const overlayEnd = Math.min(
-                        duration || overlayStart + overlayDuration,
-                        overlayStart + overlayDuration,
-                      );
-                      const overlayScrubMax = Math.max(overlayStart + 0.001, overlayEnd);
-                      const overlayScrubValue = clamp(currentTime, overlayStart, overlayScrubMax);
                       const selected = selectedOverlayKey === overlay.key;
+                      const edit = getSelectedIndicationEdit(overlay);
+                      const scrubMax = Math.max(0.001, duration || edit.end || currentTime + 0.001);
+                      const scrubValue = clamp(currentTime, 0, scrubMax);
                       return (
                         <div
                           key={overlay.key}
@@ -3818,9 +4057,7 @@ export default function VideoPanel() {
                           onClick={(event) => {
                             event.stopPropagation();
                             openEvidencePanelForOverlay(overlay);
-                            setSelectedOverlayKey((current) =>
-                              current === overlay.key ? null : overlay.key,
-                            );
+                            selectOverlayForEditing(overlay);
                           }}
                           onKeyDown={(event) => {
                             if (event.key !== "Enter" && event.key !== " ") {
@@ -3829,9 +4066,7 @@ export default function VideoPanel() {
                             event.preventDefault();
                             event.stopPropagation();
                             openEvidencePanelForOverlay(overlay);
-                            setSelectedOverlayKey((current) =>
-                              current === overlay.key ? null : overlay.key,
-                            );
+                            selectOverlayForEditing(overlay);
                           }}
                           className={`pointer-events-auto absolute overflow-hidden rounded border ${overlay.color} ${
                             "cursor-pointer"
@@ -3861,39 +4096,121 @@ export default function VideoPanel() {
                               <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
                                 <span className="truncate">{overlay.label}</span>
                                 <span className="shrink-0 text-slate-500">
-                                  {formatPreciseTime(overlayScrubValue)}
+                                  {formatPreciseTime(scrubValue)}
                                 </span>
                               </div>
                               <input
                                 type="range"
-                                min={overlayStart}
-                                max={overlayScrubMax}
+                                min={0}
+                                max={scrubMax}
                                 step={0.001}
-                                value={overlayScrubValue}
+                                value={scrubValue}
                                 onClick={(event) => event.stopPropagation()}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onChange={(event) => jumpToTime(Number(event.target.value))}
                                 className="mb-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-cyan-300"
-                                aria-label="Selected bounding box timeline"
+                                aria-label="Video timeline for selected indication"
                               />
-                              <div className="mb-1 flex items-center gap-1 text-[10px] text-slate-400">
-                                <span className="shrink-0">Span {overlayDuration.toFixed(1)}s</span>
+                              <div className="mb-1 grid grid-cols-[1fr_1fr_1.35fr] gap-1">
                                 <input
-                                  type="range"
-                                  min="0.1"
-                                  max="8"
-                                  step="0.1"
-                                  value={overlayDuration}
-                                  onClick={(event) => event.stopPropagation()}
-                                  onMouseDown={(event) => event.stopPropagation()}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  onChange={(event) => setOverlayDuration(overlay.key, Number(event.target.value))}
-                                  className="h-4 min-w-0 flex-1"
-                                  aria-label="Selected bounding box duration"
+                                  type="number"
+                                  min={0}
+                                  max={scrubMax}
+                                  step={0.001}
+                                  value={Number(edit.start.toFixed(3))}
+                                  onChange={(event) =>
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      start: Number(event.target.value),
+                                    })
+                                  }
+                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                  aria-label="Indication start time"
                                 />
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={scrubMax}
+                                  step={0.001}
+                                  value={Number(edit.end.toFixed(3))}
+                                  onChange={(event) =>
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      end: Number(event.target.value),
+                                    })
+                                  }
+                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                  aria-label="Indication end time"
+                                />
+                                <select
+                                  value={edit.category}
+                                  onChange={(event) =>
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      category: event.target.value as ManualVisualAnnotation["category"],
+                                    })
+                                  }
+                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                  aria-label="Indication category"
+                                >
+                                  {NATIVE_ANNOTATION_CATEGORIES.map((category) => (
+                                    <option key={category} value={category}>
+                                      {category}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-1">
+                                <input
+                                  type="text"
+                                  value={edit.label}
+                                  onChange={(event) =>
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      label: event.target.value,
+                                      identityAffirmation:
+                                        edit.category === "Identification"
+                                          ? event.target.value
+                                          : edit.identityAffirmation,
+                                    })
+                                  }
+                                  className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                  placeholder="Label or identity"
+                                  aria-label="Indication label"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      start: currentTime,
+                                    });
+                                  }}
+                                  className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
+                                >
+                                  In
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    updateSelectedIndicationEdit(overlay.key, {
+                                      end: currentTime,
+                                    });
+                                  }}
+                                  className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
+                                >
+                                  Out
+                                </button>
                               </div>
                               <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void saveSelectedIndication(overlay, edit);
+                                  }}
+                                  className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
+                                >
+                                  Save
+                                </button>
                                 {overlay.modality === "object" ? (
                                   <>
                                     <button
@@ -3933,7 +4250,7 @@ export default function VideoPanel() {
                                   type="button"
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    seedForensicRoiFromOverlay(overlay, overlayDuration);
+                                    seedForensicRoiFromOverlay(overlay, edit);
                                   }}
                                   className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
                                 >
