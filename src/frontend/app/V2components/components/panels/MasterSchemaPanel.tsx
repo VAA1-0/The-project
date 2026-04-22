@@ -7,6 +7,12 @@ import type {
   IdentityCandidateLedger,
   ManualVisualAnnotation,
 } from "@/lib/api-service";
+import {
+  broadcastAnalysisCorrectionRefresh,
+  pushCorrectionSnapshot,
+  removeManualVisualAnnotation,
+  upsertManualVisualAnnotation,
+} from "@/lib/annotation-corrections";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "OBJ",
@@ -25,6 +31,80 @@ const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "Metadata",
   "Notes",
 ];
+
+const MANUAL_SUBCATEGORIES: Record<ManualVisualAnnotation["category"], string[]> = {
+  Action: ["Action"],
+  Audio: ["Ambience", "Foley", "Music", "Prosody", "Sound event", "Speaker-state"],
+  "Cinematic Cues": ["Composition", "Lighting", "Shot size", "Transition"],
+  Expressions: ["Emotion", "Expression"],
+  Genre: [
+    "Media genre",
+    "Media subgenre",
+    "Situational genre",
+    "Situational subgenre",
+    "Situational taxonomy",
+  ],
+  Identification: ["Character", "Identity"],
+  Interaction: ["Exchange", "Interaction"],
+  Metadata: ["Context", "Correlation"],
+  Movement: ["Camera movement", "Subject movement"],
+  Notes: ["Timestamped note"],
+  OBJ: ["Object label"],
+  OCR: ["Visible text"],
+  Role: ["Role affirmation"],
+  Scene: ["Location", "Scene type"],
+  Transcription: ["Speech content", "Transcript note"],
+};
+
+type LeafAnnotationDraft = {
+  category: ManualVisualAnnotation["category"];
+  subcategory: string;
+  label: string;
+  identityAffirmation: string;
+  roleAffirmation: string;
+  start: number;
+  end: number;
+  note: string;
+};
+
+function firstSubcategory(category: ManualVisualAnnotation["category"]): string {
+  return MANUAL_SUBCATEGORIES[category]?.[0] || "";
+}
+
+function buildLeafDraft(item: ManualVisualAnnotation): LeafAnnotationDraft {
+  const start =
+    typeof item.start_seconds === "number"
+      ? item.start_seconds
+      : item.timestamp_seconds || 0;
+  const end =
+    typeof item.end_seconds === "number"
+      ? item.end_seconds
+      : item.timestamp_seconds || start;
+  return {
+    category: item.category,
+    subcategory: item.subcategory || firstSubcategory(item.category),
+    label:
+      item.custom_label ||
+      item.identity_affirmation ||
+      item.role_affirmation ||
+      item.label ||
+      "",
+    identityAffirmation: item.identity_affirmation || "",
+    roleAffirmation: item.role_affirmation || "",
+    start: Math.max(0, Math.min(start, end)),
+    end: Math.max(start, end),
+    note: item.open_note || "",
+  };
+}
+
+function resolveLeafLabel(draft: LeafAnnotationDraft): string {
+  const label = draft.label.trim();
+  if (label) return label;
+  if (draft.category === "Identification") return "Character present";
+  if (draft.category === "OBJ") return "Object present";
+  if (draft.category === "OCR") return "Visible text";
+  return `${draft.category} indication`;
+}
 
 function formatSeconds(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -323,6 +403,9 @@ export default function MasterSchemaPanel({
   const [identityDrafts, setIdentityDrafts] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [leafDrafts, setLeafDrafts] = useState<Record<string, LeafAnnotationDraft>>({});
+  const [leafActionMessage, setLeafActionMessage] = useState("");
 
   useEffect(() => {
     if (initialVideoId) {
@@ -443,6 +526,105 @@ export default function MasterSchemaPanel({
     }
   }
 
+  function activateVideoForAnnotation(item: ManualVisualAnnotation) {
+    const start =
+      typeof item.start_seconds === "number"
+        ? item.start_seconds
+        : item.timestamp_seconds || 0;
+    eventBus.emit("openPanelRequest", {
+      panelType: "VideoPanel",
+      panelProps: { videoId },
+    });
+    eventBus.emit("videoIdChanged", videoId);
+    eventBus.emit("videoTimeLineChanged", Number(start || 0));
+    eventBus.emit("videoIndicationEditOpen", {
+      videoId,
+      annotationId: item.id,
+      timestamp: Number(start || 0),
+    });
+  }
+
+  function selectAnnotationForEditing(item: ManualVisualAnnotation) {
+    setSelectedAnnotationId(item.id);
+    setLeafDrafts((current) =>
+      current[item.id] ? current : { ...current, [item.id]: buildLeafDraft(item) },
+    );
+    activateVideoForAnnotation(item);
+  }
+
+  function updateLeafDraft(
+    annotationId: string,
+    patch: Partial<LeafAnnotationDraft>,
+  ) {
+    const item = (analysisData?.annotationCorrections?.manual_visual_annotations || []).find(
+      (entry: ManualVisualAnnotation) => entry.id === annotationId,
+    );
+    setLeafDrafts((current) => {
+      const base = current[annotationId] || (item ? buildLeafDraft(item) : null);
+      if (!base) return current;
+      const next = { ...base, ...patch };
+      if (patch.category && patch.category !== base.category) {
+        next.subcategory = firstSubcategory(patch.category);
+      }
+      next.start = Math.max(0, Number(next.start) || 0);
+      next.end = Math.max(next.start + 0.001, Number(next.end) || next.start + 0.001);
+      return { ...current, [annotationId]: next };
+    });
+  }
+
+  async function saveLeafAnnotation(item: ManualVisualAnnotation) {
+    if (!videoId) return;
+    const draft = leafDrafts[item.id] || buildLeafDraft(item);
+    const label = resolveLeafLabel(draft);
+    const nextAnnotation: ManualVisualAnnotation = {
+      ...item,
+      category: draft.category,
+      subcategory: draft.subcategory || firstSubcategory(draft.category),
+      label,
+      custom_label: draft.label.trim() || item.custom_label,
+      timestamp_seconds: Number(draft.start.toFixed(3)),
+      start_seconds: Number(draft.start.toFixed(3)),
+      end_seconds: Number(draft.end.toFixed(3)),
+      identity_affirmation:
+        draft.category === "Identification"
+          ? draft.identityAffirmation.trim() || label
+          : draft.identityAffirmation.trim() || undefined,
+      role_affirmation:
+        draft.category === "Role"
+          ? draft.roleAffirmation.trim() || label
+          : draft.roleAffirmation.trim() || undefined,
+      open_note: draft.note.trim() || undefined,
+      updated_at: new Date().toISOString(),
+      updated_by: "analyst",
+    };
+    const existingCorrections = analysisData?.annotationCorrections;
+    const nextCorrections = upsertManualVisualAnnotation(
+      existingCorrections,
+      nextAnnotation,
+    );
+    pushCorrectionSnapshot(videoId, existingCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    setAnalysisData(await VideoService.getAnalysis(videoId));
+    setLeafActionMessage(`Saved ${draft.category} / ${label}`);
+    setSelectedAnnotationId(nextAnnotation.id);
+    activateVideoForAnnotation(nextAnnotation);
+    broadcastAnalysisCorrectionRefresh(videoId);
+  }
+
+  async function deleteLeafAnnotation(item: ManualVisualAnnotation) {
+    if (!videoId || !item.id) return;
+    const existingCorrections = analysisData?.annotationCorrections;
+    const nextCorrections = removeManualVisualAnnotation(existingCorrections, item.id);
+    pushCorrectionSnapshot(videoId, existingCorrections);
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    setAnalysisData(await VideoService.getAnalysis(videoId));
+    setSelectedAnnotationId(null);
+    setLeafActionMessage("Deleted indication.");
+    eventBus.emit("videoIdChanged", videoId);
+    eventBus.emit("videoTimeLineChanged", Number(item.start_seconds || item.timestamp_seconds || 0));
+    broadcastAnalysisCorrectionRefresh(videoId);
+  }
+
   const groupedAnnotations = useMemo(() => {
     const groups =
       analysisData?.manualAnnotationsByCategory ||
@@ -520,47 +702,186 @@ export default function MasterSchemaPanel({
                   </span>
                 </div>
                 <div className="space-y-1 p-2">
-                  {group.items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="block w-full rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-slate-900/60"
-                      onClick={() =>
-                        eventBus.emit(
-                          "videoTimeLineChanged",
-                          Number(item.timestamp_seconds || 0),
-                        )
-                      }
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium">
-                          {getManualAnnotationTitle(item)}
-                        </span>
-                        <span className="shrink-0 text-[var(--ui-passive-text)]">
-                          {formatSeconds(item.timestamp_seconds)}
-                        </span>
+                  {group.items.map((item) => {
+                    const selected = selectedAnnotationId === item.id;
+                    const draft = leafDrafts[item.id] || buildLeafDraft(item);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded border ${
+                          selected
+                            ? "border-cyan-400/40 bg-cyan-400/5"
+                            : "border-slate-800 bg-[#111214]"
+                        } px-2 py-1.5 text-[10px] text-slate-200`}
+                      >
+                        <button
+                          type="button"
+                          className="block w-full text-left hover:text-slate-50"
+                          onClick={() => selectAnnotationForEditing(item)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-medium">
+                              {getManualAnnotationTitle(item)}
+                            </span>
+                            <span className="shrink-0 text-[var(--ui-passive-text)]">
+                              {formatSeconds(item.start_seconds ?? item.timestamp_seconds)}
+                              {item.end_seconds !== undefined
+                                ? `-${formatSeconds(item.end_seconds)}`
+                                : ""}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 text-[var(--ui-passive-text)]">
+                            {getManualAnnotationDetail(item)}
+                          </div>
+                          {item.open_note ? (
+                            <div className="mt-0.5 line-clamp-2 text-[var(--ui-passive-text)]">
+                              {item.open_note}
+                            </div>
+                          ) : null}
+                        </button>
+
+                        {selected ? (
+                          <div className="mt-2 rounded border border-slate-800 bg-black/25 p-2">
+                            <div className="grid gap-1 md:grid-cols-[1fr_1fr]">
+                              <select
+                                value={draft.category}
+                                onChange={(event) =>
+                                  updateLeafDraft(item.id, {
+                                    category: event.target.value as ManualVisualAnnotation["category"],
+                                  })
+                                }
+                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                              >
+                                {CATEGORY_ORDER.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={draft.subcategory}
+                                onChange={(event) =>
+                                  updateLeafDraft(item.id, {
+                                    subcategory: event.target.value,
+                                  })
+                                }
+                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                              >
+                                {(MANUAL_SUBCATEGORIES[draft.category] || []).map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="mt-1 grid gap-1 md:grid-cols-[1fr_0.6fr_0.6fr]">
+                              <input
+                                value={draft.label}
+                                onChange={(event) =>
+                                  updateLeafDraft(item.id, {
+                                    label: event.target.value,
+                                    identityAffirmation:
+                                      draft.category === "Identification"
+                                        ? event.target.value
+                                        : draft.identityAffirmation,
+                                  })
+                                }
+                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                                placeholder="Label, identity, or indication"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.001}
+                                value={Number(draft.start.toFixed(3))}
+                                onChange={(event) =>
+                                  updateLeafDraft(item.id, {
+                                    start: Number(event.target.value),
+                                  })
+                                }
+                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                                aria-label="Start time"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.001}
+                                value={Number(draft.end.toFixed(3))}
+                                onChange={(event) =>
+                                  updateLeafDraft(item.id, {
+                                    end: Number(event.target.value),
+                                  })
+                                }
+                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                                aria-label="End time"
+                              />
+                            </div>
+                            <textarea
+                              value={draft.note}
+                              onChange={(event) =>
+                                updateLeafDraft(item.id, { note: event.target.value })
+                              }
+                              className="mt-1 min-h-14 w-full rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                              placeholder="Analyst note"
+                            />
+                            <div className="mt-2 flex flex-wrap items-center gap-1">
+                              <button
+                                type="button"
+                                className="rounded bg-emerald-900/50 px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
+                                onClick={() => void saveLeafAnnotation(item)}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+                                onClick={() => activateVideoForAnnotation(item)}
+                              >
+                                Show video
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+                                onClick={() => {
+                                  const start = Number(draft.start || 0);
+                                  eventBus.emit("videoTimeLineChanged", start);
+                                }}
+                              >
+                                Go start
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
+                                onClick={() => {
+                                  const end = Number(draft.end || 0);
+                                  eventBus.emit("videoTimeLineChanged", end);
+                                }}
+                              >
+                                Go end
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded bg-rose-900/40 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-800/60"
+                                onClick={() => void deleteLeafAnnotation(item)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="mt-0.5 text-[var(--ui-passive-text)]">
-                        {getManualAnnotationDetail(item)}
-                      </div>
-                      {item.open_note ? (
-                        <div className="mt-0.5 line-clamp-2 text-[var(--ui-passive-text)]">
-                          {item.open_note}
-                        </div>
-                      ) : null}
-                      {item.category === "Genre" &&
-                      item.subcategory?.startsWith("Situational") ? (
-                        <div className="mt-1 rounded border border-sky-400/20 bg-sky-400/10 px-2 py-1 text-sky-100">
-                          Situational genre branch is under schema review.
-                        </div>
-                      ) : null}
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             ))}
           </div>
             )}
+            {leafActionMessage ? (
+              <div className="mt-2 rounded border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-[11px] text-emerald-100">
+                {leafActionMessage}
+              </div>
+            ) : null}
           </>
         )}
       </div>

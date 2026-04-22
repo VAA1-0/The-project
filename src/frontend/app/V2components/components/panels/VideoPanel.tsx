@@ -1379,6 +1379,33 @@ export default function VideoPanel() {
   }, []);
 
   useEffect(() => {
+    const handler = (payload?: {
+      videoId?: string;
+      annotationId?: string;
+      timestamp?: number;
+    }) => {
+      if (!payload?.annotationId) {
+        return;
+      }
+      if (payload.videoId && payload.videoId !== videoId) {
+        setVideoId(payload.videoId);
+      }
+      const targetTime =
+        typeof payload.timestamp === "number" ? payload.timestamp : currentTime;
+      jumpToTime(targetTime);
+      setAnnotationWorkspaceActive(true);
+      setNativeAnnotationMode(false);
+      setForensicRoiMode(false);
+      setSelectedOverlayKey(`manual-${payload.annotationId}`);
+    };
+
+    eventBus.on("videoIndicationEditOpen", handler);
+    return () => {
+      eventBus.off("videoIndicationEditOpen", handler);
+    };
+  }, [currentTime, jumpToTime, videoId]);
+
+  useEffect(() => {
     const handler = (preset: string) => {
       setAnnotationWorkspaceActive(preset === "annotation");
     };
