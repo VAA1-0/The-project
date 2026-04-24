@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
@@ -13,6 +13,10 @@ import {
   removeManualVisualAnnotation,
   upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
+import {
+  closeManualAnnotationInVideo,
+  openManualAnnotationInVideo,
+} from "@/lib/video-navigation";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "OBJ",
@@ -110,7 +114,29 @@ function formatSeconds(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "time n/a";
   }
-  return `${value.toFixed(2)}s`;
+  const safeValue = Math.max(0, value);
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = Math.floor(safeValue % 60);
+  const milliseconds = Math.floor((safeValue - Math.floor(safeValue)) * 1000);
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
+function parseTimeInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!trimmed.includes(":")) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) ? seconds : null;
+  }
+  const [minutesPart, secondsPart] = trimmed.split(":");
+  const minutes = Number(minutesPart);
+  const seconds = Number(secondsPart);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+  return minutes * 60 + seconds;
 }
 
 function getManualAnnotationTitle(item: ManualVisualAnnotation): string {
@@ -405,7 +431,9 @@ export default function MasterSchemaPanel({
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [leafDrafts, setLeafDrafts] = useState<Record<string, LeafAnnotationDraft>>({});
+  const [timeInputDrafts, setTimeInputDrafts] = useState<Record<string, string>>({});
   const [leafActionMessage, setLeafActionMessage] = useState("");
+  const suppressNextLocalCorrectionRefreshRef = useRef(false);
 
   useEffect(() => {
     if (initialVideoId) {
@@ -417,6 +445,10 @@ export default function MasterSchemaPanel({
     const videoHandler = (id: string) => setVideoId(id);
     const correctionHandler = (id: string) => {
       if (id === videoId) {
+        if (suppressNextLocalCorrectionRefreshRef.current) {
+          suppressNextLocalCorrectionRefreshRef.current = false;
+          return;
+        }
         setRefreshNonce((current) => current + 1);
       }
     };
@@ -527,21 +559,7 @@ export default function MasterSchemaPanel({
   }
 
   function activateVideoForAnnotation(item: ManualVisualAnnotation) {
-    const start =
-      typeof item.start_seconds === "number"
-        ? item.start_seconds
-        : item.timestamp_seconds || 0;
-    eventBus.emit("openPanelRequest", {
-      panelType: "VideoPanel",
-      panelProps: { videoId },
-    });
-    eventBus.emit("videoIdChanged", videoId);
-    eventBus.emit("videoTimeLineChanged", Number(start || 0));
-    eventBus.emit("videoIndicationEditOpen", {
-      videoId,
-      annotationId: item.id,
-      timestamp: Number(start || 0),
-    });
+    openManualAnnotationInVideo(videoId, item);
   }
 
   function selectAnnotationForEditing(item: ManualVisualAnnotation) {
@@ -572,8 +590,33 @@ export default function MasterSchemaPanel({
     });
   }
 
+  function commitLeafTimeInput(
+    inputKey: string,
+    annotationId: string,
+    field: "start" | "end",
+    fallbackValue: number,
+  ) {
+    const draftValue = timeInputDrafts[inputKey];
+    if (draftValue === undefined) return;
+    const parsed = parseTimeInput(draftValue);
+    if (parsed !== null) {
+      updateLeafDraft(annotationId, { [field]: parsed });
+    }
+    setTimeInputDrafts((current) => {
+      const next = { ...current };
+      delete next[inputKey];
+      return next;
+    });
+    if (parsed === null) {
+      setLeafActionMessage(`Invalid time. Keeping ${formatSeconds(fallbackValue)}.`);
+    }
+  }
+
   async function saveLeafAnnotation(item: ManualVisualAnnotation) {
-    if (!videoId) return;
+    if (!videoId) {
+      setLeafActionMessage("Cannot save: no active analysis is selected.");
+      return;
+    }
     const draft = leafDrafts[item.id] || buildLeafDraft(item);
     const label = resolveLeafLabel(draft);
     const nextAnnotation: ManualVisualAnnotation = {
@@ -602,13 +645,72 @@ export default function MasterSchemaPanel({
       existingCorrections,
       nextAnnotation,
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    setAnalysisData(await VideoService.getAnalysis(videoId));
-    setLeafActionMessage(`Saved ${draft.category} / ${label}`);
-    setSelectedAnnotationId(nextAnnotation.id);
-    activateVideoForAnnotation(nextAnnotation);
-    broadcastAnalysisCorrectionRefresh(videoId);
+    setLeafActionMessage(`Saving ${draft.category} / ${label}...`);
+    try {
+      pushCorrectionSnapshot(videoId, existingCorrections);
+      const savedCorrections = await VideoService.saveAnnotationCorrections(
+        videoId,
+        nextCorrections,
+      );
+      const savedAnnotation =
+        (savedCorrections.manual_visual_annotations || []).find(
+          (entry: ManualVisualAnnotation) => entry.id === nextAnnotation.id,
+        ) || nextAnnotation;
+      setAnalysisData((current: any) =>
+        current
+          ? (() => {
+              const nextManualGroups = (
+                savedCorrections.manual_visual_annotations || []
+              ).reduce(
+                (
+                  groups: Partial<
+                    Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
+                  >,
+                  entry: ManualVisualAnnotation,
+                ) => {
+                  const items = groups[entry.category] || [];
+                  groups[entry.category] = [...items, entry];
+                  return groups;
+                },
+                {},
+              );
+              for (const items of Object.values(nextManualGroups)) {
+                items?.sort(
+                  (left: ManualVisualAnnotation, right: ManualVisualAnnotation) =>
+                    Number(left.timestamp_seconds || 0) -
+                    Number(right.timestamp_seconds || 0),
+                );
+              }
+              return {
+                ...current,
+                annotationCorrections: savedCorrections,
+                manualAnnotationsByCategory: nextManualGroups,
+              };
+            })()
+          : current,
+      );
+      setLeafDrafts((current) => ({
+        ...current,
+        [savedAnnotation.id]: buildLeafDraft(savedAnnotation),
+      }));
+      setSelectedAnnotationId(null);
+      setLeafActionMessage(`Saved ${draft.category} / ${label}`);
+      openManualAnnotationInVideo(videoId, savedAnnotation, {
+        focusVideoPanel: false,
+        seekVideo: false,
+      });
+      closeManualAnnotationInVideo(videoId, savedAnnotation.id);
+      suppressNextLocalCorrectionRefreshRef.current = true;
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      console.error("Failed to save master schema annotation:", error);
+      setSelectedAnnotationId(nextAnnotation.id);
+      setLeafActionMessage(
+        error instanceof Error
+          ? `Save failed: ${error.message}`
+          : "Save failed. See console for details.",
+      );
+    }
   }
 
   async function deleteLeafAnnotation(item: ManualVisualAnnotation) {
@@ -705,6 +807,8 @@ export default function MasterSchemaPanel({
                   {group.items.map((item) => {
                     const selected = selectedAnnotationId === item.id;
                     const draft = leafDrafts[item.id] || buildLeafDraft(item);
+                    const startInputKey = `${item.id}:start`;
+                    const endInputKey = `${item.id}:end`;
                     return (
                       <div
                         key={item.id}
@@ -789,32 +893,98 @@ export default function MasterSchemaPanel({
                                 className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
                                 placeholder="Label, identity, or indication"
                               />
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.001}
-                                value={Number(draft.start.toFixed(3))}
-                                onChange={(event) =>
-                                  updateLeafDraft(item.id, {
-                                    start: Number(event.target.value),
-                                  })
-                                }
-                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
-                                aria-label="Start time"
-                              />
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.001}
-                                value={Number(draft.end.toFixed(3))}
-                                onChange={(event) =>
-                                  updateLeafDraft(item.id, {
-                                    end: Number(event.target.value),
-                                  })
-                                }
-                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
-                                aria-label="End time"
-                              />
+                              <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                                In {formatSeconds(draft.start)}
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    timeInputDrafts[startInputKey] ??
+                                    formatSeconds(draft.start)
+                                  }
+                                  onChange={(event) => {
+                                    setTimeInputDrafts((current) => ({
+                                      ...current,
+                                      [startInputKey]: event.target.value,
+                                    }));
+                                  }}
+                                  onBlur={() =>
+                                    commitLeafTimeInput(
+                                      startInputKey,
+                                      item.id,
+                                      "start",
+                                      draft.start,
+                                    )
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      commitLeafTimeInput(
+                                        startInputKey,
+                                        item.id,
+                                        "start",
+                                        draft.start,
+                                      );
+                                      event.currentTarget.blur();
+                                    } else if (event.key === "Escape") {
+                                      setTimeInputDrafts((current) => {
+                                        const next = { ...current };
+                                        delete next[startInputKey];
+                                        return next;
+                                      });
+                                      event.currentTarget.blur();
+                                    }
+                                  }}
+                                  className="mt-0.5 w-full min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                                  aria-label="Start time"
+                                />
+                              </label>
+                              <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                                Out {formatSeconds(draft.end)}
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    timeInputDrafts[endInputKey] ??
+                                    formatSeconds(draft.end)
+                                  }
+                                  onChange={(event) => {
+                                    setTimeInputDrafts((current) => ({
+                                      ...current,
+                                      [endInputKey]: event.target.value,
+                                    }));
+                                  }}
+                                  onBlur={() =>
+                                    commitLeafTimeInput(
+                                      endInputKey,
+                                      item.id,
+                                      "end",
+                                      draft.end,
+                                    )
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      commitLeafTimeInput(
+                                        endInputKey,
+                                        item.id,
+                                        "end",
+                                        draft.end,
+                                      );
+                                      event.currentTarget.blur();
+                                    } else if (event.key === "Escape") {
+                                      setTimeInputDrafts((current) => {
+                                        const next = { ...current };
+                                        delete next[endInputKey];
+                                        return next;
+                                      });
+                                      event.currentTarget.blur();
+                                    }
+                                  }}
+                                  className="mt-0.5 w-full min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                                  aria-label="End time"
+                                />
+                              </label>
                             </div>
                             <textarea
                               value={draft.note}

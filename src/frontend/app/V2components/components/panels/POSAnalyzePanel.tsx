@@ -5,6 +5,7 @@ import { useLayoutHost } from "../LayoutHost";
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { apiService } from "@/lib/api-service";
+import { openVideoAtTime } from "@/lib/video-navigation";
 
 import {
   Download,
@@ -621,8 +622,7 @@ export default function POSAnalyzePanel() {
 
   const jumpToTime = (time: number) => {
     if (!videoId) return;
-    eventBus.emit("videoIdChanged", videoId);
-    eventBus.emit("videoTimeLineChanged", Math.max(0, time));
+    openVideoAtTime(videoId, time);
   };
 
   const findTranscriptTimeForText = (needle?: string) => {

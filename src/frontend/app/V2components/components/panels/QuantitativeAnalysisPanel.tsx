@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { useLayoutHost } from "../LayoutHost";
+import { openVideoAtTime } from "@/lib/video-navigation";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
@@ -322,8 +323,7 @@ export default function QuantitativeAnalysisPanel() {
   };
   const jumpToTime = (time: number) => {
     if (!videoId) return;
-    eventBus.emit("videoIdChanged", videoId);
-    eventBus.emit("videoTimeLineChanged", Math.max(0, time));
+    openVideoAtTime(videoId, time);
   };
   const findTranscriptTimeForText = (needle?: string) => {
     const normalizedNeedle = String(needle || "")

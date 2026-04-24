@@ -3,6 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
+import { openVideoAtTime } from "@/lib/video-navigation";
 
 const MATRIX_STORAGE_KEY = "vaa1.pos.matrix.sections";
 const MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
@@ -353,8 +354,7 @@ export default function POSMatrixPanel({
   }, [analysisRows, selectedSections]);
 
   const jumpToAnalysisTime = (analysisId: string, time: number) => {
-    eventBus.emit("videoIdChanged", analysisId);
-    eventBus.emit("videoTimeLineChanged", Math.max(0, time));
+    openVideoAtTime(analysisId, time);
   };
 
   const openAnalysisPanel = (analysisId: string, panelType: string) => {

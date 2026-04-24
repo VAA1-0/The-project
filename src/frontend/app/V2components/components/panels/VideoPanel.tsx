@@ -12,6 +12,12 @@ import {
   type VideoMetadata,
   groupDetectedObjectsForDisplay,
 } from "@/lib/video-service";
+import {
+  buildEvidenceNavigationState,
+  resolveManualVisualEvidence,
+  type EvidenceNavigationState,
+  type ResolvedEvidenceItem,
+} from "@/lib/evidence-authority";
 import { getVideoBlob, saveVideoBlob } from "@/lib/blob-store";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -46,6 +52,7 @@ const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
 const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
 const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
+const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 0.5;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -118,11 +125,40 @@ type DraftBox = {
   h: number;
 };
 
+type ManualGeometryKeyframe = NonNullable<
+  ManualVisualAnnotation["geometry_keyframes"]
+>[number];
+
+type OverlayGeometryDraft = {
+  box: DraftBox;
+  time: number;
+};
+
 type OverlayGeometryDrag = {
   overlayKey: string;
   mode: "move" | "resize-se";
   startPoint: { x: number; y: number };
   startBox: DraftBox;
+};
+
+type PendingObjectOverlayEdit = {
+  videoId?: string;
+  timestamp?: number;
+  trackId?: number;
+  label?: string;
+  start?: number;
+  end?: number;
+  category?: ManualVisualAnnotation["category"];
+  note?: string;
+};
+
+type LocalObjectLabelOverride = {
+  videoId?: string;
+  trackId?: number;
+  sourceLabel?: string;
+  label: string;
+  start?: number;
+  end?: number;
 };
 
 type ForensicRegionSelectedPayload = {
@@ -142,6 +178,7 @@ type ForensicRegionSelectedPayload = {
 type ForensicRoiIntent =
   | "identification"
   | "expression"
+  | "micro_expression"
   | "movement"
   | "object"
   | "ocr"
@@ -154,6 +191,7 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
 }> = [
   { value: "identification", label: "Identification" },
   { value: "expression", label: "Expressions" },
+  { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
   { value: "object", label: "Object" },
   { value: "ocr", label: "OCR" },
@@ -347,6 +385,95 @@ function resolveIndicationLabel(
   return `${category} indication`;
 }
 
+function resolveManualVisualDisplayLabel(item: ManualVisualAnnotation): string {
+  return (
+    item.identity_affirmation ||
+    item.role_affirmation ||
+    item.custom_label ||
+    item.label ||
+    "manual annotation"
+  ).trim();
+}
+
+function objectTrackTargetId(item: DetectedObject): string | null {
+  const trackId = item.trackId ?? (item as any).track_id;
+  return trackId === undefined || trackId === null ? null : String(trackId);
+}
+
+function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
+  const targetType = String(item.metadata_correlation?.target_type || "").toLowerCase();
+  if (targetType !== "object") {
+    return null;
+  }
+  const targetId = item.metadata_correlation?.target_id;
+  return targetId === undefined || targetId === null ? null : String(targetId);
+}
+
+function normalizeEvidenceLabel(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getManualAnnotationBounds(entry: ManualVisualAnnotation) {
+  const rawStart =
+    typeof entry.start_seconds === "number"
+      ? entry.start_seconds
+      : entry.timestamp_seconds;
+  const rawEnd =
+    typeof entry.end_seconds === "number"
+      ? entry.end_seconds
+      : entry.timestamp_seconds;
+
+  if (typeof rawStart !== "number" || typeof rawEnd !== "number") {
+    return null;
+  }
+
+  const start = Math.min(rawStart, rawEnd);
+  const end = Math.max(rawStart, rawEnd);
+  const duration = end - start;
+  const timestamp =
+    typeof entry.timestamp_seconds === "number"
+      ? entry.timestamp_seconds
+      : (start + end) / 2;
+
+  return {
+    start,
+    end,
+    duration,
+    timestamp,
+  };
+}
+
+function isManualAnnotationVisibleAtTime(
+  entry: ManualVisualAnnotation,
+  currentTime: number,
+) {
+  const bounds = getManualAnnotationBounds(entry);
+  if (!bounds) {
+    return false;
+  }
+
+  if (bounds.duration <= MANUAL_POINT_VISIBILITY_SECONDS) {
+    return (
+      currentTime >= bounds.timestamp &&
+      currentTime <= bounds.timestamp + MANUAL_POINT_VISIBILITY_SECONDS
+    );
+  }
+
+  return (
+    currentTime >= bounds.start &&
+    currentTime <= bounds.end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+  );
+}
+
+function getAttachedManualAnnotation(source: any): ManualVisualAnnotation | null {
+  const candidate = source?.manual_annotation;
+  return candidate && typeof candidate === "object"
+    ? (candidate as ManualVisualAnnotation)
+    : null;
+}
+
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 0) {
     return "0:00";
@@ -366,6 +493,24 @@ function formatPreciseTime(value: number): string {
   const seconds = Math.floor(value % 60);
   const milliseconds = Math.floor((value - Math.floor(value)) * 1000);
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
+function parsePreciseTimeInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!trimmed.includes(":")) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) ? seconds : null;
+  }
+  const [minutesPart, secondsPart] = trimmed.split(":");
+  const minutes = Number(minutesPart);
+  const seconds = Number(secondsPart);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+  return minutes * 60 + seconds;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -420,6 +565,120 @@ function resolveObjectOverlayBBox(
     w: right - left,
     h: bottom - top,
   };
+}
+
+function resolveManualOverlayBBox(
+  coordinates: ManualVisualAnnotation["coordinates"] | undefined,
+  videoWidth: number,
+  videoHeight: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (
+    !coordinates ||
+    coordinates.x === undefined ||
+    coordinates.y === undefined ||
+    coordinates.w === undefined ||
+    coordinates.h === undefined
+  ) {
+    return null;
+  }
+  const values = [coordinates.x, coordinates.y, coordinates.w, coordinates.h].map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  const [rawX, rawY, rawW, rawH] = values;
+  const appearsNormalized =
+    rawX >= 0 &&
+    rawY >= 0 &&
+    rawW >= 0 &&
+    rawH >= 0 &&
+    Math.max(rawX, rawY, rawW, rawH) <= 1.5;
+  const x = appearsNormalized ? rawX * videoWidth : rawX;
+  const y = appearsNormalized ? rawY * videoHeight : rawY;
+  const w = appearsNormalized ? rawW * videoWidth : rawW;
+  const h = appearsNormalized ? rawH * videoHeight : rawH;
+  const safeW = clamp(Math.max(8, w), 8, videoWidth);
+  const safeH = clamp(Math.max(8, h), 8, videoHeight);
+  return {
+    x: clamp(x, 0, Math.max(0, videoWidth - safeW)),
+    y: clamp(y, 0, Math.max(0, videoHeight - safeH)),
+    w: safeW,
+    h: safeH,
+  };
+}
+
+function normalizeDraftBox(box: DraftBox): DraftBox {
+  return {
+    x: clamp(box.x, 0, 1),
+    y: clamp(box.y, 0, 1),
+    w: clamp(box.w, 0.002, 1),
+    h: clamp(box.h, 0.002, 1),
+  };
+}
+
+function detectedObjectToNormalizedBox(
+  item: DetectedObject | undefined,
+  videoWidth: number,
+  videoHeight: number,
+): DraftBox | null {
+  if (
+    !item?.bbox ||
+    item.bbox.x1 === undefined ||
+    item.bbox.y1 === undefined ||
+    item.bbox.x2 === undefined ||
+    item.bbox.y2 === undefined
+  ) {
+    return null;
+  }
+  const width = Math.max(1, videoWidth);
+  const height = Math.max(1, videoHeight);
+  const x1 = Number(item.bbox.x1);
+  const y1 = Number(item.bbox.y1);
+  const x2 = Number(item.bbox.x2);
+  const y2 = Number(item.bbox.y2);
+  if (![x1, y1, x2, y2].some((value) => !Number.isFinite(value))) {
+    return normalizeDraftBox({
+      x: Math.min(x1, x2) / width,
+      y: Math.min(y1, y2) / height,
+      w: Math.abs(x2 - x1) / width,
+      h: Math.abs(y2 - y1) / height,
+    });
+  }
+  return null;
+}
+
+function interpolateBoxes(
+  left: DraftBox,
+  right: DraftBox,
+  ratio: number,
+): DraftBox {
+  const safeRatio = clamp(ratio, 0, 1);
+  return normalizeDraftBox({
+    x: left.x + (right.x - left.x) * safeRatio,
+    y: left.y + (right.y - left.y) * safeRatio,
+    w: left.w + (right.w - left.w) * safeRatio,
+    h: left.h + (right.h - left.h) * safeRatio,
+  });
+}
+
+function mergeGeometryKeyframes(
+  keyframes: ManualGeometryKeyframe[],
+): ManualGeometryKeyframe[] {
+  const byTime = new Map<number, ManualGeometryKeyframe>();
+  for (const keyframe of keyframes) {
+    if (!Number.isFinite(keyframe.time)) {
+      continue;
+    }
+    const time = Number(keyframe.time.toFixed(3));
+    const existing = byTime.get(time);
+    if (!existing || keyframe.source === "manual") {
+      byTime.set(time, {
+        ...keyframe,
+        time,
+        coordinates: normalizeDraftBox(keyframe.coordinates),
+      });
+    }
+  }
+  return Array.from(byTime.values()).sort((left, right) => left.time - right.time);
 }
 
 function buildBoxFromPoints(
@@ -760,9 +1019,16 @@ function buildLocalObjectOverlays(
       const spanStart = Math.min(start, end);
       const spanEnd = Math.max(start, end);
       if (spanEnd - spanStart > 0.001) {
-        return currentTime >= spanStart - 0.06 && currentTime <= spanEnd + 0.06;
+        return (
+          currentTime >= spanStart &&
+          currentTime <= spanEnd + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+        );
       }
-      return Math.abs((item.timestamp ?? spanStart) - currentTime) <= 0.35;
+      const pointTime = item.timestamp ?? spanStart;
+      return (
+        currentTime >= pointTime &&
+        currentTime <= pointTime + MANUAL_POINT_VISIBILITY_SECONDS
+      );
     },
   );
 
@@ -976,8 +1242,8 @@ function alignActiveObjectLabelsWithGroupedTracks(
         const end = grouped.endTimestamp ?? grouped.timestamp ?? start;
         return (
           groupedRawLabel === rawLabel &&
-          currentTime >= start - 0.2 &&
-          currentTime <= end + 0.2
+          currentTime >= start &&
+          currentTime <= end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
         );
       })
       .map((grouped) => ({
@@ -1005,6 +1271,10 @@ function alignActiveObjectLabelsWithGroupedTracks(
     return {
       ...item,
       displayLabel: best.displayLabel,
+      trackId: item.trackId ?? best.trackId,
+      startTimestamp: item.startTimestamp ?? best.startTimestamp,
+      endTimestamp: item.endTimestamp ?? best.endTimestamp,
+      raw_class_name: item.raw_class_name ?? best.raw_class_name,
     };
   });
 }
@@ -1135,14 +1405,47 @@ export default function VideoPanel() {
   const [linkedComparePlayback, setLinkedComparePlayback] = useState(true);
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [selectedOverlaySnapshot, setSelectedOverlaySnapshot] =
+    useState<OverlayBox | null>(null);
+  const [selectedWorkspaceAnnotationId, setSelectedWorkspaceAnnotationId] = useState<
+    string | null
+  >(null);
+  const [activeEvidenceNavigation, setActiveEvidenceNavigation] =
+    useState<EvidenceNavigationState | null>(null);
   const [selectedIndicationEdits, setSelectedIndicationEdits] = useState<
     Record<string, SelectedIndicationEdit>
   >({});
+  const [selectedOverlayScrub, setSelectedOverlayScrub] = useState<{
+    overlayKey: string;
+    value: number;
+    active: boolean;
+  } | null>(null);
+  const [selectedOverlayTimeDrag, setSelectedOverlayTimeDrag] = useState<{
+    overlayKey: string;
+    start: number;
+  } | null>(null);
+  const [selectedTimeInputDrafts, setSelectedTimeInputDrafts] = useState<
+    Record<string, string>
+  >({});
+  const [selectedOverlayOverdrafts, setSelectedOverlayOverdrafts] = useState<
+    Record<string, boolean>
+  >({});
+  const [selectedOverlayTimelinePadding, setSelectedOverlayTimelinePadding] = useState<
+    Record<string, { before: number; after: number }>
+  >({});
+  const [selectedOverlayContinuationSeconds, setSelectedOverlayContinuationSeconds] = useState<
+    Record<string, number>
+  >({});
   const [overlayGeometryDrafts, setOverlayGeometryDrafts] = useState<
-    Record<string, DraftBox>
+    Record<string, OverlayGeometryDraft>
   >({});
   const [overlayGeometryDrag, setOverlayGeometryDrag] =
     useState<OverlayGeometryDrag | null>(null);
+  const [pendingObjectOverlayEdit, setPendingObjectOverlayEdit] =
+    useState<PendingObjectOverlayEdit | null>(null);
+  const [localObjectLabelOverrides, setLocalObjectLabelOverrides] = useState<
+    LocalObjectLabelOverride[]
+  >([]);
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
   const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
   const [forensicRoiMode, setForensicRoiMode] = useState(false);
@@ -1325,6 +1628,123 @@ export default function VideoPanel() {
     [currentTime, persistSingleSourceMarks, singleSourceMarks],
   );
 
+  const scrubSelectedOverlayTo = React.useCallback(
+    (overlayKey: string, nextTime: number, minTime = 0, maxTime = duration) => {
+      const safeTime = clamp(
+        nextTime,
+        Math.max(0, minTime),
+        Math.max(Math.max(0, minTime), maxTime || duration || Number.MAX_SAFE_INTEGER),
+      );
+      setSelectedOverlayScrub({ overlayKey, value: safeTime, active: true });
+      jumpToTime(safeTime);
+    },
+    [duration, jumpToTime],
+  );
+
+  const finishSelectedOverlayScrub = React.useCallback(() => {
+    setSelectedOverlayScrub((current) =>
+      current ? { ...current, active: false } : current,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOverlayScrub || selectedOverlayScrub.active) {
+      return;
+    }
+    if (Math.abs(currentTime - selectedOverlayScrub.value) > 0.05) {
+      return;
+    }
+    setSelectedOverlayScrub(null);
+  }, [currentTime, selectedOverlayScrub]);
+
+  useEffect(() => {
+    setSelectedOverlayScrub(null);
+  }, [selectedOverlayKey]);
+
+  useEffect(() => {
+    if (!selectedOverlayKey) {
+      setSelectedWorkspaceAnnotationId(null);
+    }
+  }, [selectedOverlayKey]);
+
+  const closeSelectedOverlayEditor = React.useCallback((overlayKey: string) => {
+    setSelectedOverlayKey((current) => (current === overlayKey ? null : current));
+    setSelectedOverlaySnapshot((current) =>
+      current?.key === overlayKey ? null : current,
+    );
+    setSelectedWorkspaceAnnotationId((current) =>
+      overlayKey === `manual-${current}` ? null : current,
+    );
+    setSelectedOverlayScrub((current) =>
+      current?.overlayKey === overlayKey ? null : current,
+    );
+    setSelectedOverlayTimeDrag((current) =>
+      current?.overlayKey === overlayKey ? null : current,
+    );
+    setOverlayGeometryDrafts((current) => {
+      if (!current[overlayKey]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[overlayKey];
+      return next;
+    });
+    setSelectedOverlayTimelinePadding((current) => {
+      if (!current[overlayKey]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[overlayKey];
+      return next;
+    });
+  }, []);
+
+  const clearOverlayEditingWorkspace = React.useCallback((overlayKeys: string[]) => {
+    const keys = new Set(overlayKeys.filter(Boolean));
+    if (keys.size === 0) {
+      return;
+    }
+    setSelectedOverlayScrub((current) =>
+      current && keys.has(current.overlayKey) ? null : current,
+    );
+    setSelectedOverlayTimeDrag((current) =>
+      current && keys.has(current.overlayKey) ? null : current,
+    );
+    setOverlayGeometryDrafts((current) => {
+      const next = { ...current };
+      let changed = false;
+      keys.forEach((key) => {
+        if (next[key]) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+    setSelectedOverlayTimelinePadding((current) => {
+      const next = { ...current };
+      let changed = false;
+      keys.forEach((key) => {
+        if (next[key]) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+    setSelectedOverlayOverdrafts((current) => {
+      const next = { ...current };
+      let changed = false;
+      keys.forEach((key) => {
+        if (next[key]) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, []);
+
   const clearSingleSourceMarks = React.useCallback(() => {
     persistSingleSourceMarks({});
   }, [persistSingleSourceMarks]);
@@ -1395,8 +1815,106 @@ export default function VideoPanel() {
       videoId?: string;
       annotationId?: string;
       timestamp?: number;
+      annotation?: ManualVisualAnnotation;
+      resolvedEvidence?: ResolvedEvidenceItem;
+      navigationState?: EvidenceNavigationState;
     }) => {
       if (!payload?.annotationId) {
+        return;
+      }
+      const targetVideoId = payload.videoId || videoId;
+      if (payload.videoId && payload.videoId !== videoId) {
+        setVideoId(payload.videoId);
+      }
+      if (payload.annotation) {
+        setAnalysisData((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            annotationCorrections: upsertManualVisualAnnotation(
+              current.annotationCorrections,
+              payload.annotation as ManualVisualAnnotation,
+            ),
+          };
+        });
+      }
+      const resolvedEvidence =
+        payload.resolvedEvidence ||
+        (payload.annotation && targetVideoId
+          ? resolveManualVisualEvidence(targetVideoId, payload.annotation)
+          : null);
+      const navigationState =
+        payload.navigationState || buildEvidenceNavigationState(resolvedEvidence);
+      setActiveEvidenceNavigation(navigationState);
+      const targetTime =
+        navigationState.activeEvidenceId && typeof navigationState.activeTime === "number"
+          ? navigationState.activeTime
+          : typeof payload.timestamp === "number"
+            ? payload.timestamp
+            : currentTime;
+      const overlayKey = `manual-${payload.annotationId}`;
+      const nextEdit = payload.annotation
+        ? {
+            category: payload.annotation.category,
+            subcategory:
+              payload.annotation.subcategory ||
+              getFirstSubcategoryForCategory(payload.annotation.category),
+            label: resolveManualVisualDisplayLabel(payload.annotation),
+            identityAffirmation: payload.annotation.identity_affirmation || "",
+            start: Number((resolvedEvidence?.time.start ?? targetTime).toFixed(3)),
+            end: Number(
+              (resolvedEvidence?.time.end ?? targetTime + 0.001).toFixed(3),
+            ),
+            note: payload.annotation.open_note || "",
+          }
+        : null;
+      if (nextEdit) {
+        setSelectedIndicationEdits((current) => ({
+          ...current,
+          [overlayKey]: nextEdit,
+        }));
+      }
+      jumpToTime(targetTime);
+      setAnnotationWorkspaceActive(true);
+      setNativeAnnotationMode(false);
+      setForensicRoiMode(false);
+      setSelectedWorkspaceAnnotationId(payload.annotationId);
+      setSelectedOverlayKey(overlayKey);
+    };
+
+    eventBus.on("videoIndicationEditOpen", handler);
+    return () => {
+      eventBus.off("videoIndicationEditOpen", handler);
+    };
+  }, [currentTime, jumpToTime, videoId]);
+
+  useEffect(() => {
+    const handler = (payload?: {
+      videoId?: string;
+      annotationId?: string;
+      overlayKey?: string;
+    }) => {
+      if (payload?.videoId && payload.videoId !== videoId) {
+        return;
+      }
+      const overlayKey =
+        payload?.overlayKey ||
+        (payload?.annotationId ? `manual-${payload.annotationId}` : null);
+      if (!overlayKey) {
+        return;
+      }
+      closeSelectedOverlayEditor(overlayKey);
+    };
+
+    eventBus.on("videoIndicationEditClose", handler);
+    return () => {
+      eventBus.off("videoIndicationEditClose", handler);
+    };
+  }, [closeSelectedOverlayEditor, videoId]);
+
+  useEffect(() => {
+    const handler = (payload?: PendingObjectOverlayEdit) => {
+      if (!payload) {
         return;
       }
       if (payload.videoId && payload.videoId !== videoId) {
@@ -1408,14 +1926,44 @@ export default function VideoPanel() {
       setAnnotationWorkspaceActive(true);
       setNativeAnnotationMode(false);
       setForensicRoiMode(false);
-      setSelectedOverlayKey(`manual-${payload.annotationId}`);
+      setPendingObjectOverlayEdit(payload);
     };
 
-    eventBus.on("videoIndicationEditOpen", handler);
+    eventBus.on("videoObjectIndicationEditOpen", handler);
     return () => {
-      eventBus.off("videoIndicationEditOpen", handler);
+      eventBus.off("videoObjectIndicationEditOpen", handler);
     };
   }, [currentTime, jumpToTime, videoId]);
+
+  useEffect(() => {
+    const handler = (payload?: LocalObjectLabelOverride) => {
+      if (!payload?.label) {
+        return;
+      }
+      if (payload.videoId && payload.videoId !== videoId) {
+        return;
+      }
+      setLocalObjectLabelOverrides((current) => {
+        const next = current.filter((item) => {
+          const sameTrack =
+            payload.trackId !== undefined &&
+            item.trackId !== undefined &&
+            Number(item.trackId) === Number(payload.trackId);
+          const sameSource =
+            normalizeEvidenceLabel(payload.sourceLabel) &&
+            normalizeEvidenceLabel(payload.sourceLabel) ===
+              normalizeEvidenceLabel(item.sourceLabel);
+          return !(sameTrack || sameSource);
+        });
+        return [...next, payload];
+      });
+    };
+
+    eventBus.on("videoObjectLabelOverride", handler);
+    return () => {
+      eventBus.off("videoObjectLabelOverride", handler);
+    };
+  }, [videoId]);
 
   useEffect(() => {
     const handler = (preset: string) => {
@@ -2055,6 +2603,35 @@ export default function VideoPanel() {
     () => groupDetectedObjectsForDisplay(detectedObjects),
     [detectedObjects],
   );
+  const objectTrackSamplesById = useMemo(() => {
+    const samples = new Map<string, DetectedObject[]>();
+    for (const item of [...rawDetectedObjects, ...detectedObjects]) {
+      const trackId = objectTrackTargetId(item);
+      if (!trackId || !detectedObjectToNormalizedBox(item, videoWidth, videoHeight)) {
+        continue;
+      }
+      const existing = samples.get(trackId) || [];
+      existing.push(item);
+      samples.set(trackId, existing);
+    }
+    for (const [trackId, items] of samples.entries()) {
+      const byTime = new Map<number, DetectedObject>();
+      for (const item of items) {
+        const timestamp = Number((item.timestamp || item.startTimestamp || 0).toFixed(3));
+        const previous = byTime.get(timestamp);
+        if (!previous || (item.confidence || 0) >= (previous.confidence || 0)) {
+          byTime.set(timestamp, item);
+        }
+      }
+      samples.set(
+        trackId,
+        Array.from(byTime.values()).sort(
+          (left, right) => (left.timestamp || 0) - (right.timestamp || 0),
+        ),
+      );
+    }
+    return samples;
+  }, [detectedObjects, rawDetectedObjects, videoHeight, videoWidth]);
   const ocrResults = analysisData?.ocr ?? [];
   const expressionResults = analysisData?.expressionResults ?? [];
   const audioProsody = analysisData?.audioProsody ?? [];
@@ -2112,40 +2689,137 @@ export default function VideoPanel() {
     () => findNearbyItems(expressionResults, 0.5),
     [expressionResults, findNearbyItems],
   );
+  const allManualVisualAnnotations = useMemo(
+    () => analysisData?.annotationCorrections?.manual_visual_annotations || [],
+    [analysisData?.annotationCorrections?.manual_visual_annotations],
+  );
   const manualVisualAnnotations = useMemo(
     () =>
-      (analysisData?.annotationCorrections?.manual_visual_annotations || []).filter(
-        (entry: ManualVisualAnnotation) => {
-          const rawStart =
-            typeof entry.start_seconds === "number"
-              ? entry.start_seconds
-              : entry.timestamp_seconds;
-          const rawEnd =
-            typeof entry.end_seconds === "number"
-              ? entry.end_seconds
-              : entry.timestamp_seconds;
-          if (typeof rawStart !== "number" || typeof rawEnd !== "number") {
-            return false;
-          }
-          const start = Math.min(rawStart, rawEnd);
-          const end = Math.max(rawStart, rawEnd);
-          const duration = end - start;
-          if (duration <= MANUAL_POINT_VISIBILITY_SECONDS) {
-            const timestamp =
-              typeof entry.timestamp_seconds === "number"
-                ? entry.timestamp_seconds
-                : (start + end) / 2;
-            return (
-              Math.abs(currentTime - timestamp) <= MANUAL_POINT_VISIBILITY_SECONDS
-            );
-          }
-          return (
-            currentTime >= start - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS &&
-            currentTime <= end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
-          );
-        },
+      allManualVisualAnnotations.filter(
+        (entry: ManualVisualAnnotation) =>
+          isManualAnnotationVisibleAtTime(entry, currentTime),
       ),
-    [analysisData?.annotationCorrections?.manual_visual_annotations, currentTime],
+    [allManualVisualAnnotations, currentTime],
+  );
+  const isManualAnnotationVisibleInSelectedWorkspace = React.useCallback(
+    (entry: ManualVisualAnnotation) => {
+      if (!entry.id) {
+        return false;
+      }
+      const overlayKey = `manual-${entry.id}`;
+      if (
+        selectedWorkspaceAnnotationId !== entry.id ||
+        !selectedOverlayKey
+      ) {
+        return false;
+      }
+      const edit = selectedIndicationEdits[selectedOverlayKey];
+      if (!edit) {
+        return false;
+      }
+      const intervalStart = clamp(
+        Math.min(edit.start, edit.end),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const intervalEnd = clamp(
+        Math.max(edit.start, edit.end, Math.min(edit.start, edit.end) + 0.001),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const padding =
+        selectedOverlayTimelinePadding[selectedOverlayKey] ||
+        selectedOverlayTimelinePadding[overlayKey] ||
+        { before: 0, after: 0 };
+      const workspaceStart = clamp(
+        intervalStart - Math.max(0, padding.before),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const workspaceEnd = clamp(
+        intervalEnd + Math.max(0, padding.after),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      return (
+        currentTime >= workspaceStart &&
+        currentTime <= workspaceEnd + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+      );
+    },
+    [
+      currentTime,
+      duration,
+      selectedIndicationEdits,
+      selectedOverlayKey,
+      selectedOverlayTimelinePadding,
+      selectedWorkspaceAnnotationId,
+    ],
+  );
+  const buildTrackGeometryKeyframes = React.useCallback(
+    (trackId: string | null): ManualGeometryKeyframe[] => {
+      if (!trackId) {
+        return [];
+      }
+      const samples = objectTrackSamplesById.get(trackId) || [];
+      return samples
+        .map((item) => {
+          const box = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
+          if (!box || typeof item.timestamp !== "number") {
+            return null;
+          }
+          return {
+            time: Number(item.timestamp.toFixed(3)),
+            coordinates: box,
+            source: "track" as const,
+          };
+        })
+        .filter(Boolean) as ManualGeometryKeyframe[];
+    },
+    [objectTrackSamplesById, videoHeight, videoWidth],
+  );
+  const resolveManualGeometryAtTime = React.useCallback(
+    (item: ManualVisualAnnotation, timestamp: number): DraftBox | null => {
+      const manualKeyframes = Array.isArray(item.geometry_keyframes)
+        ? item.geometry_keyframes
+        : [];
+      const trackKeyframes = buildTrackGeometryKeyframes(manualObjectTargetId(item));
+      const merged = [...trackKeyframes, ...manualKeyframes]
+        .filter(
+          (keyframe): keyframe is ManualGeometryKeyframe =>
+            typeof keyframe?.time === "number" &&
+            Number.isFinite(keyframe.time) &&
+            Boolean(keyframe.coordinates),
+        )
+        .sort((left, right) => left.time - right.time);
+
+      if (merged.length === 0) {
+        const fallbackBox = resolveManualOverlayBBox(item.coordinates, videoWidth, videoHeight);
+        return fallbackBox
+          ? normalizeDraftBox({
+              x: fallbackBox.x / Math.max(1, videoWidth),
+              y: fallbackBox.y / Math.max(1, videoHeight),
+              w: fallbackBox.w / Math.max(1, videoWidth),
+              h: fallbackBox.h / Math.max(1, videoHeight),
+            })
+          : null;
+      }
+
+      const before = [...merged].reverse().find((keyframe) => keyframe.time <= timestamp);
+      const after = merged.find((keyframe) => keyframe.time >= timestamp);
+      if (before && after && before !== after) {
+        const span = Math.max(0.001, after.time - before.time);
+        if (span <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS) {
+          return interpolateBoxes(
+            normalizeDraftBox(before.coordinates),
+            normalizeDraftBox(after.coordinates),
+            (timestamp - before.time) / span,
+          );
+        }
+      }
+      const nearest = before || after || merged[0];
+      return normalizeDraftBox(nearest.coordinates);
+    },
+    [buildTrackGeometryKeyframes, videoHeight, videoWidth],
   );
   const nativeSubcategoryOptions = useMemo(
     () =>
@@ -2205,25 +2879,145 @@ export default function VideoPanel() {
       return overlays;
     }
 
+    const manualOverridesByObjectTrack = new Map<string, ManualVisualAnnotation[]>();
+    const manualOverridesBySourceLabel = new Map<string, ManualVisualAnnotation>();
+    allManualVisualAnnotations.forEach((item) => {
+      const targetId = manualObjectTargetId(item);
+      if (targetId) {
+        const existing = manualOverridesByObjectTrack.get(targetId) || [];
+        manualOverridesByObjectTrack.set(targetId, [...existing, item]);
+      }
+      const targetLabel = normalizeEvidenceLabel(item.metadata_correlation?.target_label);
+      if (targetLabel) {
+        manualOverridesBySourceLabel.set(targetLabel, item);
+      }
+    });
+    const activeManualObjectTrackIds = new Set<string>();
+    manualVisualAnnotations.forEach((item) => {
+      const targetId = manualObjectTargetId(item);
+      if (targetId) {
+        activeManualObjectTrackIds.add(targetId);
+      }
+    });
+    const activeLocalObjectLabelOverrides = localObjectLabelOverrides.filter((item) => {
+      if (item.videoId && item.videoId !== videoId) {
+        return false;
+      }
+      const start = typeof item.start === "number" ? item.start : Number.NEGATIVE_INFINITY;
+      const end = typeof item.end === "number" ? item.end : Number.POSITIVE_INFINITY;
+      return (
+        currentTime >= Math.min(start, end) &&
+        currentTime <= Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+      );
+    });
+
     if (overlayToggles.objects) {
       activeRawObjects.forEach((item: DetectedObject, index: number) => {
-        const resolvedBox = resolveObjectOverlayBBox(item.bbox, videoWidth, videoHeight);
+        const targetId = objectTrackTargetId(item);
+        const manualOverride = (() => {
+          const trackMatches =
+            targetId && manualOverridesByObjectTrack.has(targetId)
+              ? manualOverridesByObjectTrack.get(targetId) || []
+              : [];
+          const selectedTrackManual =
+            selectedWorkspaceAnnotationId && trackMatches.length > 0
+              ? trackMatches.find((entry) => entry.id === selectedWorkspaceAnnotationId)
+              : undefined;
+          if (selectedTrackManual) {
+            return selectedTrackManual;
+          }
+          const activeTrackManual = trackMatches.find(
+            (entry) =>
+              isManualAnnotationVisibleAtTime(entry, currentTime) ||
+              isManualAnnotationVisibleInSelectedWorkspace(entry),
+          );
+          if (activeTrackManual) {
+            return activeTrackManual;
+          }
+          const labels = [
+            item.displayLabel,
+            item.class_name,
+            item.raw_class_name,
+            targetId ? `${item.class_name} track ${targetId}` : "",
+            targetId ? `person track ${targetId}` : "",
+          ].map(normalizeEvidenceLabel);
+          for (const label of labels) {
+            if (label && manualOverridesBySourceLabel.has(label)) {
+              return manualOverridesBySourceLabel.get(label);
+            }
+          }
+          return undefined;
+        })();
+        const manualOverrideActive =
+          !!manualOverride &&
+          (isManualAnnotationVisibleAtTime(manualOverride, currentTime) ||
+            isManualAnnotationVisibleInSelectedWorkspace(manualOverride));
+        const localOverride = (() => {
+          const targetId = objectTrackTargetId(item);
+          return activeLocalObjectLabelOverrides.find((override) => {
+            const sameTrack =
+              targetId &&
+              override.trackId !== undefined &&
+              Number(override.trackId) === Number(targetId);
+            const sourceLabels = [
+              item.displayLabel,
+              item.class_name,
+              item.raw_class_name,
+              targetId ? `${item.class_name} track ${targetId}` : "",
+              targetId ? `person track ${targetId}` : "",
+            ].map(normalizeEvidenceLabel);
+            const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
+            return sameTrack || Boolean(overrideSource && sourceLabels.includes(overrideSource));
+          });
+        })();
+        const resolvedBox =
+          manualOverrideActive && manualOverride?.geometry_type === "box"
+            ? (() => {
+                const normalized = resolveManualGeometryAtTime(manualOverride, currentTime);
+                if (!normalized) return null;
+                return {
+                  x: normalized.x * videoWidth,
+                  y: normalized.y * videoHeight,
+                  w: normalized.w * videoWidth,
+                  h: normalized.h * videoHeight,
+                };
+              })()
+            : resolveObjectOverlayBBox(item.bbox, videoWidth, videoHeight);
         if (!resolvedBox) {
+          return;
+        }
+        if (
+          targetId &&
+          manualOverrideActive &&
+          activeManualObjectTrackIds.has(targetId) &&
+          overlayToggles.manual
+        ) {
           return;
         }
 
         overlays.push({
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
-          label: item.displayLabel || item.class_name,
-          color: isFallbackPersonDetection(item)
+          label: localOverride?.label ||
+            (manualOverrideActive
+            ? resolveManualVisualDisplayLabel(manualOverride)
+            : item.displayLabel || item.class_name),
+          color: localOverride || manualOverrideActive
+            ? "border-emerald-300/80 bg-emerald-300/10"
+            : isFallbackPersonDetection(item)
             ? "border-amber-300/80 bg-amber-300/10"
             : "border-cyan-300/70 bg-transparent",
           x: resolvedBox.x,
           y: resolvedBox.y,
           w: resolvedBox.w,
           h: resolvedBox.h,
-          sourceItem: item,
+          sourceItem:
+            manualOverrideActive && manualOverride
+              ? {
+                  ...item,
+                  manual_annotation: manualOverride,
+                }
+              : item,
         });
       });
     }
@@ -2279,29 +3073,74 @@ export default function VideoPanel() {
     }
 
     if (overlayToggles.manual) {
-      manualVisualAnnotations.forEach((item: ManualVisualAnnotation, index: number) => {
+      const selectedManualId = selectedOverlayKey?.startsWith("manual-")
+        ? selectedOverlayKey.replace(/^manual-/, "")
+        : null;
+      const manualOverlaySource = [...manualVisualAnnotations];
+      if (
+        selectedManualId &&
+        !manualOverlaySource.some((item) => item.id === selectedManualId)
+      ) {
+        const selectedManual = allManualVisualAnnotations.find(
+          (item) => item.id === selectedManualId,
+        );
         if (
-          item.geometry_type !== "box" ||
-          item.coordinates?.x === undefined ||
-          item.coordinates?.y === undefined ||
-          item.coordinates?.w === undefined ||
-          item.coordinates?.h === undefined
+          selectedManual &&
+          (isManualAnnotationVisibleAtTime(selectedManual, currentTime) ||
+            isManualAnnotationVisibleInSelectedWorkspace(selectedManual))
         ) {
+          manualOverlaySource.push(selectedManual);
+        }
+      }
+      manualOverlaySource.forEach((item: ManualVisualAnnotation, index: number) => {
+        if (item.geometry_type !== "box") {
           return;
         }
+        const resolvedBox = resolveManualGeometryAtTime(item, currentTime);
+        if (!resolvedBox) return;
 
         overlays.push({
           key: `manual-${item.id || index}`,
           modality: "manual",
-          label: item.label || "manual annotation",
+          label: resolveManualVisualDisplayLabel(item),
           color: "border-amber-300/90 bg-amber-300/10",
-          x: item.coordinates.x * videoWidth,
-          y: item.coordinates.y * videoHeight,
-          w: item.coordinates.w * videoWidth,
-          h: item.coordinates.h * videoHeight,
+          x: resolvedBox.x * videoWidth,
+          y: resolvedBox.y * videoHeight,
+          w: resolvedBox.w * videoWidth,
+          h: resolvedBox.h * videoHeight,
           sourceItem: item,
         });
       });
+    }
+
+    if (
+      selectedOverlayKey &&
+      selectedOverlaySnapshot &&
+      !overlays.some((overlay) => overlay.key === selectedOverlayKey)
+    ) {
+      const edit = selectedIndicationEdits[selectedOverlayKey];
+      const padding = selectedOverlayTimelinePadding[selectedOverlayKey] || {
+        before: 0,
+        after: 0,
+      };
+      if (edit) {
+        const intervalStart = clamp(
+          Math.min(edit.start, edit.end) - Math.max(0, padding.before),
+          0,
+          duration || Number.MAX_SAFE_INTEGER,
+        );
+        const intervalEnd = clamp(
+          Math.max(edit.start, edit.end) + Math.max(0, padding.after),
+          0,
+          duration || Number.MAX_SAFE_INTEGER,
+        );
+        if (
+          currentTime >= intervalStart &&
+          currentTime <= intervalEnd + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+        ) {
+          overlays.push(selectedOverlaySnapshot);
+        }
+      }
     }
 
     return overlays;
@@ -2309,10 +3148,22 @@ export default function VideoPanel() {
     activeExpressions,
     activeOCR,
     activeRawObjects,
+    allManualVisualAnnotations,
+    currentTime,
+    localObjectLabelOverrides,
     manualVisualAnnotations,
     overlayToggles,
+    resolveManualGeometryAtTime,
+    isManualAnnotationVisibleInSelectedWorkspace,
+    duration,
+    selectedIndicationEdits,
+    selectedOverlayKey,
+    selectedOverlaySnapshot,
+    selectedOverlayTimelinePadding,
+    selectedWorkspaceAnnotationId,
     isLoading,
     videoUrl,
+    videoId,
     videoHeight,
     videoWidth,
   ]);
@@ -2332,9 +3183,17 @@ export default function VideoPanel() {
         w: clamp(overlay.w / videoWidth, 0.002, 1),
         h: clamp(overlay.h / videoHeight, 0.002, 1),
       };
-      return overlayGeometryDrafts[overlay.key] || fallback;
+      const draft = overlayGeometryDrafts[overlay.key];
+      if (
+        draft &&
+        Number.isFinite(draft.time) &&
+        Math.abs(draft.time - currentTime) <= 0.075
+      ) {
+        return draft.box;
+      }
+      return fallback;
     },
-    [overlayGeometryDrafts],
+    [currentTime, overlayGeometryDrafts],
   );
 
   const getRenderedVideoPoint = React.useCallback(
@@ -2384,9 +3243,31 @@ export default function VideoPanel() {
       if (!point) {
         return;
       }
-      const minSize = 0.015;
+      const minSize = 0.004;
       const dx = point.x - overlayGeometryDrag.startPoint.x;
       const dy = point.y - overlayGeometryDrag.startPoint.y;
+      const rawEndX = overlayGeometryDrag.startBox.x + overlayGeometryDrag.startBox.w + dx;
+      const rawEndY = overlayGeometryDrag.startBox.y + overlayGeometryDrag.startBox.h + dy;
+      const nextX = clamp(
+        Math.min(overlayGeometryDrag.startBox.x, rawEndX),
+        0,
+        1 - minSize,
+      );
+      const nextY = clamp(
+        Math.min(overlayGeometryDrag.startBox.y, rawEndY),
+        0,
+        1 - minSize,
+      );
+      const nextW = clamp(
+        Math.abs(rawEndX - overlayGeometryDrag.startBox.x),
+        minSize,
+        1 - nextX,
+      );
+      const nextH = clamp(
+        Math.abs(rawEndY - overlayGeometryDrag.startBox.y),
+        minSize,
+        1 - nextY,
+      );
       const nextBox =
         overlayGeometryDrag.mode === "move"
           ? {
@@ -2404,21 +3285,18 @@ export default function VideoPanel() {
             }
           : {
               ...overlayGeometryDrag.startBox,
-              w: clamp(
-                overlayGeometryDrag.startBox.w + dx,
-                minSize,
-                1 - overlayGeometryDrag.startBox.x,
-              ),
-              h: clamp(
-                overlayGeometryDrag.startBox.h + dy,
-                minSize,
-                1 - overlayGeometryDrag.startBox.y,
-              ),
+              x: nextX,
+              y: nextY,
+              w: nextW,
+              h: nextH,
             };
 
       setOverlayGeometryDrafts((current) => ({
         ...current,
-        [overlayGeometryDrag.overlayKey]: nextBox,
+        [overlayGeometryDrag.overlayKey]: {
+          box: normalizeDraftBox(nextBox),
+          time: currentTime,
+        },
       }));
     };
 
@@ -2434,14 +3312,19 @@ export default function VideoPanel() {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [getRenderedVideoPoint, overlayGeometryDrag]);
+  }, [currentTime, getRenderedVideoPoint, overlayGeometryDrag]);
 
   const getOverlayTimestamp = React.useCallback(
     (overlay: OverlayBox) => {
       const source = overlay.sourceItem || {};
+      const attachedManual = getAttachedManualAnnotation(source);
       const timestamp =
-        typeof source.timestamp_seconds === "number"
-          ? source.timestamp_seconds
+        typeof attachedManual?.timestamp_seconds === "number"
+          ? attachedManual.timestamp_seconds
+          : typeof attachedManual?.start_seconds === "number"
+            ? attachedManual.start_seconds
+          : typeof source.timestamp_seconds === "number"
+            ? source.timestamp_seconds
           : typeof source.timestamp === "number"
             ? source.timestamp
             : typeof source.startTimestamp === "number"
@@ -2455,18 +3338,23 @@ export default function VideoPanel() {
   const getOverlayTimeBounds = React.useCallback(
     (overlay: OverlayBox) => {
       const source = overlay.sourceItem || {};
+      const attachedManual = getAttachedManualAnnotation(source);
       const timestamp = getOverlayTimestamp(overlay);
       const rawStart =
-        typeof source.start_seconds === "number"
-          ? source.start_seconds
+        typeof attachedManual?.start_seconds === "number"
+          ? attachedManual.start_seconds
+          : typeof source.start_seconds === "number"
+            ? source.start_seconds
           : typeof source.startTimestamp === "number"
             ? source.startTimestamp
             : typeof source.start_timestamp === "number"
               ? source.start_timestamp
               : timestamp;
       const rawEnd =
-        typeof source.end_seconds === "number"
-          ? source.end_seconds
+        typeof attachedManual?.end_seconds === "number"
+          ? attachedManual.end_seconds
+          : typeof source.end_seconds === "number"
+            ? source.end_seconds
           : typeof source.endTimestamp === "number"
             ? source.endTimestamp
             : typeof source.end_timestamp === "number"
@@ -2482,17 +3370,53 @@ export default function VideoPanel() {
     [duration, getOverlayTimestamp],
   );
 
+  const getOverlayInteractionTime = React.useCallback(
+    (overlay: OverlayBox) => {
+      const bounds = getOverlayTimeBounds(overlay);
+      const scrubValue =
+        selectedOverlayScrub?.overlayKey === overlay.key
+          ? selectedOverlayScrub.value
+          : null;
+      const visibleTime =
+        typeof scrubValue === "number" && Number.isFinite(scrubValue)
+          ? scrubValue
+          : currentTime;
+      if (
+        selectedOverlayKey === overlay.key &&
+        Number.isFinite(visibleTime)
+      ) {
+        return clamp(visibleTime, 0, duration || Number.MAX_SAFE_INTEGER);
+      }
+      if (
+        Number.isFinite(visibleTime) &&
+        visibleTime >= bounds.start - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS &&
+        visibleTime <= bounds.end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+      ) {
+        return clamp(visibleTime, 0, duration || Number.MAX_SAFE_INTEGER);
+      }
+      return getOverlayTimestamp(overlay);
+    },
+    [
+      currentTime,
+      duration,
+      getOverlayTimeBounds,
+      getOverlayTimestamp,
+      selectedOverlayKey,
+      selectedOverlayScrub,
+    ],
+  );
+
   const buildIndicationEditForOverlay = React.useCallback(
     (overlay: OverlayBox): SelectedIndicationEdit => {
       const source = overlay.sourceItem || {};
       const bounds = getOverlayTimeBounds(overlay);
       const category = getDefaultCategoryForOverlay(overlay);
-      const manual = overlay.modality === "manual" ? (source as ManualVisualAnnotation) : null;
+      const manual =
+        overlay.modality === "manual"
+          ? (source as ManualVisualAnnotation)
+          : getAttachedManualAnnotation(source);
       const label =
-        manual?.custom_label ||
-        manual?.identity_affirmation ||
-        manual?.role_affirmation ||
-        manual?.label ||
+        (manual ? resolveManualVisualDisplayLabel(manual) : "") ||
         overlay.label ||
         "";
       return {
@@ -2543,20 +3467,172 @@ export default function VideoPanel() {
     [buildIndicationEditForOverlay, duration, overlayBoxes],
   );
 
+  const cutSelectedIndicationOut = React.useCallback(
+    (overlayKey: string, explicitCutTime?: number) => {
+      const cutTime =
+        typeof explicitCutTime === "number"
+          ? explicitCutTime
+          : selectedOverlayScrub?.overlayKey === overlayKey
+          ? selectedOverlayScrub.value
+          : currentTime;
+      updateSelectedIndicationEdit(overlayKey, { end: cutTime });
+      setSelectedOverlayScrub({ overlayKey, value: cutTime, active: false });
+    },
+    [currentTime, selectedOverlayScrub, updateSelectedIndicationEdit],
+  );
+
+  const finishSelectedOverlayTimeDraw = React.useCallback(
+    (overlayKey: string, fallbackTime: number) => {
+      const drag =
+        selectedOverlayTimeDrag?.overlayKey === overlayKey
+          ? selectedOverlayTimeDrag
+          : null;
+      const releaseTime =
+        selectedOverlayScrub?.overlayKey === overlayKey
+          ? selectedOverlayScrub.value
+          : fallbackTime;
+      if (drag) {
+        const start = Math.min(drag.start, releaseTime);
+        const end = Math.max(drag.start, releaseTime, start + 0.001);
+        updateSelectedIndicationEdit(overlayKey, { start, end });
+      }
+      setSelectedOverlayTimeDrag(null);
+      finishSelectedOverlayScrub();
+    },
+    [
+      finishSelectedOverlayScrub,
+      selectedOverlayScrub,
+      selectedOverlayTimeDrag,
+      updateSelectedIndicationEdit,
+    ],
+  );
+
+  const scrubAndExtendSelectedOverlay = React.useCallback(
+    (
+      overlayKey: string,
+      nextTime: number,
+      minTime: number,
+      maxTime: number,
+      edit: SelectedIndicationEdit,
+      _overdraftActive: boolean,
+    ) => {
+      const safeTime = clamp(nextTime, minTime, maxTime);
+      scrubSelectedOverlayTo(overlayKey, safeTime, minTime, maxTime);
+      const patch: Partial<SelectedIndicationEdit> = {};
+      if (safeTime < edit.start) {
+        patch.start = safeTime;
+      }
+      if (safeTime > edit.end) {
+        patch.end = safeTime;
+      }
+      if (patch.start !== undefined || patch.end !== undefined) {
+        updateSelectedIndicationEdit(overlayKey, patch);
+      }
+    },
+    [scrubSelectedOverlayTo, updateSelectedIndicationEdit],
+  );
+
+  const commitSelectedTimeInput = React.useCallback(
+    (
+      inputKey: string,
+      overlayKey: string,
+      field: "start" | "end",
+      fallbackValue: number,
+    ) => {
+      setSelectedTimeInputDrafts((current) => {
+        const draftValue = current[inputKey];
+        if (draftValue === undefined) {
+          return current;
+        }
+        const parsed = parsePreciseTimeInput(draftValue);
+        if (parsed !== null) {
+          updateSelectedIndicationEdit(overlayKey, { [field]: parsed });
+        }
+        const next = { ...current };
+        next[inputKey] = formatPreciseTime(parsed ?? fallbackValue);
+        window.setTimeout(() => {
+          setSelectedTimeInputDrafts((latest) => {
+            const cleared = { ...latest };
+            delete cleared[inputKey];
+            return cleared;
+          });
+        }, 0);
+        return next;
+      });
+    },
+    [updateSelectedIndicationEdit],
+  );
+
   const selectOverlayForEditing = React.useCallback(
     (overlay: OverlayBox) => {
+      const source = overlay.sourceItem || {};
+      const attachedManual =
+        overlay.modality === "manual"
+          ? (source as ManualVisualAnnotation)
+          : getAttachedManualAnnotation(source);
+      const authoritativeEdit = buildIndicationEditForOverlay(overlay);
       setSelectedIndicationEdits((current) =>
-        current[overlay.key]
+        selectedOverlayKey === overlay.key && current[overlay.key]
           ? current
           : {
               ...current,
-              [overlay.key]: buildIndicationEditForOverlay(overlay),
+              [overlay.key]: authoritativeEdit,
             },
       );
-      setSelectedOverlayKey((current) => (current === overlay.key ? null : overlay.key));
+      setSelectedWorkspaceAnnotationId(attachedManual?.id || null);
+      setSelectedOverlayKey(overlay.key);
+      setSelectedOverlaySnapshot(overlay);
     },
-    [buildIndicationEditForOverlay],
+    [buildIndicationEditForOverlay, getAttachedManualAnnotation, selectedOverlayKey],
   );
+
+  useEffect(() => {
+    if (!pendingObjectOverlayEdit || overlayBoxes.length === 0) {
+      return;
+    }
+    const match = overlayBoxes.find((overlay) => {
+      if (overlay.modality !== "object") {
+        return false;
+      }
+      const source = overlay.sourceItem || {};
+      const sameTrack =
+        pendingObjectOverlayEdit.trackId !== undefined &&
+        Number(source.trackId ?? source.track_id) ===
+          Number(pendingObjectOverlayEdit.trackId);
+      const sameLabel =
+        pendingObjectOverlayEdit.label &&
+        String(overlay.label || source.displayLabel || source.class_name || "")
+          .toLowerCase()
+          .includes(String(pendingObjectOverlayEdit.label).toLowerCase());
+      return sameTrack || sameLabel;
+    });
+    if (!match) {
+      return;
+    }
+    const authoritativeEdit = buildIndicationEditForOverlay(match);
+    setSelectedIndicationEdits((current) => ({
+      ...current,
+      [match.key]: {
+        ...authoritativeEdit,
+        start:
+          typeof pendingObjectOverlayEdit.start === "number"
+            ? pendingObjectOverlayEdit.start
+            : authoritativeEdit.start,
+        end:
+          typeof pendingObjectOverlayEdit.end === "number"
+            ? pendingObjectOverlayEdit.end
+            : authoritativeEdit.end,
+        category:
+          pendingObjectOverlayEdit.category ||
+          authoritativeEdit.category,
+        note:
+          pendingObjectOverlayEdit.note ??
+          authoritativeEdit.note,
+      },
+    }));
+    setSelectedOverlayKey(match.key);
+    setPendingObjectOverlayEdit(null);
+  }, [buildIndicationEditForOverlay, overlayBoxes, pendingObjectOverlayEdit]);
 
   const openEvidencePanelForOverlay = React.useCallback(
     (overlay: OverlayBox) => {
@@ -2565,7 +3641,7 @@ export default function VideoPanel() {
       }
 
       const source = overlay.sourceItem || {};
-      const timestamp = getOverlayTimestamp(overlay);
+      const timestamp = getOverlayInteractionTime(overlay);
 
       let panelType = "MasterSchema";
       if (overlay.modality === "object") {
@@ -2597,7 +3673,7 @@ export default function VideoPanel() {
         sourceItem: source,
       });
     },
-    [getOverlayTimestamp, openPanel, videoId],
+    [getOverlayInteractionTime, openPanel, videoId],
   );
 
   const seedForensicRoiFromOverlay = React.useCallback(
@@ -2618,7 +3694,7 @@ export default function VideoPanel() {
         indication.category === "OCR" || overlay.modality === "ocr"
           ? "ocr"
           : indication.category === "Expressions" || overlay.modality === "expression"
-            ? "expression"
+            ? "micro_expression"
             : indication.category === "Identification"
               ? "identification"
               : indication.category === "Movement"
@@ -2704,6 +3780,14 @@ export default function VideoPanel() {
           : undefined,
       geometry_type: "box",
       coordinates: draftBox,
+      geometry_keyframes: [
+        {
+          time: annotationTimestamp,
+          coordinates: normalizeDraftBox(draftBox),
+          source: "manual",
+          updated_at: new Date().toISOString(),
+        },
+      ],
       timestamp_seconds: annotationTimestamp,
       start_seconds: annotationTimestamp,
       end_seconds: annotationTimestamp,
@@ -2729,6 +3813,7 @@ export default function VideoPanel() {
     setAnalysisData(refreshed);
     jumpToTime(annotationTimestamp);
     setNativeAnnotationMode(false);
+    setSelectedWorkspaceAnnotationId(annotation.id);
     setSelectedOverlayKey(`manual-${annotation.id}`);
     const savedDetail = (
       annotation.identity_affirmation ||
@@ -2788,15 +3873,42 @@ export default function VideoPanel() {
         duration || Number.MAX_SAFE_INTEGER,
       );
       const label = resolveIndicationLabel(edit.category, edit.label);
-      const existingManual =
-        overlay.modality === "manual"
-          ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
-          : undefined;
       const source = overlay.sourceItem || {};
-      const normalizedBox = getOverlayNormalizedBox(overlay);
+      const targetTrackId = String(
+        source.trackId ??
+          source.track_id ??
+          (overlay.modality === "manual"
+            ? manualObjectTargetId(overlay.sourceItem as ManualVisualAnnotation)
+            : null) ??
+          "",
+      ).trim();
       const annotationId =
-        existingManual?.id ||
-        `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
+        overlay.modality === "manual"
+          ? (overlay.sourceItem as ManualVisualAnnotation | undefined)?.id ||
+            `${videoId}:indication:${overlay.modality}:${overlay.key}`
+          : `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
+      const existingManual =
+        allManualVisualAnnotations.find((item) => item.id === annotationId) ||
+        (overlay.modality === "manual"
+          ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
+          : undefined);
+      const normalizedBox = getOverlayNormalizedBox(overlay);
+      const keyframeTime = clamp(
+        getOverlayInteractionTime(overlay),
+        start,
+        end,
+      );
+      const trackKeyframes = buildTrackGeometryKeyframes(targetTrackId || null);
+      const geometryKeyframes = mergeGeometryKeyframes([
+        ...(existingManual?.geometry_keyframes || []),
+        ...trackKeyframes,
+        {
+          time: Number(keyframeTime.toFixed(3)),
+          coordinates: normalizeDraftBox(normalizedBox),
+          source: "manual",
+          updated_at: new Date().toISOString(),
+        },
+      ]);
       const annotation: ManualVisualAnnotation = {
         ...(existingManual || {}),
         id: annotationId,
@@ -2811,6 +3923,7 @@ export default function VideoPanel() {
           w: clamp(normalizedBox.w, 0.002, 1),
           h: clamp(normalizedBox.h, 0.002, 1),
         },
+        geometry_keyframes: geometryKeyframes,
         timestamp_seconds: Number(start.toFixed(3)),
         start_seconds: Number(start.toFixed(3)),
         end_seconds: Number(end.toFixed(3)),
@@ -2844,25 +3957,13 @@ export default function VideoPanel() {
       await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
-      setSelectedOverlayKey(`manual-${annotation.id}`);
-      setOverlayGeometryDrafts((current) => {
-        const next = { ...current, [`manual-${annotation.id}`]: normalizedBox };
-        if (overlay.key !== `manual-${annotation.id}`) {
-          delete next[overlay.key];
-        }
-        return next;
-      });
+      closeSelectedOverlayEditor(overlay.key);
+      clearOverlayEditingWorkspace([overlay.key, `manual-${annotation.id}`]);
       setSelectedIndicationEdits((current) => ({
         ...current,
         [`manual-${annotation.id}`]: edit,
       }));
       setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
-      openPanel(MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema", {
-        videoId,
-        source: "indication_editor",
-        evidenceKey: annotation.id,
-        timestamp: start,
-      });
       eventBus.emit("videoEvidenceSelected", {
         videoId,
         panelType: MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema",
@@ -2876,11 +3977,36 @@ export default function VideoPanel() {
     },
     [
       analysisData?.annotationCorrections,
+      allManualVisualAnnotations,
+      buildTrackGeometryKeyframes,
+      clearOverlayEditingWorkspace,
+      closeSelectedOverlayEditor,
       duration,
+      getOverlayInteractionTime,
       getOverlayNormalizedBox,
-      openPanel,
       videoId,
     ],
+  );
+
+  const saveSelectedIndicationAtFrame = React.useCallback(
+    async (
+      overlay: OverlayBox,
+      edit: SelectedIndicationEdit,
+      frameTime: number,
+    ) => {
+      const safeFrameTime = clamp(
+        frameTime,
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const stretchedEdit = {
+        ...edit,
+        start: Math.min(edit.start, safeFrameTime),
+        end: Math.max(edit.end, safeFrameTime, edit.start + 0.001),
+      };
+      await saveSelectedIndication(overlay, stretchedEdit);
+    },
+    [duration, saveSelectedIndication],
   );
 
   const buildNormalizedDraftPoint = React.useCallback(
@@ -4205,9 +5331,121 @@ export default function VideoPanel() {
                     {overlayBoxes.map((overlay) => {
                       const selected = selectedOverlayKey === overlay.key;
                       const edit = getSelectedIndicationEdit(overlay);
+                      const startInputKey = `${overlay.key}:start`;
+                      const endInputKey = `${overlay.key}:end`;
                       const normalizedBox = getOverlayNormalizedBox(overlay);
-                      const scrubMax = Math.max(0.001, duration || edit.end || currentTime + 0.001);
-                      const scrubValue = clamp(currentTime, 0, scrubMax);
+                      const overdraftActive = Boolean(selectedOverlayOverdrafts[overlay.key]);
+                      const timelinePadding = selectedOverlayTimelinePadding[overlay.key] || {
+                        before: 0,
+                        after: 0,
+                      };
+                      const continuationSeconds = Math.max(
+                        1,
+                        Number(selectedOverlayContinuationSeconds[overlay.key] ?? 30),
+                      );
+                      const intervalStart = clamp(
+                        Math.min(edit.start, edit.end),
+                        0,
+                        duration || Number.MAX_SAFE_INTEGER,
+                      );
+                      const intervalEnd = clamp(
+                        Math.max(edit.start, edit.end, intervalStart + 0.001),
+                        0,
+                        duration || Number.MAX_SAFE_INTEGER,
+                      );
+                      const sceneEnd =
+                        typeof currentMotionScan.activeScene?.end === "number"
+                          ? currentMotionScan.activeScene.end
+                          : duration || intervalEnd;
+                      const sceneStart =
+                        typeof currentMotionScan.activeScene?.start === "number"
+                          ? currentMotionScan.activeScene.start
+                          : 0;
+                      const hasSceneBounds =
+                        typeof currentMotionScan.activeScene?.start === "number" ||
+                        typeof currentMotionScan.activeScene?.end === "number";
+                      const workingFrameTime = clamp(
+                        currentTime,
+                        0,
+                        duration || Number.MAX_SAFE_INTEGER,
+                      );
+                      const workspaceStart = clamp(
+                        intervalStart - Math.max(0, timelinePadding.before),
+                        0,
+                        duration || Number.MAX_SAFE_INTEGER,
+                      );
+                      const workspaceEnd = clamp(
+                        intervalEnd + Math.max(0, timelinePadding.after),
+                        0,
+                        duration || Number.MAX_SAFE_INTEGER,
+                      );
+                      const scrubMin = overdraftActive
+                        ? hasSceneBounds
+                          ? Math.min(workspaceStart, clamp(sceneStart, 0, workspaceStart))
+                          : workspaceStart
+                        : workspaceStart;
+                      const scrubMax = Math.max(
+                        workspaceEnd,
+                        overdraftActive && hasSceneBounds
+                          ? clamp(sceneEnd, workspaceEnd, duration || sceneEnd)
+                          : workspaceEnd,
+                      );
+                      const scrubValue =
+                        selectedOverlayScrub?.overlayKey === overlay.key
+                          ? clamp(selectedOverlayScrub.value, scrubMin, scrubMax)
+                          : workingFrameTime;
+                      const stretchActionLabel = "Extend in";
+                      const selectedEditorOnRight = normalizedBox.x > 0.62;
+                      const editorPreferredHeight = 176;
+                      const editorSpaceAbove = normalizedBox.y * renderedVideoRect.height;
+                      const editorSpaceBelow =
+                        (1 - normalizedBox.y - normalizedBox.h) * renderedVideoRect.height;
+                      const selectedEditorBelow =
+                        editorSpaceBelow >= editorPreferredHeight ||
+                        editorSpaceAbove < editorPreferredHeight;
+                      const selectedEditorMaxHeight = Math.max(
+                        96,
+                        Math.min(
+                          220,
+                          (selectedEditorBelow ? editorSpaceBelow : editorSpaceAbove) - 8,
+                        ),
+                      );
+                      const selectedEditorMaxWidth = Math.max(
+                        180,
+                        renderedVideoRect.width - 8,
+                      );
+                      const editableOverlay =
+                        overlay.modality === "manual" || overlay.modality === "object";
+                      const overlaySourceLabel =
+                        overlay.modality === "manual"
+                          ? String(
+                              (overlay.sourceItem as ManualVisualAnnotation | undefined)
+                                ?.metadata_correlation?.target_label || "",
+                            ).trim()
+                          : (() => {
+                              const source = overlay.sourceItem || {};
+                              const trackId = source.trackId ?? source.track_id;
+                              const rawLabel = String(
+                                source.raw_class_name ||
+                                  source.class_name ||
+                                  source.displayLabel ||
+                                  "",
+                              ).trim();
+                              if (trackId !== undefined && trackId !== null) {
+                                return rawLabel.toLowerCase().startsWith("person")
+                                  ? `person track ${trackId}`
+                                  : rawLabel
+                                    ? `${rawLabel} track ${trackId}`
+                                    : `track ${trackId}`;
+                              }
+                              return rawLabel;
+                            })();
+                      const compactOverlayLabel =
+                        overlaySourceLabel &&
+                        normalizeEvidenceLabel(overlaySourceLabel) !==
+                          normalizeEvidenceLabel(overlay.label)
+                          ? `${overlay.label} / ${overlaySourceLabel}`
+                          : overlay.label;
                       return (
                         <div
                           key={overlay.key}
@@ -4227,7 +5465,9 @@ export default function VideoPanel() {
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
                           }}
-                          className={`pointer-events-auto absolute overflow-hidden rounded border ${overlay.color} ${
+                          className={`pointer-events-auto absolute rounded border ${overlay.color} ${
+                            selected ? "overflow-visible" : "overflow-hidden"
+                          } ${
                             "cursor-pointer"
                           } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
                           style={{
@@ -4242,9 +5482,37 @@ export default function VideoPanel() {
                               : "Click for evidence panel"
                           }
                         >
-                          <div className="truncate bg-black/60 px-1 py-0.5 text-[10px] text-slate-100">
-                            {overlay.label}
+                          <div
+                            className={`truncate bg-black/60 px-1 py-0.5 text-[10px] text-slate-100 ${
+                              editableOverlay ? "cursor-move" : ""
+                            }`}
+                            title={
+                              editableOverlay
+                                ? `Drag to move indication box: ${compactOverlayLabel}`
+                                : compactOverlayLabel
+                            }
+                            onPointerDown={
+                              editableOverlay
+                                ? (event) => beginOverlayGeometryDrag(event, overlay, "move")
+                                : undefined
+                            }
+                          >
+                            {compactOverlayLabel}
                           </div>
+                          {editableOverlay && (
+                            <button
+                              type="button"
+                              title="Resize indication box"
+                              aria-label="Resize indication box"
+                              onPointerDown={(event) =>
+                                beginOverlayGeometryDrag(event, overlay, "resize-se")
+                              }
+                              onClick={(event) => event.stopPropagation()}
+                              className="absolute bottom-0 right-0 z-30 h-4 w-4 cursor-nwse-resize rounded-tl border border-cyan-300/60 bg-black/80 text-[10px] leading-3 text-cyan-100 hover:bg-cyan-950"
+                            >
+                              /
+                            </button>
+                          )}
                           {selected && (
                             <>
                               <button
@@ -4260,7 +5528,20 @@ export default function VideoPanel() {
                                 +
                               </button>
                               <div
-                                className="absolute inset-x-1 bottom-1 z-20 rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
+                                className="absolute z-20 w-64 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
+                                style={
+                                  {
+                                    ...(selectedEditorOnRight
+                                      ? selectedEditorBelow
+                                        ? { right: 4, top: "calc(100% + 4px)" }
+                                        : { right: 4, bottom: "calc(100% + 4px)" }
+                                      : selectedEditorBelow
+                                        ? { left: 4, top: "calc(100% + 4px)" }
+                                        : { left: 4, bottom: "calc(100% + 4px)" }),
+                                    maxHeight: selectedEditorMaxHeight,
+                                    maxWidth: selectedEditorMaxWidth,
+                                  }
+                                }
                                 onClick={(event) => event.stopPropagation()}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => event.stopPropagation()}
@@ -4271,48 +5552,271 @@ export default function VideoPanel() {
                                     {formatPreciseTime(scrubValue)}
                                   </span>
                                 </div>
+                                <div className="mb-1 flex items-center justify-between gap-2 text-[9px] text-slate-500">
+                                  <span>Drag slider to mark interest</span>
+                                  <span>
+                                    {formatPreciseTime(edit.start)}-{formatPreciseTime(edit.end)}
+                                  </span>
+                                </div>
                                 <input
                                   type="range"
-                                  min={0}
+                                  min={scrubMin}
                                   max={scrubMax}
                                   step={0.001}
                                   value={scrubValue}
                                   onClick={(event) => event.stopPropagation()}
                                   onMouseDown={(event) => event.stopPropagation()}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  onChange={(event) => jumpToTime(Number(event.target.value))}
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    setSelectedOverlayScrub({
+                                      overlayKey: overlay.key,
+                                      value: scrubValue,
+                                      active: true,
+                                    });
+                                    setSelectedOverlayTimeDrag({
+                                      overlayKey: overlay.key,
+                                      start: scrubValue,
+                                    });
+                                    videoRef.current?.pause();
+                                  }}
+                                  onPointerUp={(event) => {
+                                    event.stopPropagation();
+                                    finishSelectedOverlayTimeDraw(overlay.key, scrubValue);
+                                  }}
+                                  onPointerCancel={(event) => {
+                                    event.stopPropagation();
+                                    setSelectedOverlayTimeDrag(null);
+                                    finishSelectedOverlayScrub();
+                                  }}
+                                  onBlur={() => {
+                                    setSelectedOverlayTimeDrag(null);
+                                    finishSelectedOverlayScrub();
+                                  }}
+                                  onChange={(event) =>
+                                    scrubSelectedOverlayTo(
+                                      overlay.key,
+                                      Number(event.target.value),
+                                      scrubMin,
+                                      scrubMax,
+                                    )
+                                  }
                                   className="mb-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-800 accent-cyan-300"
-                                  aria-label="Video timeline for selected indication"
+                                  aria-label="Selected indication timeline"
                                 />
+                                <div className="mb-1 flex items-center gap-1 text-[10px] text-slate-400">
+                                  <label className="flex items-center gap-1 whitespace-nowrap">
+                                    <span className="text-slate-500">+s</span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      value={continuationSeconds}
+                                      onChange={(event) => {
+                                        const nextValue = Math.max(
+                                          1,
+                                          Number(event.target.value || 30),
+                                        );
+                                        setSelectedOverlayContinuationSeconds((current) => ({
+                                          ...current,
+                                          [overlay.key]: nextValue,
+                                        }));
+                                      }}
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="w-12 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                      aria-label="Continuation seconds"
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    title="Add workspace seconds before and after this indication"
+                                    aria-label="Extend indication timeline workspace"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedOverlayTimelinePadding((current) => {
+                                        const existing = current[overlay.key] || {
+                                          before: 0,
+                                          after: 0,
+                                        };
+                                        return {
+                                          ...current,
+                                          [overlay.key]: {
+                                            before: existing.before + continuationSeconds,
+                                            after: existing.after + continuationSeconds,
+                                          },
+                                        };
+                                      });
+                                      setSelectedOverlayScrub({
+                                        overlayKey: overlay.key,
+                                        value: clamp(edit.start, scrubMin, scrubMax),
+                                        active: false,
+                                      });
+                                    }}
+                                    className="rounded bg-cyan-900/45 px-1 py-0.5 text-cyan-100 hover:bg-cyan-800/65"
+                                  >
+                                    {stretchActionLabel}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Cut indication out at current frame"
+                                    aria-label="Cut indication out at current frame"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      cutSelectedIndicationOut(overlay.key, scrubValue);
+                                    }}
+                                    className="rounded bg-amber-900/45 px-1 py-0.5 text-amber-100 hover:bg-amber-800/65"
+                                  >
+                                    Cut out
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Step back 100 ms"
+                                    aria-label="Step selected indication back 100 milliseconds"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      scrubAndExtendSelectedOverlay(
+                                        overlay.key,
+                                        scrubValue - 0.1,
+                                        scrubMin,
+                                        scrubMax,
+                                        edit,
+                                        overdraftActive,
+                                      );
+                                      finishSelectedOverlayScrub();
+                                    }}
+                                    className="rounded border border-slate-700 px-1 py-0.5 hover:bg-slate-800"
+                                  >
+                                    -100ms
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Step forward 100 ms"
+                                    aria-label="Step selected indication forward 100 milliseconds"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      scrubAndExtendSelectedOverlay(
+                                        overlay.key,
+                                        scrubValue + 0.1,
+                                        scrubMin,
+                                        scrubMax,
+                                        edit,
+                                        overdraftActive,
+                                      );
+                                      finishSelectedOverlayScrub();
+                                    }}
+                                    className="rounded border border-slate-700 px-1 py-0.5 hover:bg-slate-800"
+                                  >
+                                    +100ms
+                                  </button>
+                                  <label className="ml-auto flex items-center gap-1 whitespace-nowrap">
+                                    <input
+                                      type="checkbox"
+                                      checked={overdraftActive}
+                                      onChange={(event) => {
+                                        event.stopPropagation();
+                                        setSelectedOverlayOverdrafts((current) => ({
+                                          ...current,
+                                          [overlay.key]: event.target.checked,
+                                        }));
+                                      }}
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="h-3 w-3 accent-cyan-300"
+                                    />
+                                    Overdraft
+                                  </label>
+                                </div>
                                 <div className="mb-1 grid grid-cols-[1fr_1fr_1.35fr] gap-1">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={scrubMax}
-                                    step={0.001}
-                                    value={Number(edit.start.toFixed(3))}
-                                    onChange={(event) =>
-                                      updateSelectedIndicationEdit(overlay.key, {
-                                        start: Number(event.target.value),
-                                      })
-                                    }
-                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                    aria-label="Indication start time"
-                                  />
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={scrubMax}
-                                    step={0.001}
-                                    value={Number(edit.end.toFixed(3))}
-                                    onChange={(event) =>
-                                      updateSelectedIndicationEdit(overlay.key, {
-                                        end: Number(event.target.value),
-                                      })
-                                    }
-                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                    aria-label="Indication end time"
-                                  />
+                                  <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                                    In
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={
+                                        selectedTimeInputDrafts[startInputKey] ??
+                                        formatPreciseTime(edit.start)
+                                      }
+                                      onChange={(event) => {
+                                        setSelectedTimeInputDrafts((current) => ({
+                                          ...current,
+                                          [startInputKey]: event.target.value,
+                                        }));
+                                      }}
+                                      onBlur={() =>
+                                        commitSelectedTimeInput(
+                                          startInputKey,
+                                          overlay.key,
+                                          "start",
+                                          edit.start,
+                                        )
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitSelectedTimeInput(
+                                            startInputKey,
+                                            overlay.key,
+                                            "start",
+                                            edit.start,
+                                          );
+                                          event.currentTarget.blur();
+                                        } else if (event.key === "Escape") {
+                                          setSelectedTimeInputDrafts((current) => {
+                                            const next = { ...current };
+                                            delete next[startInputKey];
+                                            return next;
+                                          });
+                                          event.currentTarget.blur();
+                                        }
+                                      }}
+                                      className="mt-0.5 w-full min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
+                                      aria-label="Indication start time"
+                                    />
+                                  </label>
+                                  <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                                    Out
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={
+                                        selectedTimeInputDrafts[endInputKey] ??
+                                        formatPreciseTime(edit.end)
+                                      }
+                                      onChange={(event) => {
+                                        setSelectedTimeInputDrafts((current) => ({
+                                          ...current,
+                                          [endInputKey]: event.target.value,
+                                        }));
+                                      }}
+                                      onBlur={() =>
+                                        commitSelectedTimeInput(
+                                          endInputKey,
+                                          overlay.key,
+                                          "end",
+                                          edit.end,
+                                        )
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitSelectedTimeInput(
+                                            endInputKey,
+                                            overlay.key,
+                                            "end",
+                                            edit.end,
+                                          );
+                                          event.currentTarget.blur();
+                                        } else if (event.key === "Escape") {
+                                          setSelectedTimeInputDrafts((current) => {
+                                            const next = { ...current };
+                                            delete next[endInputKey];
+                                            return next;
+                                          });
+                                          event.currentTarget.blur();
+                                        }
+                                      }}
+                                      className="mt-0.5 w-full min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
+                                      aria-label="Indication end time"
+                                    />
+                                  </label>
                                   <select
                                     value={edit.category}
                                     onChange={(event) =>
@@ -4352,7 +5856,7 @@ export default function VideoPanel() {
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       updateSelectedIndicationEdit(overlay.key, {
-                                        start: currentTime,
+                                        start: scrubValue,
                                       });
                                     }}
                                     className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
@@ -4363,11 +5867,9 @@ export default function VideoPanel() {
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      updateSelectedIndicationEdit(overlay.key, {
-                                        end: currentTime,
-                                      });
+                                      cutSelectedIndicationOut(overlay.key, scrubValue);
                                     }}
-                                    className="rounded border border-slate-700 px-1 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
+                                    className="rounded bg-amber-900/45 px-1 py-0.5 text-[10px] text-amber-100 hover:bg-amber-800/65"
                                   >
                                     Out
                                   </button>
@@ -4382,6 +5884,22 @@ export default function VideoPanel() {
                                     className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
                                   >
                                     Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Stretch indication to this frame, save this bbox keyframe, and close"
+                                    aria-label="Stretch indication to current frame and save"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void saveSelectedIndicationAtFrame(
+                                        overlay,
+                                        edit,
+                                        workingFrameTime,
+                                      );
+                                    }}
+                                    className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
+                                  >
+                                    Save here
                                   </button>
                                   {overlay.modality === "object" ? (
                                     <>
@@ -4432,7 +5950,7 @@ export default function VideoPanel() {
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      setSelectedOverlayKey(null);
+                                      closeSelectedOverlayEditor(overlay.key);
                                     }}
                                     className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
                                   >
@@ -4440,18 +5958,6 @@ export default function VideoPanel() {
                                   </button>
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                title="Resize indication box"
-                                aria-label="Resize indication box"
-                                onPointerDown={(event) =>
-                                  beginOverlayGeometryDrag(event, overlay, "resize-se")
-                                }
-                                onClick={(event) => event.stopPropagation()}
-                                className="absolute bottom-0 right-0 z-30 h-4 w-4 cursor-nwse-resize rounded-tl border border-cyan-300/60 bg-black/80 text-[10px] leading-3 text-cyan-100 hover:bg-cyan-950"
-                              >
-                                /
-                              </button>
                             </>
                           )}
                         </div>

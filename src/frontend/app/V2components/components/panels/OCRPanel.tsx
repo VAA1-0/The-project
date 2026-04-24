@@ -23,9 +23,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 
 function normalizeOCRText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function formatPanelTime(value?: number | null): string {
+  const safe = Number(value ?? 0);
+  if (!Number.isFinite(safe)) return "0:00.000";
+  const clamped = Math.max(0, safe);
+  const minutes = Math.floor(clamped / 60);
+  const seconds = clamped - minutes * 60;
+  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
 }
 
 function looksLikeUsefulOCR(text: string, confidence: number): boolean {
@@ -446,18 +456,15 @@ export default function OCRPanel() {
                         key={item.id}
                         type="button"
                         className="block w-full rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-left text-[10px] text-slate-200 hover:bg-slate-900/35"
-                        onClick={() =>
-                          eventBus.emit(
-                            "videoTimeLineChanged",
-                            Number(item.timestamp_seconds || 0),
-                          )
-                        }
+                        onClick={() => {
+                          openManualAnnotationInVideo(videoId, item);
+                        }}
                       >
                         <div className="font-medium">
                           {item.label || item.custom_label || "Manual OCR annotation"}
                         </div>
                         <div className="text-[var(--ui-passive-text)]">
-                          {Number(item.timestamp_seconds || 0).toFixed(2)}s
+                          {formatPanelTime(item.timestamp_seconds)}
                           {item.subcategory ? ` • ${item.subcategory}` : ""}
                         </div>
                         {item.open_note ? (
@@ -480,8 +487,7 @@ export default function OCRPanel() {
                     key={`${obj.text}-${idx}`}
                     className="cursor-pointer rounded border border-slate-800 bg-slate-950/20 px-3 py-2 transition hover:bg-slate-900/35"
                     onClick={() => {
-                      eventBus.emit("videoTimeLineChanged", obj.timestamp);
-                      console.log("Seeking video to", obj.timestamp);
+                      openVideoAtTime(videoId, obj.timestamp);
                     }}
                   >
                     <div className="flex items-start justify-between gap-3">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService } from "@/lib/api-service";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
+import { openVideoAtTime } from "@/lib/video-navigation";
 
 const TIMEBANK_ANALYSES_STORAGE_KEY = "vaa1.timebank.analyses";
 const TIMEBANK_SECTIONS_STORAGE_KEY = "vaa1.timebank.sections";
@@ -566,8 +567,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
   };
 
   const seekTo = (analysisId: string, tStartMs?: number | null) => {
-    eventBus.emit("videoIdChanged", analysisId);
-    eventBus.emit("videoTimeLineChanged", Math.max(0, Number(tStartMs || 0) / 1000));
+    openVideoAtTime(analysisId, Number(tStartMs || 0) / 1000);
   };
 
   const renderCell = (

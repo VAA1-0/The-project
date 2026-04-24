@@ -31,12 +31,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 
 function formatSpeechSeconds(value?: number | null): string {
   const safe = Number(value ?? 0);
-  if (!Number.isFinite(safe)) return "0s";
-  const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(2);
-  return `${Number(rounded)}s`;
+  if (!Number.isFinite(safe)) return "0:00.000";
+  const clamped = Math.max(0, safe);
+  const minutes = Math.floor(clamped / 60);
+  const seconds = clamped - minutes * 60;
+  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
 }
 
 type TranscriptEditorDraft = {
@@ -940,10 +943,7 @@ export default function SpeechToTextPanel({
                         type="button"
                         className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-xs text-slate-300 transition hover:bg-slate-800/30"
                         onClick={() => {
-                          eventBus.emit(
-                            "videoTimeLineChanged",
-                            Number(item.timestamp_seconds || 0),
-                          );
+                          openManualAnnotationInVideo(videoId, item);
                         }}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -977,7 +977,7 @@ export default function SpeechToTextPanel({
                     key={cue.cue_id || `${cue.start}-${cue.end}`}
                     className="cursor-pointer rounded border border-white/8 bg-[#171717] px-3 py-3 transition-colors hover:bg-slate-800/25"
                     onClick={() => {
-                      eventBus.emit("videoTimeLineChanged", cue.start);
+                      openVideoAtTime(videoId, cue.start);
                     }}
                   >
                     <div className="text-[11px] text-slate-300">
@@ -1103,10 +1103,7 @@ export default function SpeechToTextPanel({
                         type="button"
                         className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-xs text-slate-300 transition hover:bg-slate-800/30"
                         onClick={() => {
-                          eventBus.emit(
-                            "videoTimeLineChanged",
-                            Number(item.timestamp_seconds || 0),
-                          );
+                          openManualAnnotationInVideo(videoId, item);
                         }}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -1156,8 +1153,7 @@ export default function SpeechToTextPanel({
                         : "cursor-pointer border-white/8 bg-[#171717] hover:bg-slate-800/25"
                     }`}
                     onClick={() => {
-                      eventBus.emit("videoTimeLineChanged", row.start);
-                      console.log("Seeking video to", row.start);
+                      openVideoAtTime(videoId, row.start);
                     }}
                   >
                     <div className="mb-2 flex items-start justify-between gap-3">

@@ -67,6 +67,7 @@ import {
 
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { openManualAnnotationInVideo, openVideoAtTime as openSharedVideoAtTime } from "@/lib/video-navigation";
 
 import { useLayoutHost } from "../LayoutHost";
 import CvatPluginPanel from "./CvatPluginPanel";
@@ -103,6 +104,7 @@ type ForensicRegionSelectedPayload = {
 type ForensicRoiIntent =
   | "identification"
   | "expression"
+  | "micro_expression"
   | "movement"
   | "object"
   | "ocr"
@@ -115,6 +117,7 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
 }> = [
   { value: "identification", label: "Identification" },
   { value: "expression", label: "Expressions" },
+  { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
   { value: "object", label: "Object" },
   { value: "ocr", label: "OCR" },
@@ -258,13 +261,19 @@ function classifyCinematicShotSize(heightRatio: number, widthRatio: number): str
 
 function formatSeconds(value?: number | null): string {
   const safe = Number(value ?? 0);
-  if (!Number.isFinite(safe)) return "0s";
-  const rounded = Math.abs(safe) >= 10 ? safe.toFixed(1) : safe.toFixed(3);
-  return `${Number(rounded)}s`;
+  if (!Number.isFinite(safe)) return "0:00.000";
+  const clamped = Math.max(0, safe);
+  const minutes = Math.floor(clamped / 60);
+  const seconds = clamped - minutes * 60;
+  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
 }
 
 function parseSecondsInput(value: string): number | null {
-  const parsed = Number(value);
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+):([0-5]?\d(?:\.\d+)?)$/);
+  const parsed = match
+    ? Number(match[1]) * 60 + Number(match[2])
+    : Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   return parsed;
 }
@@ -298,6 +307,16 @@ function buildForensicDefaultReason(
   timeEnd: number,
 ): string {
   return `${formatForensicIntentLabel(intent)} ROI / ${formatSeconds(timeStart)}-${formatSeconds(timeEnd)}`;
+}
+
+function buildMicroExpressionWindow(timestamp: number) {
+  const center = Number.isFinite(timestamp) ? timestamp : 0;
+  const start = Math.max(0, center - 0.25);
+  const end = Math.max(start + 0.125, center + 0.25);
+  return {
+    start: Number(start.toFixed(3)),
+    end: Number(end.toFixed(3)),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -370,11 +389,7 @@ function ManualAnnotationLeafSection({
             type="button"
             className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-[11px] text-slate-300 transition hover:bg-slate-800/30"
             onClick={() => {
-              eventBus.emit("videoIdChanged", videoId);
-              eventBus.emit(
-                "videoTimeLineChanged",
-                Number(item.timestamp_seconds || 0),
-              );
+              openManualAnnotationInVideo(videoId, item);
             }}
           >
             <div className="flex items-center justify-between gap-3">
@@ -707,6 +722,65 @@ export default function ToolsPanel() {
       .filter((sample: ExpressionSample) => sample?.dominant_emotion)
       .slice(0, expressionPreviewCount[0] ?? 4);
   }, [analysisData, expressionPreviewCount]);
+
+  const openMicroExpressionForensicSample = React.useCallback(
+    (sample: ExpressionSample) => {
+      const bbox = sample?.bbox;
+      if (
+        !videoId ||
+        !bbox ||
+        bbox.x === undefined ||
+        bbox.y === undefined ||
+        bbox.w === undefined ||
+        bbox.h === undefined
+      ) {
+        setForensicJobsError(
+          "This expression sample does not include a face region for forensic rendering.",
+        );
+        return;
+      }
+
+      const window = buildMicroExpressionWindow(sample.timestamp);
+      setActiveWorkspace("forensic");
+      setForensicRegionEnabled(true);
+      setForensicRegionIntent("micro_expression");
+      setForensicRegion({
+        x: String(bbox.x),
+        y: String(bbox.y),
+        w: String(bbox.w),
+        h: String(bbox.h),
+      });
+      setForensicStart(window.start.toFixed(3));
+      setForensicEnd(window.end.toFixed(3));
+      setForensicRegionTrack([
+        {
+          time: Number(sample.timestamp.toFixed(3)),
+          region: {
+            x: Number(bbox.x),
+            y: Number(bbox.y),
+            w: Number(bbox.w),
+            h: Number(bbox.h),
+          },
+          intent: "micro_expression",
+          note: sample.dominant_emotion
+            ? `Expression sample: ${sample.dominant_emotion}`
+            : "Expression sample",
+        },
+      ]);
+      setForensicReason(
+        [
+          "Micro-granular Expression ROI",
+          sample.dominant_emotion ? sample.dominant_emotion : null,
+          `${formatSeconds(window.start)}-${formatSeconds(window.end)}`,
+        ]
+          .filter(Boolean)
+          .join(" / "),
+      );
+      setForensicJobsError(null);
+      openSharedVideoAtTime(videoId, sample.timestamp);
+    },
+    [videoId],
+  );
 
   const manualCinematicAnnotations =
     analysisData?.manualAnnotationsByCategory?.["Cinematic Cues"] ?? [];
@@ -2539,8 +2613,7 @@ export default function ToolsPanel() {
                                           key={`motion-${sample.timestamp}-${index}`}
                                           className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition hover:bg-slate-800/30"
                                           onClick={() => {
-                                            eventBus.emit("videoIdChanged", videoId);
-                                            eventBus.emit("videoTimeLineChanged", Number(sample.timestamp || 0));
+                                            openSharedVideoAtTime(videoId, Number(sample.timestamp || 0));
                                           }}
                                         >
                                           <span className="truncate">
@@ -2600,8 +2673,7 @@ export default function ToolsPanel() {
                                           key={`scene-${segment.scene_index}-${segment.start}-${segment.end}`}
                                           className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition hover:bg-slate-800/30"
                                           onClick={() => {
-                                            eventBus.emit("videoIdChanged", videoId);
-                                            eventBus.emit("videoTimeLineChanged", Number(segment.start || 0));
+                                            openSharedVideoAtTime(videoId, Number(segment.start || 0));
                                           }}
                                         >
                                           <span className="truncate">
@@ -4324,8 +4396,31 @@ export default function ToolsPanel() {
                   )}
                   <div className="space-y-1">
                     {expressionTimeline.map((sample: ExpressionSample, index: number) => (
-                      <div key={`${sample.timestamp}-${sample.face_id ?? index}`}>
-                        {sample.timestamp.toFixed(1)}s - {sample.dominant_emotion}
+                      <div
+                        key={`${sample.timestamp}-${sample.face_id ?? index}`}
+                        className="flex items-center justify-between gap-3 rounded border border-white/10 px-2 py-1"
+                      >
+                        <div className="min-w-0">
+                          <div>
+                            {formatSeconds(sample.timestamp)} - {sample.dominant_emotion}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {sample.face_id !== undefined ? `Face ${sample.face_id}` : "Face sample"}
+                            {sample.top_emotion_score !== null &&
+                            sample.top_emotion_score !== undefined
+                              ? ` • score ${Math.round(sample.top_emotion_score * 100)}%`
+                              : ""}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-fuchsia-500/40 px-2 text-[10px] text-fuchsia-100"
+                          onClick={() => openMicroExpressionForensicSample(sample)}
+                        >
+                          Micro render
+                        </Button>
                       </div>
                     ))}
                   </div>

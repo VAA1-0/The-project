@@ -569,6 +569,17 @@ export interface ManualVisualAnnotation {
     w: number;
     h: number;
   };
+  geometry_keyframes?: Array<{
+    time: number;
+    coordinates: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    };
+    source?: "manual" | "track" | "interpolated";
+    updated_at?: string;
+  }>;
   timestamp_seconds: number;
   start_seconds?: number;
   end_seconds?: number;

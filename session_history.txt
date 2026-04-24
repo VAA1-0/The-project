@@ -1,0 +1,16 @@
+  349  nano app/test_face_bridge.py
+  350  python -m py_compile app/test_face_bridge.py
+  351  python -m app.test_face_bridge
+  352  nano app/test_face_bridge.py
+  353  python -m py_compile app/test_face_bridge.py
+  354  python -m app.test_face_bridge
+  355  python -m py_compile app/face_worker.py\npython -m py_compile app/pipeline/face_bridge.py\npython -m py_compile app/test_face_bridge.py
+  356  nano app/pipeline/face_analysis.py
+  357  python -m py_compile app/pipeline/face_analysis.py
+  358  nano app/test_face_analysis.py
+  359  python -m py_compile app/test_face_analysis.py\npython -m app.test_face_analysis
+  360  python -m py_compile app/face_worker.py\npython -m py_compile app/pipeline/face_bridge.py\npython -m py_compile app/pipeline/face_analysis.py\npython -m py_compile app/test_face_bridge.py\npython -m py_compile app/test_face_analysis.py
+  361  tar -czf vaa1_session_backup.tar.gz app tmp environment-MacOS-core.yml environment-MacOS-face.yml vaa1_core.lock.yml vaa1_face.lock.yml
+  362  git status
+  363  git add app tmp environment-MacOS-core.yml environment-MacOS-face.yml vaa1_core.lock.yml vaa1_face.lock.yml\ngit commit -m "Working face-analysis pipeline with core/face bridge"
+  364  history > session_history.txt

@@ -1,0 +1,281 @@
+VAA1 BBox/ROI Navigation Bug Fix Report
+Date: 2026-04-24
+Project: VAA1 on Python 1.0 / The-project
+
+1. Scope
+
+This report documents the repeated failures, regression patterns, and fix attempts related to
+the VAA1 bounding box (BBox) and ROI box timing, extension, visibility, and panel propagation
+workflow during the current four-day sprint.
+
+The focus is the analyst-facing workflow where a manual correction to a BBox or ROI box must
+become authoritative across the entire application.
+
+
+2. Required Design Principle
+
+The required VAA1 rule is:
+
+- if an analyst manually corrects a BBox or ROI box
+- that correction is saved
+- that saved correction stands
+- that saved correction becomes authoritative everywhere
+- all associated panels must reflect it
+- raw detections and grouped track spans may remain for traceback and fallback processing
+- raw detections and grouped spans must not override the saved manual correction
+
+In short:
+
+MANUAL CORRECTION WINS EVERYWHERE
+
+
+3. Observed Failures
+
+The following failures were observed repeatedly:
+
+- Extend in throws playback to wrong timestamps, including 0:00.000 and 1:05.000
+- Extend in widens state without yielding usable slider navigation
+- Extend out sometimes widens state without yielding usable future work area
+- BBoxes surface before their corrected mark-in time
+- BBoxes remain visible outside their corrected timespan
+- Video panel BBoxes and leaf panel timestamps can disagree
+- Saved manual timing can be ignored by the overlay rendering path
+- Object-linked manual corrections can be re-overridden by grouped/raw track spans
+- Selected overlays can inherit stale draft state from prior edits
+- The Tools panel disappeared once due to a frontend crash
+- Manual tests intended for this sprint have not been completed successfully
+
+
+4. User Impact
+
+The impact of the failures has been high:
+
+- analyst trust in the timing system has been damaged
+- manual validation has been blocked
+- multiple days were consumed on the same feature family
+- the workflow became harder and less predictable after several supposed fixes
+- the application behaved as if it had multiple competing clocks
+
+
+5. Count Of Fix Attempts
+
+From the visible history in the latest day of the sprint alone:
+
+- 19 distinct fix attempts were made on this same problem family
+
+Across the full four-day sprint:
+
+- the true number is likely much higher
+- the exact total has not yet been reconstructed from all prior session history
+
+The important conclusion is not the exact number, but that the process has retried the same
+issue far too many times without stabilizing the architecture.
+
+
+6. The 19 Logged Attempts From The Latest Day
+
+1. Clicking a BBox should open at the visible frame time, not always at indication start.
+2. Added geometry_keyframes for timestamped BBox geometry.
+3. Improved editor placement and close behavior.
+4. Tightened manual BBox visibility to the actual mark-in.
+5. Tightened object override visibility to the manual mark-in.
+6. Removed raw object pre-roll windows.
+7. Tried making Extend in jump to an earlier opened bound.
+8. Attached manual annotation timing to object overlays.
+9. Made Objects leaf send explicit start/end/category/note into the video editor.
+10. Refreshed Identification edit draft from the incoming annotation.
+11. Unified panel navigation through shared video helpers.
+12. Changed Extend in/out to widen range without moving video.
+13. Added selected-manual workspace visibility.
+14. Made scrub extend outside saved bounds without overdraft gating.
+15. Replaced hidden padding logic with direct draft interval edits.
+16. Added selectedWorkspaceAnnotationId.
+17. Refreshed edit state from authoritative overlay on reopen.
+18. Changed manual object overrides from one-per-track to time-aware arrays.
+19. Made Objects leaf drafts derive from authoritative manual overrides.
+
+
+7. Additional Regression Observed And Fixed
+
+An additional frontend regression surfaced:
+
+- ToolsPanel.tsx had a real crash caused by using openVideoAtTime before its declaration
+- this could blank the whole Tools panel
+- the fix was to use the shared video navigation helper instead
+
+This issue was real, but separate from the main BBox authority problem.
+
+
+8. Root Cause
+
+This is not one bug. It is a failed authority model.
+
+Too many competing time sources have been allowed to coexist:
+
+1. raw detection timestamp
+2. grouped track span
+3. saved manual annotation time
+4. selected editor draft time
+5. slider scrub state
+6. jumpToTime side effects inside extension behavior
+
+Because these time sources compete, a correction saved in one part of the program can still be
+contradicted later by another path during render or navigation.
+
+
+9. Wrong Coupling Identified
+
+The system has repeatedly shown wrong coupling between:
+
+- overlay key and saved annotation id
+- raw track span and corrected manual interval
+- track-wide override and time-scoped manual correction
+
+This wrong coupling is the main reason a saved manual correction can appear to "not take effect"
+or can be re-overridden later by unrelated raw timing.
+
+
+10. Where Wrong Time Enters The Program
+
+Main leak points identified in the current frontend:
+
+A. src/frontend/lib/video-service.ts
+
+- groupDetectedObjectsForDisplay(...)
+- builds grouped object spans using startTimestamp and endTimestamp
+
+B. src/frontend/app/V2components/components/panels/VideoPanel.tsx
+
+- buildLocalObjectOverlays(...)
+- alignActiveObjectLabelsWithGroupedTracks(...)
+- getOverlayTimeBounds(...)
+- selectOverlayForEditing(...)
+- scrubSelectedOverlayTo(...)
+- Extend in/out button path
+
+C. src/frontend/app/V2components/components/panels/OBJDetectionPanel.tsx
+
+- object draft creation from grouped object rows
+
+The practical meaning is:
+
+- even when panel fields are manually corrected
+- the visible BBox can still be rebuilt from raw/grouped timing
+- especially when an object overlay is carrying a manual label/identity
+
+
+11. Process Failures
+
+The fixing process also failed in several ways:
+
+- symptom patching happened before the architecture was frozen
+- incompatible extension models were mixed together
+- static and governance tests were treated as stronger proof than they really are
+- fixes were reported before the exact analyst path was proven manually
+- old timing logic was layered together with new timing logic instead of being removed
+
+
+12. Mixed Extension Models That Caused Regressions
+
+Three incompatible models were mixed in the same tool family:
+
+1. hidden extension workspace / timeline padding
+2. direct draft interval editing using start and end
+3. jump-based extension behavior
+
+These models conflict with one another. Their coexistence explains why the feature could appear
+to improve briefly, then fail again in a different way.
+
+
+13. What Has Improved
+
+Not every change should be discarded. The following improvements remain useful:
+
+- stricter visibility gates for manual BBoxes at actual timestamps
+- timestamp-scoped geometry drafts and geometry_keyframes
+- time-aware manual object overrides in the video panel
+- object leaf drafts preferring manual override timing
+- shared navigation helpers across panels
+- Tools panel crash fix
+
+
+14. What Is Still Structurally Wrong
+
+The current BBox extension path still contains too much machinery:
+
+- selectedOverlayTimelinePadding
+- selectedOverlayOverdrafts
+- selectedOverlayScrub
+- selectedWorkspaceAnnotationId
+- direct draft start/end
+- jumpToTime calls inside extend controls
+
+That is too much state and too many control systems for one interaction.
+
+
+15. Correct Authority Chain
+
+For corrected evidence, the correct authority chain must be:
+
+1. saved ManualVisualAnnotation
+2. all associated leaf panels read from that saved annotation
+3. video BBox timing reads from that saved annotation
+4. video BBox geometry reads from that saved annotation and its saved geometry keyframes
+5. raw/grouped detections remain available only for fallback use and traceback use
+6. raw/grouped detections must not override the saved correction
+
+
+16. Required Analyst-Facing Behavior
+
+The intended behavior from the analyst perspective is:
+
+- mark-in and mark-out are solid anchors
+- a BBox/ROI box appears only at its true saved time and location
+- Extend in makes more earlier time available for editing
+- Extend out makes more later time available for editing
+- slider navigation operates inside the actual current draft interval
+- saving commits the edited interval and geometry
+- reopening the same evidence item restores the saved correction
+- every associated panel shows the same corrected interval and label
+
+
+17. Recommended Remediation Strategy
+
+The next fixing phase should be strict and narrow:
+
+1. freeze blind BBox patches
+2. write one hard engineering rule:
+   saved manual correction is authoritative everywhere
+3. list allowed timing sources
+4. list forbidden timing sources for corrected evidence
+5. remove hidden extension padding from the active BBox extension path
+6. remove jumpToTime side effects from Extend in/out
+7. make slider min and max derive only from the current draft start/end
+8. ensure corrected object and identification overlays render only from saved manual timing
+9. validate one analyst path only before touching anything else:
+   Identification -> Felix Leiter -> Extend in -> slider widens -> scrub works
+
+
+18. Immediate Action Recommendation
+
+The project should not treat this as a minor bug anymore. It should be handled like a focused
+interaction incident:
+
+- define the authority rule in code comments and design notes
+- remove non-authoritative time paths from corrected evidence
+- verify one manual test case at a time
+- do not push the feature until at least one end-to-end manual navigation path passes cleanly
+
+
+19. Bottom Line
+
+The BBox/ROI navigation tool has been unstable because the program has been allowed to have
+multiple competing truths about time.
+
+The correct VAA1 rule is simpler:
+
+MANUAL CORRECTION WINS EVERYWHERE
+
+Until the implementation fully obeys that rule, the analyst experience will continue to suffer
+from timing conflicts, extension failures, and apparent contradictions between panels.
+
