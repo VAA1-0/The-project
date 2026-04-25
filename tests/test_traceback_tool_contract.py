@@ -95,6 +95,69 @@ class TracebackToolContractTest(unittest.TestCase):
             persisted = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["artifact_id"], record["artifact_id"])
 
+    def test_build_traceback_tree_creates_navigable_nodes_and_edges(self):
+        record = traceback_tool.build_traceback_record(
+            {
+                "render_job_id": "job-3",
+                "analysis_id": "analysis-1",
+                "source_video_path": "uploads/source.mp4",
+                "time_start": 5.0,
+                "time_end": 8.0,
+                "frame_start": 100,
+                "frame_end": 160,
+                "region_type": "static_box",
+                "region": {"x": 1, "y": 2, "w": 3, "h": 4},
+                "region_intent": "identification",
+                "mode": "science_grade",
+                "input_evidence_ids": ["manual-1"],
+                "adopted_context": {
+                    "manual_annotation_refs": [{"id": "manual-1"}],
+                    "identity_refs": [{"id": "identity-1"}],
+                    "object_refs": [{"track_id": 37}],
+                    "transcript_refs": [{"id": "transcript-1"}],
+                },
+                "output_video_path": "",
+                "output_json_path": "",
+            },
+            known_limitations=["Identity refs remain evidence links, not independent verification."],
+        )
+
+        tree = traceback_tool.build_traceback_tree(record)
+        node_types = {node["type"] for node in tree["nodes"]}
+        relations = {edge["relation"] for edge in tree["edges"]}
+
+        self.assertEqual(tree["traceback_tree_schema"], "vaa1.traceback_tree.v1")
+        self.assertEqual(tree["root_node_id"], "artifact:job-3")
+        self.assertIn("artifact", node_types)
+        self.assertIn("source_media", node_types)
+        self.assertIn("time_window", node_types)
+        self.assertIn("region", node_types)
+        self.assertIn("evidence_group", node_types)
+        self.assertIn("limitation", node_types)
+        self.assertIn("supports_artifact", relations)
+        self.assertIn("renders_artifact", relations)
+        self.assertIn("qualifies_artifact", relations)
+        self.assertGreaterEqual(tree["node_count"], 10)
+
+    def test_write_traceback_tree_persists_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            record = traceback_tool.build_traceback_record(
+                {
+                    "render_job_id": "job-4",
+                    "analysis_id": "analysis-1",
+                    "time_start": 0.0,
+                    "time_end": 1.0,
+                    "region_type": "full_frame",
+                }
+            )
+            output_path = Path(tmpdir) / "traceback_tree.json"
+            tree = traceback_tool.write_traceback_tree(record, output_path)
+
+            self.assertTrue(output_path.exists())
+            persisted = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["root_node_id"], tree["root_node_id"])
+            self.assertEqual(persisted["traceback_tree_schema"], "vaa1.traceback_tree.v1")
+
 
 if __name__ == "__main__":
     unittest.main()

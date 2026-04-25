@@ -93,6 +93,8 @@ export interface AnalysisStatus {
     };
     audio_segments?: number;
     audio_prosody_cues?: number;
+    audio_sample_clouds?: number;
+    audio_sample_count?: number;
     audio_language?: string;
     audio_language_name?: string;
     audio_language_source?: string;
@@ -100,6 +102,8 @@ export interface AnalysisStatus {
     audio_error?: string;
     audio_prosody_error?: string;
     audio_diarization_error?: string;
+    audio_sample_cloud_error?: string;
+    identity_triangulation_error?: string;
     pos_error?: string;
     quan_error?: string;
     language_support?: {
@@ -194,7 +198,9 @@ export interface AnalysisStatus {
   forensic_render_jobs?: ForensicRenderJob[];
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
+  identity_triangulation?: IdentityTriangulationStatus | null;
   audio_diarization?: AudioDiarizationScaffold | null;
+  audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
   pipeline_type?: string;
   analysis_tier?: string;
@@ -274,6 +280,14 @@ export interface IdentityRefinementStatus {
   last_promoted_at?: string;
 }
 
+export interface IdentityTriangulationStatus {
+  status?: string;
+  identity_count?: number;
+  proliferation_ready_count?: number;
+  output_json_path?: string;
+  updated_at?: string;
+}
+
 export interface AudioDiarizationScaffold {
   analysis_id?: string;
   status?: string;
@@ -295,6 +309,36 @@ export interface AudioDiarizationScaffold {
   vad_segments?: unknown[];
   prosody_cue_count?: number;
   notes?: string[];
+}
+
+export interface AudioSampleClouds {
+  analysis_id?: string;
+  status?: string;
+  cloud_count?: number;
+  sample_count?: number;
+  authority_order?: string[];
+  clouds?: Array<{
+    cloud_id?: string;
+    entity_type?: string;
+    entity_label?: string;
+    entity_status?: string;
+    samples?: Array<{
+      sample_id?: string;
+      time_start?: number;
+      time_end?: number;
+      transcript_text?: string;
+      speaker_label?: string;
+      source_turn_id?: string;
+      sample_role?: string;
+      source_type?: string;
+      confidence?: number;
+      epistemic_status?: string;
+      review_state?: string;
+      audio_features?: Record<string, any>;
+      supporting_evidence_ids?: string[];
+    }>;
+    cloud_summary?: Record<string, any>;
+  }>;
 }
 
 export interface ForensicRenderRequest {
@@ -336,6 +380,9 @@ export interface ForensicRenderJob {
   output_frame_dir?: string;
   output_json_path?: string;
   traceback_record_path?: string;
+  traceback_tree_path?: string;
+  traceback_tree_node_count?: number;
+  traceback_tree_edge_count?: number;
   artifact_sha256?: string | null;
   saved_frame_paths?: string[];
   rendered_frames?: number;
@@ -357,6 +404,26 @@ export interface ForensicTracebackRecord {
   reproducibility?: Record<string, unknown>;
   warnings?: Array<{ code?: string; message?: string }>;
   known_limitations?: string[];
+}
+
+export interface ForensicTracebackTree {
+  traceback_tree_schema: string;
+  analysis_id?: string;
+  artifact_id?: string;
+  root_node_id?: string;
+  node_count?: number;
+  edge_count?: number;
+  nodes?: Array<{
+    id: string;
+    type: string;
+    label?: string;
+    payload?: Record<string, unknown>;
+  }>;
+  edges?: Array<{
+    source: string;
+    target: string;
+    relation: string;
+  }>;
 }
 
 export interface SourceSampleRequest {
@@ -881,7 +948,7 @@ class ApiService {
   async getForensicRenderTraceback(
     analysisId: string,
     renderJobId: string,
-  ): Promise<ForensicTracebackRecord> {
+  ): Promise<{ traceback: ForensicTracebackRecord; tree?: ForensicTracebackTree | null }> {
     const response = await fetch(
       this.getForensicRenderTracebackUrl(analysisId, renderJobId),
     );
@@ -894,7 +961,7 @@ class ApiService {
     }
 
     const payload = await response.json();
-    return payload.traceback;
+    return { traceback: payload.traceback, tree: payload.tree || null };
   }
 
   async listSourceSamples(analysisId: string): Promise<SourceSample[]> {
@@ -1783,6 +1850,8 @@ class ApiService {
       "audio",
       "transcript",
       "audio_diarization",
+      "audio_sample_clouds",
+      "identity_triangulation",
       "annotation_corrections",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
@@ -1805,6 +1874,8 @@ class ApiService {
       audio: "Extracted Audio",
       transcript: "Transcript (JSON)",
       audio_diarization: "Audio Diarization Scaffold (JSON)",
+      audio_sample_clouds: "Audio Sample Clouds (JSON)",
+      identity_triangulation: "Identity Triangulation Bundle (JSON)",
       annotation_corrections: "Annotation Corrections (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
@@ -1829,6 +1900,8 @@ class ApiService {
       audio: ".wav",
       transcript: ".json",
       audio_diarization: ".json",
+      audio_sample_clouds: ".json",
+      identity_triangulation: ".json",
       annotation_corrections: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",

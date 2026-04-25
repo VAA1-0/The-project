@@ -1,0 +1,381 @@
+VAA1 Evidence Navigation And Authority Model Failure Report
+Date: 2026-04-25
+Project: VAA1 on Python 1.0 / The-project
+Former title: VAA1 BBox/ROI Navigation Bug Fix Report
+
+1. Scope
+
+This report reframes the former BBox/ROI timing bug family as an evidence navigation and
+authority model failure across linked timestamped annotations.
+
+The issue was not only that BBoxes or ROI boxes extended, saved, or rendered incorrectly.
+The deeper issue was that VAA1 allowed several panels and overlay paths to independently
+reconstruct timing, geometry, labels, and visibility for the same evidence item.
+
+The correct fix boundary is therefore architectural:
+
+- every annotation, detection, correction, BBox, ROI box, panel row, and video overlay must be
+  treated as a linked timestamped evidence object
+- every evidence object must remain navigable from every associated view
+- manual correction must be authoritative over automated detection while preserving the original
+  detection as provenance and traceback
+- when one associated view activates an evidence object, all other associated views must
+  synchronize to the same resolved evidence state
+
+
+2. Correct Architecture
+
+The canonical panel-facing evidence item should be understood as:
+
+Evidence item =
+
+- id
+- type
+- source kind: detection | manual | correction
+- timestamp interval: start/end
+- geometry: bbox/roi/keyframes
+- semantic labels
+- provenance links
+- associated panel links
+
+When evidence is selected anywhere, every panel must obey the same rule:
+
+1. resolve evidence id
+2. load authoritative evidence state
+3. set global active evidence
+4. set video time/window from that evidence
+5. render BBox/ROI from that evidence
+6. update all associated panels from that evidence
+
+
+3. Authority Rule
+
+The governing authority order is:
+
+manual correction > manual annotation > grouped detection > raw detection
+
+The shorthand remains:
+
+MANUAL CORRECTION WINS EVERYWHERE
+
+However, the mature rule is more specific:
+
+No panel may independently reconstruct timing, geometry, or labels for corrected evidence from
+raw detections or grouped spans. Panels may only request the resolved authoritative evidence
+object.
+
+
+4. Correct Bug Framing
+
+The bug family should be named:
+
+Evidence navigation and authority model failure across linked timestamped annotations.
+
+It should not be treated as:
+
+BBox timing bug.
+
+The BBox/ROI symptoms were visible because overlays make authority conflicts obvious, but the
+same root problem applies to Objects, OCR, Expressions, Identification, Master Schema, forensic
+ROI, and any future annotation-capable panel.
+
+
+5. Centralized Fix Boundary
+
+The fix should centralize three things:
+
+1. EvidenceAuthorityResolver
+
+   Decides which annotation or detection is authoritative.
+
+2. EvidenceNavigationState
+
+   Stores the active evidence id, active time, active interval, and active geometry.
+
+3. PanelSyncBus / shared hook
+
+   Makes all associated panels react to the same active evidence.
+
+Anything outside this boundary risks patching symptoms while preserving multiple competing
+truths.
+
+
+6. Observed Failures
+
+The following failures were observed during the sprint:
+
+- Extend in threw playback to wrong timestamps, including 0:00.000 and 1:05.000
+- Extend in widened internal state without yielding usable slider navigation
+- Extend out sometimes widened state without yielding usable future work area
+- BBoxes surfaced before their corrected mark-in time
+- BBoxes remained visible outside their corrected timespan
+- Video panel BBoxes and leaf panel timestamps disagreed
+- saved manual timing was ignored by overlay rendering paths
+- object-linked manual corrections were re-overridden by grouped/raw track spans
+- selected overlays inherited stale draft state from prior edits
+- saved leaf panel annotations stayed open after save
+- VideoPanel BBox editor stayed open after linked leaf save
+- Object save could force a surprise Identification panel focus jump
+- timestamped BBox geometry at later frames could overwrite or smear earlier geometry
+- a locked forensic/ROI rectangle could persist as a large yellow overlay over unrelated videos
+- Tools panel disappeared once due to a frontend crash
+
+
+7. User Impact
+
+The impact was high:
+
+- analyst trust in the timing system was damaged
+- manual validation was blocked
+- multiple days were consumed on the same feature family
+- the workflow became harder and less predictable after several supposed fixes
+- the application behaved as if it had multiple competing clocks
+- analysts could not reliably mark one evidence interval and trust it to remain stable
+
+
+8. Root Cause
+
+This was not one bug. It was a failed authority model.
+
+Too many competing time and geometry sources were allowed to coexist:
+
+1. raw detection timestamp
+2. grouped track span
+3. saved manual annotation time
+4. saved manual geometry keyframes
+5. selected editor draft time
+6. selected slider scrub state
+7. hidden extension workspace/padding state
+8. jumpToTime side effects inside extension behavior
+9. persistent ROI display state without analysis/time ownership
+
+Because these sources competed, a correction saved in one part of the program could still be
+contradicted later by another path during render, navigation, save, or panel synchronization.
+
+
+9. Wrong Coupling Identified
+
+The system repeatedly showed wrong coupling between:
+
+- overlay key and saved annotation id
+- raw track span and corrected manual interval
+- track-wide override and time-scoped manual correction
+- selected BBox editor state and unrelated panel focus state
+- ROI display state and current analysis/video state
+- later geometry edits and earlier timestamped geometry
+
+This wrong coupling is why a saved manual correction could appear to not take effect, could
+reopen unexpectedly, or could be re-overridden later by unrelated raw timing or geometry.
+
+
+10. Where Wrong Time Entered The Program
+
+Main leak points identified in the frontend:
+
+A. src/frontend/lib/video-service.ts
+
+- groupDetectedObjectsForDisplay(...)
+- grouped object spans using startTimestamp and endTimestamp
+- raw/grouped detections feeding panel rows and overlay streams
+
+B. src/frontend/app/V2components/components/panels/VideoPanel.tsx
+
+- buildLocalObjectOverlays(...)
+- alignActiveObjectLabelsWithGroupedTracks(...)
+- getOverlayTimeBounds(...)
+- selectOverlayForEditing(...)
+- scrubSelectedOverlayTo(...)
+- Extend in/out and selected slider paths
+- manual geometry_keyframes merge and resolve path
+- lockedForensicRoiBox display path
+
+C. src/frontend/app/V2components/components/panels/OBJDetectionPanel.tsx
+
+- object draft creation from grouped object rows
+- object save/close behavior
+- linked panel focus behavior
+
+D. src/frontend/app/V2components/components/panels/MasterSchemaPanel.tsx
+
+- leaf save/close behavior
+- local correction refresh and panel synchronization behavior
+
+
+11. Implementation Changes Made
+
+The current remediation introduced or tightened the following:
+
+- added src/frontend/lib/evidence-authority.ts
+- defined ResolvedEvidenceItem
+- defined EvidenceNavigationState
+- defined evidence authority order:
+  raw_detection: 10
+  grouped_detection: 20
+  manual_annotation: 30
+  manual_correction: 40
+- added resolveManualVisualEvidence(...)
+- added resolveDetectedObjectEvidence(...)
+- added resolveAuthoritativeEvidence(...)
+- added buildEvidenceNavigationState(...)
+- updated video navigation helpers to emit resolvedEvidence and navigationState
+- added closeManualAnnotationInVideo(...)
+- made Master Schema save close the leaf editor and linked VideoPanel editor
+- made Object leaf save close the Object editor and linked VideoPanel editor
+- removed surprise panel focus jumps from Object save and video BBox save paths
+- made VideoPanel listen for videoIndicationEditClose
+- made selected BBox/ROI editor close via shared close helper
+- changed Extend in behavior into an editable workspace expansion rather than a direct saved
+  interval mutation
+- removed jumpToTime side effects from Extend in/out behavior
+- added one-drag slider framing for the selected BBox/ROI interval
+- preserved selected overlays inside the expanded edit workspace
+- fixed object-backed save to load existing manual annotation keyframes before adding a new
+  timestamped geometry keyframe
+- bounded geometry interpolation so later BBoxes cannot smear across cuts or distant timestamps
+- scoped locked forensic ROI overlays to videoId and timestamp
+- cleared stale locked ROI overlays when native annotation/OCR annotation workflows open
+
+
+12. Analyst-Facing Behavior Now Required
+
+From the analyst perspective, the intended BBox/ROI interaction is one workflow:
+
+1. open a detection or saved evidence item
+2. use Extend in to add X seconds of editable workspace before and after the item
+3. drag the slider across the actual area of interest in time
+4. resize or reposition the BBox/ROI as needed at the relevant timestamp
+5. choose or adjust the label
+6. save
+7. the editor closes
+8. the BBox/ROI appears only inside the saved interval
+9. timestamped geometry remains stable at every saved timestamp
+10. reopening restores the saved correction
+
+Extend in/out is not the feature. The feature is fast temporal drawing of the evidence interval.
+
+
+13. Timestamp And Geometry Rule
+
+The timestamp/coordinates regime must hold without excuses:
+
+- a BBox/ROI coordinate set belongs to a specific analysis/video
+- a BBox/ROI coordinate set belongs to a specific timestamp or keyframe
+- saving a later geometry adjustment must not eat or smear an earlier keyframe
+- manual geometry may interpolate only over short, continuous gaps
+- geometry must not interpolate freely across cuts or distant timestamps
+- stale ROI display state must not render on unrelated videos or unrelated timestamps
+
+
+14. Panel Synchronization Rule
+
+Every annotation-capable panel must follow the same operating principle:
+
+- selecting evidence resolves the authoritative evidence state
+- save commits analyst evidence
+- save closes the active editor
+- linked video editor closes when the linked leaf editor saves
+- automated evidence is preserved as provenance, not as override
+- no panel may steal focus unless the analyst explicitly requested that navigation
+- reopening must restore saved state, not stale draft state
+
+This has been proven for key Master Schema and Object save paths, and partially enforced for
+shared video navigation. It still needs a full global panel alignment sweep.
+
+
+15. Expressions Clarification
+
+Expressions must not be governed by a flat primal list of emotions as the primary analyst model.
+
+Automatic expression samples may remain as raw evidence. Manual Expressions should follow the
+genre-weighted interpretation model and remain analyst evidence beside automatic scoring, not a
+replacement for it.
+
+The Expressions test should therefore verify:
+
+- automatic expression samples remain visible as automated evidence
+- manual genre-weighted Expressions annotations can be added
+- manual expression evidence appears in Master Schema
+- raw expression scoring is preserved
+- save/open/close behavior follows the same panel synchronization rule
+
+
+16. Verification Added
+
+Governance checks were expanded in:
+
+src/frontend/tests/manual-annotation-governance.test.mjs
+
+The current governance regime now checks:
+
+- manual categories align across type, video UI, and Tools navigation
+- every manual category has subcategory support
+- every manual category has a Master Schema leaf panel
+- forensic ROI intent options align across Tools and Video
+- Objects remains a leaf, not the master schema sink
+- manual BBox geometry stays timestamp scoped
+- manual annotation panels use shared video navigation helpers
+- detection and analysis panels use shared video seek navigation
+- linked evidence authority is centralized before panel navigation
+- timestamped overlay geometry stays scoped to one analysis and timestamp
+
+Latest verification:
+
+- npm run test:governance passed 12/12
+- npx tsc --noEmit passed
+
+
+17. Remaining Risk
+
+The current implementation is a root-readiness pass, not the final polished UX.
+
+Remaining risks:
+
+- the BBox/ROI UI is still primitive and too button-heavy
+- slider interaction works at a primal level but needs a cleaner analyst-facing design
+- all panels still need a complete save/open/close alignment sweep
+- OCR and Expressions manual annotation flows need end-to-end manual tests
+- timestamped ROI/BBox behavior needs repeated cross-cut manual tests
+- the PanelSyncBus/shared hook architecture is not yet fully realized as a single hook
+- some resolver logic is still panel-facing rather than fully app-global
+
+
+18. Recommended Next Phase
+
+The next phase should stay inside the fix boundary:
+
+1. finish the shared evidence authority/navigation hook
+2. make all annotation-capable panels consume resolved authoritative evidence
+3. remove remaining panel-local reconstruction of corrected timing, geometry, and labels
+4. simplify BBox/ROI UI around one fast analyst action:
+   draw the time span, adjust the box, label it, save
+5. manually test one path at a time:
+   Master Schema
+   Objects
+   OCR
+   Expressions
+   Identification
+   BBox/ROI cross-cut geometry
+6. keep raw/grouped detections only for fallback and traceback once manual correction exists
+
+
+19. Bottom Line
+
+The former BBox/ROI navigation problem was a symptom.
+
+The actual failure was evidence navigation and authority model instability across linked
+timestamped annotations.
+
+The corrected governing rule is:
+
+VAA1 treats annotations, detections, corrections, BBoxes, ROI boxes, panel rows, and video
+overlays as linked timestamped evidence objects.
+
+Every evidence object must remain navigable from every associated view.
+
+Manual correction is authoritative over automated detection while preserving the original
+detection as provenance and traceback.
+
+When one associated view activates an evidence object, all other associated views must
+synchronize to the same resolved evidence state.
+
+That is the fix boundary. Anything else is patching symptoms.

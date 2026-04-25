@@ -309,6 +309,24 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /type LockedForensicRoi = \{[\s\S]*box: DraftBox;[\s\S]*videoId\?: string;[\s\S]*time\?: number;/,
+    "locked ROI overlays must carry video/time scope instead of rendering as global boxes",
+  );
+
+  assert.match(
+    videoPanel,
+    /const visibleLockedForensicRoiBox = useMemo\(\(\) => \{/,
+    "locked ROI overlays must resolve through scoped visibility before rendering",
+  );
+
+  assert.match(
+    videoPanel,
+    /setLockedForensicRoiBox\(null\);[\s\S]*setNativeAnnotationMode\(true\)/,
+    "opening native annotation mode must clear stale locked ROI overlays",
+  );
+
+  assert.match(
+    videoPanel,
     /const minSize = 0\.004/,
     "bbox resize should allow analyst-scale small boxes without coarse minimum sizing",
   );
@@ -464,5 +482,147 @@ test("linked evidence authority is centralized before panel navigation", () => {
     evidenceAuthority,
     /metadata_correlation[\s\S]*\?\s*"manual_correction"[\s\S]*:\s*"manual_annotation"/,
     "manual annotations linked to source evidence must be treated as manual corrections",
+  );
+});
+
+test("timestamped overlay geometry stays scoped to one analysis and timestamp", () => {
+  assert.match(
+    videoPanel,
+    /type LockedForensicRoi = \{[\s\S]*box: DraftBox;[\s\S]*videoId\?: string;[\s\S]*time\?: number;/,
+    "locked ROI overlays must include analysis/video and timestamp ownership",
+  );
+
+  assert.match(
+    videoPanel,
+    /lockedForensicRoiBox\.videoId && lockedForensicRoiBox\.videoId !== videoId/,
+    "locked ROI overlays must not render on a different active analysis/video",
+  );
+
+  assert.match(
+    videoPanel,
+    /Math\.abs\(currentTime - lockedForensicRoiBox\.time\) > 1/,
+    "locked ROI overlays must not render at unrelated timestamps",
+  );
+
+  assert.match(
+    videoPanel,
+    /time: Number\(keyframeTime\.toFixed\(3\)\),[\s\S]*coordinates: normalizeDraftBox\(normalizedBox\),[\s\S]*source: "manual"/,
+    "saved bbox geometry must bind each analyst-adjusted coordinate set to its own timestamp",
+  );
+
+  assert.match(
+    videoPanel,
+    /allManualVisualAnnotations\.find\(\(item\) => item\.id === annotationId\)/,
+    "saving later geometry must load the existing annotation before adding a timestamped keyframe",
+  );
+
+  assert.match(
+    videoPanel,
+    /span <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS/,
+    "manual bbox interpolation must be bounded so later boxes cannot smear across cuts",
+  );
+});
+
+test("one evidence occurrence can participate in multiple independent tracks", () => {
+  assert.match(
+    evidenceAuthority,
+    /export type EvidenceTrackType =[\s\S]*"Identification"[\s\S]*"Interaction"[\s\S]*"Action"[\s\S]*"Role"[\s\S]*"Scene"/,
+    "evidence tracks must cover different analyst scopes, not only object tracking",
+  );
+
+  assert.match(
+    evidenceAuthority,
+    /export type EvidenceTrackScope =[\s\S]*"continuous"[\s\S]*"episodic"[\s\S]*"non_contiguous"[\s\S]*"interpretive"/,
+    "evidence tracks must support episodic and non-contiguous narrative structure",
+  );
+
+  assert.match(
+    evidenceAuthority,
+    /export type EvidenceTrackMembership = \{[\s\S]*occurrenceId: string;[\s\S]*trackId: string;[\s\S]*relation: EvidenceTrackRelation;/,
+    "track membership must be separate from the occurrence so one detection can join many tracks",
+  );
+
+  assert.match(
+    evidenceAuthority,
+    /trackMemberships: EvidenceTrackMembership\[\];/,
+    "evidence occurrence must store an array of track memberships",
+  );
+
+  assert.match(
+    evidenceAuthority,
+    /export function addEvidenceTrackMembership\([\s\S]*trackMemberships: \[\.\.\.existing, membership\]/,
+    "adding a membership must preserve existing memberships instead of replacing the track",
+  );
+
+  assert.doesNotMatch(
+    evidenceAuthority,
+    /trackId:\s*string;\s*\/\/\s*single|singleTrack|primaryTrackOnly/,
+    "evidence authority must not encode a single-track-only assumption",
+  );
+});
+
+test("audio sample clouds stay exposed as governed analysis artifacts", () => {
+  assert.match(
+    apiService,
+    /audio_sample_clouds\?: AudioSampleClouds \| null;/,
+    "analysis status must expose governed audio sample clouds to panels",
+  );
+
+  assert.match(
+    apiService,
+    /audio_sample_clouds: "Audio Sample Clouds \(JSON\)"/,
+    "audio sample clouds must have a user-facing download label",
+  );
+
+  assert.match(
+    apiService,
+    /audio_sample_clouds: "\.json"/,
+    "audio sample clouds must remain a JSON artifact",
+  );
+
+  assert.match(
+    apiService,
+    /authority_order\?: string\[\];/,
+    "audio sample clouds must carry their sample authority order",
+  );
+});
+
+test("identity triangulation stays exposed as a governed analysis artifact", () => {
+  assert.match(
+    apiService,
+    /identity_triangulation\?: IdentityTriangulationStatus \| null;/,
+    "analysis status must expose identity triangulation summary to panels",
+  );
+
+  assert.match(
+    apiService,
+    /identity_triangulation: "Identity Triangulation Bundle \(JSON\)"/,
+    "identity triangulation must have a user-facing download label",
+  );
+
+  assert.match(
+    apiService,
+    /identity_triangulation: "\.json"/,
+    "identity triangulation must remain a JSON artifact",
+  );
+});
+
+test("forensic traceback exposes a navigable tree contract", () => {
+  assert.match(
+    apiService,
+    /traceback_tree_path\?: string;/,
+    "forensic render jobs must expose the traceback tree artifact path",
+  );
+
+  assert.match(
+    apiService,
+    /export interface ForensicTracebackTree \{[\s\S]*traceback_tree_schema: string;[\s\S]*nodes\?: Array/,
+    "frontend API types must include the traceback tree node contract",
+  );
+
+  assert.match(
+    apiService,
+    /Promise<\{ traceback: ForensicTracebackRecord; tree\?: ForensicTracebackTree \| null \}>/,
+    "traceback fetch must return both the flat record and tree payload",
   );
 });

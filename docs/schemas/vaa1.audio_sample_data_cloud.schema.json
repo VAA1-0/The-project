@@ -63,6 +63,22 @@
           "time_start": { "type": "number" },
           "time_end": { "type": "number" },
           "transcript_text": { "type": "string" },
+          "speaker_label": {
+            "type": "string"
+          },
+          "source_turn_id": {
+            "type": "string"
+          },
+          "sample_role": {
+            "type": "string",
+            "enum": [
+              "reference",
+              "candidate_reference",
+              "identity_support",
+              "role_support",
+              "forensic_support"
+            ]
+          },
           "source_type": {
             "type": "string",
             "enum": [
@@ -160,6 +176,19 @@
         },
         "turn_taking_profile": {
           "type": "object"
+        },
+        "authority_order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "manual_confirmed_sample",
+              "manual_candidate_sample",
+              "diarization_speaker_turn",
+              "transcript_segment",
+              "raw_audio"
+            ]
+          }
         }
       },
       "additionalProperties": true

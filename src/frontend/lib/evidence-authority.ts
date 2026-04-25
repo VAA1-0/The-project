@@ -7,6 +7,48 @@ export type EvidenceKind =
   | "manual_annotation"
   | "manual_correction";
 
+export type EvidenceSourceKind = "detection" | "manual" | "correction";
+
+export type EvidenceTrackType =
+  | "Identification"
+  | "Interaction"
+  | "Action"
+  | "Role"
+  | "Scene"
+  | "Expression"
+  | "OBJ"
+  | "OCR"
+  | "Audio"
+  | "Forensic"
+  | "ReportClaim"
+  | "custom";
+
+export type EvidenceTrackScope =
+  | "continuous"
+  | "episodic"
+  | "non_contiguous"
+  | "interpretive";
+
+export type EvidenceTrackRelation =
+  | "supports"
+  | "depicts"
+  | "identifies"
+  | "participates_in"
+  | "contradicts"
+  | "refines"
+  | "supersedes"
+  | "same_track_as"
+  | "attached_to";
+
+export type EvidenceReviewState =
+  | "candidate"
+  | "unreviewed"
+  | "confirmed"
+  | "uncertain"
+  | "contested"
+  | "rejected"
+  | "superseded";
+
 export const EVIDENCE_AUTHORITY_ORDER: Record<EvidenceKind, number> = {
   raw_detection: 10,
   grouped_detection: 20,
@@ -42,6 +84,47 @@ export type EvidenceTimeInterval = {
   start: number;
   end: number;
   source: EvidenceKind | "draft";
+};
+
+export type EvidenceTrackSegment = {
+  segmentId: string;
+  start: number;
+  end: number;
+  geometry?: EvidenceGeometry;
+  sourceOccurrenceIds: string[];
+};
+
+export type EvidenceTrack = {
+  trackId: string;
+  trackType: EvidenceTrackType;
+  label: string;
+  scope: EvidenceTrackScope;
+  segments: EvidenceTrackSegment[];
+  authorityState: EvidenceReviewState;
+  provenance: EvidenceProvenance;
+};
+
+export type EvidenceTrackMembership = {
+  membershipId: string;
+  occurrenceId: string;
+  trackId: string;
+  relation: EvidenceTrackRelation;
+  time: EvidenceTimeInterval;
+  geometry?: EvidenceGeometry;
+  confidence?: number;
+  reviewState: EvidenceReviewState;
+  note?: string;
+};
+
+export type EvidenceOccurrence = {
+  occurrenceId: string;
+  mediaId: string;
+  sourceKind: EvidenceSourceKind;
+  time: EvidenceTimeInterval;
+  geometry: EvidenceGeometry;
+  labels: EvidenceLabels;
+  provenance: EvidenceProvenance;
+  trackMemberships: EvidenceTrackMembership[];
 };
 
 export type EvidenceLabels = {
@@ -325,6 +408,45 @@ export function resolveAuthoritativeEvidence(
     }
     return right.time.start - left.time.start;
   })[0] || null;
+}
+
+export function evidenceSourceKindFor(evidenceKind: EvidenceKind): EvidenceSourceKind {
+  if (evidenceKind === "manual_correction") {
+    return "correction";
+  }
+  if (evidenceKind === "manual_annotation") {
+    return "manual";
+  }
+  return "detection";
+}
+
+export function buildEvidenceOccurrence(
+  evidence: ResolvedEvidenceItem,
+  trackMemberships: EvidenceTrackMembership[] = [],
+): EvidenceOccurrence {
+  return {
+    occurrenceId: evidence.evidenceId,
+    mediaId: evidence.mediaId,
+    sourceKind: evidenceSourceKindFor(evidence.evidenceKind),
+    time: evidence.time,
+    geometry: evidence.geometry,
+    labels: evidence.labels,
+    provenance: evidence.provenance,
+    trackMemberships,
+  };
+}
+
+export function addEvidenceTrackMembership(
+  occurrence: EvidenceOccurrence,
+  membership: EvidenceTrackMembership,
+): EvidenceOccurrence {
+  const existing = occurrence.trackMemberships.filter(
+    (item) => item.membershipId !== membership.membershipId,
+  );
+  return {
+    ...occurrence,
+    trackMemberships: [...existing, membership],
+  };
 }
 
 export function buildEvidenceNavigationState(

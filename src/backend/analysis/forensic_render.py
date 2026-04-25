@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
-    from src.backend.analysis.traceback_tool import write_traceback_record
+    from src.backend.analysis.traceback_tool import (
+        write_traceback_record,
+        write_traceback_tree,
+    )
 except Exception:
     traceback_path = Path(__file__).with_name("traceback_tool.py")
     spec = importlib.util.spec_from_file_location("traceback_tool", traceback_path)
@@ -25,6 +28,7 @@ except Exception:
         raise
     spec.loader.exec_module(traceback_tool)
     write_traceback_record = traceback_tool.write_traceback_record
+    write_traceback_tree = traceback_tool.write_traceback_tree
 
 
 VALID_FORENSIC_RENDER_MODES = {"science_grade", "forensic_accuracy"}
@@ -401,6 +405,7 @@ def create_forensic_render_job(
             "created_at": utc_now_iso(),
         })
         traceback_record_path = job_dir / "traceback_record.json"
+        traceback_tree_path = job_dir / "traceback_tree.json"
         job["traceback_record_path"] = str(traceback_record_path)
         traceback_record = write_traceback_record(
             job,
@@ -409,6 +414,10 @@ def create_forensic_render_job(
                 "Traceback records preserve derivation and adopted evidence references; they do not independently verify identity claims.",
             ],
         )
+        traceback_tree = write_traceback_tree(traceback_record, traceback_tree_path)
+        job["traceback_tree_path"] = str(traceback_tree_path)
+        job["traceback_tree_node_count"] = traceback_tree.get("node_count")
+        job["traceback_tree_edge_count"] = traceback_tree.get("edge_count")
         job["artifact_sha256"] = traceback_record.get("reproducibility", {}).get(
             "output_video_sha256"
         )

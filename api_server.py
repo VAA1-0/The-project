@@ -31,6 +31,9 @@ from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline, vali
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.analysis.audio_prosody import analyze_audio_prosody
 from src.backend.analysis.audio_diarization import write_audio_diarization_scaffold
+from src.backend.analysis.audio_sample_cloud import (
+    build_audio_sample_clouds_from_diarization,
+)
 from src.backend.analysis.language_modeller import MMSASRTranscriber, DEFAULT_MMS_MODEL_ID
 from src.backend.analysis.expression_detector import ExpressionDetectorDeepFace
 from src.backend.utils.logger import get_logger
@@ -69,6 +72,7 @@ from src.backend.analysis.identification_refinery import (
     promote_identity_candidate,
     refine_identities,
 )
+from src.backend.analysis.identity_triangulation import write_identity_triangulation_bundle
 from fastapi import Form
 
 
@@ -650,6 +654,65 @@ def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     )
     output_files = status.setdefault("output_files", {})
     output_files["annotation_corrections"] = str(json_path)
+
+
+def collect_manual_identity_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    master = status.get("vaa1_annotation_master_schema") or {}
+    for collection_name in [
+        "manual_visual_annotations",
+        "object_annotations",
+        "track_annotations",
+    ]:
+        for item in master.get(collection_name, []) or []:
+            if isinstance(item, dict) and (
+                item.get("identity_affirmation")
+                or (item.get("attributes") or {}).get("identity_label")
+            ):
+                items.append(item)
+
+    corrections = build_annotation_corrections_payload(status)
+    for item in corrections.get("manual_visual_annotations", []) or []:
+        if isinstance(item, dict) and item.get("identity_affirmation"):
+            items.append(item)
+    return items
+
+
+def write_identity_triangulation_artifact_for_status(
+    status: Dict[str, Any],
+    *,
+    reviewed_by: str = "system",
+) -> Optional[Dict[str, Any]]:
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return None
+
+    results = status.get("results") or {}
+    visual = results.get("visual_analysis") or {}
+    audio = results.get("audio_analysis") or {}
+    output_path = RESULTS_DIR / analysis_id / "identity_triangulation_bundle.json"
+    payload = write_identity_triangulation_bundle(
+        analysis_id,
+        output_path,
+        source_media_metadata=status.get("source_media_metadata")
+        or build_source_media_metadata_payload(status),
+        visual_sample_clouds=visual.get("visual_sample_clouds"),
+        audio_sample_clouds=audio.get("audio_sample_clouds"),
+        manual_annotations=collect_manual_identity_annotations(status),
+        reviewed_by=reviewed_by,
+    )
+    status.setdefault("internal_artifacts", {})["identity_triangulation_bundle"] = str(
+        output_path
+    )
+    status.setdefault("output_files", {})["identity_triangulation"] = str(output_path)
+    status["identity_triangulation"] = {
+        "status": payload.get("status"),
+        "identity_count": payload.get("identity_count", 0),
+        "proliferation_ready_count": payload.get("proliferation_ready_count", 0),
+        "output_json_path": str(output_path),
+        "updated_at": utc_now_iso(),
+    }
+    return payload
 
 
 def intervals_overlap(
@@ -2539,12 +2602,14 @@ def run_complete_analysis(
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
                 audio_diarization_filename = f"{analysis_id}_audio_diarization_scaffold.json"
+                audio_sample_clouds_filename = f"{analysis_id}_audio_sample_clouds.json"
 
                 organized_audio_path = AUDIO_DIR / audio_filename
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
                 organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
                 organized_audio_prosody_path = TRANSCRIPTS_DIR / audio_prosody_filename
                 organized_audio_diarization_path = TRANSCRIPTS_DIR / audio_diarization_filename
+                organized_audio_sample_clouds_path = TRANSCRIPTS_DIR / audio_sample_clouds_filename
 
                 # Ensure dirs exist
                 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -2604,6 +2669,21 @@ def run_complete_analysis(
                     logger.warning("Audio diarization scaffold failed: %s", diarization_error)
                     results["audio_diarization_error"] = str(diarization_error)
                     audio_diarization = None
+
+                try:
+                    audio_sample_clouds = build_audio_sample_clouds_from_diarization(
+                        analysis_id,
+                        audio_diarization=audio_diarization,
+                        source_media_context=build_source_media_metadata_payload(status),
+                        source_audio_path=organized_audio_path,
+                    )
+                    with open(organized_audio_sample_clouds_path, "w", encoding="utf-8") as f:
+                        json.dump(audio_sample_clouds, f, indent=2, ensure_ascii=False)
+                    output_files["audio_sample_clouds"] = str(organized_audio_sample_clouds_path)
+                except Exception as sample_cloud_error:
+                    logger.warning("Audio sample cloud build failed: %s", sample_cloud_error)
+                    results["audio_sample_cloud_error"] = str(sample_cloud_error)
+                    audio_sample_clouds = None
 
                 # write the language model text to its own file
                 if lm_text is not None:
@@ -2725,11 +2805,15 @@ def run_complete_analysis(
                     "audio_diarization_path": str(organized_audio_diarization_path)
                     if output_files.get("audio_diarization")
                     else None,
+                    "audio_sample_clouds_path": str(organized_audio_sample_clouds_path)
+                    if output_files.get("audio_sample_clouds")
+                    else None,
                     "lm_transcript_path": str(organized_lm_path) if lm_text is not None else None,
                     "pos_analysis": str(pos_path) if pos_path else None,
                     "quan_analysis": str(quan_path) if quan_path else None,
                     "audio_prosody": audio_prosody,
                     "audio_diarization": audio_diarization,
+                    "audio_sample_clouds": audio_sample_clouds,
                     "transcript": transcript,
                     "transcript_quality": transcript_quality,
                     "metadata": ingestion_result.get("metadata", {}),
@@ -2764,6 +2848,25 @@ def run_complete_analysis(
             "analysis_completed_at": utc_now_iso(),
         })
         write_source_media_metadata_files(status)
+        try:
+            triangulation_bundle = write_identity_triangulation_artifact_for_status(status)
+            if triangulation_bundle:
+                append_analysis_event(
+                    status,
+                    "identity_triangulation_bundle_created",
+                    details={
+                        "identity_count": triangulation_bundle.get("identity_count", 0),
+                        "proliferation_ready_count": triangulation_bundle.get(
+                            "proliferation_ready_count",
+                            0,
+                        ),
+                    },
+                )
+        except Exception as triangulation_error:
+            logger.warning("Identity triangulation bundle failed: %s", triangulation_error)
+            status.setdefault("results", {})["identity_triangulation_error"] = str(
+                triangulation_error
+            )
         status["mission_stage"] = "complete"
         status["mission_message"] = "All available stations have reported in."
         append_analysis_event(
@@ -2915,6 +3018,10 @@ async def promote_identity_candidate_endpoint(
     )
     status.setdefault("identity_refinement", {})["last_promoted_candidate_id"] = candidate_id
     status.setdefault("identity_refinement", {})["last_promoted_at"] = promoted_at
+    triangulation_bundle = write_identity_triangulation_artifact_for_status(
+        status,
+        reviewed_by=reviewer,
+    )
     append_analysis_event(
         status,
         "identity_candidate_promoted",
@@ -2923,6 +3030,12 @@ async def promote_identity_candidate_endpoint(
             "identity_label": identity_label,
             "master_json_path": str(master_json_path),
             "output_json_path": str(output_json_path),
+            "triangulation_identity_count": (
+                triangulation_bundle or {}
+            ).get("identity_count"),
+            "triangulation_proliferation_ready_count": (
+                triangulation_bundle or {}
+            ).get("proliferation_ready_count"),
         },
     )
     persist_analysis_record_for_status(status)
@@ -2966,6 +3079,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "forensic_render_jobs": status.get("forensic_render_jobs", []),
         "source_samples": status.get("source_samples", []),
         "identity_refinement": status.get("identity_refinement"),
+        "identity_triangulation": status.get("identity_triangulation"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -3024,12 +3138,19 @@ async def get_analysis_status(analysis_id: str) -> dict:
         if "audio_analysis" in results:
             aa = results["audio_analysis"]
             response_data["audio_diarization"] = aa.get("audio_diarization")
+            response_data["audio_sample_clouds"] = aa.get("audio_sample_clouds")
             # Whisper transcript summary
             response_data["summary"]["audio_segments"] = len(
                 aa.get("transcript", {}).get("segments", [])
             )
             response_data["summary"]["audio_prosody_cues"] = len(
                 aa.get("audio_prosody", {}).get("cues", [])
+            )
+            response_data["summary"]["audio_sample_clouds"] = (
+                aa.get("audio_sample_clouds", {}).get("cloud_count", 0)
+            )
+            response_data["summary"]["audio_sample_count"] = (
+                aa.get("audio_sample_clouds", {}).get("sample_count", 0)
             )
             response_data["summary"]["audio_language"] = aa.get("transcript", {}).get("language", "unknown")
             language_info = aa.get("transcript", {}).get("language_info", {})
@@ -3062,6 +3183,10 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["audio_prosody_error"] = results.get("audio_prosody_error")
         if results.get("audio_diarization_error"):
             response_data["summary"]["audio_diarization_error"] = results.get("audio_diarization_error")
+        if results.get("audio_sample_cloud_error"):
+            response_data["summary"]["audio_sample_cloud_error"] = results.get("audio_sample_cloud_error")
+        if results.get("identity_triangulation_error"):
+            response_data["summary"]["identity_triangulation_error"] = results.get("identity_triangulation_error")
         if results.get("pos_error"):
             response_data["summary"]["pos_error"] = results.get("pos_error")
         if results.get("quan_error"):
@@ -3127,7 +3252,14 @@ async def get_forensic_render_traceback(analysis_id: str, render_job_id: str) ->
                 status_code=500,
                 detail=f"Forensic render traceback could not be read: {exc}",
             ) from exc
-        return make_json_safe({"analysis_id": analysis_id, "traceback": record})
+        tree = None
+        traceback_tree_path = Path(str(job.get("traceback_tree_path") or ""))
+        if traceback_tree_path.exists():
+            try:
+                tree = json.loads(traceback_tree_path.read_text(encoding="utf-8"))
+            except Exception:
+                tree = None
+        return make_json_safe({"analysis_id": analysis_id, "traceback": record, "tree": tree})
 
     raise HTTPException(status_code=404, detail="Forensic render job not found")
 
@@ -3375,6 +3507,8 @@ async def download_file(analysis_id: str, file_type: str):
         "linked_transcript": ("linked_transcript.json", "application/json"),
         "audio_prosody": ("audio_prosody.json", "application/json"),
         "audio_diarization": ("audio_diarization_scaffold.json", "application/json"),
+        "audio_sample_clouds": ("audio_sample_clouds.json", "application/json"),
+        "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
         "time_bank_audio": ("time_bank_audio.json", "application/json"),
         "time_bank_ocr": ("time_bank_ocr.json", "application/json"),
         "time_bank_objects": ("time_bank_objects.json", "application/json"),
@@ -3444,6 +3578,8 @@ async def download_bundle(analysis_id: str):
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
         "audio_diarization": "audio_diarization_scaffold.json",
+        "audio_sample_clouds": "audio_sample_clouds.json",
+        "identity_triangulation": "identity_triangulation_bundle.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -3510,6 +3646,8 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
         "audio_diarization": "audio_diarization_scaffold.json",
+        "audio_sample_clouds": "audio_sample_clouds.json",
+        "identity_triangulation": "identity_triangulation_bundle.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",

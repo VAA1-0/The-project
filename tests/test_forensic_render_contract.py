@@ -98,6 +98,7 @@ class ForensicRenderContractTest(unittest.TestCase):
 
             output_video_path = Path(job["output_video_path"])
             output_json_path = Path(job["output_json_path"])
+            traceback_tree_path = Path(job["traceback_tree_path"])
             jobs_path = tmp_path / "renders" / "jobs.json"
 
             self.assertEqual(job["status"], "completed")
@@ -106,11 +107,19 @@ class ForensicRenderContractTest(unittest.TestCase):
             self.assertGreater(job["rendered_frames"], 0)
             self.assertTrue(output_video_path.exists())
             self.assertTrue(output_json_path.exists())
+            self.assertTrue(traceback_tree_path.exists())
             self.assertTrue(jobs_path.exists())
+            self.assertGreater(job["traceback_tree_node_count"], 0)
+            self.assertGreater(job["traceback_tree_edge_count"], 0)
 
             persisted_job = json.loads(output_json_path.read_text(encoding="utf-8"))
+            traceback_tree = json.loads(traceback_tree_path.read_text(encoding="utf-8"))
             jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted_job["render_job_id"], job["render_job_id"])
+            self.assertEqual(
+                traceback_tree["traceback_tree_schema"],
+                "vaa1.traceback_tree.v1",
+            )
             self.assertEqual(jobs[0]["render_job_id"], job["render_job_id"])
 
     def test_odd_roi_dimensions_are_normalized_for_mp4(self):
