@@ -27,6 +27,7 @@ import type {
   AudioDiarizationScaffold,
   ForensicRenderJob,
   IdentityRefinementStatus,
+  SecondOrderLabelProliferationPlan,
   ManualVisualAnnotation,
   ManualTranscriptEntry,
   SourceMediaMetadata,
@@ -1480,6 +1481,7 @@ export interface AnalysisData {
   forensicRenderJobs?: ForensicRenderJob[];
   sourceSamples?: SourceSample[];
   identityRefinement?: IdentityRefinementStatus | null;
+  secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
   audioDiarization?: AudioDiarizationScaffold | null;
   summary: string;
   rawCsv: string;
@@ -2469,6 +2471,7 @@ export interface AnalysisStatus {
   forensic_render_jobs?: ForensicRenderJob[];
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
+  second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   pipeline_type?: string; // This was missing
   analysis_tier?: string;
@@ -2853,6 +2856,7 @@ export class VideoService {
         forensicRenderJobs: status.forensic_render_jobs || [],
         sourceSamples: status.source_samples || [],
         identityRefinement: status.identity_refinement || null,
+        secondOrderLabelProliferation: status.second_order_label_proliferation || null,
         audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",

@@ -32,6 +32,9 @@ const timeBankPanel = read("app/V2components/components/panels/TimeBankPanel.tsx
 const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx");
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
+const secondOrderAffirmations = read(
+  "app/V2components/components/panels/SecondOrderLabelAffirmations.tsx",
+);
 const videoService = read("lib/video-service.ts");
 const evidenceAuthority = read("lib/evidence-authority.ts");
 
@@ -624,5 +627,49 @@ test("forensic traceback exposes a navigable tree contract", () => {
     apiService,
     /Promise<\{ traceback: ForensicTracebackRecord; tree\?: ForensicTracebackTree \| null \}>/,
     "traceback fetch must return both the flat record and tree payload",
+  );
+});
+
+test("second-order labels surface as governed affirmations without confirmation tax", () => {
+  assert.match(
+    apiService,
+    /export interface SecondOrderLabelProliferationPlan/,
+    "frontend API types must expose the second-order proliferation plan",
+  );
+
+  assert.match(
+    videoService,
+    /secondOrderLabelProliferation: status\.second_order_label_proliferation \|\| null/,
+    "video service must carry the proliferation plan into analysis data",
+  );
+
+  assert.match(
+    secondOrderAffirmations,
+    /analyst_confirmation_is_not_required_for_every_candidate/,
+    "second-order UI must preserve the no confirmation tax governance flag",
+  );
+
+  assert.match(
+    secondOrderAffirmations,
+    /manual override remains available/i,
+    "second-order labels must tell analysts manual override remains authoritative",
+  );
+
+  assert.match(
+    videoPanel,
+    /surface="bbox_roi_overlay"/,
+    "BBox/ROI editor must surface second-order affirmation chips",
+  );
+
+  assert.match(
+    objPanel,
+    /surface="objects_panel"/,
+    "Objects panel must surface second-order affirmation chips",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /SecondOrderLabelReviewTray/,
+    "Master Schema must expose the batch review tray for second-order labels",
   );
 });

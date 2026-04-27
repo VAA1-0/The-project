@@ -199,6 +199,7 @@ export interface AnalysisStatus {
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
   identity_triangulation?: IdentityTriangulationStatus | null;
+  second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
@@ -286,6 +287,63 @@ export interface IdentityTriangulationStatus {
   proliferation_ready_count?: number;
   output_json_path?: string;
   updated_at?: string;
+}
+
+export interface SecondOrderLabelInstruction {
+  instruction_id: string;
+  source_event_id?: string;
+  target_label_family: string;
+  candidate_label: string;
+  status: "candidate" | "probable" | "strongly_supported" | "analyst_confirmed" | string;
+  may_surface_in_ui?: boolean;
+  may_proliferate?: boolean;
+  may_auto_confirm?: boolean;
+  requires_immediate_confirmation?: boolean;
+  manual_override_available?: boolean;
+  confirmation_policy?: {
+    analyst_confirmation_is_welcome?: boolean;
+    analyst_confirmation_is_not_required_for_every_candidate?: boolean;
+    interrupt_analyst?: boolean;
+    surface_as?: "badge" | "review_prompt" | string;
+  };
+  ui_surfaces?: string[];
+  time_span?: {
+    start_ms?: number;
+    end_ms?: number;
+    start?: number;
+    end?: number;
+  };
+  participants_involved?: string[];
+  objects_involved?: string[];
+  source_evidence_refs?: Array<{
+    evidence_id?: string;
+    evidence_kind?: string;
+    authority_level?: number;
+  }>;
+  traceback?: Record<string, unknown>;
+  open_scores?: Record<string, number>;
+  open_score_weights?: Record<string, number>;
+  must_preserve?: string[];
+  forbidden_updates?: string[];
+}
+
+export interface SecondOrderLabelProliferationPlan {
+  schema: "vaa1.second_order_label_proliferation_plan.v1" | string;
+  analysis_id?: string;
+  source_media_id?: string;
+  authority_policy?: Record<string, unknown>;
+  open_score_weights?: Record<string, number>;
+  priority_weights?: Record<string, unknown>;
+  graduated_status_thresholds?: Record<string, number>;
+  instructions?: SecondOrderLabelInstruction[];
+  summary?: {
+    instruction_count?: number;
+    status_counts?: Record<string, number>;
+    immediate_confirmation_count?: number;
+    ui_surface_count?: number;
+  };
+  governance?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
 }
 
 export interface AudioDiarizationScaffold {

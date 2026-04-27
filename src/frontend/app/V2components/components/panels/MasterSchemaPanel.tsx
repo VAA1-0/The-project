@@ -17,6 +17,10 @@ import {
   closeManualAnnotationInVideo,
   openManualAnnotationInVideo,
 } from "@/lib/video-navigation";
+import {
+  SecondOrderLabelAffirmationChips,
+  SecondOrderLabelReviewTray,
+} from "./SecondOrderLabelAffirmations";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "OBJ",
@@ -766,6 +770,7 @@ export default function MasterSchemaPanel({
         <div className="my-2 rounded border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-[11px] text-sky-100">
           {panelDescription}
         </div>
+        <SecondOrderLabelReviewTray plan={analysisData?.secondOrderLabelProliferation} />
 
         {isLoading ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
@@ -842,6 +847,23 @@ export default function MasterSchemaPanel({
                               {item.open_note}
                             </div>
                           ) : null}
+                          <div className="mt-1">
+                            <SecondOrderLabelAffirmationChips
+                              plan={analysisData?.secondOrderLabelProliferation}
+                              surface="master_schema"
+                              targetLabelFamilies={[item.category]}
+                              timeSpan={{
+                                start: item.start_seconds ?? item.timestamp_seconds ?? 0,
+                                end:
+                                  item.end_seconds ??
+                                  item.start_seconds ??
+                                  item.timestamp_seconds ??
+                                  0,
+                              }}
+                              compact
+                              limit={3}
+                            />
+                          </div>
                         </button>
 
                         {selected ? (

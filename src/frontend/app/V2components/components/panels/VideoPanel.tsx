@@ -46,6 +46,7 @@ import {
   SITUATIONAL_TAXONOMY_OPTIONS,
 } from "@/lib/metadata-taxonomy";
 import { useLayoutHost } from "../LayoutHost";
+import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
 import type { ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
@@ -5592,6 +5593,13 @@ export default function VideoPanel() {
                                     {formatPreciseTime(scrubValue)}
                                   </span>
                                 </div>
+                                <SecondOrderLabelAffirmationChips
+                                  plan={analysisData?.secondOrderLabelProliferation}
+                                  surface="bbox_roi_overlay"
+                                  timeSpan={{ start: edit.start, end: edit.end }}
+                                  compact
+                                  limit={3}
+                                />
                                 <div className="mb-1 flex items-center justify-between gap-2 text-[9px] text-slate-500">
                                   <span>Drag slider to mark interest</span>
                                   <span>
