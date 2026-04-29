@@ -46,7 +46,6 @@ import {
   SITUATIONAL_TAXONOMY_OPTIONS,
 } from "@/lib/metadata-taxonomy";
 import { useLayoutHost } from "../LayoutHost";
-import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
 import type { ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
@@ -210,12 +209,6 @@ type ForensicRegionDraftPayload = {
     h: number;
   };
   normalizedRegion?: DraftBox;
-};
-
-type LockedForensicRoi = {
-  box: DraftBox;
-  videoId?: string;
-  time?: number;
 };
 
 const CUSTOM_LABEL_VALUE = "__custom__";
@@ -1464,27 +1457,7 @@ export default function VideoPanel() {
   } | null>(null);
   const [draftBox, setDraftBox] = useState<DraftBox | null>(null);
   const [lockedForensicRoiBox, setLockedForensicRoiBox] =
-    useState<LockedForensicRoi | null>(null);
-  const visibleLockedForensicRoiBox = useMemo(() => {
-    if (!lockedForensicRoiBox) {
-      return null;
-    }
-    if (lockedForensicRoiBox.videoId && lockedForensicRoiBox.videoId !== videoId) {
-      return null;
-    }
-    if (
-      typeof lockedForensicRoiBox.time === "number" &&
-      Math.abs(currentTime - lockedForensicRoiBox.time) > 1
-    ) {
-      return null;
-    }
-    return lockedForensicRoiBox.box;
-  }, [currentTime, lockedForensicRoiBox, videoId]);
-  useEffect(() => {
-    setLockedForensicRoiBox((current) =>
-      current?.videoId && current.videoId !== videoId ? null : current,
-    );
-  }, [videoId]);
+    useState<DraftBox | null>(null);
   const [draftTimestamp, setDraftTimestamp] = useState<number | null>(null);
   const [draftStartPoint, setDraftStartPoint] = useState<{ x: number; y: number } | null>(
     null,
@@ -1635,6 +1608,7 @@ export default function VideoPanel() {
     if (videoRef.current) {
       videoRef.current.currentTime = safeTime;
     }
+    lastBroadcastTimeRef.current = safeTime;
     eventBus.emit("videoTimeLineChanged", safeTime);
   }, [duration]);
 
@@ -1829,6 +1803,12 @@ export default function VideoPanel() {
 
   useEffect(() => {
     const handler = (nextVideoTimeLine: number) => {
+      // Break the seek-loop race condition that causes playback stuttering.
+      // If the incoming time is what we just broadcasted, it is a delayed 
+      // React state update catching up to our natural playback.
+      if (Math.abs(nextVideoTimeLine - lastBroadcastTimeRef.current) < 0.05) {
+        return;
+      }
       setVideoTimeLine(nextVideoTimeLine);
     };
     eventBus.on("videoTimeLineChanged", handler);
@@ -2007,7 +1987,6 @@ export default function VideoPanel() {
       setSelectedOverlayKey(null);
       setNativeSaveMessage(null);
       setForensicRoiMode(false);
-      setLockedForensicRoiBox(null);
       setNativeAnnotationMode(true);
       setAnnotationWorkspaceActive(true);
     };
@@ -2040,16 +2019,12 @@ export default function VideoPanel() {
           : null;
       if (normalizedRegion) {
         setDraftBox(normalizedRegion);
-        const selectedTime =
+        setLockedForensicRoiBox(normalizedRegion);
+        setDraftTimestamp(
           typeof payload?.time === "number"
             ? Number(payload.time.toFixed(3))
-            : Number(currentTime.toFixed(3));
-        setLockedForensicRoiBox({
-          box: normalizedRegion,
-          videoId: payload?.videoId || videoId,
-          time: selectedTime,
-        });
-        setDraftTimestamp(selectedTime);
+            : Number(currentTime.toFixed(3)),
+        );
       } else {
         setDraftTimestamp(null);
       }
@@ -2063,7 +2038,7 @@ export default function VideoPanel() {
     return () => {
       eventBus.off("forensicRoiToolOpen", handler);
     };
-  }, [currentTime, videoId]);
+  }, [currentTime]);
 
   useEffect(() => {
     const handler = (payload: ForensicRegionDraftPayload) => {
@@ -2098,7 +2073,7 @@ export default function VideoPanel() {
           : Number(currentTime.toFixed(3)),
       );
       setDraftBox(normalizedRegion);
-      setLockedForensicRoiBox(null);
+      setLockedForensicRoiBox(normalizedRegion);
       setNativeSaveMessage("Forensic ROI loaded into native annotation.");
     };
 
@@ -3738,18 +3713,13 @@ export default function VideoPanel() {
                     : "other";
       const normalizedRegion = getOverlayNormalizedBox(overlay);
       setDraftBox(normalizedRegion);
-      const selectedTime = Number(timestamp.toFixed(3));
-      setLockedForensicRoiBox({
-        box: normalizedRegion,
-        videoId,
-        time: selectedTime,
-      });
-      setDraftTimestamp(selectedTime);
+      setLockedForensicRoiBox(normalizedRegion);
+      setDraftTimestamp(Number(timestamp.toFixed(3)));
       openPanel("ToolsPanel", { videoId, workspace: "forensic" });
       eventBus.emit("toolsWorkspaceOpen", { workspace: "forensic", videoId });
       eventBus.emit("forensicRegionSelected", {
         videoId,
-        time: selectedTime,
+        time: Number(timestamp.toFixed(3)),
         time_start: Number(Math.max(0, timestamp).toFixed(3)),
         time_end: Number(Math.max(timestamp + 0.001, endTimestamp).toFixed(3)),
         intent,
@@ -4078,7 +4048,7 @@ export default function VideoPanel() {
       setSelectedOverlayKey(null);
       setDraftTimestamp(Number(getAuthoritativeVideoTime().toFixed(3)));
 
-      const activeForensicBox = draftBox || visibleLockedForensicRoiBox;
+      const activeForensicBox = draftBox || lockedForensicRoiBox;
       const pointerInsideActiveBox =
         forensicRoiMode &&
         activeForensicBox &&
@@ -4108,8 +4078,8 @@ export default function VideoPanel() {
       draftBox,
       forensicRoiMode,
       getAuthoritativeVideoTime,
+      lockedForensicRoiBox,
       nativeAnnotationMode,
-      visibleLockedForensicRoiBox,
     ],
   );
 
@@ -4190,11 +4160,7 @@ export default function VideoPanel() {
         normalizedRegion: draftBox,
       };
       eventBus.emit("forensicRegionSelected", payload);
-      setLockedForensicRoiBox({
-        box: draftBox,
-        videoId,
-        time: selectedTime,
-      });
+      setLockedForensicRoiBox(draftBox);
       setForensicRoiMode(false);
     }
     setDraftStartPoint(null);
@@ -4211,7 +4177,7 @@ export default function VideoPanel() {
 
   const handleForensicRoiContextMenu = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!forensicRoiMode && !visibleLockedForensicRoiBox && !draftBox) {
+      if (!forensicRoiMode && !lockedForensicRoiBox && !draftBox) {
         return;
       }
       event.preventDefault();
@@ -4221,7 +4187,7 @@ export default function VideoPanel() {
         y: clamp(event.clientY - rect.top, 0, rect.height),
       });
     },
-    [draftBox, forensicRoiMode, visibleLockedForensicRoiBox],
+    [draftBox, forensicRoiMode, lockedForensicRoiBox],
   );
 
   const chooseForensicRoiIntent = React.useCallback((intent: ForensicRoiIntent) => {
@@ -5593,13 +5559,6 @@ export default function VideoPanel() {
                                     {formatPreciseTime(scrubValue)}
                                   </span>
                                 </div>
-                                <SecondOrderLabelAffirmationChips
-                                  plan={analysisData?.secondOrderLabelProliferation}
-                                  surface="bbox_roi_overlay"
-                                  timeSpan={{ start: edit.start, end: edit.end }}
-                                  compact
-                                  limit={3}
-                                />
                                 <div className="mb-1 flex items-center justify-between gap-2 text-[9px] text-slate-500">
                                   <span>Drag slider to mark interest</span>
                                   <span>
@@ -6015,7 +5974,7 @@ export default function VideoPanel() {
                 )}
 
                 {renderedVideoRect &&
-                  (nativeAnnotationMode || forensicRoiMode || visibleLockedForensicRoiBox) && (
+                  (nativeAnnotationMode || forensicRoiMode || lockedForensicRoiBox) && (
                   <div
                     ref={nativeOverlayRef}
                     className={`absolute ${nativeAnnotationMode || forensicRoiMode ? "z-30" : "z-10"} cursor-crosshair`}
@@ -6030,7 +5989,7 @@ export default function VideoPanel() {
                           : "none",
                     }}
                     onClick={(event) => {
-                      if (nativeAnnotationMode || forensicRoiMode || !visibleLockedForensicRoiBox) {
+                      if (nativeAnnotationMode || forensicRoiMode || !lockedForensicRoiBox) {
                         return;
                       }
                       event.preventDefault();
@@ -6050,7 +6009,7 @@ export default function VideoPanel() {
                         Forensic ROI armed / {forensicRoiIntent} / drag box or draw new
                       </div>
                     )}
-                    {(draftBox || visibleLockedForensicRoiBox) && (
+                    {(draftBox || lockedForensicRoiBox) && (
                       <div
                         className={`absolute border-2 ${
                           forensicRoiMode
@@ -6058,10 +6017,10 @@ export default function VideoPanel() {
                             : "border-amber-300/90 bg-amber-300/10"
                         }`}
                         style={{
-                          left: `${((draftBox || visibleLockedForensicRoiBox)?.x ?? 0) * 100}%`,
-                          top: `${((draftBox || visibleLockedForensicRoiBox)?.y ?? 0) * 100}%`,
-                          width: `${((draftBox || visibleLockedForensicRoiBox)?.w ?? 0) * 100}%`,
-                          height: `${((draftBox || visibleLockedForensicRoiBox)?.h ?? 0) * 100}%`,
+                          left: `${((draftBox || lockedForensicRoiBox)?.x ?? 0) * 100}%`,
+                          top: `${((draftBox || lockedForensicRoiBox)?.y ?? 0) * 100}%`,
+                          width: `${((draftBox || lockedForensicRoiBox)?.w ?? 0) * 100}%`,
+                          height: `${((draftBox || lockedForensicRoiBox)?.h ?? 0) * 100}%`,
                         }}
                       />
                     )}
