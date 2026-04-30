@@ -4,6 +4,13 @@ Date: 2026-04-19
 Branch context: `petteri`  
 Purpose: describe what VAA1 is currently made of, how it runs, how data moves through it, and which parts are operational versus still bending tasks.
 
+Update note, 2026-04-30:
+
+- This document remains useful as the April 19 baseline program map.
+- It is no longer the complete current delivery map.
+- For the latest delivered functionality audit, including SFL/Dependency, multimodal meaning, second-order label proliferation, Meaning/Plot, Time Bank Meaning, audio sample clouds, identity triangulation, forensic traceback, and evidence-authority navigation, see:
+  `docs/vaa1_functionality_delivery_audit_2026-04-30.md`
+
 This document is the current architectural map of VAA1 as it exists in the working repository. It is intentionally concrete: file paths, runtime components, data stores, analyst panels, pipeline modules, and known seams are named explicitly.
 
 ## 1. Executive Map
@@ -643,4 +650,3 @@ Important related documents:
 ## 19. One-Sentence System Description
 
 VAA1 is currently a local multimodal video analysis and annotation cockpit where automatic analysis artifacts, source-media documentation, manual analyst annotations, and governance taxonomies converge into panel-based review surfaces, with Master Schema acting as the canonical manual annotation map and CVAT acting as an optional external bridge.
-

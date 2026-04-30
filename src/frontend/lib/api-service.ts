@@ -104,6 +104,7 @@ export interface AnalysisStatus {
     audio_diarization_error?: string;
     audio_sample_cloud_error?: string;
     identity_triangulation_error?: string;
+    second_order_label_proliferation_error?: string;
     pos_error?: string;
     quan_error?: string;
     language_support?: {
@@ -315,6 +316,8 @@ export interface SecondOrderLabelInstruction {
   };
   participants_involved?: string[];
   objects_involved?: string[];
+  source_feature_type?: string;
+  source_feature_payload?: Record<string, unknown>;
   source_evidence_refs?: Array<{
     evidence_id?: string;
     evidence_kind?: string;
@@ -1910,6 +1913,9 @@ class ApiService {
       "audio_diarization",
       "audio_sample_clouds",
       "identity_triangulation",
+      "dependency_sfl_stage1",
+      "multimodal_meaning_stage1",
+      "second_order_label_proliferation",
       "annotation_corrections",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
@@ -1934,6 +1940,9 @@ class ApiService {
       audio_diarization: "Audio Diarization Scaffold (JSON)",
       audio_sample_clouds: "Audio Sample Clouds (JSON)",
       identity_triangulation: "Identity Triangulation Bundle (JSON)",
+      dependency_sfl_stage1: "Dependency + SFL Stage 1 (JSON)",
+      multimodal_meaning_stage1: "Multimodal Meaning Stage 1 (JSON)",
+      second_order_label_proliferation: "Second-Order Label Proliferation (JSON)",
       annotation_corrections: "Annotation Corrections (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
@@ -1960,6 +1969,9 @@ class ApiService {
       audio_diarization: ".json",
       audio_sample_clouds: ".json",
       identity_triangulation: ".json",
+      dependency_sfl_stage1: ".json",
+      multimodal_meaning_stage1: ".json",
+      second_order_label_proliferation: ".json",
       annotation_corrections: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",

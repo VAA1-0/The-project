@@ -57,6 +57,42 @@ RITUAL_PATTERNS = {
     "challenge_response": {"prove", "try me", "you cannot", "can't"},
     "boundary_setting": {"stop", "leave", "enough", "do not"},
 }
+AFFILIATION_CARE_PATTERNS = {
+    "affirmation": {"yes", "exactly", "right", "true", "confirmed", "i agree"},
+    "approval": {"good", "well done", "excellent", "beautiful", "perfect"},
+    "encouragement": {"you can", "keep going", "come on", "you got this"},
+    "consolation": {"it's okay", "it is okay", "don't worry", "do not worry", "i'm here"},
+    "gratitude": {"thank you", "thanks", "grateful"},
+    "apology": {"sorry", "i apologize", "forgive me"},
+    "offering_help": {"let me help", "i can help", "help you", "protect you"},
+}
+INTIMACY_COMMITMENT_PATTERNS = {
+    "flirting": {"darling", "beautiful", "handsome", "come closer"},
+    "affection": {"i love", "miss you", "my dear", "beloved"},
+    "invitation": {"come with me", "join me", "stay with me"},
+    "vow": {"i promise", "i swear", "i will always", "i'll always", "never leave"},
+    "trust_building": {"trust me", "believe me", "you can trust"},
+}
+JUDGMENT_DENIGRATION_PATTERNS = {
+    "disapproval": {"wrong", "unacceptable", "not good enough"},
+    "belittling": {"pathetic", "stupid", "weak", "ridiculous", "laughable"},
+    "scorn": {"so-called", "nothing but", "you people"},
+    "blame": {"your fault", "because of you", "shame on you"},
+    "smear": {"liar", "corrupt", "fake", "traitor"},
+    "dismissal": {"whatever", "irrelevant", "doesn't matter", "do not care"},
+}
+PLOT_FUNCTION_PATTERNS = {
+    "setup_exposition": {"this is", "there is", "once", "welcome to", "in a world"},
+    "goal_mission": {"we need to", "must find", "our mission", "save", "escape", "find"},
+    "obstacle_conflict": {"can't", "cannot", "blocked", "too late", "impossible", "stopped us"},
+    "reversal_revelation": {"but", "however", "suddenly", "turns out", "truth", "secret", "found out"},
+    "stakes_escalation": {"danger", "die", "kill", "lose everything", "time runs out", "before it's too late"},
+    "resolution_transformation": {"finally", "it's over", "it is over", "changed", "return", "home"},
+    "flashback_memory": {"remember", "years ago", "back then", "used to"},
+    "episode_transition": {"meanwhile", "later", "next", "after that", "now"},
+    "voice_over_commentary": {"as we see", "he is about to", "they are about to", "what a move"},
+    "montage_trailer_escalation": {"this time", "coming", "only one", "every", "all"},
+}
 TOPIC_STOPWORDS = {
     "the",
     "a",
@@ -111,6 +147,18 @@ def _tokens(text: str) -> List[str]:
 
 def _content_terms(text: str) -> Set[str]:
     return {token for token in _tokens(text) if token not in TOPIC_STOPWORDS and len(token) > 2}
+
+
+def _matched_pattern_groups(
+    text_lower: str,
+    patterns: Dict[str, Set[str]],
+) -> List[Dict[str, Any]]:
+    matches: List[Dict[str, Any]] = []
+    for group, markers in patterns.items():
+        found = sorted(marker for marker in markers if marker in text_lower)
+        if found:
+            matches.append({"group": group, "markers": found})
+    return matches
 
 
 def _event_id(analysis_id: str, feature_type: str, index: int) -> str:
@@ -223,6 +271,10 @@ def _candidate_target_labels(feature_type: str) -> List[str]:
         "gaze_target_priority": ["Interaction", "Identification", "Object"],
         "topic_shift": ["Scene", "Episode", "Interaction"],
         "micro_ritual": ["Interaction", "Role", "Situation"],
+        "affiliation_care": ["Interaction", "Role", "Affect", "Situation"],
+        "intimacy_commitment": ["Interaction", "Role", "Relationship", "Situation"],
+        "judgment_denigration": ["Interaction", "Role", "Situation", "Affect", "Intensity", "ReportClaim"],
+        "plot_function": ["Scene", "Episode", "Situation", "Action", "Interaction", "Role", "ReportClaim"],
     }
     return mapping.get(feature_type, [])
 
@@ -488,6 +540,110 @@ def _build_linguistic_events(
                     )
                 )
                 event_index += 1
+
+        for match in _matched_pattern_groups(text_lower, AFFILIATION_CARE_PATTERNS):
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "affiliation_care",
+                    event_index,
+                    span,
+                    {
+                        "care_signal_type": match["group"],
+                        "markers": match["markers"],
+                        "social_orientation": "alignment_or_support",
+                        "compassionate_understanding_note": (
+                            "Candidate evidence of affiliation, care, reassurance, or social repair."
+                        ),
+                    },
+                    participants=[speaker],
+                    evidence_refs=evidence_refs,
+                    traceback_refs=traceback_refs,
+                    interpretive_tags=["affiliation", "care", match["group"]],
+                    confidence_score=0.52,
+                    confidence_notes="Affiliation/care pattern candidate; genre and context remain open.",
+                )
+            )
+            event_index += 1
+
+        for match in _matched_pattern_groups(text_lower, INTIMACY_COMMITMENT_PATTERNS):
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "intimacy_commitment",
+                    event_index,
+                    span,
+                    {
+                        "intimacy_signal_type": match["group"],
+                        "markers": match["markers"],
+                        "relationship_movement": "closeness_or_commitment_candidate",
+                    },
+                    participants=[speaker],
+                    evidence_refs=evidence_refs,
+                    traceback_refs=traceback_refs,
+                    interpretive_tags=["intimacy", "commitment", match["group"]],
+                    confidence_score=0.5,
+                    confidence_notes="Intimacy/commitment candidate; analyst review may separate sincerity, irony, and genre performance.",
+                )
+            )
+            event_index += 1
+
+        for match in _matched_pattern_groups(text_lower, JUDGMENT_DENIGRATION_PATTERNS):
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "judgment_denigration",
+                    event_index,
+                    span,
+                    {
+                        "judgment_signal_type": match["group"],
+                        "markers": match["markers"],
+                        "social_positioning": "downward_or_condemning_candidate",
+                        "uncertainty_note": (
+                            "Judgment and denigration candidates must remain genre-sensitive and traceback-first."
+                        ),
+                    },
+                    participants=[speaker],
+                    evidence_refs=evidence_refs,
+                    traceback_refs=traceback_refs,
+                    interpretive_tags=["judgment", "denigration", match["group"]],
+                    confidence_score=0.5,
+                    confidence_notes="Judgment/denigration candidate; not a factual claim without review.",
+                )
+            )
+            event_index += 1
+
+        for match in _matched_pattern_groups(text_lower, PLOT_FUNCTION_PATTERNS):
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "plot_function",
+                    event_index,
+                    span,
+                    {
+                        "plot_function": match["group"],
+                        "markers": match["markers"],
+                        "story_world_change_candidate": True,
+                        "alternative_plot_lenses": {
+                            "aristotle": ["reversal", "recognition", "suffering", "causal_necessity", "catharsis"],
+                            "freytag": ["exposition", "rising_action", "climax", "falling_action", "resolution_or_catastrophe"],
+                            "campbell": ["call", "refusal", "mentor", "threshold", "trials", "abyss", "transformation", "return"],
+                            "frye": ["comedy_integration", "romance_quest", "tragedy_fall", "irony_disintegration"],
+                            "booker": ["monster", "quest", "voyage_return", "comedy", "tragedy", "rebirth", "rags_riches"],
+                        },
+                        "linearity_note": (
+                            "Plot meaning may be nonlinear, episodic, narrated, montage-like, or cross-cut."
+                        ),
+                    },
+                    participants=[speaker],
+                    evidence_refs=evidence_refs,
+                    traceback_refs=traceback_refs,
+                    interpretive_tags=["plot", match["group"]],
+                    confidence_score=0.5,
+                    confidence_notes="Plot-function candidate from transcript pattern; requires source-aware interpretation.",
+                )
+            )
+            event_index += 1
 
         sfl = utterance.get("sfl_lite") or {}
         interpersonal = sfl.get("interpersonal") or {}
@@ -785,4 +941,3 @@ def write_multimodal_meaning_stage1_artifact(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     return artifact
-

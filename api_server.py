@@ -73,6 +73,13 @@ from src.backend.analysis.identification_refinery import (
     refine_identities,
 )
 from src.backend.analysis.identity_triangulation import write_identity_triangulation_bundle
+from src.backend.analysis.dependency_sfl_stage1 import write_dependency_sfl_stage1_artifact
+from src.backend.analysis.multimodal_meaning_stage1 import (
+    write_multimodal_meaning_stage1_artifact,
+)
+from src.backend.analysis.second_order_label_proliferation import (
+    write_second_order_label_proliferation_plan,
+)
 from fastapi import Form
 
 
@@ -713,6 +720,283 @@ def write_identity_triangulation_artifact_for_status(
         "updated_at": utc_now_iso(),
     }
     return payload
+
+
+def value_to_ms(value: Any, default: int = 0) -> int:
+    number = safe_float(value)
+    if number is None:
+        return default
+    if 0 < number < 10_000:
+        return int(round(number * 1000))
+    return int(round(number))
+
+
+def build_meaning_genre_profile(source_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    annotations = source_metadata.get("user_annotations") or {}
+    return {
+        "genre": annotations.get("genre", ""),
+        "genre_subtype": annotations.get("genre_subtype", ""),
+        "situational_genre": annotations.get("situational_genre", ""),
+        "situational_subtype": annotations.get("situational_subtype", ""),
+        "narrative_development": annotations.get("narrative_development", ""),
+        "performance_expression": annotations.get("performance_expression", ""),
+    }
+
+
+def build_meaning_culture_context(status: Dict[str, Any]) -> Dict[str, Any]:
+    source_metadata = status.get("source_media_metadata") or {}
+    annotations = source_metadata.get("user_annotations") or {}
+    return {
+        "annotation_culture": "vaa1_default_open_weight_policy",
+        "analysis_tier": status.get("analysis_tier", "science_scan"),
+        "modality_focus": status.get("modality_focus", "multimodal"),
+        "privacy_axis": annotations.get("privacy_axis", ""),
+        "expertise_axis": annotations.get("expertise_axis", ""),
+        "linearity_policy": {
+            "does_not_assume_linear_story_world": True,
+            "episode_links_may_cross_chronological_order": True,
+        },
+    }
+
+
+def iter_detection_items(value: Any) -> List[Dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        for key in ("detections", "items", "objects", "results"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def build_visual_cues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, Any]]:
+    cues: List[Dict[str, Any]] = []
+    for index, item in enumerate(iter_detection_items(visual.get("ocr_results"))[:80]):
+        text = item.get("text") or item.get("label") or item.get("ocr_text")
+        if not text:
+            continue
+        start_ms = value_to_ms(
+            item.get("timestamp", item.get("time", item.get("start", item.get("start_ms"))))
+        )
+        end_ms = value_to_ms(
+            item.get("end", item.get("end_ms")),
+            default=start_ms + 1000,
+        )
+        cues.append(
+            {
+                "evidence_id": item.get("evidence_id") or f"ocr:{index}",
+                "cue_type": "object_mentioned",
+                "object_id": f"visible_text:{index}",
+                "significance_stage": "visible_text_reference",
+                "score": item.get("confidence", 0.45),
+                "start_ms": start_ms,
+                "end_ms": max(end_ms, start_ms),
+                "text": text,
+            }
+        )
+
+    for index, item in enumerate(iter_detection_items(visual.get("tracked_objects"))[:120]):
+        label = str(item.get("class") or item.get("label") or item.get("object_class") or "").strip()
+        if not label:
+            continue
+        confidence = safe_float(item.get("confidence"), 0.0) or 0.0
+        if confidence < 0.65 and label.lower() != "person":
+            continue
+        start_ms = value_to_ms(item.get("startTimestamp", item.get("start", item.get("timestamp"))))
+        end_ms = value_to_ms(item.get("endTimestamp", item.get("end")), default=start_ms + 1000)
+        cues.append(
+            {
+                "evidence_id": item.get("track_id") or item.get("id") or f"tracked_object:{index}",
+                "cue_type": "object_foregrounded",
+                "object_id": item.get("track_id") or item.get("id") or label,
+                "significance_stage": "foregrounded",
+                "score": confidence or 0.5,
+                "start_ms": start_ms,
+                "end_ms": max(end_ms, start_ms),
+            }
+        )
+    return cues
+
+
+def build_cinematic_clues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = visual.get("cinematic_clues") or {}
+    clues: List[Dict[str, Any]] = []
+    if not isinstance(raw, dict):
+        return clues
+
+    for group_name, group_value in raw.items():
+        samples = group_value.get("samples") if isinstance(group_value, dict) else group_value
+        if not isinstance(samples, list):
+            continue
+        for index, sample in enumerate(item for item in samples if isinstance(item, dict)):
+            label = str(
+                sample.get("label")
+                or sample.get("shot_size")
+                or sample.get("cue_type")
+                or group_name
+            ).lower()
+            clue_type = ""
+            if "close" in label:
+                clue_type = "close_up"
+            elif "domin" in label or "foreground" in label:
+                clue_type = "screen_dominance"
+            elif "approach" in label:
+                clue_type = "approach"
+            elif "withdraw" in label:
+                clue_type = "withdrawal"
+            elif "block" in label:
+                clue_type = "blocking"
+            if not clue_type:
+                continue
+
+            start_ms = value_to_ms(
+                sample.get("timestamp", sample.get("time", sample.get("start", sample.get("start_ms"))))
+            )
+            end_ms = value_to_ms(sample.get("end", sample.get("end_ms")), default=start_ms + 1000)
+            clues.append(
+                {
+                    "evidence_id": sample.get("evidence_id")
+                    or f"cinematic:{group_name}:{index}",
+                    "clue_type": clue_type,
+                    "participant_id": sample.get("participant_id")
+                    or sample.get("track_id")
+                    or sample.get("subject_id")
+                    or "unknown",
+                    "target_id": sample.get("target_id"),
+                    "start_ms": start_ms,
+                    "end_ms": max(end_ms, start_ms),
+                }
+            )
+    return clues
+
+
+def load_json_artifact_for_meaning(path_value: Any) -> Optional[Dict[str, Any]]:
+    if not path_value:
+        return None
+    try:
+        artifact_path = Path(str(path_value))
+        if not artifact_path.exists():
+            return None
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except Exception as exc:
+        logger.debug(f"Could not load second-order meaning artifact fallback {path_value}: {exc}")
+        return None
+
+
+def resolve_transcript_for_meaning(status: Dict[str, Any], audio: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    transcript = audio.get("transcript")
+    if isinstance(transcript, dict) and (
+        transcript.get("segments") or transcript.get("utterances") or transcript.get("text")
+    ):
+        return transcript
+
+    output_files = status.get("output_files") or {}
+    analysis_id = status.get("analysis_id")
+    candidate_paths: List[Any] = [
+        output_files.get("transcript"),
+        TRANSCRIPTS_DIR / f"{analysis_id}_transcript.json" if analysis_id else None,
+    ]
+    for path_value in candidate_paths:
+        payload = load_json_artifact_for_meaning(path_value)
+        if payload and (payload.get("segments") or payload.get("utterances") or payload.get("text")):
+            return payload
+    return None
+
+
+def resolve_audio_prosody_for_meaning(status: Dict[str, Any], audio: Dict[str, Any]) -> Dict[str, Any]:
+    prosody = audio.get("audio_prosody")
+    if isinstance(prosody, dict):
+        return prosody
+
+    output_files = status.get("output_files") or {}
+    analysis_id = status.get("analysis_id")
+    candidate_paths: List[Any] = [
+        output_files.get("audio_prosody"),
+        TRANSCRIPTS_DIR / f"{analysis_id}_audio_prosody.json" if analysis_id else None,
+    ]
+    for path_value in candidate_paths:
+        payload = load_json_artifact_for_meaning(path_value)
+        if payload:
+            return payload
+    return {}
+
+
+def write_second_order_meaning_artifacts_for_status(
+    status: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return None
+
+    results = status.get("results") or {}
+    audio = results.get("audio_analysis") or {}
+    transcript = resolve_transcript_for_meaning(status, audio)
+    if not transcript:
+        return None
+    audio_prosody = resolve_audio_prosody_for_meaning(status, audio)
+
+    visual = results.get("visual_analysis") or {}
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    source_metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    genre_profile = build_meaning_genre_profile(source_metadata)
+    culture_context = build_meaning_culture_context(status)
+
+    dependency_path = analysis_dir / "dependency_sfl_stage1.json"
+    meaning_path = analysis_dir / "multimodal_meaning_stage1.json"
+    proliferation_path = analysis_dir / "second_order_label_proliferation.json"
+
+    sfl_artifact = write_dependency_sfl_stage1_artifact(
+        analysis_id,
+        transcript,
+        dependency_path,
+        source_media_id=analysis_id,
+        language=transcript.get("language") if isinstance(transcript, dict) else None,
+        source_metadata=source_metadata,
+        genre_profile=genre_profile,
+        culture_context=culture_context,
+    )
+    meaning_artifact = write_multimodal_meaning_stage1_artifact(
+        analysis_id,
+        sfl_artifact,
+        meaning_path,
+        source_media_id=analysis_id,
+        source_metadata=source_metadata,
+        visual_cues=build_visual_cues_for_meaning(visual),
+        cinematic_clues=build_cinematic_clues_for_meaning(visual),
+        audio_features={
+            "artifact_id": "audio_prosody",
+            "cue_count": len(audio_prosody.get("cues") or audio_prosody.get("events") or []),
+        },
+        ocr_features={
+            "artifact_id": "ocr_results",
+            "count": len(iter_detection_items(visual.get("ocr_results"))),
+        },
+        genre_profile=genre_profile,
+        culture_context=culture_context,
+    )
+    plan = write_second_order_label_proliferation_plan(
+        analysis_id,
+        meaning_artifact,
+        proliferation_path,
+    )
+
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    output_files = status.setdefault("output_files", {})
+    internal_artifacts["dependency_sfl_stage1"] = str(dependency_path)
+    internal_artifacts["multimodal_meaning_stage1"] = str(meaning_path)
+    internal_artifacts["second_order_label_proliferation"] = str(proliferation_path)
+    output_files["dependency_sfl_stage1"] = str(dependency_path)
+    output_files["multimodal_meaning_stage1"] = str(meaning_path)
+    output_files["second_order_label_proliferation"] = str(proliferation_path)
+    status["second_order_label_proliferation"] = {
+        **plan,
+        "output_json_path": str(proliferation_path),
+        "updated_at": utc_now_iso(),
+    }
+    return plan
 
 
 def intervals_overlap(
@@ -2849,6 +3133,29 @@ def run_complete_analysis(
         })
         write_source_media_metadata_files(status)
         try:
+            proliferation_plan = write_second_order_meaning_artifacts_for_status(status)
+            if proliferation_plan:
+                append_analysis_event(
+                    status,
+                    "second_order_label_proliferation_created",
+                    details={
+                        "instruction_count": (
+                            proliferation_plan.get("summary") or {}
+                        ).get("instruction_count", 0),
+                        "immediate_confirmation_count": (
+                            proliferation_plan.get("summary") or {}
+                        ).get("immediate_confirmation_count", 0),
+                    },
+                )
+        except Exception as proliferation_error:
+            logger.warning(
+                "Second-order label proliferation failed: %s",
+                proliferation_error,
+            )
+            status.setdefault("results", {})[
+                "second_order_label_proliferation_error"
+            ] = str(proliferation_error)
+        try:
             triangulation_bundle = write_identity_triangulation_artifact_for_status(status)
             if triangulation_bundle:
                 append_analysis_event(
@@ -3080,6 +3387,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_samples": status.get("source_samples", []),
         "identity_refinement": status.get("identity_refinement"),
         "identity_triangulation": status.get("identity_triangulation"),
+        "second_order_label_proliferation": status.get("second_order_label_proliferation"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -3106,6 +3414,33 @@ async def get_analysis_status(analysis_id: str) -> dict:
         ):
             persist_analysis_record_for_status(status)
             output_files = status.get("output_files", {})
+        if not status.get("second_order_label_proliferation"):
+            try:
+                proliferation_plan = write_second_order_meaning_artifacts_for_status(status)
+                if proliferation_plan:
+                    append_analysis_event(
+                        status,
+                        "second_order_label_proliferation_created",
+                        details={
+                            "instruction_count": (
+                                proliferation_plan.get("summary") or {}
+                            ).get("instruction_count", 0),
+                            "created_during": "status_refresh",
+                        },
+                    )
+                    persist_analysis_record_for_status(status)
+                    output_files = status.get("output_files", {})
+                    response_data["second_order_label_proliferation"] = status.get(
+                        "second_order_label_proliferation"
+                    )
+            except Exception as proliferation_error:
+                logger.warning(
+                    "Second-order label proliferation refresh failed: %s",
+                    proliferation_error,
+                )
+                status.setdefault("results", {})[
+                    "second_order_label_proliferation_error"
+                ] = str(proliferation_error)
         
         # Add processing time
         if status.get("start_time") and status.get("end_time"):
@@ -3187,6 +3522,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["audio_sample_cloud_error"] = results.get("audio_sample_cloud_error")
         if results.get("identity_triangulation_error"):
             response_data["summary"]["identity_triangulation_error"] = results.get("identity_triangulation_error")
+        if results.get("second_order_label_proliferation_error"):
+            response_data["summary"]["second_order_label_proliferation_error"] = results.get("second_order_label_proliferation_error")
         if results.get("pos_error"):
             response_data["summary"]["pos_error"] = results.get("pos_error")
         if results.get("quan_error"):
@@ -3482,7 +3819,9 @@ async def download_file(analysis_id: str, file_type: str):
     """
     Download analysis results
     Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript,
-    linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json, quan_analysis, face_anonymization_manifest
+    linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json,
+    quan_analysis, dependency_sfl_stage1, multimodal_meaning_stage1, second_order_label_proliferation,
+    face_anonymization_manifest
     """
     status = get_analysis_entry(analysis_id)
     if status is None:
@@ -3509,6 +3848,12 @@ async def download_file(analysis_id: str, file_type: str):
         "audio_diarization": ("audio_diarization_scaffold.json", "application/json"),
         "audio_sample_clouds": ("audio_sample_clouds.json", "application/json"),
         "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
+        "dependency_sfl_stage1": ("dependency_sfl_stage1.json", "application/json"),
+        "multimodal_meaning_stage1": ("multimodal_meaning_stage1.json", "application/json"),
+        "second_order_label_proliferation": (
+            "second_order_label_proliferation.json",
+            "application/json",
+        ),
         "time_bank_audio": ("time_bank_audio.json", "application/json"),
         "time_bank_ocr": ("time_bank_ocr.json", "application/json"),
         "time_bank_objects": ("time_bank_objects.json", "application/json"),
@@ -3580,6 +3925,9 @@ async def download_bundle(analysis_id: str):
         "audio_diarization": "audio_diarization_scaffold.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
+        "dependency_sfl_stage1": "dependency_sfl_stage1.json",
+        "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
+        "second_order_label_proliferation": "second_order_label_proliferation.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -3648,6 +3996,9 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "audio_diarization": "audio_diarization_scaffold.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
+        "dependency_sfl_stage1": "dependency_sfl_stage1.json",
+        "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
+        "second_order_label_proliferation": "second_order_label_proliferation.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",

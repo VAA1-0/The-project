@@ -49,10 +49,12 @@ TARGET_LABEL_PROFILES = {
     "Movement": {"speed": 0.72, "interpretive_power": 0.7, "scale_power": 0.8},
     "Identification": {"speed": 0.55, "interpretive_power": 0.95, "scale_power": 0.95},
     "Role": {"speed": 0.62, "interpretive_power": 0.95, "scale_power": 0.95},
+    "Relationship": {"speed": 0.6, "interpretive_power": 0.92, "scale_power": 0.88},
     "Scene": {"speed": 0.62, "interpretive_power": 0.82, "scale_power": 0.9},
     "Episode": {"speed": 0.55, "interpretive_power": 0.86, "scale_power": 0.9},
     "Situation": {"speed": 0.58, "interpretive_power": 0.95, "scale_power": 0.95},
     "Expression": {"speed": 0.65, "interpretive_power": 0.65, "scale_power": 0.6},
+    "Intensity": {"speed": 0.72, "interpretive_power": 0.78, "scale_power": 0.78},
     "Object": {"speed": 0.8, "interpretive_power": 0.75, "scale_power": 0.8},
     "ReportClaim": {"speed": 0.45, "interpretive_power": 1.0, "scale_power": 0.95},
     "ForensicObservation": {"speed": 0.25, "interpretive_power": 1.0, "scale_power": 0.65},
@@ -135,6 +137,25 @@ def _target_label_fit(event: Dict[str, Any], target_label: str) -> float:
         "gaze_target_priority": {"Interaction": 0.75, "Identification": 0.55, "Object": 0.7},
         "topic_shift": {"Scene": 0.8, "Episode": 0.85, "Interaction": 0.65},
         "micro_ritual": {"Interaction": 0.85, "Role": 0.75, "Situation": 0.8},
+        "affiliation_care": {"Interaction": 0.88, "Role": 0.7, "Affect": 0.82, "Situation": 0.72},
+        "intimacy_commitment": {"Interaction": 0.86, "Role": 0.68, "Relationship": 0.9, "Situation": 0.76},
+        "judgment_denigration": {
+            "Interaction": 0.88,
+            "Role": 0.78,
+            "Situation": 0.8,
+            "Affect": 0.8,
+            "Intensity": 0.75,
+            "ReportClaim": 0.58,
+        },
+        "plot_function": {
+            "Scene": 0.88,
+            "Episode": 0.88,
+            "Situation": 0.82,
+            "Action": 0.68,
+            "Interaction": 0.62,
+            "Role": 0.58,
+            "ReportClaim": 0.62,
+        },
     }
     return direct_map.get(str(feature_type), {}).get(target_label, 0.35)
 
@@ -252,6 +273,8 @@ def build_label_instruction(
         "time_span": event.get("time_span") or {},
         "participants_involved": event.get("participants_involved") or [],
         "objects_involved": event.get("objects_involved") or [],
+        "source_feature_type": event.get("feature_type"),
+        "source_feature_payload": event.get("feature_payload") or {},
         "source_evidence_refs": _evidence_refs(event),
         "traceback": event.get("traceback") or {},
         "open_scores": {**open_scores, **priorities},
@@ -288,6 +311,14 @@ def _candidate_label_for_event(event: Dict[str, Any], target_label: str) -> str:
         return _safe_text(payload.get("repair_type"), "repair_candidate")
     if feature_type == "repetition":
         return _safe_text(payload.get("repetition_type"), "repetition_candidate")
+    if feature_type == "affiliation_care":
+        return _safe_text(payload.get("care_signal_type"), "affiliation_care_candidate")
+    if feature_type == "intimacy_commitment":
+        return _safe_text(payload.get("intimacy_signal_type"), "intimacy_commitment_candidate")
+    if feature_type == "judgment_denigration":
+        return _safe_text(payload.get("judgment_signal_type"), "judgment_denigration_candidate")
+    if feature_type == "plot_function":
+        return _safe_text(payload.get("plot_function"), "plot_function_candidate")
     return f"{target_label.lower()}_candidate"
 
 
@@ -362,4 +393,3 @@ def write_second_order_label_proliferation_plan(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     return plan
-

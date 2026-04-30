@@ -1,0 +1,676 @@
+VAA1 BBox/ROI Navigation Bug Fix Report
+Date: 2026-04-24
+Project: VAA1 on Python 1.0 / The-project
+
+1. Scope
+
+This report documents the repeated failures, regression patterns, and fix attempts related to
+the VAA1 bounding box (BBox) and ROI box timing, extension, visibility, and panel propagation
+workflow during the current four-day sprint.
+
+The focus is the analyst-facing workflow where a manual correction to a BBox or ROI box must
+become authoritative across the entire application.
+
+
+2. Required Design Principle
+
+The required VAA1 rule is:
+
+- if an analyst manually corrects a BBox or ROI box
+- that correction is saved
+- that saved correction stands
+- that saved correction becomes authoritative everywhere
+- all associated panels must reflect it
+- raw detections and grouped track spans may remain for traceback and fallback processing
+- raw detections and grouped spans must not override the saved manual correction
+
+In short:
+
+MANUAL CORRECTION WINS EVERYWHERE
+
+
+3. Observed Failures
+
+The following failures were observed repeatedly:
+
+- Extend in throws playback to wrong timestamps, including 0:00.000 and 1:05.000
+- Extend in widens state without yielding usable slider navigation
+- Extend out sometimes widens state without yielding usable future work area
+- BBoxes surface before their corrected mark-in time
+- BBoxes remain visible outside their corrected timespan
+- Video panel BBoxes and leaf panel timestamps can disagree
+- Saved manual timing can be ignored by the overlay rendering path
+- Object-linked manual corrections can be re-overridden by grouped/raw track spans
+- Selected overlays can inherit stale draft state from prior edits
+- The Tools panel disappeared once due to a frontend crash
+- Manual tests intended for this sprint have not been completed successfully
+
+
+4. User Impact
+
+The impact of the failures has been high:
+
+- analyst trust in the timing system has been damaged
+- manual validation has been blocked
+- multiple days were consumed on the same feature family
+- the workflow became harder and less predictable after several supposed fixes
+- the application behaved as if it had multiple competing clocks
+
+
+5. Count Of Fix Attempts
+
+From the visible history in the latest day of the sprint alone:
+
+- 19 distinct fix attempts were made on this same problem family
+
+Across the full four-day sprint:
+
+- the true number is likely much higher
+- the exact total has not yet been reconstructed from all prior session history
+
+The important conclusion is not the exact number, but that the process has retried the same
+issue far too many times without stabilizing the architecture.
+
+
+6. The 19 Logged Attempts From The Latest Day
+
+1. Clicking a BBox should open at the visible frame time, not always at indication start.
+2. Added geometry_keyframes for timestamped BBox geometry.
+3. Improved editor placement and close behavior.
+4. Tightened manual BBox visibility to the actual mark-in.
+5. Tightened object override visibility to the manual mark-in.
+6. Removed raw object pre-roll windows.
+7. Tried making Extend in jump to an earlier opened bound.
+8. Attached manual annotation timing to object overlays.
+9. Made Objects leaf send explicit start/end/category/note into the video editor.
+10. Refreshed Identification edit draft from the incoming annotation.
+11. Unified panel navigation through shared video helpers.
+12. Changed Extend in/out to widen range without moving video.
+13. Added selected-manual workspace visibility.
+14. Made scrub extend outside saved bounds without overdraft gating.
+15. Replaced hidden padding logic with direct draft interval edits.
+16. Added selectedWorkspaceAnnotationId.
+17. Refreshed edit state from authoritative overlay on reopen.
+18. Changed manual object overrides from one-per-track to time-aware arrays.
+19. Made Objects leaf drafts derive from authoritative manual overrides.
+
+
+7. Additional Regression Observed And Fixed
+
+An additional frontend regression surfaced:
+
+- ToolsPanel.tsx had a real crash caused by using openVideoAtTime before its declaration
+- this could blank the whole Tools panel
+- the fix was to use the shared video navigation helper instead
+
+This issue was real, but separate from the main BBox authority problem.
+
+
+8. Root Cause
+
+This is not one bug. It is a failed authority model.
+
+Too many competing time sources have been allowed to coexist:
+
+1. raw detection timestamp
+2. grouped track span
+3. saved manual annotation time
+4. selected editor draft time
+5. slider scrub state
+6. jumpToTime side effects inside extension behavior
+
+Because these time sources compete, a correction saved in one part of the program can still be
+contradicted later by another path during render or navigation.
+
+
+9. Wrong Coupling Identified
+
+The system has repeatedly shown wrong coupling between:
+
+- overlay key and saved annotation id
+- raw track span and corrected manual interval
+- track-wide override and time-scoped manual correction
+
+This wrong coupling is the main reason a saved manual correction can appear to "not take effect"
+or can be re-overridden later by unrelated raw timing.
+
+
+10. Where Wrong Time Enters The Program
+
+Main leak points identified in the current frontend:
+
+A. src/frontend/lib/video-service.ts
+
+- groupDetectedObjectsForDisplay(...)
+- builds grouped object spans using startTimestamp and endTimestamp
+
+B. src/frontend/app/V2components/components/panels/VideoPanel.tsx
+
+- buildLocalObjectOverlays(...)
+- alignActiveObjectLabelsWithGroupedTracks(...)
+- getOverlayTimeBounds(...)
+- selectOverlayForEditing(...)
+- scrubSelectedOverlayTo(...)
+- Extend in/out button path
+
+C. src/frontend/app/V2components/components/panels/OBJDetectionPanel.tsx
+
+- object draft creation from grouped object rows
+
+The practical meaning is:
+
+- even when panel fields are manually corrected
+- the visible BBox can still be rebuilt from raw/grouped timing
+- especially when an object overlay is carrying a manual label/identity
+
+
+11. Process Failures
+
+The fixing process also failed in several ways:
+
+- symptom patching happened before the architecture was frozen
+- incompatible extension models were mixed together
+- static and governance tests were treated as stronger proof than they really are
+- fixes were reported before the exact analyst path was proven manually
+- old timing logic was layered together with new timing logic instead of being removed
+
+
+12. Mixed Extension Models That Caused Regressions
+
+Three incompatible models were mixed in the same tool family:
+
+1. hidden extension workspace / timeline padding
+2. direct draft interval editing using start and end
+3. jump-based extension behavior
+
+These models conflict with one another. Their coexistence explains why the feature could appear
+to improve briefly, then fail again in a different way.
+
+
+13. What Has Improved
+
+Not every change should be discarded. The following improvements remain useful:
+
+- stricter visibility gates for manual BBoxes at actual timestamps
+- timestamp-scoped geometry drafts and geometry_keyframes
+- time-aware manual object overrides in the video panel
+- object leaf drafts preferring manual override timing
+- shared navigation helpers across panels
+- Tools panel crash fix
+
+
+14. What Is Still Structurally Wrong
+
+The current BBox extension path still contains too much machinery:
+
+- selectedOverlayTimelinePadding
+- selectedOverlayOverdrafts
+- selectedOverlayScrub
+- selectedWorkspaceAnnotationId
+- direct draft start/end
+- jumpToTime calls inside extend controls
+
+That is too much state and too many control systems for one interaction.
+
+
+15. Correct Authority Chain
+
+For corrected evidence, the correct authority chain must be:
+
+1. saved ManualVisualAnnotation
+2. all associated leaf panels read from that saved annotation
+3. video BBox timing reads from that saved annotation
+4. video BBox geometry reads from that saved annotation and its saved geometry keyframes
+5. raw/grouped detections remain available only for fallback use and traceback use
+6. raw/grouped detections must not override the saved correction
+
+
+16. Required Analyst-Facing Behavior
+
+The intended behavior from the analyst perspective is:
+
+- mark-in and mark-out are solid anchors
+- a BBox/ROI box appears only at its true saved time and location
+- Extend in makes more earlier time available for editing
+- Extend out makes more later time available for editing
+- slider navigation operates inside the actual current draft interval
+- saving commits the edited interval and geometry
+- reopening the same evidence item restores the saved correction
+- every associated panel shows the same corrected interval and label
+
+
+17. Recommended Remediation Strategy
+
+The next fixing phase should be strict and narrow:
+
+1. freeze blind BBox patches
+2. write one hard engineering rule:
+   saved manual correction is authoritative everywhere
+3. list allowed timing sources
+4. list forbidden timing sources for corrected evidence
+5. remove hidden extension padding from the active BBox extension path
+6. remove jumpToTime side effects from Extend in/out
+7. make slider min and max derive only from the current draft start/end
+8. ensure corrected object and identification overlays render only from saved manual timing
+9. validate one analyst path only before touching anything else:
+   Identification -> Felix Leiter -> Extend in -> slider widens -> scrub works
+
+
+18. Immediate Action Recommendation
+
+The project should not treat this as a minor bug anymore. It should be handled like a focused
+interaction incident:
+
+- define the authority rule in code comments and design notes
+- remove non-authoritative time paths from corrected evidence
+- verify one manual test case at a time
+- do not push the feature until at least one end-to-end manual navigation path passes cleanly
+
+
+19. Bottom Line
+
+The BBox/ROI navigation tool has been unstable because the program has been allowed to have
+multiple competing truths about time.
+
+The correct VAA1 rule is simpler:
+
+MANUAL CORRECTION WINS EVERYWHERE
+
+Until the implementation fully obeys that rule, the analyst experience will continue to suffer
+from timing conflicts, extension failures, and apparent contradictions between panels.
+
+
+20. Stepwise Implementation Codes
+
+This section reframes the bug family as:
+
+Evidence navigation and authority model failure across linked timestamped annotations.
+
+These codes divide the work into General, Backend, and Frontend responsibilities so sprint
+testing, code review, and manual analyst validation can refer to the same implementation map.
+
+
+20.1 General Codes
+
+G-01 Evidence Object Contract
+
+Every detection, annotation, correction, BBox, ROI box, panel row, and video overlay must be
+treated as a linked timestamped evidence object.
+
+Required evidence object fields:
+
+- evidence_id
+- media_id
+- evidence_kind
+- source_kind: detection | manual | correction
+- timestamp interval: start/end
+- geometry: bbox | roi | polygon | keyframes | none
+- semantic labels
+- provenance links
+- associated panel links
+- review and confidence state
+
+
+G-02 Authority Order
+
+All evidence resolution must obey this order:
+
+1. manual correction
+2. manual annotation
+3. grouped detection
+4. raw detection
+
+Manual correction is authoritative over automated detection while preserving the original
+detection as provenance and traceback.
+
+
+G-03 Selection Rule
+
+When evidence is selected anywhere:
+
+1. resolve evidence id
+2. load authoritative evidence state
+3. set global active evidence
+4. set video time/window from that evidence
+5. render BBox/ROI from that evidence
+6. update all associated panels from that evidence
+
+
+G-04 Forbidden Reconstruction Rule
+
+No panel may independently reconstruct timing, geometry, or labels for corrected evidence from
+raw detections or grouped spans.
+
+Panels may only request the resolved authoritative evidence object.
+
+
+G-05 Traceback Rule
+
+All interpretations, second-order labels, proliferated labels, and report claims must remain
+traceable back to the earliest available source evidence.
+
+Traceback must preserve:
+
+- source media id
+- source timestamp
+- source detection or annotation id
+- modality
+- confidence
+- analyst correction history
+
+
+G-06 Open Weight Policy
+
+VAA1 should not demand analyst confirmation at every corner.
+
+Pattern-level recognition may surface as provisional evidence when:
+
+- weights are visible
+- source evidence is navigable
+- confidence is shown
+- analyst correction can override or refine the output
+- corrected analyst decisions can proliferate across related detections
+
+
+20.2 Backend Codes
+
+B-01 EvidenceAuthorityResolver
+
+Backend must expose one resolver that decides which evidence object is authoritative.
+
+Resolver inputs:
+
+- raw detections
+- grouped detections
+- manual annotations
+- manual corrections
+- provenance links
+- timestamp interval
+- geometry keyframes
+
+Resolver output:
+
+- one resolved authoritative evidence object
+- preserved fallback/provenance references
+- authority source
+- confidence and review state
+
+
+B-02 Evidence Artifact Generation
+
+Completed analyses must generate and expose:
+
+- dependency_sfl_stage1.json
+- multimodal_meaning_stage1.json
+- second_order_label_proliferation.json
+- identity_triangulation_bundle.json
+- audio_sample_clouds.json
+- source_media_metadata.json
+- annotation_corrections.json
+
+
+B-03 Status Refresh Backfill
+
+Older completed analyses must be able to backfill missing second-order meaning artifacts from
+stored transcript files.
+
+Fallback order:
+
+1. embedded audio_analysis.transcript
+2. output_files["transcript"]
+3. outputs/transcripts/{analysis_id}_transcript.json
+
+This prevents old saved analyses from showing empty Meaning/Plot and Time Bank Meaning columns
+when transcript evidence already exists.
+
+
+B-04 SFL + Dependency Stage 1
+
+The SFL + Dependency layer must produce timestamped linguistic evidence with token-level
+traceback.
+
+Stage 1 must support:
+
+- clause/sentence segmentation
+- dependency parse features
+- ideational features
+- interpersonal features
+- textual features
+- addressivity
+- repair/self-correction
+- repetition
+- topic shift
+- turn-taking
+
+
+B-05 Substantial Indicative Pattern Packs
+
+The first iteration must include low-compute but analytically meaningful pattern packs:
+
+- affiliation, affirmation, approval, greeting
+- empathy, consolation, compassion
+- flirting, vow, commitment, intimacy
+- disapproval, belittling, resentment, judgement, scorn, smear, denigration
+- narration, commentary, voice-over, sports-commentary style
+- plot function and dramatic development
+
+
+B-06 Plot Lens Support
+
+Backend meaning events must support alternative plot lenses:
+
+- Aristotle: reversal, recognition, suffering, causal necessity, catharsis
+- Freytag: exposition, rising action, climax, falling action, resolution/catastrophe
+- Campbell: call, refusal, mentor, threshold, trials, abyss, transformation, return
+- Frye: comedy/integration, romance/quest, tragedy/fall, irony/disintegration
+- Booker: monster, quest, voyage-return, comedy, tragedy, rebirth, rags-riches
+
+
+B-07 Proliferation Contract
+
+Second-order labels may suggest updates to:
+
+- Identification
+- Interaction
+- Action
+- Movement
+- Scene
+- Episode
+- Role
+- Relationship
+- Affect
+- Intensity
+- Report claims
+
+Each suggested label must carry:
+
+- source_feature_type
+- source_feature_payload
+- source_evidence_refs
+- target_label_family
+- candidate_label
+- weighted support score
+- review status
+- forbidden update checks
+
+
+B-08 Audio Identity Support
+
+Audio detection must support sample arrays for characters and speakers.
+
+Required artifacts:
+
+- VAD segments
+- diarization scaffold
+- speaker sample cloud
+- reference voice candidates
+- speaker-role hypothesis
+- source timestamps
+- provenance links
+
+
+B-09 Forensic Render Support
+
+Forensic rendering must distinguish:
+
+- occurrence: one bounded timestamped event
+- track: a recurring evidence path across one or more spans
+
+A track must be attachable to an existing track when episodic or non-linear narration separates
+related appearances across time.
+
+
+B-10 Traceback Tool Support
+
+Traceback data must support a navigable evidence tree or network model.
+
+Each node must include:
+
+- evidence id
+- source media id
+- timestamp
+- modality
+- parent evidence links
+- child interpretation links
+- current authority state
+
+
+20.3 Frontend Codes
+
+F-01 EvidenceNavigationState
+
+Frontend must maintain one active evidence navigation state.
+
+Required active state:
+
+- active_evidence_id
+- active_media_id
+- active_time
+- active_interval
+- active_geometry
+- active_panels
+- active_authority_source
+
+
+F-02 PanelSyncBus / Shared Hook
+
+All associated panels must react to the same active evidence.
+
+Required behavior:
+
+- selecting evidence in any panel updates the shared state
+- video panel seeks to the resolved evidence time/window
+- BBox/ROI overlay renders from authoritative geometry
+- leaf panel opens the matching attribute
+- closing/saving in one associated view closes/saves the matching UI state everywhere
+
+
+F-03 BBox/ROI Extension UX
+
+From the analyst perspective:
+
+- open detection
+- click Extend in/out or one simple extension command
+- receive X seconds more navigable slider span before and after the current clip
+- draw the wanted time interval with the slider
+- adjust geometry as needed
+- save
+- editor closes
+- saved BBox/ROI appears only inside the drawn interval
+
+Extend controls must not jump playback to chaotic timestamps.
+
+
+F-04 Timestamped Geometry Rule
+
+BBox/ROI coordinates must be timestamp-scoped.
+
+Dragging or resizing a box at a later timestamp must not overwrite earlier coordinates.
+
+Geometry must be stored as:
+
+- base geometry
+- timestamped geometry_keyframes
+- interpolation only where allowed by explicit gap policy
+
+
+F-05 Meaning / Plot Panel
+
+Meaning/Plot must surface second-order candidates from the proliferation plan.
+
+Required views:
+
+- plot path
+- character path
+- selected plot lens
+- confidence/open weight display
+- source evidence references
+- jump-to-source navigation
+
+
+F-06 Time Bank Meaning Column
+
+Time Bank must include a Meaning column that surfaces second-order indicators as navigable
+evidence events.
+
+Required behavior:
+
+- show event timestamp
+- show candidate label
+- show confidence
+- show source evidence refs
+- clicking the row jumps to the source time
+
+
+F-07 Second-Order Label Affirmations
+
+Suggested labels should surface where the analyst already works:
+
+- BBox/ROI editor
+- Objects panel
+- Master Schema leaf panels
+- Time Bank
+- report/printout preparation surfaces
+
+The analyst should be able to approve, correct, reject, or batch-approve suggestions without
+being forced into repetitive confirmation loops.
+
+
+F-08 Tab Layout Rule
+
+Panel leaf labels must not bleed into a second row or beyond the layout.
+
+Required UI behavior:
+
+- tabs remain on one compact row
+- long labels truncate with ellipsis
+- overflow is horizontally navigable
+- content remains readable inside the panel body
+
+
+F-09 Traceback Visualization
+
+Traceback UI should support a navigable tree or network model.
+
+Required behavior:
+
+- clicking a node opens the source evidence
+- edges show derived-from and supersedes relations
+- analyst corrections remain visually authoritative
+- raw detections remain visible as provenance/fallback, not as competing truth
+
+
+F-10 Report Writing Support
+
+Report surfaces should distinguish:
+
+- source evidence
+- second-order interpretation
+- third-order claim
+- confidence
+- uncertainty note
+- analyst confirmation/correction
+- traceback link
+
+The report writer should help the analyst compose auditable claims without losing the evidence
+chain.

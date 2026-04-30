@@ -23,6 +23,7 @@ import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
 import QuantMatrixPanel from "./panels/QuantMatrixPanel";
 import SourceMediaMetadataPanel from "./panels/SourceMediaMetadataPanel";
 import TimeBankPanel from "./panels/TimeBankPanel";
+import MeaningPlotPanel from "./panels/MeaningPlotPanel";
 import MasterSchemaPanel from "./panels/MasterSchemaPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -51,6 +52,7 @@ const RIGHT_STACK_ANCHOR_TYPES = [
   "Audio",
   "SourceMediaMetadata",
   "TimeBank",
+  "MeaningPlot",
   "Transcript",
   "POS",
   "Quant",
@@ -317,6 +319,7 @@ export default function LayoutHost({
     QuantMatrix: "Quant matrix",
     SourceMediaMetadata: "Source Media",
     TimeBank: "Time Bank",
+    MeaningPlot: "Meaning / Plot",
     MasterSchema: "Master Schema",
     ...Object.fromEntries(
       MANUAL_LEAF_PANEL_CONFIGS.map((item) => [item.componentType, item.title]),
@@ -616,6 +619,18 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           TimeBankPanel,
+          (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "MeaningPlot",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          MeaningPlotPanel,
           (state as Record<string, unknown>) || {},
           ContextWrapper,
         );

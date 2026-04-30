@@ -41,6 +41,7 @@ type TimeBankRow = {
   bank: {
     transcript?: TimeBankEnvelope | null;
     audio?: TimeBankEnvelope | null;
+    meaning?: TimeBankEnvelope | null;
     ocr?: TimeBankEnvelope | null;
     objects?: TimeBankEnvelope | null;
     expressions?: TimeBankEnvelope | null;
@@ -49,7 +50,7 @@ type TimeBankRow = {
 
 function buildEnvelopeFromAnalysisData(
   analysisData: AnalysisData | null,
-  type: "audio" | "transcript" | "ocr" | "objects" | "expressions",
+  type: "audio" | "transcript" | "meaning" | "ocr" | "objects" | "expressions",
   analysisId: string,
   sourceName: string,
 ): TimeBankEnvelope | null {
@@ -117,6 +118,51 @@ function buildEnvelopeFromAnalysisData(
       },
       confidence: null,
       created_by: "client_fallback",
+    }));
+    return {
+      media_ref: {
+        media_id: analysisId,
+        source_filename: sourceName,
+        source_uri: sourceUri,
+      },
+      anchors,
+      objects,
+    };
+  }
+
+  if (type === "meaning") {
+    const instructions = analysisData.secondOrderLabelProliferation?.instructions || [];
+    const anchors = instructions.map((item, index) => ({
+      anchor_id: makeAnchorId("meaning", index),
+      media_id: analysisId,
+      t_start_ms: Math.round(Number(item.time_span?.start_ms ?? item.time_span?.start ?? 0)),
+      t_end_ms: Math.round(
+        Number(
+          item.time_span?.end_ms ??
+            item.time_span?.end ??
+            item.time_span?.start_ms ??
+            item.time_span?.start ??
+            0,
+        ),
+      ),
+    }));
+    const objects = instructions.map((item, index) => ({
+      id: item.instruction_id || `meaning_event_${analysisId}_${index}`,
+      object_type: "second_order_label_candidate",
+      anchor_id: anchors[index].anchor_id,
+      payload: {
+        target_label_family: item.target_label_family,
+        candidate_label: item.candidate_label,
+        status: item.status,
+        participants: item.participants_involved || [],
+        objects: item.objects_involved || [],
+        ui_surfaces: item.ui_surfaces || [],
+        source_event_id: item.source_event_id,
+        source_evidence_refs: item.source_evidence_refs || [],
+        traceback: item.traceback || {},
+      },
+      confidence: item.open_scores?.weighted_support_score ?? null,
+      created_by: "second_order_label_proliferation",
     }));
     return {
       media_ref: {
@@ -246,6 +292,7 @@ function buildEnvelopeFromAnalysisData(
 const SECTION_LABELS = {
   audio: "Audio",
   transcript: "Transcript",
+  meaning: "Meaning",
   ocr: "OCR",
   objects: "Objects",
   expressions: "Expressions",
@@ -263,6 +310,7 @@ const DEFAULT_SECTIONS = (Object.keys(SECTION_LABELS) as TimeBankSection[]).sort
 const DEFAULT_SECTION_WIDTHS: Record<TimeBankSection, number> = {
   audio: 380,
   expressions: 280,
+  meaning: 360,
   objects: 300,
   ocr: 300,
   transcript: 340,
@@ -485,6 +533,12 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
           );
           const correctedOcr =
             buildEnvelopeFromAnalysisData(analysisData, "ocr", analysisId, resolvedSourceName);
+          const correctedMeaning = buildEnvelopeFromAnalysisData(
+            analysisData,
+            "meaning",
+            analysisId,
+            resolvedSourceName,
+          );
           const correctedObjects =
             buildEnvelopeFromAnalysisData(analysisData, "objects", analysisId, resolvedSourceName);
           const correctedExpressions = buildEnvelopeFromAnalysisData(
@@ -500,6 +554,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
             bank: {
               audio: correctedAudio || audio,
               transcript: correctedTranscript || transcript,
+              meaning: correctedMeaning,
               ocr: correctedOcr || ocr,
               objects: correctedObjects || objects,
               expressions: correctedExpressions || expressions,
@@ -645,6 +700,23 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                 secondary = payload.bbox
                   ? `${Math.round(payload.bbox.x || 0)}, ${Math.round(payload.bbox.y || 0)}`
                   : "";
+              } else if (section === "meaning") {
+                primary = `${payload.target_label_family || "Meaning"} / ${
+                  payload.candidate_label || object.object_type
+                }`;
+                const refs = Array.isArray(payload.source_evidence_refs)
+                  ? payload.source_evidence_refs.length
+                  : 0;
+                const participants = Array.isArray(payload.participants)
+                  ? payload.participants.filter(Boolean).join(", ")
+                  : "";
+                secondary = [
+                  payload.status,
+                  participants ? `participants: ${participants}` : "",
+                  refs ? `${refs} source refs` : "traceback ready",
+                ]
+                  .filter(Boolean)
+                  .join(" • ");
               } else if (section === "objects") {
                 primary = String(payload.label || "Object");
                 secondary = payload.bbox

@@ -178,6 +178,66 @@ class MultimodalMeaningStage1ContractTest(unittest.TestCase):
             ]
         )
 
+    def test_substantial_indicative_pattern_packs_are_actual_events(self):
+        sfl = dependency_sfl_stage1.build_dependency_sfl_stage1_artifact(
+            "analysis-pattern-packs",
+            {
+                "language": "en",
+                "segments": [
+                    {
+                        "id": "utt-care",
+                        "start": 1.0,
+                        "end": 2.0,
+                        "speaker": "SPEAKER_01",
+                        "text": "Don't worry, I can help you.",
+                        "source_evidence_ids": ["transcript:care"],
+                    },
+                    {
+                        "id": "utt-intimacy",
+                        "start": 3.0,
+                        "end": 4.0,
+                        "speaker": "SPEAKER_02",
+                        "text": "Trust me, I promise I will always stay with you.",
+                        "source_evidence_ids": ["transcript:intimacy"],
+                    },
+                    {
+                        "id": "utt-judgment",
+                        "start": 5.0,
+                        "end": 6.0,
+                        "speaker": "SPEAKER_03",
+                        "text": "That is ridiculous and it is your fault.",
+                        "source_evidence_ids": ["transcript:judgment"],
+                    },
+                    {
+                        "id": "utt-plot",
+                        "start": 7.0,
+                        "end": 8.0,
+                        "speaker": "SPEAKER_04",
+                        "text": "However, we need to escape before time runs out.",
+                        "source_evidence_ids": ["transcript:plot"],
+                    },
+                ],
+            },
+            source_media_id="media-plot",
+            model_name="__missing_model__",
+        )
+        artifact = multimodal_meaning_stage1.build_multimodal_meaning_stage1_artifact(
+            "analysis-pattern-packs",
+            sfl,
+        )
+
+        feature_types = {event["feature_type"] for event in artifact["feature_events"]}
+        self.assertIn("affiliation_care", feature_types)
+        self.assertIn("intimacy_commitment", feature_types)
+        self.assertIn("judgment_denigration", feature_types)
+        self.assertIn("plot_function", feature_types)
+
+        plot_events = [
+            event for event in artifact["feature_events"] if event["feature_type"] == "plot_function"
+        ]
+        self.assertTrue(plot_events)
+        self.assertIn("alternative_plot_lenses", plot_events[0]["feature_payload"])
+
     def test_write_artifact_persists_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "meaning_stage1.json"
@@ -195,4 +255,3 @@ class MultimodalMeaningStage1ContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

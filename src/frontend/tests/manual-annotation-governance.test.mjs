@@ -29,6 +29,8 @@ const quantAnalysisPanel = read("app/V2components/components/panels/Quantitative
 const quantMatrixPanel = read("app/V2components/components/panels/QuantMatrixPanel.tsx");
 const speechPanel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
 const timeBankPanel = read("app/V2components/components/panels/TimeBankPanel.tsx");
+const meaningPlotPanel = read("app/V2components/components/panels/MeaningPlotPanel.tsx");
+const globalsCss = read("styles/globals.css");
 const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx");
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
@@ -671,5 +673,45 @@ test("second-order labels surface as governed affirmations without confirmation 
     masterSchemaPanel,
     /SecondOrderLabelReviewTray/,
     "Master Schema must expose the batch review tray for second-order labels",
+  );
+});
+
+test("meaning plot panel keeps second-order visualizations navigable to source", () => {
+  assert.match(
+    layoutHost,
+    /MeaningPlotPanel/,
+    "layout host must register the Meaning / Plot panel",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /openVideoAtTime/,
+    "meaning plot candidates must navigate back to the source video timestamp",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /source_evidence_refs/,
+    "meaning plot candidates must surface source evidence references",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Aristotle[\s\S]*Freytag[\s\S]*Campbell[\s\S]*Frye[\s\S]*Booker/,
+    "meaning plot panel must expose alternative plot lenses",
+  );
+});
+
+test("GoldenLayout leaf tabs stay on one compact row", () => {
+  assert.match(
+    globalsCss,
+    /\.lm_header[\s\S]*white-space:\s*nowrap/,
+    "GoldenLayout headers must prevent leaf tabs from wrapping into a second row",
+  );
+
+  assert.match(
+    globalsCss,
+    /\.lm_header \.lm_tab \.lm_title[\s\S]*text-overflow:\s*ellipsis/,
+    "long leaf panel labels must truncate instead of bleeding beyond the tab layout",
   );
 });

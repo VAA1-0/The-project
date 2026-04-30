@@ -100,6 +100,7 @@ class SecondOrderLabelProliferationContractTest(unittest.TestCase):
         for instruction in plan["instructions"]:
             self.assertTrue(instruction["may_surface_in_ui"])
             self.assertTrue(instruction["manual_override_available"])
+            self.assertIn("source_feature_payload", instruction)
             self.assertTrue(
                 instruction["confirmation_policy"][
                     "analyst_confirmation_is_not_required_for_every_candidate"

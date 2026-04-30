@@ -51,3 +51,23 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #4a4a4a;
 }
+
+/* GoldenLayout tabs must stay compact when many VAA1 leaf panels are open. */
+.lm_header,
+.lm_header .lm_tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+
+.lm_header .lm_tab {
+  max-width: 132px;
+  white-space: nowrap;
+}
+
+.lm_header .lm_tab .lm_title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

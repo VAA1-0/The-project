@@ -979,6 +979,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "Meaning / Plot",
+          onClick: () => {
+            openPanel("MeaningPlot", selectedVideoId ? { videoId: selectedVideoId } : {});
+          },
+        },
+        {
           label: "Toolbox",
           onClick: () => {
             openPanel("ToolsPanel");
