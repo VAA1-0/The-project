@@ -241,8 +241,8 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
             No second-order meaning candidates surfaced for this analysis yet.
           </div>
         ) : (
-          <div className="grid min-w-[980px] grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3">
-            <section className="rounded border border-white/8 bg-[#121212]">
+          <div className="grid h-full min-h-0 min-w-[980px] grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3">
+            <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
               <div className="border-b border-white/8 px-3 py-2">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                   Plot Path
@@ -251,7 +251,7 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                   {PLOT_LENSES.find((lens) => lens.id === activeLens)?.label} lens over shared source evidence
                 </div>
               </div>
-              <div className="max-h-[620px] space-y-2 overflow-auto p-2">
+              <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2">
                 {plotInstructions.length ? (
                   plotInstructions.map((instruction) => renderInstruction(instruction, { showLens: true }))
                 ) : (
@@ -262,7 +262,7 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
               </div>
             </section>
 
-            <section className="rounded border border-white/8 bg-[#121212]">
+            <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
               <div className="border-b border-white/8 px-3 py-2">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                   Character Paths
@@ -271,7 +271,7 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                   Care, power, role, relation, affect, and intensity candidates.
                 </div>
               </div>
-              <div className="max-h-[620px] space-y-3 overflow-auto p-2">
+              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-2">
                 {participantGroups.length ? (
                   participantGroups.map(([participant, items]) => (
                     <div key={participant} className="rounded border border-slate-800 bg-[#101010]/60">

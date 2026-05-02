@@ -31,7 +31,11 @@ import {
   openManualAnnotationInVideo,
   openObjectIndicationInVideo,
 } from "@/lib/video-navigation";
-import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
+import {
+  formatSecondOrderInstructionLabel,
+  getPrimarySecondOrderInstruction,
+  SecondOrderLabelAffirmationChips,
+} from "./SecondOrderLabelAffirmations";
 
 const OBJECT_INDICATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "OBJ",
@@ -777,6 +781,24 @@ export default function OBJDetectionPanel() {
                   const trackId = getObjectTrackId(obj);
                   const sourceLabel = getObjectSourceLabel(obj);
                   const manualOverride = trackId ? manualOverridesByTrack.get(trackId) : undefined;
+                  const objectTimeSpan = {
+                    start: Number(obj.startTimestamp ?? obj.timestamp ?? 0),
+                    end: Number(obj.endTimestamp ?? obj.timestamp ?? 0),
+                  };
+                  const primarySecondOrderLabel = formatSecondOrderInstructionLabel(
+                    getPrimarySecondOrderInstruction({
+                      plan: analysisData?.secondOrderLabelProliferation,
+                      surface: "objects_panel",
+                      targetLabelFamilies: [
+                        "Interaction",
+                        "Action",
+                        "Movement",
+                        "Object",
+                        "Identification",
+                      ],
+                      timeSpan: objectTimeSpan,
+                    }),
+                  );
                   const draft =
                     objectDrafts[rowKey] || buildObjectIndicationDraft(obj, latestLabel);
                   const startInputKey = `${rowKey}:start`;
@@ -800,6 +822,14 @@ export default function OBJDetectionPanel() {
                         <div className="truncate text-[11px] text-slate-200">
                           {latestLabel}
                         </div>
+                        {primarySecondOrderLabel ? (
+                          <div
+                            className="mt-0.5 truncate text-[10px] font-medium text-cyan-200"
+                            title={primarySecondOrderLabel}
+                          >
+                            {primarySecondOrderLabel}
+                          </div>
+                        ) : null}
                         <div className="truncate text-[10px] text-[var(--ui-passive-text)]">
                           Source: {sourceLabel}
                         </div>
@@ -847,8 +877,8 @@ export default function OBJDetectionPanel() {
                           "Identification",
                         ]}
                         timeSpan={{
-                          start: Number(obj.startTimestamp ?? obj.timestamp ?? 0),
-                          end: Number(obj.endTimestamp ?? obj.timestamp ?? 0),
+                          start: objectTimeSpan.start,
+                          end: objectTimeSpan.end,
                         }}
                         compact
                         limit={3}

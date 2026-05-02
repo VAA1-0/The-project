@@ -316,6 +316,15 @@ export default function ExpressionPanel() {
                   )}
                   {expressionResults.map((sample: any, idx: number) => {
                   const weighting = buildExpressionWeighting(sample, sourceMetadata);
+                  const weightedPrimaryLabel = weighting.ranking.weighted_primary.label;
+                  const matureExpressionLabel =
+                    weightedPrimaryLabel && weightedPrimaryLabel !== "unavailable"
+                      ? weightedPrimaryLabel
+                      : sample.interpreted_expression?.label ||
+                        sample.dominant_emotion ||
+                        "Unknown";
+                  const rawExpressionLabel =
+                    sample.rawDominantEmotion || sample.dominant_emotion || "Unknown";
                   const correctionKey = `${sample.timestamp}-${sample.face_id ?? idx}`;
                   return (
                     <div
@@ -333,9 +342,7 @@ export default function ExpressionPanel() {
                               : "text-slate-200"
                           }`}
                         >
-                          {sample.interpreted_expression?.label ||
-                            sample.dominant_emotion ||
-                            "Unknown"}
+                          {matureExpressionLabel}
                         </span>
                         <div className="flex shrink-0 items-center gap-2">
                           <button
@@ -392,10 +399,10 @@ export default function ExpressionPanel() {
                         </div>
                       ) : null}
 
-                      {sample.rawDominantEmotion &&
-                        sample.rawDominantEmotion !== sample.dominant_emotion && (
+                      {rawExpressionLabel &&
+                        rawExpressionLabel !== matureExpressionLabel && (
                           <div className="mt-1 text-[10px] text-amber-300/90">
-                            Raw label: {sample.rawDominantEmotion}
+                            Raw label: {rawExpressionLabel}
                             <button
                               type="button"
                               onClick={(event) => {

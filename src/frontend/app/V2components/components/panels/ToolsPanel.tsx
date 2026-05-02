@@ -352,6 +352,30 @@ function contextRefLabels(value: unknown, limit = 5): string[] {
     .slice(0, limit);
 }
 
+function manualAnnotationDisplayLabel(item: ManualVisualAnnotation, fallback: string): string {
+  return (
+    item.identity_affirmation ||
+    item.role_affirmation ||
+    item.custom_label ||
+    item.label ||
+    item.subcategory ||
+    fallback
+  );
+}
+
+function manualAnnotationSourceLabel(item: ManualVisualAnnotation): string {
+  const targetLabel = String(item.metadata_correlation?.target_label || "").trim();
+  const targetId = item.metadata_correlation?.target_id;
+  const targetType = String(item.metadata_correlation?.target_type || "").trim();
+  if (targetLabel) {
+    return targetLabel;
+  }
+  if (targetType && targetId !== undefined && targetId !== null) {
+    return `${targetType} ${targetId}`;
+  }
+  return "";
+}
+
 function ManualAnnotationLeafSection({
   title,
   categoryTone,
@@ -394,7 +418,7 @@ function ManualAnnotationLeafSection({
           >
             <div className="flex items-center justify-between gap-3">
               <span className="min-w-0 truncate font-medium text-slate-100">
-                {item.label || item.subcategory || title}
+                {manualAnnotationDisplayLabel(item, title)}
               </span>
               <span className="shrink-0 text-slate-500">
                 {formatSeconds(item.timestamp_seconds)}
@@ -403,6 +427,11 @@ function ManualAnnotationLeafSection({
             <div className="mt-1 text-slate-400">
               {item.subcategory || item.category}
             </div>
+            {manualAnnotationSourceLabel(item) ? (
+              <div className="mt-1 text-[10px] text-cyan-200/80">
+                Source track: {manualAnnotationSourceLabel(item)}
+              </div>
+            ) : null}
             {item.open_note ? (
               <div className="mt-1 text-slate-400">{item.open_note}</div>
             ) : null}

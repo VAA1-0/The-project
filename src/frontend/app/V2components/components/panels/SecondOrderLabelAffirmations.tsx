@@ -81,6 +81,14 @@ function labelFor(instruction: SecondOrderLabelInstruction): string {
   return `${status}: ${instruction.target_label_family} / ${instruction.candidate_label}`;
 }
 
+function readableCandidateLabel(value: string): string {
+  return value.replace(/[_-]+/g, " ").trim();
+}
+
+function compactLabelFor(instruction: SecondOrderLabelInstruction): string {
+  return readableCandidateLabel(instruction.candidate_label || instruction.target_label_family);
+}
+
 function titleFor(instruction: SecondOrderLabelInstruction): string {
   const score = instruction.open_scores?.weighted_support_score;
   const priorityScore = instruction.open_scores?.delivery_priority;
@@ -114,6 +122,29 @@ export function getSecondOrderInstructionsForSurface({
     .sort((left, right) => priority(right) - priority(left));
 
   return typeof limit === "number" ? instructions.slice(0, limit) : instructions;
+}
+
+export function getPrimarySecondOrderInstruction({
+  plan,
+  surface,
+  targetLabelFamilies,
+  timeSpan,
+}: Omit<ChipProps, "compact" | "emptyText" | "limit">): SecondOrderLabelInstruction | null {
+  return (
+    getSecondOrderInstructionsForSurface({
+      plan,
+      surface,
+      targetLabelFamilies,
+      timeSpan,
+      limit: 1,
+    })[0] || null
+  );
+}
+
+export function formatSecondOrderInstructionLabel(
+  instruction?: SecondOrderLabelInstruction | null,
+): string {
+  return instruction ? compactLabelFor(instruction) : "";
 }
 
 export function SecondOrderLabelAffirmationChips({
@@ -152,8 +183,8 @@ export function SecondOrderLabelAffirmationChips({
               prompt ? "ring-1 ring-amber-300/60" : ""
             }`}
           >
-            {prompt ? "Review: " : ""}
-            {labelFor(instruction)}
+            {prompt && !compact ? "Review: " : ""}
+            {compact ? compactLabelFor(instruction) : labelFor(instruction)}
           </span>
         );
       })}

@@ -45,8 +45,13 @@ import {
   SITUATIONAL_SUBGENRE_OPTIONS,
   SITUATIONAL_TAXONOMY_OPTIONS,
 } from "@/lib/metadata-taxonomy";
+import { buildExpressionWeighting } from "@/lib/expression-weighting";
 import { useLayoutHost } from "../LayoutHost";
-import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
+import {
+  formatSecondOrderInstructionLabel,
+  getPrimarySecondOrderInstruction,
+  SecondOrderLabelAffirmationChips,
+} from "./SecondOrderLabelAffirmations";
 import type { ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
@@ -146,6 +151,69 @@ type OverlayGeometryDrag = {
   mode: "move" | "resize-se";
   startPoint: { x: number; y: number };
   startBox: DraftBox;
+};
+
+type ProliferationScope =
+  | "same_video"
+  | "open_analyses"
+  | "selected_media_set"
+  | "whole_case";
+
+type ProliferationTarget =
+  | "character_continuity"
+  | "object"
+  | "role"
+  | "action"
+  | "interaction"
+  | "scene_episode"
+  | "ocr_text_phrase"
+  | "speaker_voice_continuity"
+  | "sound_event"
+  | "music_motif"
+  | "ambient_sound"
+  | "prosody_delivery_pattern"
+  | "visual_pattern";
+
+type ProliferationLauncherState = {
+  open: boolean;
+  scope: ProliferationScope;
+  target: ProliferationTarget;
+  message?: string;
+};
+
+const PROLIFERATION_SCOPE_OPTIONS: Array<{
+  value: ProliferationScope;
+  label: string;
+}> = [
+  { value: "same_video", label: "Same video" },
+  { value: "open_analyses", label: "Open analyses" },
+  { value: "selected_media_set", label: "Selected media set" },
+  { value: "whole_case", label: "Whole case" },
+];
+
+const PROLIFERATION_TARGET_OPTIONS: Array<{
+  value: ProliferationTarget;
+  label: string;
+}> = [
+  { value: "character_continuity", label: "Character continuity" },
+  { value: "object", label: "Object" },
+  { value: "role", label: "Role" },
+  { value: "action", label: "Action" },
+  { value: "interaction", label: "Interaction" },
+  { value: "scene_episode", label: "Scene / episode" },
+  { value: "ocr_text_phrase", label: "OCR / text phrase" },
+  { value: "speaker_voice_continuity", label: "Speaker / voice continuity" },
+  { value: "sound_event", label: "Sound event" },
+  { value: "music_motif", label: "Music / motif" },
+  { value: "ambient_sound", label: "Ambient sound" },
+  { value: "prosody_delivery_pattern", label: "Prosody / delivery pattern" },
+  { value: "visual_pattern", label: "Visual pattern" },
+];
+
+const DEFAULT_PROLIFERATION_LAUNCHER: ProliferationLauncherState = {
+  open: false,
+  scope: "same_video",
+  target: "character_continuity",
 };
 
 type PendingObjectOverlayEdit = {
@@ -522,6 +590,22 @@ function parsePreciseTimeInput(value: string): number | null {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function getOverlayStackRank(
+  modality: OverlayBox["modality"],
+  normalizedBox: DraftBox,
+): number {
+  const area = Math.max(0.000001, normalizedBox.w * normalizedBox.h);
+  const specificity =
+    modality === "expression"
+      ? 4000
+      : modality === "ocr"
+        ? 3000
+        : modality === "manual"
+          ? 2000
+          : 1000;
+  return specificity + Math.round(1000000 / area);
 }
 
 function resolveObjectOverlayBBox(
@@ -1448,6 +1532,9 @@ export default function VideoPanel() {
   >({});
   const [overlayGeometryDrag, setOverlayGeometryDrag] =
     useState<OverlayGeometryDrag | null>(null);
+  const [selectedOverlayProliferation, setSelectedOverlayProliferation] = useState<
+    Record<string, ProliferationLauncherState>
+  >({});
   const [pendingObjectOverlayEdit, setPendingObjectOverlayEdit] =
     useState<PendingObjectOverlayEdit | null>(null);
   const [localObjectLabelOverrides, setLocalObjectLabelOverrides] = useState<
@@ -3116,11 +3203,26 @@ export default function VideoPanel() {
         ) {
           return;
         }
+        const sourceAnnotations = analysisData?.metadata?.sourceAnnotations || {};
+        const weighting = buildExpressionWeighting(item, {
+          user_annotations: {
+            genre: sourceAnnotations.genre || "",
+            genre_subtype: sourceAnnotations.genre_subtype || "",
+            situational_genre: sourceAnnotations.situational_genre || "",
+            situational_subtype: sourceAnnotations.situational_subtype || "",
+            privacy_axis: "",
+            expertise_axis: "",
+          },
+        } as any);
+        const weightedLabel = weighting.ranking.weighted_primary.label;
 
         overlays.push({
           key: `expression-${index}-${item.timestamp}`,
           modality: "expression",
-          label: item.dominant_emotion || "expression",
+          label:
+            weightedLabel && weightedLabel !== "unavailable"
+              ? weightedLabel
+              : item.dominant_emotion || "expression",
           color: "border-fuchsia-400/80 bg-fuchsia-400/10",
           x: item.bbox.x,
           y: item.bbox.y,
@@ -3207,6 +3309,7 @@ export default function VideoPanel() {
     activeExpressions,
     activeOCR,
     activeRawObjects,
+    analysisData?.metadata?.sourceAnnotations,
     allManualVisualAnnotations,
     currentTime,
     localObjectLabelOverrides,
@@ -3524,6 +3627,69 @@ export default function VideoPanel() {
       });
     },
     [buildIndicationEditForOverlay, duration, overlayBoxes],
+  );
+
+  const updateSelectedOverlayProliferation = React.useCallback(
+    (overlayKey: string, patch: Partial<ProliferationLauncherState>) => {
+      setSelectedOverlayProliferation((current) => ({
+        ...current,
+        [overlayKey]: {
+          ...DEFAULT_PROLIFERATION_LAUNCHER,
+          ...(current[overlayKey] || {}),
+          ...patch,
+        },
+      }));
+    },
+    [],
+  );
+
+  const prepareProliferationFromOverlay = React.useCallback(
+    (
+      overlay: OverlayBox,
+      edit: SelectedIndicationEdit,
+      launcher: ProliferationLauncherState,
+      sourceLabel: string,
+    ) => {
+      const request = {
+        request_id: `proliferate-${Date.now()}-${overlay.key}`,
+        created_at: new Date().toISOString(),
+        video_id: videoId,
+        evidence: {
+          overlay_key: overlay.key,
+          modality: overlay.modality,
+          label: edit.label || overlay.label,
+          source_label: sourceLabel || overlay.label,
+          category: edit.category,
+          interval: {
+            start: Number(edit.start.toFixed(3)),
+            end: Number(edit.end.toFixed(3)),
+          },
+        },
+        scope: launcher.scope,
+        target: launcher.target,
+        governance: {
+          manual_correction_wins: true,
+          evidence_linked_not_timeline_linear: true,
+          analyst_confirmation_is_optional: true,
+          outputs_are_candidates_until_verified_by_evidence: true,
+        },
+      };
+
+      if (typeof window !== "undefined") {
+        const storageKey = "vaa1.proliferation.requests";
+        const existing = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify([request, ...(Array.isArray(existing) ? existing : [])].slice(0, 25)),
+        );
+      }
+      eventBus.emit("evidenceProliferationRequested", request);
+      updateSelectedOverlayProliferation(overlay.key, {
+        open: true,
+        message: "Candidate search request prepared.",
+      });
+    },
+    [updateSelectedOverlayProliferation, videoId],
   );
 
   const cutSelectedIndicationOut = React.useCallback(
@@ -5402,6 +5568,9 @@ export default function VideoPanel() {
                       const startInputKey = `${overlay.key}:start`;
                       const endInputKey = `${overlay.key}:end`;
                       const normalizedBox = getOverlayNormalizedBox(overlay);
+                      const overlayStackRank = selected
+                        ? 9000
+                        : getOverlayStackRank(overlay.modality, normalizedBox);
                       const overdraftActive = Boolean(selectedOverlayOverdrafts[overlay.key]);
                       const timelinePadding = selectedOverlayTimelinePadding[overlay.key] || {
                         before: 0,
@@ -5463,8 +5632,15 @@ export default function VideoPanel() {
                           ? clamp(selectedOverlayScrub.value, scrubMin, scrubMax)
                           : workingFrameTime;
                       const stretchActionLabel = "Extend in";
-                      const selectedEditorOnRight = normalizedBox.x > 0.62;
-                      const editorPreferredHeight = 176;
+                      const overlayLeftPx = normalizedBox.x * renderedVideoRect.width;
+                      const overlayTopPx = normalizedBox.y * renderedVideoRect.height;
+                      const overlayWidthPx = normalizedBox.w * renderedVideoRect.width;
+                      const overlayHeightPx = normalizedBox.h * renderedVideoRect.height;
+                      const selectedEditorWidthPx = Math.min(
+                        360,
+                        Math.max(280, renderedVideoRect.width - 16),
+                      );
+                      const editorPreferredHeight = 320;
                       const editorSpaceAbove = normalizedBox.y * renderedVideoRect.height;
                       const editorSpaceBelow =
                         (1 - normalizedBox.y - normalizedBox.h) * renderedVideoRect.height;
@@ -5472,16 +5648,30 @@ export default function VideoPanel() {
                         editorSpaceBelow >= editorPreferredHeight ||
                         editorSpaceAbove < editorPreferredHeight;
                       const selectedEditorMaxHeight = Math.max(
-                        96,
-                        Math.min(
-                          220,
-                          (selectedEditorBelow ? editorSpaceBelow : editorSpaceAbove) - 8,
-                        ),
-                      );
-                      const selectedEditorMaxWidth = Math.max(
                         180,
-                        renderedVideoRect.width - 8,
+                        Math.min(420, renderedVideoRect.height - 12),
                       );
+                      const preferredEditorLeftPx =
+                        overlayLeftPx + overlayWidthPx / 2 - selectedEditorWidthPx / 2;
+                      const selectedEditorLeftPx = clamp(
+                        preferredEditorLeftPx,
+                        4,
+                        Math.max(4, renderedVideoRect.width - selectedEditorWidthPx - 4),
+                      );
+                      const preferredEditorTopPx = selectedEditorBelow
+                        ? overlayTopPx + overlayHeightPx + 6
+                        : overlayTopPx - selectedEditorMaxHeight - 6;
+                      const selectedEditorTopPx = clamp(
+                        preferredEditorTopPx,
+                        4,
+                        Math.max(4, renderedVideoRect.height - selectedEditorMaxHeight - 4),
+                      );
+                      const selectedEditorStyle = {
+                        left: selectedEditorLeftPx - overlayLeftPx,
+                        top: selectedEditorTopPx - overlayTopPx,
+                        width: selectedEditorWidthPx,
+                        maxHeight: selectedEditorMaxHeight,
+                      };
                       const editableOverlay =
                         overlay.modality === "manual" || overlay.modality === "object";
                       const overlaySourceLabel =
@@ -5514,6 +5704,19 @@ export default function VideoPanel() {
                           normalizeEvidenceLabel(overlay.label)
                           ? `${overlay.label} / ${overlaySourceLabel}`
                           : overlay.label;
+                      const primarySecondOrderLabel = formatSecondOrderInstructionLabel(
+                        getPrimarySecondOrderInstruction({
+                          plan: analysisData?.secondOrderLabelProliferation,
+                          surface: "bbox_roi_overlay",
+                          targetLabelFamilies: [edit.category],
+                          timeSpan: { start: edit.start, end: edit.end },
+                        }),
+                      );
+                      const visibleOverlayLabel = compactOverlayLabel;
+                      const proliferationLauncher = {
+                        ...DEFAULT_PROLIFERATION_LAUNCHER,
+                        ...(selectedOverlayProliferation[overlay.key] || {}),
+                      };
                       return (
                         <div
                           key={overlay.key}
@@ -5543,6 +5746,7 @@ export default function VideoPanel() {
                             top: `${normalizedBox.y * 100}%`,
                             width: `${normalizedBox.w * 100}%`,
                             height: `${normalizedBox.h * 100}%`,
+                            zIndex: overlayStackRank,
                           }}
                           title={
                             overlay.modality === "object" || overlay.modality === "manual"
@@ -5556,8 +5760,12 @@ export default function VideoPanel() {
                             }`}
                             title={
                               editableOverlay
-                                ? `Drag to move indication box: ${compactOverlayLabel}`
-                                : compactOverlayLabel
+                                ? `Drag to move indication box: ${visibleOverlayLabel}${
+                                    primarySecondOrderLabel
+                                      ? ` • source label ${compactOverlayLabel}`
+                                      : ""
+                                  }`
+                                : visibleOverlayLabel
                             }
                             onPointerDown={
                               editableOverlay
@@ -5565,7 +5773,7 @@ export default function VideoPanel() {
                                 : undefined
                             }
                           >
-                            {compactOverlayLabel}
+                            {visibleOverlayLabel}
                           </div>
                           {editableOverlay && (
                             <button
@@ -5596,30 +5804,33 @@ export default function VideoPanel() {
                                 +
                               </button>
                               <div
-                                className="absolute z-20 w-64 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-1.5 py-1 shadow-lg"
-                                style={
-                                  {
-                                    ...(selectedEditorOnRight
-                                      ? selectedEditorBelow
-                                        ? { right: 4, top: "calc(100% + 4px)" }
-                                        : { right: 4, bottom: "calc(100% + 4px)" }
-                                      : selectedEditorBelow
-                                        ? { left: 4, top: "calc(100% + 4px)" }
-                                        : { left: 4, bottom: "calc(100% + 4px)" }),
-                                    maxHeight: selectedEditorMaxHeight,
-                                    maxWidth: selectedEditorMaxWidth,
-                                  }
-                                }
+                                className="absolute z-20 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-2 py-1.5 shadow-lg"
+                                style={selectedEditorStyle}
                                 onClick={(event) => event.stopPropagation()}
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => event.stopPropagation()}
                               >
                                 <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
-                                  <span className="truncate">{overlay.label}</span>
+                                  <span
+                                    className="truncate font-medium text-cyan-100"
+                                    title={compactOverlayLabel}
+                                  >
+                                    {compactOverlayLabel}
+                                  </span>
                                   <span className="shrink-0 text-slate-500">
                                     {formatPreciseTime(scrubValue)}
                                   </span>
                                 </div>
+                                {primarySecondOrderLabel &&
+                                  normalizeEvidenceLabel(primarySecondOrderLabel) !==
+                                    normalizeEvidenceLabel(compactOverlayLabel) && (
+                                    <div
+                                      className="mb-1 truncate text-[9px] text-cyan-200/80"
+                                      title={primarySecondOrderLabel}
+                                    >
+                                      Suggested meaning: {primarySecondOrderLabel}
+                                    </div>
+                                  )}
                                 <div className="mb-1 flex items-center justify-between gap-2 text-[9px] text-slate-500">
                                   <span>Drag slider to mark interest</span>
                                   <span>
@@ -6032,6 +6243,19 @@ export default function VideoPanel() {
                                   </button>
                                   <button
                                     type="button"
+                                    title="Prepare a governed candidate search from this evidence item"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      updateSelectedOverlayProliferation(overlay.key, {
+                                        open: !proliferationLauncher.open,
+                                      });
+                                    }}
+                                    className="rounded border border-cyan-800/70 bg-cyan-950/30 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-900/45"
+                                  >
+                                    Proliferate
+                                  </button>
+                                  <button
+                                    type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       closeSelectedOverlayEditor(overlay.key);
@@ -6041,6 +6265,72 @@ export default function VideoPanel() {
                                     Cancel
                                   </button>
                                 </div>
+                                {proliferationLauncher.open ? (
+                                  <div className="mt-1 rounded border border-cyan-900/60 bg-cyan-950/20 p-1.5">
+                                    <div className="mb-1 text-[9px] text-cyan-100/80">
+                                      Proliferate from this evidence. Results stay as quiet
+                                      candidates until supported or corrected.
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1">
+                                      <select
+                                        value={proliferationLauncher.scope}
+                                        onChange={(event) =>
+                                          updateSelectedOverlayProliferation(overlay.key, {
+                                            scope: event.target.value as ProliferationScope,
+                                            message: undefined,
+                                          })
+                                        }
+                                        className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                        aria-label="Proliferation scope"
+                                      >
+                                        {PROLIFERATION_SCOPE_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <select
+                                        value={proliferationLauncher.target}
+                                        onChange={(event) =>
+                                          updateSelectedOverlayProliferation(overlay.key, {
+                                            target: event.target.value as ProliferationTarget,
+                                            message: undefined,
+                                          })
+                                        }
+                                        className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                        aria-label="Proliferation target"
+                                      >
+                                        {PROLIFERATION_TARGET_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          prepareProliferationFromOverlay(
+                                            overlay,
+                                            edit,
+                                            proliferationLauncher,
+                                            overlaySourceLabel || compactOverlayLabel,
+                                          );
+                                        }}
+                                        className="rounded bg-cyan-900/50 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-800/70"
+                                      >
+                                        Prepare candidates
+                                      </button>
+                                      {proliferationLauncher.message ? (
+                                        <span className="text-[9px] text-cyan-200/80">
+                                          {proliferationLauncher.message}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             </>
                           )}

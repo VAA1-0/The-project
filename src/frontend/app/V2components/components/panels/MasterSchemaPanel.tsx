@@ -172,9 +172,25 @@ function getManualAnnotationTitle(item: ManualVisualAnnotation): string {
   return item.label || item.custom_label || "Manual annotation";
 }
 
+function getManualAnnotationSourceLabel(item: ManualVisualAnnotation): string {
+  const targetLabel = String(item.metadata_correlation?.target_label || "").trim();
+  const targetId = item.metadata_correlation?.target_id;
+  const targetType = String(item.metadata_correlation?.target_type || "").trim();
+  if (targetLabel) {
+    return targetLabel;
+  }
+  if (targetType && targetId !== undefined && targetId !== null) {
+    return `${targetType} ${targetId}`;
+  }
+  return "";
+}
+
 function getManualAnnotationDetail(item: ManualVisualAnnotation): string {
   const details = [
     item.subcategory || "Unspecified subcategory",
+    getManualAnnotationSourceLabel(item)
+      ? `source: ${getManualAnnotationSourceLabel(item)}`
+      : "",
     item.label && item.label !== getManualAnnotationTitle(item) ? item.label : "",
     item.identity_affirmation && item.category !== "Identification"
       ? `identity: ${item.identity_affirmation}`

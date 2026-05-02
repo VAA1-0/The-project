@@ -633,25 +633,21 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     const objects = envelope?.objects || [];
     const anchorMap = buildAnchorMap(envelope);
 
-    const previewObjects = objects.slice(0, 16);
+    const visibleObjects = objects;
 
     return (
-      <div className="rounded-sm border border-[#242424] bg-[#101010]">
+      <div className="flex h-full min-h-0 flex-col rounded-sm border border-[#242424] bg-[#101010]">
         <div className="flex items-center justify-between border-b border-[#202020] px-2.5 py-1.5 text-[11px] text-[#8f8f8f]">
           <span>{objects.length} events</span>
-          {objects.length > previewObjects.length ? (
-            <span>+{objects.length - previewObjects.length} hidden</span>
-          ) : (
-            <span>&nbsp;</span>
-          )}
+          <span>&nbsp;</span>
         </div>
         {objects.length === 0 ? (
           <div className="px-2.5 py-3 text-[12px] text-[#8f8f8f]">
             No {SECTION_LABELS[section].toLowerCase()} events loaded.
           </div>
         ) : (
-          <div className="max-h-[360px] overflow-auto">
-            {previewObjects.map((object, index) => {
+          <div className="min-h-0 flex-1 overflow-auto">
+            {visibleObjects.map((object, index) => {
               const anchor = anchorMap.get(object.anchor_id);
               const payload = object.payload || {};
               const timeLabel = formatTimeMs(anchor?.t_start_ms);
@@ -732,7 +728,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                   key={object.id}
                   onClick={() => seekTo(row.id, anchor?.t_start_ms)}
                   className={`w-full px-2.5 py-1.5 text-left transition-colors hover:bg-[#171717] ${
-                    index < previewObjects.length - 1 ? "border-b border-[#1d1d1d]" : ""
+                    index < visibleObjects.length - 1 ? "border-b border-[#1d1d1d]" : ""
                   }`}
                   title={`Jump to ${timeLabel}`}
                 >
@@ -838,7 +834,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
         {loading ? (
           <div className="rounded border border-white/8 bg-[#121212] px-4 py-4 text-sm text-slate-400">Loading Time Bank…</div>
         ) : rows.length === 0 ? (
@@ -846,13 +842,14 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
             No analyses selected. Open an analysis, then use `Add Current`.
           </div>
         ) : (
-          <div className="min-w-[1040px]">
+          <div className="h-full min-h-[520px] min-w-[1040px]">
             <div
-              className="grid gap-3"
+              className="grid h-full min-h-0 gap-3"
               style={{
                 gridTemplateColumns: `210px ${sections
                   .map((section) => `minmax(${sectionWidths[section] || 300}px, 1fr)`)
                   .join(" ")}`,
+                gridTemplateRows: `auto repeat(${rows.length}, minmax(0, 1fr))`,
               }}
             >
               <div className="rounded border border-white/8 bg-[#151515] px-3 py-2.5">
@@ -928,7 +925,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
                     </div>
                   </button>
                   {sections.map((section) => (
-                    <div key={`${row.id}-${section}`} className="align-top">
+                    <div key={`${row.id}-${section}`} className="min-h-0 align-top">
                       {renderCell(section, row)}
                     </div>
                   ))}

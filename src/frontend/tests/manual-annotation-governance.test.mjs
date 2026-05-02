@@ -702,6 +702,38 @@ test("meaning plot panel keeps second-order visualizations navigable to source",
   );
 });
 
+test("evidence proliferation launch remains governed and analyst initiated", () => {
+  assert.match(
+    videoPanel,
+    /Proliferate/,
+    "BBox/ROI editor must expose an analyst-initiated proliferation action",
+  );
+
+  assert.match(
+    videoPanel,
+    /evidenceProliferationRequested/,
+    "proliferation launch must emit a shared event for future review surfaces",
+  );
+
+  assert.match(
+    videoPanel,
+    /manual_correction_wins:\s*true/,
+    "proliferation requests must preserve manual correction authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /evidence_linked_not_timeline_linear:\s*true/,
+    "proliferation requests must not assume linear story or detection order",
+  );
+
+  assert.match(
+    videoPanel,
+    /outputs_are_candidates_until_verified_by_evidence:\s*true/,
+    "proliferation outputs must remain candidates until supported by evidence",
+  );
+});
+
 test("GoldenLayout leaf tabs stay on one compact row", () => {
   assert.match(
     globalsCss,
