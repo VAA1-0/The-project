@@ -31,24 +31,19 @@ import {
   openManualAnnotationInVideo,
   openObjectIndicationInVideo,
 } from "@/lib/video-navigation";
-import {
-  formatSecondOrderInstructionLabel,
-  getPrimarySecondOrderInstruction,
-  SecondOrderLabelAffirmationChips,
-} from "./SecondOrderLabelAffirmations";
 
 const OBJECT_INDICATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
-  "OBJ",
-  "Identification",
-  "Role",
   "Action",
-  "Movement",
-  "Interaction",
-  "Scene",
   "Cinematic Cues",
   "Expressions",
-  "OCR",
+  "Identification",
+  "Interaction",
+  "Movement",
   "Notes",
+  "OBJ",
+  "OCR",
+  "Role",
+  "Scene",
 ];
 
 const OBJECT_INDICATION_SUBCATEGORIES: Record<
@@ -781,24 +776,6 @@ export default function OBJDetectionPanel() {
                   const trackId = getObjectTrackId(obj);
                   const sourceLabel = getObjectSourceLabel(obj);
                   const manualOverride = trackId ? manualOverridesByTrack.get(trackId) : undefined;
-                  const objectTimeSpan = {
-                    start: Number(obj.startTimestamp ?? obj.timestamp ?? 0),
-                    end: Number(obj.endTimestamp ?? obj.timestamp ?? 0),
-                  };
-                  const primarySecondOrderLabel = formatSecondOrderInstructionLabel(
-                    getPrimarySecondOrderInstruction({
-                      plan: analysisData?.secondOrderLabelProliferation,
-                      surface: "objects_panel",
-                      targetLabelFamilies: [
-                        "Interaction",
-                        "Action",
-                        "Movement",
-                        "Object",
-                        "Identification",
-                      ],
-                      timeSpan: objectTimeSpan,
-                    }),
-                  );
                   const draft =
                     objectDrafts[rowKey] || buildObjectIndicationDraft(obj, latestLabel);
                   const startInputKey = `${rowKey}:start`;
@@ -822,14 +799,6 @@ export default function OBJDetectionPanel() {
                         <div className="truncate text-[11px] text-slate-200">
                           {latestLabel}
                         </div>
-                        {primarySecondOrderLabel ? (
-                          <div
-                            className="mt-0.5 truncate text-[10px] font-medium text-cyan-200"
-                            title={primarySecondOrderLabel}
-                          >
-                            {primarySecondOrderLabel}
-                          </div>
-                        ) : null}
                         <div className="truncate text-[10px] text-[var(--ui-passive-text)]">
                           Source: {sourceLabel}
                         </div>
@@ -865,25 +834,6 @@ export default function OBJDetectionPanel() {
                         Latest analyst label • source remains {sourceLabel}
                       </div>
                     )}
-                    <div className="mt-1">
-                      <SecondOrderLabelAffirmationChips
-                        plan={analysisData?.secondOrderLabelProliferation}
-                        surface="objects_panel"
-                        targetLabelFamilies={[
-                          "Interaction",
-                          "Action",
-                          "Movement",
-                          "Object",
-                          "Identification",
-                        ]}
-                        timeSpan={{
-                          start: objectTimeSpan.start,
-                          end: objectTimeSpan.end,
-                        }}
-                        compact
-                        limit={3}
-                      />
-                    </div>
                     {obj.sourceType === "manual_visual" && (
                       <div className="mt-1 text-[10px] text-emerald-300/90">
                         Native annotation

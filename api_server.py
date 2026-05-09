@@ -80,6 +80,18 @@ from src.backend.analysis.multimodal_meaning_stage1 import (
 from src.backend.analysis.second_order_label_proliferation import (
     write_second_order_label_proliferation_plan,
 )
+from src.backend.analysis.evidence_proliferation_matcher import (
+    write_evidence_proliferation_match,
+)
+from src.backend.analysis.mise_en_scene_scene_card import (
+    write_mise_en_scene_scene_cards,
+    write_source_extraction_metadata_summary,
+)
+from src.backend.analysis.ai_agent_feature_starters import (
+    build_feature_starter_manifest,
+    render_report_markdown,
+    write_feature_starter_manifest,
+)
 from fastapi import Form
 
 
@@ -722,6 +734,313 @@ def write_identity_triangulation_artifact_for_status(
     return payload
 
 
+def read_json_artifact_if_available(path_value: Any) -> Optional[Dict[str, Any]]:
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def output_file_exists(status: Dict[str, Any], file_type: str) -> bool:
+    path_value = (status.get("output_files") or {}).get(file_type)
+    return bool(path_value and Path(str(path_value)).exists())
+
+
+def find_sibling_artifact(path_value: Any, suffix: str) -> Optional[str]:
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    parent = path.parent
+    if not parent.exists():
+        return None
+    if path.name.endswith(suffix) and path.exists():
+        return str(path)
+    matches = sorted(parent.glob(f"*{suffix}"))
+    return str(matches[0]) if matches else None
+
+
+def find_plain_transcript_sibling(path_value: Any) -> Optional[str]:
+    if not path_value:
+        return None
+    parent = Path(str(path_value)).parent
+    if not parent.exists():
+        return None
+    matches = [
+        path
+        for path in sorted(parent.glob("*transcript.json"))
+        if not path.name.endswith("linked_transcript.json")
+    ]
+    return str(matches[0]) if matches else None
+
+
+def normalize_imported_output_files_for_status(status: Dict[str, Any]) -> bool:
+    """Repair channel registrations that older imported bundles could misclassify."""
+
+    output_files = status.setdefault("output_files", {})
+    changed = False
+
+    transcript_path = output_files.get("transcript")
+    if transcript_path and Path(str(transcript_path)).name.endswith("linked_transcript.json"):
+        output_files.setdefault("linked_transcript", str(transcript_path))
+        real_transcript = find_plain_transcript_sibling(transcript_path)
+        if real_transcript:
+            output_files["transcript"] = real_transcript
+        else:
+            output_files.pop("transcript", None)
+        changed = True
+
+    for file_type, suffix in (
+        ("linked_transcript", "linked_transcript.json"),
+        ("transcript", "transcript.json"),
+        ("tracked_objects_csv", "tracked_objects.csv"),
+        ("tracked_objects_json", "tracked_objects.json"),
+        ("dependency_sfl_stage1", "dependency_sfl_stage1.json"),
+        ("multimodal_meaning_stage1", "multimodal_meaning_stage1.json"),
+        ("second_order_label_proliferation", "second_order_label_proliferation.json"),
+    ):
+        if output_file_exists(status, file_type):
+            continue
+        anchor = (
+            output_files.get("source_video")
+            or output_files.get("summary_json")
+            or output_files.get("transcript")
+            or output_files.get("linked_transcript")
+        )
+        sibling = (
+            find_plain_transcript_sibling(anchor)
+            if file_type == "transcript"
+            else find_sibling_artifact(anchor, suffix)
+        )
+        if sibling:
+            output_files[file_type] = sibling
+            changed = True
+
+    status["output_files"] = output_files
+    return changed
+
+
+def write_tracked_objects_fallback_from_yolo_if_needed(status: Dict[str, Any]) -> bool:
+    """Create explicit untracked-object artifacts when YOLO detections exist but tracking files do not."""
+
+    if output_file_exists(status, "tracked_objects_csv") and output_file_exists(
+        status, "tracked_objects_json"
+    ):
+        return False
+
+    output_files = status.setdefault("output_files", {})
+    yolo_path_raw = output_files.get("yolo_csv")
+    if not yolo_path_raw:
+        return False
+    yolo_path = Path(str(yolo_path_raw))
+    if not yolo_path.exists():
+        return False
+
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return False
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    tracked_csv_path = analysis_dir / "tracked_objects.csv"
+    tracked_json_path = analysis_dir / "tracked_objects.json"
+
+    rows: List[Dict[str, Any]] = []
+    try:
+        with yolo_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for index, row in enumerate(reader, start=1):
+                row = dict(row)
+                timestamp = row.get("timestamp") or row.get("time") or row.get("start")
+                class_name = row.get("class_name") or row.get("label") or "object"
+                row.update(
+                    {
+                        "start_timestamp": timestamp,
+                        "end_timestamp": timestamp,
+                        "occurrence_count": "1",
+                        "track_id": f"untracked_{index:05d}",
+                        "display_label": f"{class_name} untracked {index}",
+                        "tracking_status": "not_tracked_yolo_detection_fallback",
+                    }
+                )
+                rows.append(row)
+    except Exception as exc:
+        logger.warning("Tracked-object fallback failed for %s: %s", yolo_path, exc)
+        return False
+
+    if not rows:
+        return False
+
+    fieldnames: List[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    with tracked_csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    tracked_json_path.write_text(
+        json.dumps(rows, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    output_files["tracked_objects_csv"] = str(tracked_csv_path)
+    output_files["tracked_objects_json"] = str(tracked_json_path)
+    status["output_files"] = output_files
+    return True
+
+
+def write_iterative_audio_identity_artifacts_for_status(
+    status: Dict[str, Any],
+) -> List[str]:
+    """Backfill derived audio/identity artifacts from existing analysis outputs.
+
+    This deliberately avoids rerunning sensors. It only writes contract artifacts
+    that can be rebuilt from already persisted audio, transcript, prosody, and
+    manual/visual evidence.
+    """
+
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return []
+
+    output_files = status.setdefault("output_files", {})
+    results = status.setdefault("results", {})
+    audio_analysis = results.setdefault("audio_analysis", {})
+    created: List[str] = []
+
+    transcript = audio_analysis.get("transcript") or read_json_artifact_if_available(
+        output_files.get("transcript")
+    )
+    audio_prosody = audio_analysis.get("audio_prosody") or read_json_artifact_if_available(
+        output_files.get("audio_prosody")
+    )
+    audio_path = output_files.get("audio") or audio_analysis.get("audio_path")
+    if audio_path:
+        audio_analysis.setdefault("audio_path", str(audio_path))
+
+    audio_diarization = audio_analysis.get("audio_diarization")
+    if not output_file_exists(status, "audio_diarization") and transcript and audio_path:
+        diarization_path = (
+            TRANSCRIPTS_DIR / f"{analysis_id}_audio_diarization_scaffold.json"
+        )
+        audio_diarization = write_audio_diarization_scaffold(
+            analysis_id,
+            audio_path=audio_path,
+            output_json_path=diarization_path,
+            transcript=transcript,
+            audio_prosody=audio_prosody,
+        )
+        audio_analysis["audio_diarization"] = audio_diarization
+        audio_analysis["audio_diarization_path"] = str(diarization_path)
+        output_files["audio_diarization"] = str(diarization_path)
+        created.append("audio_diarization")
+    elif not audio_diarization:
+        audio_diarization = read_json_artifact_if_available(output_files.get("audio_diarization"))
+        if audio_diarization:
+            audio_analysis["audio_diarization"] = audio_diarization
+
+    audio_sample_clouds = audio_analysis.get("audio_sample_clouds")
+    if not output_file_exists(status, "audio_sample_clouds") and audio_diarization:
+        sample_cloud_path = TRANSCRIPTS_DIR / f"{analysis_id}_audio_sample_clouds.json"
+        audio_sample_clouds = build_audio_sample_clouds_from_diarization(
+            analysis_id,
+            audio_diarization=audio_diarization,
+            source_media_context=build_source_media_metadata_payload(status),
+            source_audio_path=audio_path,
+        )
+        sample_cloud_path.parent.mkdir(parents=True, exist_ok=True)
+        sample_cloud_path.write_text(
+            json.dumps(audio_sample_clouds, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        audio_analysis["audio_sample_clouds"] = audio_sample_clouds
+        audio_analysis["audio_sample_clouds_path"] = str(sample_cloud_path)
+        output_files["audio_sample_clouds"] = str(sample_cloud_path)
+        created.append("audio_sample_clouds")
+    elif not audio_sample_clouds:
+        audio_sample_clouds = read_json_artifact_if_available(
+            output_files.get("audio_sample_clouds")
+        )
+        if audio_sample_clouds:
+            audio_analysis["audio_sample_clouds"] = audio_sample_clouds
+
+    if not output_file_exists(status, "identity_triangulation"):
+        triangulation_bundle = write_identity_triangulation_artifact_for_status(status)
+        if triangulation_bundle:
+            created.append("identity_triangulation")
+
+    return created
+
+
+def write_iterative_matrix_artifacts_for_status(status: Dict[str, Any]) -> List[str]:
+    """Create download-ready matrix snapshots from existing POS/Quant analyses."""
+
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return []
+
+    created: List[str] = []
+    output_files = status.setdefault("output_files", {})
+    results = status.get("results") or {}
+    audio_analysis = results.get("audio_analysis") or {}
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    for file_type, source_key, matrix_type in (
+        ("pos_matrix", "pos_analysis", "pos"),
+        ("quant_matrix", "quan_analysis", "quant"),
+    ):
+        if output_file_exists(status, file_type):
+            continue
+        source_payload = audio_analysis.get(source_key) or read_json_artifact_if_available(
+            output_files.get(source_key)
+        )
+        if not source_payload:
+            continue
+        matrix_path = analysis_dir / f"{matrix_type}_matrix.json"
+        snapshot = {
+            "matrix_type": matrix_type,
+            "snapshot_kind": "automatic_analysis_snapshot",
+            "saved_at": utc_now_iso(),
+            "owner_analysis_id": analysis_id,
+            "source_file_type": source_key,
+            "selected_sections": ["analysis"],
+            "analyses": [
+                {
+                    "analysis_id": analysis_id,
+                    "source": source_key,
+                    "payload": source_payload,
+                }
+            ],
+        }
+        matrix_path.write_text(
+            json.dumps(snapshot, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files[file_type] = str(matrix_path)
+        created.append(file_type)
+
+    return created
+
+
+def write_iterative_derived_artifacts_for_status(status: Dict[str, Any]) -> List[str]:
+    created = []
+    if normalize_imported_output_files_for_status(status):
+        created.append("output_file_registration_repaired")
+    if write_tracked_objects_fallback_from_yolo_if_needed(status):
+        created.extend(["tracked_objects_csv", "tracked_objects_json"])
+    created.extend(write_iterative_audio_identity_artifacts_for_status(status))
+    created.extend(write_iterative_matrix_artifacts_for_status(status))
+    return created
+
+
 def value_to_ms(value: Any, default: int = 0) -> int:
     number = safe_float(value)
     if number is None:
@@ -997,6 +1316,164 @@ def write_second_order_meaning_artifacts_for_status(
         "updated_at": utc_now_iso(),
     }
     return plan
+
+
+def write_mise_en_scene_artifacts_for_status(
+    status: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return None
+
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    scene_cards_path = analysis_dir / "mise_en_scene_scene_cards.json"
+    metadata_summary_path = analysis_dir / "source_extraction_metadata_summary.json"
+
+    scene_card_bundle = write_mise_en_scene_scene_cards(
+        analysis_id,
+        status,
+        scene_cards_path,
+        source_video_id=status.get("video_id") or analysis_id,
+    )
+    metadata_summary = write_source_extraction_metadata_summary(
+        scene_card_bundle,
+        metadata_summary_path,
+        source_metadata=status.get("source_media_metadata")
+        or scene_card_bundle.get("source_metadata_unchanged"),
+    )
+
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    output_files = status.setdefault("output_files", {})
+    internal_artifacts["mise_en_scene_scene_cards"] = str(scene_cards_path)
+    internal_artifacts["source_extraction_metadata_summary"] = str(metadata_summary_path)
+    output_files["mise_en_scene_scene_cards"] = str(scene_cards_path)
+    output_files["source_extraction_metadata_summary"] = str(metadata_summary_path)
+    status["mise_en_scene_scene_cards"] = {
+        "schema": scene_card_bundle.get("schema"),
+        "scene_card_count": len(scene_card_bundle.get("scene_cards") or []),
+        "output_json_path": str(scene_cards_path),
+        "source_extraction_metadata_summary_path": str(metadata_summary_path),
+        "updated_at": utc_now_iso(),
+    }
+    status["source_extraction_metadata_summary"] = {
+        "schema": metadata_summary.get("schema"),
+        "status": metadata_summary.get("status"),
+        "summary": metadata_summary.get("summary"),
+        "supporting_scenes": metadata_summary.get("supporting_scenes", []),
+        "output_json_path": str(metadata_summary_path),
+        "updated_at": utc_now_iso(),
+    }
+    return scene_card_bundle
+
+
+def mise_en_scene_artifacts_need_refresh(status: Dict[str, Any]) -> bool:
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    scene_card_path = output_files.get("mise_en_scene_scene_cards")
+    if not scene_card_path or not Path(str(scene_card_path)).exists():
+        return True
+
+    scene_bundle = read_json_artifact_if_available(scene_card_path)
+    if not scene_bundle:
+        return True
+
+    scene_cards = scene_bundle.get("scene_cards") if isinstance(scene_bundle, dict) else []
+    first_card = scene_cards[0] if isinstance(scene_cards, list) and scene_cards else {}
+    if not isinstance(first_card, dict):
+        return True
+
+    has_registered_transcript = output_file_exists(status, "transcript")
+    has_registered_objects = output_file_exists(status, "tracked_objects_csv") or output_file_exists(
+        status,
+        "tracked_objects_json",
+    )
+    card_speech_count = len(first_card.get("said_in_scene") or [])
+    card_item_count = len(first_card.get("items") or [])
+    if has_registered_transcript and card_speech_count == 0:
+        return True
+    if has_registered_objects and card_item_count <= 1:
+        return True
+    if not first_card.get("nlp_scene_summary_sentence"):
+        return True
+    nlp_summary = first_card.get("nlp_scene_summary")
+    if not isinstance(nlp_summary, dict) or int(nlp_summary.get("version") or 0) < 3:
+        return True
+    if len(scene_cards) <= 1 and _status_has_long_transcript_for_scene_windows(status, first_card):
+        return True
+    corrections = status.get("annotation_corrections") if isinstance(status.get("annotation_corrections"), dict) else {}
+    corrections_updated_at = corrections.get("updated_at")
+    scene_updated_at = (status.get("mise_en_scene_scene_cards") or {}).get("updated_at")
+    if corrections_updated_at and (not scene_updated_at or str(corrections_updated_at) > str(scene_updated_at)):
+        return True
+    return False
+
+
+def _status_has_long_transcript_for_scene_windows(
+    status: Dict[str, Any],
+    first_card: Dict[str, Any],
+) -> bool:
+    transcript_segments: List[Dict[str, Any]] = []
+    transcript_path = (status.get("output_files") or {}).get("transcript")
+    if transcript_path and Path(str(transcript_path)).exists():
+        try:
+            transcript_payload = json.loads(Path(str(transcript_path)).read_text(encoding="utf-8"))
+        except Exception:
+            transcript_payload = None
+        if isinstance(transcript_payload, list):
+            transcript_segments = [item for item in transcript_payload if isinstance(item, dict)]
+        elif isinstance(transcript_payload, dict):
+            raw_segments = transcript_payload.get("segments") or transcript_payload.get("transcript") or []
+            if isinstance(raw_segments, list):
+                transcript_segments = [item for item in raw_segments if isinstance(item, dict)]
+    if not transcript_segments:
+        transcript_payload = read_json_artifact_if_available(transcript_path)
+        raw_segments = (
+            transcript_payload.get("segments") or transcript_payload.get("transcript") or []
+            if isinstance(transcript_payload, dict)
+            else []
+        )
+        if isinstance(raw_segments, list):
+            transcript_segments = [item for item in raw_segments if isinstance(item, dict)]
+    if not transcript_segments:
+        raw_segments = ((status.get("transcript") or {}).get("segments") if isinstance(status.get("transcript"), dict) else [])
+        if isinstance(raw_segments, list):
+            transcript_segments = [item for item in raw_segments if isinstance(item, dict)]
+    if not transcript_segments:
+        results = status.get("results") if isinstance(status.get("results"), dict) else {}
+        audio_analysis = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+        transcript = audio_analysis.get("transcript") if isinstance(audio_analysis.get("transcript"), dict) else {}
+        raw_segments = transcript.get("segments") or transcript.get("transcript") or []
+        if isinstance(raw_segments, list):
+            transcript_segments = [item for item in raw_segments if isinstance(item, dict)]
+    if len(transcript_segments) < 6:
+        return False
+
+    starts: List[float] = []
+    ends: List[float] = []
+    for segment in transcript_segments:
+        start = safe_float(segment.get("start") or segment.get("timestamp") or segment.get("start_seconds"))
+        end = safe_float(segment.get("end") or segment.get("endTimestamp") or segment.get("end_seconds"))
+        if start is None:
+            continue
+        if end is None:
+            end = start
+        starts.append(start)
+        ends.append(end)
+    transcript_span = max(ends) - min(starts) if starts and ends else 0.0
+
+    interval = first_card.get("time_interval") if isinstance(first_card.get("time_interval"), dict) else {}
+    card_start_ms = safe_float(interval.get("start_ms")) or 0.0
+    card_end_ms = safe_float(interval.get("end_ms")) or card_start_ms
+    card_span_seconds = max(0.0, (card_end_ms - card_start_ms) / 1000.0)
+    boundary_source = str(first_card.get("scene_boundary_source") or "")
+
+    return max(transcript_span, card_span_seconds) > 45.0 and boundary_source in {
+        "fallback_transcript_extent",
+        "fallback_whole_media",
+        "detected_single_extent",
+        "detected",
+        "",
+    }
 
 
 def intervals_overlap(
@@ -2093,8 +2570,8 @@ def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[
         "ocr_text.csv": "ocr_csv",
         "analysis_summary.json": "summary_json",
         "extracted_audio.wav": "audio",
-        "transcript.json": "transcript",
         "linked_transcript.json": "linked_transcript",
+        "transcript.json": "transcript",
         "audio_prosody.json": "audio_prosody",
         "time_bank_audio.json": "time_bank_audio",
         "time_bank_ocr.json": "time_bank_ocr",
@@ -3174,6 +3651,24 @@ def run_complete_analysis(
             status.setdefault("results", {})["identity_triangulation_error"] = str(
                 triangulation_error
             )
+        try:
+            scene_card_bundle = write_mise_en_scene_artifacts_for_status(status)
+            if scene_card_bundle:
+                append_analysis_event(
+                    status,
+                    "mise_en_scene_scene_cards_created",
+                    details={
+                        "scene_card_count": len(scene_card_bundle.get("scene_cards") or []),
+                        "source_extraction_metadata_summary": (
+                            status.get("source_extraction_metadata_summary") or {}
+                        ).get("output_json_path"),
+                    },
+                )
+        except Exception as scene_card_error:
+            logger.warning("Mise-en-scene scene card build failed: %s", scene_card_error)
+            status.setdefault("results", {})["mise_en_scene_scene_cards_error"] = str(
+                scene_card_error
+            )
         status["mission_stage"] = "complete"
         status["mission_message"] = "All available stations have reported in."
         append_analysis_event(
@@ -3349,6 +3844,68 @@ async def promote_identity_candidate_endpoint(
 
     return make_json_safe(result)
 
+
+@app.post("/api/analysis/{analysis_id}/proliferation/match", response_model=dict)
+async def match_evidence_proliferation_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
+    request_id = str(request.get("request_id") or f"proliferate-{uuid.uuid4()}").strip()
+    request["request_id"] = request_id
+
+    analysis_dir = RESULTS_DIR / analysis_id
+    safe_request_id = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in request_id
+    )[:96]
+    output_json_path = (
+        analysis_dir / f"evidence_proliferation_match_{safe_request_id}.json"
+    )
+
+    result = write_evidence_proliferation_match(
+        analysis_id,
+        status,
+        request,
+        output_json_path,
+    )
+
+    request_record = {
+        "request_id": request_id,
+        "status": result.get("status"),
+        "candidate_count": result.get("candidate_count", 0),
+        "output_json_path": str(output_json_path),
+        "updated_at": utc_now_iso(),
+    }
+    status.setdefault("evidence_proliferation_matches", [])
+    status["evidence_proliferation_matches"] = [
+        request_record,
+        *[
+            item
+            for item in status.get("evidence_proliferation_matches", [])
+            if item.get("request_id") != request_id
+        ],
+    ][:25]
+    status.setdefault("internal_artifacts", {})[
+        f"evidence_proliferation_match:{request_id}"
+    ] = str(output_json_path)
+    append_analysis_event(
+        status,
+        "evidence_proliferation_match_completed",
+        details={
+            "request_id": request_id,
+            "candidate_count": result.get("candidate_count", 0),
+            "output_json_path": str(output_json_path),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return make_json_safe(result)
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -3388,6 +3945,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "identity_refinement": status.get("identity_refinement"),
         "identity_triangulation": status.get("identity_triangulation"),
         "second_order_label_proliferation": status.get("second_order_label_proliferation"),
+        "mise_en_scene_scene_cards": status.get("mise_en_scene_scene_cards"),
+        "source_extraction_metadata_summary": status.get("source_extraction_metadata_summary"),
+        "evidence_proliferation_matches": status.get("evidence_proliferation_matches", []),
     }
 
     source_video_path = status.get("source_video_path")
@@ -3407,11 +3967,22 @@ async def get_analysis_status(analysis_id: str) -> dict:
         linked_transcript_regenerated = regenerate_linked_transcript_if_needed(status)
         audio_prosody_regenerated = regenerate_audio_prosody_if_needed(status)
         visual_time_bank_regenerated = regenerate_time_bank_visual_artifacts_if_needed(status)
+        iterative_artifacts_created = write_iterative_derived_artifacts_for_status(status)
         if (
             linked_transcript_regenerated
             or audio_prosody_regenerated
             or visual_time_bank_regenerated
+            or iterative_artifacts_created
         ):
+            if iterative_artifacts_created:
+                append_analysis_event(
+                    status,
+                    "iterative_derived_artifacts_created",
+                    details={
+                        "file_types": iterative_artifacts_created,
+                        "created_during": "status_refresh",
+                    },
+                )
             persist_analysis_record_for_status(status)
             output_files = status.get("output_files", {})
         if not status.get("second_order_label_proliferation"):
@@ -3441,6 +4012,38 @@ async def get_analysis_status(analysis_id: str) -> dict:
                 status.setdefault("results", {})[
                     "second_order_label_proliferation_error"
                 ] = str(proliferation_error)
+        if (
+            not status.get("mise_en_scene_scene_cards")
+            or mise_en_scene_artifacts_need_refresh(status)
+        ):
+            try:
+                scene_card_bundle = write_mise_en_scene_artifacts_for_status(status)
+                if scene_card_bundle:
+                    append_analysis_event(
+                        status,
+                        "mise_en_scene_scene_cards_created",
+                        details={
+                            "scene_card_count": len(scene_card_bundle.get("scene_cards") or []),
+                            "created_during": "status_refresh",
+                            "refresh_reason": "missing_or_thin_artifact",
+                        },
+                    )
+                    persist_analysis_record_for_status(status)
+                    output_files = status.get("output_files", {})
+                    response_data["mise_en_scene_scene_cards"] = status.get(
+                        "mise_en_scene_scene_cards"
+                    )
+                    response_data["source_extraction_metadata_summary"] = status.get(
+                        "source_extraction_metadata_summary"
+                    )
+            except Exception as scene_card_error:
+                logger.warning(
+                    "Mise-en-scene scene card refresh failed: %s",
+                    scene_card_error,
+                )
+                status.setdefault("results", {})[
+                    "mise_en_scene_scene_cards_error"
+                ] = str(scene_card_error)
         
         # Add processing time
         if status.get("start_time") and status.get("end_time"):
@@ -3524,6 +4127,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["identity_triangulation_error"] = results.get("identity_triangulation_error")
         if results.get("second_order_label_proliferation_error"):
             response_data["summary"]["second_order_label_proliferation_error"] = results.get("second_order_label_proliferation_error")
+        if results.get("mise_en_scene_scene_cards_error"):
+            response_data["summary"]["mise_en_scene_scene_cards_error"] = results.get("mise_en_scene_scene_cards_error")
         if results.get("pos_error"):
             response_data["summary"]["pos_error"] = results.get("pos_error")
         if results.get("quan_error"):
@@ -3821,6 +4426,7 @@ async def download_file(analysis_id: str, file_type: str):
     Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript,
     linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json,
     quan_analysis, dependency_sfl_stage1, multimodal_meaning_stage1, second_order_label_proliferation,
+    mise_en_scene_scene_cards, source_extraction_metadata_summary, mise_en_scene_scene_card_report_draft_md,
     face_anonymization_manifest
     """
     status = get_analysis_entry(analysis_id)
@@ -3852,6 +4458,15 @@ async def download_file(analysis_id: str, file_type: str):
         "multimodal_meaning_stage1": ("multimodal_meaning_stage1.json", "application/json"),
         "second_order_label_proliferation": (
             "second_order_label_proliferation.json",
+            "application/json",
+        ),
+        "mise_en_scene_scene_cards": ("mise_en_scene_scene_card_report.json", "application/json"),
+        "mise_en_scene_scene_card_report_draft_md": (
+            "mise_en_scene_scene_card_report_draft.md",
+            "text/markdown",
+        ),
+        "source_extraction_metadata_summary": (
+            "scene_card_source_extraction_metadata_summary.json",
             "application/json",
         ),
         "time_bank_audio": ("time_bank_audio.json", "application/json"),
@@ -3893,7 +4508,8 @@ async def download_file(analysis_id: str, file_type: str):
     return FileResponse(
         path=file_path,
         media_type=media_type,
-        filename=download_filename
+        filename=download_filename,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -3928,6 +4544,9 @@ async def download_bundle(analysis_id: str):
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
+        "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
+        "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",
+        "source_extraction_metadata_summary": "scene_card_source_extraction_metadata_summary.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -3999,6 +4618,9 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
+        "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
+        "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",
+        "source_extraction_metadata_summary": "scene_card_source_extraction_metadata_summary.json",
         "time_bank_audio": "time_bank_audio.json",
         "time_bank_ocr": "time_bank_ocr.json",
         "time_bank_objects": "time_bank_objects.json",
@@ -4099,6 +4721,157 @@ async def workspace_info() -> dict:
         "downloads_note": (
             "Analysis bundles downloaded from the browser are saved to your browser or system download location."
         ),
+    }
+
+
+@app.get("/api/ai-agent/feature-starters", response_model=dict)
+async def get_ai_agent_feature_starters() -> dict:
+    """Return governed starter contracts for optional AI-agent feature families."""
+    return build_feature_starter_manifest()
+
+
+@app.post("/api/ai-agent/feature-starters/write", response_model=dict)
+async def write_ai_agent_feature_starters() -> dict:
+    """Persist the AI-agent feature-starter manifest into outputs for audit/review."""
+    output_path = RESULTS_DIR / "ai_agent_feature_starters_manifest.json"
+    manifest = write_feature_starter_manifest(output_path)
+    return {
+        "status": "written",
+        "path": str(output_path),
+        "feature_count": len(manifest.get("features", [])),
+        "manifest": manifest,
+    }
+
+
+@app.post("/api/ai-agent/{analysis_id}/scene-card-report-draft", response_model=dict)
+async def write_ai_agent_scene_card_report_draft(analysis_id: str) -> dict:
+    """Write a Markdown report draft from existing scene-card evidence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    output_files = status.setdefault("output_files", {})
+    scene_card_path = output_files.get("mise_en_scene_scene_cards")
+    if not scene_card_path or not Path(scene_card_path).exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Scene card artifact is not available for this analysis",
+        )
+
+    try:
+        scene_bundle = json.loads(Path(scene_card_path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not read scene card artifact: {exc}",
+        ) from exc
+
+    cards = scene_bundle.get("scene_cards")
+    if not isinstance(cards, list):
+        cards = []
+
+    sections: List[Dict[str, Any]] = []
+    evidence_refs: List[Dict[str, Any]] = []
+    for index, card in enumerate(cards[:12], start=1):
+        if not isinstance(card, dict):
+            continue
+        time_range = card.get("time_range") or {}
+        start = time_range.get("start_seconds", card.get("start_seconds", 0))
+        end = time_range.get("end_seconds", card.get("end_seconds", start))
+        heading = str(card.get("title") or f"Scene {index}")
+        summary = str(
+            card.get("overview")
+            or card.get("summary")
+            or "No scene summary is available."
+        )
+        nlp_summary = str(
+            card.get("nlp_scene_summary_sentence")
+            or (card.get("nlp_scene_summary") or {}).get("sentence")
+            or ""
+        ).strip()
+        description = card.get("mise_en_scene_description") or (
+            (card.get("nlp_scene_summary") or {}).get("description")
+            if isinstance(card.get("nlp_scene_summary"), dict)
+            else {}
+        )
+        description_lines = []
+        if isinstance(description, dict):
+            description_labels = [
+                ("What is happening", description.get("what_is_happening")),
+                ("Who is speaking", description.get("who_is_speaking")),
+                ("In what situation", description.get("situation")),
+                (
+                    "What meanings are being constructed",
+                    description.get("meanings_constructed"),
+                ),
+                (
+                    "What phenomena occur in the material",
+                    description.get("phenomena"),
+                ),
+            ]
+            description_lines = [
+                f"- {label}: {value}"
+                for label, value in description_labels
+                if str(value or "").strip()
+            ]
+        speech_items = card.get("speech") or card.get("said_in_scene") or []
+        speech_lines = []
+        if isinstance(speech_items, list):
+            for speech in speech_items[:8]:
+                if not isinstance(speech, dict):
+                    continue
+                text = str(speech.get("text") or "").strip()
+                if text:
+                    speech_lines.append(f"- {text}")
+        meaning = card.get("meaning_plot") or {}
+        meaning_summary = (
+            str(meaning.get("summary") or "").strip()
+            if isinstance(meaning, dict)
+            else ""
+        )
+        body_parts = [summary]
+        if nlp_summary:
+            body_parts.append(f"What is happening: {nlp_summary}")
+        if description_lines:
+            body_parts.append("Mise-en-scene description:\n" + "\n".join(description_lines))
+        if meaning_summary:
+            body_parts.append(f"Meaning / plot: {meaning_summary}")
+        if speech_lines:
+            body_parts.append("Said in scene:\n" + "\n".join(speech_lines))
+        sections.append(
+            {
+                "heading": heading,
+                "body": "\n\n".join(body_parts),
+            }
+        )
+        evidence_refs.append(
+            {
+                "evidence_id": card.get("scene_card_id") or card.get("id") or f"scene-card:{index}",
+                "label": heading,
+                "target": f"t={start},{end}",
+            }
+        )
+
+    markdown = render_report_markdown(
+        title=f"Mise-en-Scene Scene Card Report - {status.get('filename') or analysis_id}",
+        sections=sections,
+        evidence_refs=evidence_refs,
+    )
+    output_path = RESULTS_DIR / analysis_id / "mise_en_scene_scene_card_report_draft.md"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(markdown, encoding="utf-8")
+    output_files["mise_en_scene_scene_card_report_draft_md"] = str(output_path)
+    append_analysis_event(
+        status,
+        "ai_agent_scene_card_report_draft_written",
+        details={"path": str(output_path), "scene_count": len(sections)},
+    )
+    return {
+        "status": "written",
+        "analysis_id": analysis_id,
+        "path": str(output_path),
+        "scene_count": len(sections),
+        "markdown": markdown,
     }
 
 
@@ -4712,6 +5485,7 @@ async def update_annotation_corrections(
         corrections.setdefault("manual_visual_annotations", [])
 
     write_annotation_corrections_file(status)
+    write_mise_en_scene_artifacts_for_status(status)
     append_analysis_event(
         status,
         "annotation_corrections_updated",

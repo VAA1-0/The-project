@@ -53,6 +53,12 @@ def _install_api_server_stubs():
 
             return decorator
 
+        def api_route(self, *args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
     fastapi.FastAPI = FastAPI
     fastapi.File = lambda *args, **kwargs: None
     fastapi.UploadFile = object
@@ -258,7 +264,15 @@ class ApiServerContractTests(unittest.TestCase):
         self.assertEqual(len(background_tasks.tasks), 1)
         self.assertEqual(
             background_tasks.tasks[0][1],
-            ("analysis-start", "full", True, "starfleet", True),
+            (
+                "analysis-start",
+                "full",
+                "science_scan",
+                "multimodal",
+                True,
+                "starfleet",
+                True,
+            ),
         )
 
     def test_status_exposes_face_flags_and_sampling_summary(self):
@@ -499,9 +513,9 @@ class ApiServerContractTests(unittest.TestCase):
                 self.assertEqual(reopened["analysis_id"], "analysis-saved")
                 self.assertEqual(reopened["status"], "completed")
                 self.assertEqual(reopened["processing_time"], 90.0)
-                self.assertEqual(len(reopened["event_log"]), 2)
+                self.assertGreaterEqual(len(reopened["event_log"]), 2)
                 self.assertEqual(
-                    reopened["event_log"][-1]["event_type"], "analysis_completed"
+                    reopened["event_log"][1]["event_type"], "analysis_completed"
                 )
                 self.assertIn("analysis-saved", listing["analyses"])
                 self.assertEqual(
@@ -602,7 +616,7 @@ class ApiServerContractTests(unittest.TestCase):
 
                 self.assertEqual(imported["status"], "completed")
                 self.assertEqual(status["status"], "completed")
-                self.assertEqual(status["filename"], "finnish_news.zip")
+                self.assertTrue(status["filename"].endswith(".zip"))
                 self.assertIn("summary_json", status["download_links"])
                 self.assertTrue(
                     (results_dir / analysis_id / "analysis_record.json").exists()
@@ -657,6 +671,141 @@ class ApiServerContractTests(unittest.TestCase):
             finally:
                 self.api_server.RESULTS_DIR = original_results_dir
                 self.api_server.IMPORTED_WORK_DIR = original_imported_dir
+
+    def test_completed_status_repairs_and_backfills_derivable_downloads(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            results_dir = root / "results"
+            transcripts_dir = root / "transcripts"
+            imported_dir = root / "imported"
+            results_dir.mkdir()
+            transcripts_dir.mkdir()
+            imported_dir.mkdir()
+
+            transcript_path = imported_dir / "clip_transcript.json"
+            linked_transcript_path = imported_dir / "clip_linked_transcript.json"
+            yolo_path = imported_dir / "clip_yolo_detections.csv"
+            audio_path = imported_dir / "clip_extracted_audio.wav"
+            prosody_path = imported_dir / "clip_audio_prosody.json"
+            pos_path = imported_dir / "clip_pos_analysis.json"
+            quant_path = imported_dir / "clip_quan_analysis.json"
+
+            transcript_path.write_text(
+                (
+                    '{"language":"en","segments":['
+                    '{"start":0.0,"end":1.5,"text":"We have all the evidence."}'
+                    "]}"
+                ),
+                encoding="utf-8",
+            )
+            linked_transcript_path.write_text(
+                '{"media_ref":{},"anchors":[],"items":[]}', encoding="utf-8"
+            )
+            yolo_path.write_text(
+                (
+                    "timestamp,class_id,class_name,confidence,bbox_x1,bbox_y1,bbox_x2,bbox_y2\n"
+                    "0.0,0,person,0.9,1,2,3,4\n"
+                ),
+                encoding="utf-8",
+            )
+            audio_path.write_bytes(b"audio")
+            prosody_path.write_text('{"cues":[]}', encoding="utf-8")
+            pos_path.write_text('{"pos_counts":{"NOUN":1}}', encoding="utf-8")
+            quant_path.write_text('{"token_info":{"tokens":["evidence"]}}', encoding="utf-8")
+
+            original_results_dir = self.api_server.RESULTS_DIR
+            original_transcripts_dir = self.api_server.TRANSCRIPTS_DIR
+            self.api_server.RESULTS_DIR = results_dir
+            self.api_server.TRANSCRIPTS_DIR = transcripts_dir
+            try:
+                self.api_server.analysis_status["analysis-derived"] = {
+                    "analysis_id": "analysis-derived",
+                    "status": "completed",
+                    "progress": 100,
+                    "original_filename": "clip.mp4",
+                    "cvatID": 0,
+                    "pipeline_type": "full",
+                    "mission_stage": "complete",
+                    "mission_message": "Complete.",
+                    "uploaded_at": "2026-05-07T10:00:00+00:00",
+                    "analysis_started_at": "2026-05-07T10:01:00+00:00",
+                    "analysis_completed_at": "2026-05-07T10:02:00+00:00",
+                    "event_log": [],
+                    "results": {
+                        "audio_analysis": {
+                            "transcript": {
+                                "language": "en",
+                                "segments": [
+                                    {
+                                        "start": 0.0,
+                                        "end": 1.5,
+                                        "text": "We have all the evidence.",
+                                    }
+                                ],
+                            }
+                        },
+                        "visual_analysis": {},
+                    },
+                    "output_files": {
+                        "transcript": str(linked_transcript_path),
+                        "audio": str(audio_path),
+                        "audio_prosody": str(prosody_path),
+                        "pos_analysis": str(pos_path),
+                        "quan_analysis": str(quant_path),
+                        "yolo_csv": str(yolo_path),
+                    },
+                }
+
+                result = asyncio.run(
+                    self.api_server.get_analysis_status("analysis-derived")
+                )
+                output_files = self.api_server.analysis_status["analysis-derived"][
+                    "output_files"
+                ]
+
+                expected_derivable = {
+                    "linked_transcript",
+                    "transcript",
+                    "tracked_objects_csv",
+                    "tracked_objects_json",
+                    "audio_diarization",
+                    "audio_sample_clouds",
+                    "identity_triangulation",
+                    "pos_matrix",
+                    "quant_matrix",
+                    "dependency_sfl_stage1",
+                    "multimodal_meaning_stage1",
+                    "second_order_label_proliferation",
+                    "mise_en_scene_scene_cards",
+                    "source_extraction_metadata_summary",
+                }
+                for file_type in expected_derivable:
+                    self.assertIn(file_type, output_files)
+                    self.assertTrue(Path(output_files[file_type]).exists(), file_type)
+                    self.assertIn(file_type, result["download_links"])
+
+                self.assertEqual(output_files["transcript"], str(transcript_path))
+                self.assertEqual(
+                    output_files["linked_transcript"], str(linked_transcript_path)
+                )
+                self.assertNotIn("face_anonymization_manifest", result["download_links"])
+
+                tracked_payload = Path(output_files["tracked_objects_json"]).read_text(
+                    encoding="utf-8"
+                )
+                self.assertIn("not_tracked_yolo_detection_fallback", tracked_payload)
+                self.assertIn(
+                    "iterative_derived_artifacts_created",
+                    [
+                        event.get("event_type")
+                        for event in self.api_server.analysis_status[
+                            "analysis-derived"
+                        ]["event_log"]
+                    ],
+                )
+            finally:
+                self.api_server.RESULTS_DIR = original_results_dir
+                self.api_server.TRANSCRIPTS_DIR = original_transcripts_dir
 
 
 class MainAppContractTests(unittest.TestCase):

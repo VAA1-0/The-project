@@ -82,6 +82,8 @@ export function MenuBar() {
   const [uploadMetadataDrafts, setUploadMetadataDrafts] = useState<
     UploadMetadataDraft[]
   >([]);
+  const [scraperUrls, setScraperUrls] = useState<Record<number, string>>({});
+  const [isScraping, setIsScraping] = useState<Record<number, boolean>>({});
   const [showUploadMetadataDialog, setShowUploadMetadataDialog] =
     useState(false);
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
@@ -162,6 +164,34 @@ export function MenuBar() {
         itemIndex === index ? { ...item, ...patch } : item,
       ),
     );
+  };
+
+  const handleScrapeMetadata = async (index: number) => {
+    const url = scraperUrls[index];
+    if (!url) return;
+
+    setIsScraping((prev) => ({ ...prev, [index]: true }));
+    try {
+      // Placeholder for the future API call:
+      // const scrapedData = await apiService.scrapeMetadataFromUrl(url);
+      
+      // Mocking the response for now:
+      const scrapedData = {
+        title: "Example Scraped Title",
+        description: "This data was pulled from the provided URL...",
+        time_year: "2026",
+        genre: "Feature Film",
+      };
+
+      updateUploadDraft(index, scrapedData);
+      setScraperUrls((prev) => ({ ...prev, [index]: "" })); // Clear input
+      alert("Metadata autofilled successfully!");
+    } catch (error) {
+      console.error("Scraping failed:", error);
+      alert("Could not fetch metadata from the provided URL.");
+    } finally {
+      setIsScraping((prev) => ({ ...prev, [index]: false }));
+    }
   };
 
   const applyCustomUploadTaxonomy = (
@@ -820,21 +850,15 @@ export function MenuBar() {
       label: "File",
       submenu: [
         {
-          label: "Upload New File",
+          label: "Locate Media...",
           onClick: () => {
-            handleUpload();
+            void handleLocateMedia();
           },
         },
         {
           label: "Open Saved Work...",
           onClick: () => {
             handleImportSavedWork();
-          },
-        },
-        {
-          label: "Locate Media...",
-          onClick: () => {
-            void handleLocateMedia();
           },
         },
         {
@@ -861,21 +885,27 @@ export function MenuBar() {
             void handleSaveProjectAs();
           },
         },
+        {
+          label: "Upload New File",
+          onClick: () => {
+            handleUpload();
+          },
+        },
       ],
     },
     {
       label: "Session",
       submenu: [
         {
-          label: "Refresh",
-          onClick: () => {
-            handleRefreshWorkspace();
-          },
-        },
-        {
           label: "Clear Program",
           onClick: () => {
             void handleClearProgram();
+          },
+        },
+        {
+          label: "Refresh",
+          onClick: () => {
+            handleRefreshWorkspace();
           },
         },
       ],
@@ -884,9 +914,33 @@ export function MenuBar() {
       label: "Lenses",
       submenu: [
         {
-          label: "Transcript Lens",
+          label: "Action Leaf",
           onClick: () => {
-            openPanel("Transcript");
+            openSchemaPanel("ManualAction");
+          },
+        },
+        {
+          label: "Cinematic Cues",
+          onClick: () => {
+            openSchemaPanel("ManualCinematicCues");
+          },
+        },
+        {
+          label: "Expression Lens",
+          onClick: () => {
+            openPanel("Expressions");
+          },
+        },
+        {
+          label: "Identification Leaf",
+          onClick: () => {
+            openSchemaPanel("ManualIdentification");
+          },
+        },
+        {
+          label: "Master Schema",
+          onClick: () => {
+            openSchemaPanel("MasterSchema");
           },
         },
         {
@@ -914,80 +968,15 @@ export function MenuBar() {
           },
         },
         {
-          label: "Expression Lens",
-          onClick: () => {
-            openPanel("Expressions");
-          },
-        },
-        {
-          label: "Master Schema",
-          onClick: () => {
-            openSchemaPanel("MasterSchema");
-          },
-        },
-        {
           label: "Scene Leaf",
           onClick: () => {
             openSchemaPanel("ManualScene");
           },
         },
         {
-          label: "Action Leaf",
+          label: "Scene Cards",
           onClick: () => {
-            openSchemaPanel("ManualAction");
-          },
-        },
-        {
-          label: "Identification Leaf",
-          onClick: () => {
-            openSchemaPanel("ManualIdentification");
-          },
-        },
-      ],
-    },
-    {
-      label: "Window",
-      submenu: [
-        {
-          label: "Restore Windows",
-          onClick: () => {
-            handleRestoreWindows();
-          },
-        },
-        {
-          label: "Download Manager",
-          onClick: () => {
-            openPanel("DownloadPanel");
-          },
-        },
-        {
-          label: "Video Player",
-          onClick: () => {
-            openPanel("VideoPanel");
-          },
-        },
-        {
-          label: "Source Media",
-          onClick: () => {
-            openPanel("SourceMediaMetadata");
-          },
-        },
-        {
-          label: "Time Bank",
-          onClick: () => {
-            openPanel("TimeBank", selectedVideoId ? { videoId: selectedVideoId } : {});
-          },
-        },
-        {
-          label: "Meaning / Plot",
-          onClick: () => {
-            openPanel("MeaningPlot", selectedVideoId ? { videoId: selectedVideoId } : {});
-          },
-        },
-        {
-          label: "Toolbox",
-          onClick: () => {
-            openPanel("ToolsPanel");
+            openPanel("SceneCards", selectedVideoId ? { videoId: selectedVideoId } : {});
           },
         },
         {
@@ -996,6 +985,11 @@ export function MenuBar() {
             openPanel("Transcript");
           },
         },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
         {
           label: "Audio",
           onClick: () => {
@@ -1011,63 +1005,51 @@ export function MenuBar() {
           },
         },
         {
-          label: "OBJ Detection Lens",
+          label: "Download Manager",
           onClick: () => {
-            openPanel("OBJDetection");
+            openPanel("DownloadPanel");
           },
         },
         {
-          label: "OCR Lens",
+          label: "Meaning / Plot",
           onClick: () => {
-            openPanel("OCR");
+            openPanel("MeaningPlot", selectedVideoId ? { videoId: selectedVideoId } : {});
           },
         },
         {
-          label: "POS analysis Lens",
+          label: "Scene Cards",
           onClick: () => {
-            openPanel("POS");
+            openPanel("SceneCards", selectedVideoId ? { videoId: selectedVideoId } : {});
           },
         },
         {
-          label: "Quantitative Analysis",
+          label: "Restore Windows",
           onClick: () => {
-            openPanel("Quant");
+            handleRestoreWindows();
           },
         },
         {
-          label: "Expression Lens",
+          label: "Source Media",
           onClick: () => {
-            openPanel("Expressions");
+            openPanel("SourceMediaMetadata");
           },
         },
         {
-          label: "Master Schema",
+          label: "Time Bank",
           onClick: () => {
-            openSchemaPanel("MasterSchema");
+            openPanel("TimeBank", selectedVideoId ? { videoId: selectedVideoId } : {});
           },
         },
         {
-          label: "Scene",
+          label: "Toolbox",
           onClick: () => {
-            openSchemaPanel("ManualScene");
+            openPanel("ToolsPanel");
           },
         },
         {
-          label: "Action",
+          label: "Video Player",
           onClick: () => {
-            openSchemaPanel("ManualAction");
-          },
-        },
-        {
-          label: "Identification",
-          onClick: () => {
-            openSchemaPanel("ManualIdentification");
-          },
-        },
-        {
-          label: "Cinematic Cues",
-          onClick: () => {
-            openSchemaPanel("ManualCinematicCues");
+            openPanel("VideoPanel");
           },
         },
       ],
@@ -1076,51 +1058,15 @@ export function MenuBar() {
       label: "Tools",
       submenu: [
         {
-          label: "Annotation workspace",
-          onClick: () => {
-            openAnnotationWorkspace();
-          },
-        },
-        {
           label: "Analysis Setup",
           onClick: () => {
             openToolsSection("analysis");
           },
         },
         {
-          label: "Visual cues",
+          label: "Annotation workspace",
           onClick: () => {
-            openToolsSection("visual");
-          },
-        },
-        {
-          label: "Master Schema",
-          onClick: () => {
-            openSchemaPanel("MasterSchema");
-          },
-        },
-        {
-          label: "Scene Leaf",
-          onClick: () => {
-            openSchemaPanel("ManualScene");
-          },
-        },
-        {
-          label: "Action Leaf",
-          onClick: () => {
-            openSchemaPanel("ManualAction");
-          },
-        },
-        {
-          label: "Identification Leaf",
-          onClick: () => {
-            openSchemaPanel("ManualIdentification");
-          },
-        },
-        {
-          label: "Morphology Catalog",
-          onClick: () => {
-            openToolsSection("morphology");
+            openAnnotationWorkspace();
           },
         },
         {
@@ -1139,6 +1085,18 @@ export function MenuBar() {
           label: "Mission Records",
           onClick: () => {
             openToolsSection("mission");
+          },
+        },
+        {
+          label: "Morphology Catalog",
+          onClick: () => {
+            openToolsSection("morphology");
+          },
+        },
+        {
+          label: "Visual cues",
+          onClick: () => {
+            openToolsSection("visual");
           },
         },
       ],
@@ -1256,6 +1214,29 @@ export function MenuBar() {
                     key={`${file.name}-${index}`}
                     className="rounded-md border border-white/8 bg-[#111111] p-3"
                   >
+                    {/* Autofill Toolbar */}
+                    <div className="mb-4 flex items-end gap-2 rounded bg-[#1a1a1a] p-2 border border-slate-800">
+                      <label className="flex-1 block">
+                        <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                          Autofill from IMDb / Wikipedia URL
+                        </div>
+                        <input
+                          value={scraperUrls[index] || ""}
+                          onChange={(e) => setScraperUrls(prev => ({ ...prev, [index]: e.target.value }))}
+                          placeholder="https://www.imdb.com/title/..."
+                          className="w-full rounded-md border border-slate-700 bg-[#111111] px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-slate-500"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleScrapeMetadata(index)}
+                        disabled={!scraperUrls[index] || isScraping[index]}
+                        className="shrink-0 rounded bg-cyan-900/50 px-3 py-1.5 text-xs text-cyan-100 transition hover:bg-cyan-800/70 disabled:opacity-50"
+                      >
+                        {isScraping[index] ? "Fetching..." : "Fetch Data"}
+                      </button>
+                    </div>
+
                     <div className="mb-3 text-xs text-slate-400">{file.name}</div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="block">

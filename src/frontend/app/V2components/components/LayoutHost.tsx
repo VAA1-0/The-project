@@ -24,6 +24,7 @@ import QuantMatrixPanel from "./panels/QuantMatrixPanel";
 import SourceMediaMetadataPanel from "./panels/SourceMediaMetadataPanel";
 import TimeBankPanel from "./panels/TimeBankPanel";
 import MeaningPlotPanel from "./panels/MeaningPlotPanel";
+import SceneCardPanel from "./panels/SceneCardPanel";
 import MasterSchemaPanel from "./panels/MasterSchemaPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -53,6 +54,7 @@ const RIGHT_STACK_ANCHOR_TYPES = [
   "SourceMediaMetadata",
   "TimeBank",
   "MeaningPlot",
+  "SceneCards",
   "Transcript",
   "POS",
   "Quant",
@@ -177,6 +179,11 @@ const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
           },
           {
             type: "component",
+            componentType: "SceneCards",
+            title: "Scene Cards",
+          },
+          {
+            type: "component",
             componentType: "POS",
             title: "POS",
           },
@@ -275,6 +282,11 @@ const buildAnnotationWorkspaceLayout = (): import("golden-layout").LayoutConfig 
           },
           {
             type: "component",
+            componentType: "SceneCards",
+            title: "Scene Cards",
+          },
+          {
+            type: "component",
             componentType: "Transcript",
             title: "Transcript",
           },
@@ -320,6 +332,7 @@ export default function LayoutHost({
     SourceMediaMetadata: "Source Media",
     TimeBank: "Time Bank",
     MeaningPlot: "Meaning / Plot",
+    SceneCards: "Scene Cards",
     MasterSchema: "Master Schema",
     ...Object.fromEntries(
       MANUAL_LEAF_PANEL_CONFIGS.map((item) => [item.componentType, item.title]),
@@ -631,6 +644,18 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           MeaningPlotPanel,
+          (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "SceneCards",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          SceneCardPanel,
           (state as Record<string, unknown>) || {},
           ContextWrapper,
         );

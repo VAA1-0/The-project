@@ -13,6 +13,8 @@ Transcript integrity package:
 Bond trailer timestamp/transcript bug; full-duration transcript coverage; backend QA gating for short transcript spans; fallback retranscription strategy for degraded audio cases
 Panel maturation governance package:
 align remaining panels to the calmer evidence-register style already strongest in OCR, OBJ, Expressions, POS Matrix, and Quant Matrix; mature Download, Tools, TimeBank, Video Compare, Speech/Audio, and remaining Video-side governance surfaces
+Mature data surface governance:
+implement the Master Schema as the resolved mature-evidence redistribution layer across panels; first-read indications should follow manual correction > manual annotation > mature triangulated/proliferated indication > grouped/interpreted detection > raw detection, while preserving raw detection repositories; see docs/vaa1_mature_data_surface_governance_principle_2026-05-08.md
 CVAT base workflow package:
 runtime now works locally; next implement one-click VAA1 handoff: create CVAT task if missing, store cvatID, and open the correct job without re-upload or manual route knowledge
 Release readiness test protocol:
@@ -21,3 +23,5 @@ Traceback, forensic rendering, and report package:
 next strategic spine is evidence provenance and traceback first, then Quick Sweep to Forensic Deepening, forensic render job ledger, report claim weighting, workflow phases, final UI layout, and multimodal report package; see docs/vaa1_traceback_forensic_reporting_roadmap_2026-04-20.md
 Forensic tool sprint:
 backend preparation slice creates governed forensic render jobs, job ledger, static ROI/full-frame snippets, science-grade and forensic-accuracy FPS presets, and API client preparation; next step is calm UI surface, evidence traceback linkage, and adopted-context enrichment from metadata, manual annotations, identities, interactions, roles, expressions, transcript, prosody, OCR, and object/person tracks; see docs/vaa1_forensic_tool_sprint_2026-04-20.md
+AI Agent feature starters:
+selected permissive-component survey has been turned into governed starter contracts for metadata harvesting, webpage comparison, LLM/RAG gateway, report writing, audio commands, and native learning feedback; next wire the starter manifest into Tools/Admin UI and expose explicit opt-in job runners only after source/API/license boundaries are approved; see docs/vaa1_ai_agent_feature_starters_2026-05-09.md

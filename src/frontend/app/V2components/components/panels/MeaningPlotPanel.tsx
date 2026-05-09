@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
@@ -72,7 +72,13 @@ function plotLensTerms(instruction: SecondOrderLabelInstruction, lens: PlotLens)
   const payload = (instruction.source_feature_payload || {}) as Record<string, any>;
   const lenses = (payload.alternative_plot_lenses || {}) as Record<string, unknown>;
   const terms = lenses[lens];
-  return Array.isArray(terms) ? terms.map(String) : [];
+  if (Array.isArray(terms) && terms.length > 0) {
+    return terms.map(String);
+  }
+  if (lens === "freytag" && (PLOT_FAMILIES.has(instruction.target_label_family) || CHARACTER_FAMILIES.has(instruction.target_label_family))) {
+    return [instruction.candidate_label];
+  }
+  return [];
 }
 
 function groupByParticipant(instructions: SecondOrderLabelInstruction[]) {
@@ -88,6 +94,61 @@ function groupByParticipant(instructions: SecondOrderLabelInstruction[]) {
   }
   return [...groups.entries()].sort((left, right) => left[0].localeCompare(right[0]));
 }
+
+interface InstructionItemProps {
+  instruction: SecondOrderLabelInstruction;
+  activeLens: PlotLens;
+  showLens?: boolean;
+  onNavigate: (instruction: SecondOrderLabelInstruction) => void;
+}
+
+const InstructionItem = React.memo(function InstructionItem({
+  instruction,
+  activeLens,
+  showLens,
+  onNavigate,
+}: InstructionItemProps) {
+  const start = secondsFromInstruction(instruction);
+  const end = endSecondsFromInstruction(instruction);
+  const lensTerms = showLens ? plotLensTerms(instruction, activeLens) : [];
+
+  const displayLabel = showLens && lensTerms.length > 0
+    ? `${instruction.target_label_family} / ${lensTerms[0].replaceAll("_", " ")}`
+    : instructionLabel(instruction);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(instruction)}
+      className="w-full rounded border border-slate-800 bg-[#101010] px-2.5 py-2 text-left hover:border-cyan-700/60 hover:bg-cyan-950/10"
+      title={`Jump to source ${formatTime(start)}. Traceback: ${sourceRefSummary(instruction)}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-[12px] text-slate-100">{displayLabel}</div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {formatTime(start)}-{formatTime(end)} • {instruction.status} • {sourceRefSummary(instruction)}
+          </div>
+        </div>
+        <div className="shrink-0 text-[10px] text-cyan-200">
+          {Math.round(confidence(instruction) * 100)}%
+        </div>
+      </div>
+      {lensTerms.length ? (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {lensTerms.slice(0, 4).map((term) => (
+            <span
+              key={`${instruction.instruction_id}:${activeLens}:${term}`}
+              className="rounded border border-cyan-800/50 bg-cyan-950/25 px-1.5 py-0.5 text-[10px] text-cyan-100"
+            >
+              {term.replaceAll("_", " ")}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </button>
+  );
+});
 
 export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { videoId?: string }) {
   const [selectedVideoId, setSelectedVideoId] = useState(initialVideoId);
@@ -134,62 +195,25 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
     () =>
       instructions
         .filter((instruction) => PLOT_FAMILIES.has(instruction.target_label_family))
+        .filter((instruction) => plotLensTerms(instruction, activeLens).length > 0)
         .sort((left, right) => secondsFromInstruction(left) - secondsFromInstruction(right)),
-    [instructions],
+    [instructions, activeLens],
   );
   const characterInstructions = useMemo(
     () =>
       instructions
         .filter((instruction) => CHARACTER_FAMILIES.has(instruction.target_label_family))
+        .filter((instruction) => plotLensTerms(instruction, activeLens).length > 0)
         .sort((left, right) => confidence(right) - confidence(left)),
-    [instructions],
+    [instructions, activeLens],
   );
 
-  const navigateToInstruction = (instruction: SecondOrderLabelInstruction) => {
+  const navigateToInstruction = useCallback((instruction: SecondOrderLabelInstruction) => {
     if (!selectedVideoId) {
       return;
     }
     openVideoAtTime(selectedVideoId, secondsFromInstruction(instruction));
-  };
-
-  const renderInstruction = (instruction: SecondOrderLabelInstruction, options?: { showLens?: boolean }) => {
-    const start = secondsFromInstruction(instruction);
-    const end = endSecondsFromInstruction(instruction);
-    const lensTerms = options?.showLens ? plotLensTerms(instruction, activeLens) : [];
-    return (
-      <button
-        key={instruction.instruction_id}
-        type="button"
-        onClick={() => navigateToInstruction(instruction)}
-        className="w-full rounded border border-slate-800 bg-[#101010] px-2.5 py-2 text-left hover:border-cyan-700/60 hover:bg-cyan-950/10"
-        title={`Jump to source ${formatTime(start)}. Traceback: ${sourceRefSummary(instruction)}`}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate text-[12px] text-slate-100">{instructionLabel(instruction)}</div>
-            <div className="mt-0.5 text-[10px] text-slate-500">
-              {formatTime(start)}-{formatTime(end)} • {instruction.status} • {sourceRefSummary(instruction)}
-            </div>
-          </div>
-          <div className="shrink-0 text-[10px] text-cyan-200">
-            {Math.round(confidence(instruction) * 100)}%
-          </div>
-        </div>
-        {lensTerms.length ? (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {lensTerms.slice(0, 4).map((term) => (
-              <span
-                key={`${instruction.instruction_id}:${activeLens}:${term}`}
-                className="rounded border border-cyan-800/50 bg-cyan-950/25 px-1.5 py-0.5 text-[10px] text-cyan-100"
-              >
-                {term.replaceAll("_", " ")}
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </button>
-    );
-  };
+  }, [selectedVideoId]);
 
   const participantGroups = groupByParticipant(characterInstructions);
 
@@ -253,7 +277,15 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-auto p-2">
                 {plotInstructions.length ? (
-                  plotInstructions.map((instruction) => renderInstruction(instruction, { showLens: true }))
+                  plotInstructions.map((instruction) => (
+                    <InstructionItem
+                      key={instruction.instruction_id}
+                      instruction={instruction}
+                      activeLens={activeLens}
+                      showLens
+                      onNavigate={navigateToInstruction}
+                    />
+                  ))
                 ) : (
                   <div className="px-2 py-3 text-[12px] text-slate-500">
                     No plot-path candidates yet.
@@ -279,7 +311,15 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                         {participant}
                       </div>
                       <div className="space-y-1.5 p-1.5">
-                        {items.slice(0, 8).map((instruction) => renderInstruction(instruction))}
+                        {items.slice(0, 8).map((instruction) => (
+                          <InstructionItem
+                            key={instruction.instruction_id}
+                            instruction={instruction}
+                            activeLens={activeLens}
+                            showLens
+                            onNavigate={navigateToInstruction}
+                          />
+                        ))}
                       </div>
                     </div>
                   ))

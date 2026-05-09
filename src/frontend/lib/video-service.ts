@@ -322,6 +322,51 @@ export interface AudioProsodyCue {
   };
 }
 
+export type MatureEvidenceAuthority =
+  | "manual_correction"
+  | "manual_annotation"
+  | "mature_triangulated"
+  | "interpreted_detection"
+  | "raw_detection";
+
+export interface MasterSchemaResolvedEvidenceRecord {
+  id: string;
+  category:
+    | "transcript"
+    | "object"
+    | "ocr"
+    | "expression"
+    | "manual_annotation"
+    | "identity"
+    | "second_order";
+  label: string;
+  authority: MatureEvidenceAuthority;
+  sourcePanel: string;
+  start?: number;
+  end?: number;
+  rawLabel?: string;
+  targetId?: string;
+}
+
+export interface MasterSchemaResolvedEvidenceView {
+  authorityOrder: MatureEvidenceAuthority[];
+  records: MasterSchemaResolvedEvidenceRecord[];
+  counts: Record<MatureEvidenceAuthority, number>;
+  updatedAt?: string;
+  rawArtifactsPreserved: boolean;
+}
+
+type IdentityResolvedCandidate = {
+  candidate_id?: string;
+  candidate_label?: string;
+  promoted_identity?: string;
+  review_state?: string;
+  evidence?: {
+    time_start?: number;
+    time_end?: number;
+  };
+};
+
 function normalizeAudioProsodyCue(cue: any): AudioProsodyCue {
   const turnStructure = cue?.turn_structure || {};
   const interactionCues = cue?.interaction_cues || {};
@@ -704,6 +749,187 @@ function groupManualVisualAnnotationsByCategory(
       Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
     >,
   );
+}
+
+const MASTER_SCHEMA_AUTHORITY_ORDER: MatureEvidenceAuthority[] = [
+  "manual_correction",
+  "manual_annotation",
+  "mature_triangulated",
+  "interpreted_detection",
+  "raw_detection",
+];
+
+function makeResolvedEvidenceCounts(
+  records: MasterSchemaResolvedEvidenceRecord[],
+): Record<MatureEvidenceAuthority, number> {
+  return MASTER_SCHEMA_AUTHORITY_ORDER.reduce(
+    (counts, authority) => ({
+      ...counts,
+      [authority]: records.filter((record) => record.authority === authority).length,
+    }),
+    {} as Record<MatureEvidenceAuthority, number>,
+  );
+}
+
+function buildMasterSchemaResolvedEvidenceView({
+  transcript,
+  objects,
+  ocr,
+  expressions,
+  nativeAnnotations,
+  corrections,
+  identityRefinement,
+  secondOrderLabelProliferation,
+}: {
+  transcript: TranscriptSegment[];
+  objects: DetectedObject[];
+  ocr: OCR[];
+  expressions: ExpressionSample[];
+  nativeAnnotations: any[];
+  corrections?: AnnotationCorrections | null;
+  identityRefinement?: IdentityRefinementStatus | null;
+  secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
+}): MasterSchemaResolvedEvidenceView {
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+
+  transcript.forEach((segment, index) => {
+    records.push({
+      id: segment.targetId || `transcript:${index}`,
+      category: "transcript",
+      label: segment.text || "Unconfirmed",
+      authority:
+        segment.correctionSource === "manual"
+          ? "manual_annotation"
+          : segment.rawText && segment.rawText !== segment.text
+            ? "manual_correction"
+            : "raw_detection",
+      sourcePanel: "Transcript",
+      start: segment.start,
+      end: segment.end,
+      rawLabel: segment.rawText,
+      targetId: segment.targetId,
+    });
+  });
+
+  objects.forEach((item, index) => {
+    const label = item.displayLabel || item.class_name || "object";
+    records.push({
+      id: item.trackId !== undefined ? `object:${item.trackId}` : `object:${index}`,
+      category: "object",
+      label,
+      authority:
+        item.sourceType === "manual_visual"
+          ? "manual_annotation"
+          : item.raw_class_name && item.raw_class_name !== label
+            ? "manual_correction"
+            : item.screenPresenceProfile
+              ? "interpreted_detection"
+              : "raw_detection",
+      sourcePanel: item.sourceType === "manual_visual" ? "MasterSchema" : "OBJDetection",
+      start: item.startTimestamp ?? item.timestamp,
+      end: item.endTimestamp ?? item.timestamp,
+      rawLabel: item.raw_class_name,
+      targetId: item.trackId !== undefined ? String(item.trackId) : undefined,
+    });
+  });
+
+  ocr.forEach((item, index) => {
+    records.push({
+      id: `ocr:${index}:${item.timestamp}`,
+      category: "ocr",
+      label: item.text || "OCR text",
+      authority: item.rawText && item.rawText !== item.text ? "manual_correction" : "raw_detection",
+      sourcePanel: "OCR",
+      start: item.timestamp,
+      end: item.timestamp,
+      rawLabel: item.rawText,
+    });
+  });
+
+  expressions.forEach((item, index) => {
+    const label = item.interpreted_expression?.label || item.dominant_emotion || "expression";
+    records.push({
+      id: `expression:${index}:${item.timestamp}`,
+      category: "expression",
+      label,
+      authority:
+        item.rawDominantEmotion && item.rawDominantEmotion !== item.dominant_emotion
+          ? "manual_correction"
+          : item.interpreted_expression?.label
+            ? "interpreted_detection"
+            : "raw_detection",
+      sourcePanel: "Expressions",
+      start: item.timestamp,
+      end: item.timestamp,
+      rawLabel: item.rawDominantEmotion || undefined,
+    });
+  });
+
+  nativeAnnotations.forEach((item, index) => {
+    records.push({
+      id: item.id || `manual:${index}`,
+      category: "manual_annotation",
+      label: item.custom_label || item.label || item.open_note || item.category || "manual annotation",
+      authority: "manual_annotation",
+      sourcePanel: "MasterSchema",
+      start: item.start_seconds ?? item.timestamp_seconds,
+      end: item.end_seconds ?? item.timestamp_seconds,
+      targetId: item.id,
+    });
+  });
+
+  const identityCandidates =
+    ((identityRefinement as IdentityRefinementStatus & {
+      candidates?: IdentityResolvedCandidate[];
+    })?.candidates || []);
+  if (identityCandidates.length) {
+    identityCandidates.forEach((candidate, index) => {
+      const label = candidate.promoted_identity || candidate.candidate_label || candidate.candidate_id;
+      if (!label) return;
+      records.push({
+        id: candidate.candidate_id || `identity:${index}`,
+        category: "identity",
+        label,
+        authority: candidate.review_state === "promoted" ? "mature_triangulated" : "interpreted_detection",
+        sourcePanel: "MasterSchema",
+        start: candidate.evidence?.time_start,
+        end: candidate.evidence?.time_end,
+        targetId: candidate.candidate_id,
+      });
+    });
+  }
+
+  const secondOrderItems = secondOrderLabelProliferation?.instructions || [];
+  secondOrderItems.slice(0, 100).forEach((candidate, index) => {
+    const label = candidate.candidate_label || candidate.target_label_family;
+    if (!label) return;
+    records.push({
+      id: candidate.instruction_id || `second_order:${index}`,
+      category: "second_order",
+      label,
+      authority: "mature_triangulated",
+      sourcePanel: "MasterSchema",
+      start:
+        candidate.time_span?.start ??
+        (candidate.time_span?.start_ms !== undefined
+          ? Number(candidate.time_span.start_ms) / 1000
+          : undefined),
+      end:
+        candidate.time_span?.end ??
+        (candidate.time_span?.end_ms !== undefined
+          ? Number(candidate.time_span.end_ms) / 1000
+          : undefined),
+      targetId: candidate.instruction_id,
+    });
+  });
+
+  return {
+    authorityOrder: MASTER_SCHEMA_AUTHORITY_ORDER,
+    records,
+    counts: makeResolvedEvidenceCounts(records),
+    updatedAt: corrections?.updated_at,
+    rawArtifactsPreserved: true,
+  };
 }
 
 function applyAnnotationCorrectionsToRawObjects(
@@ -1477,6 +1703,7 @@ export interface AnalysisData {
   manualAnnotationsByCategory?: Partial<
     Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
   >;
+  masterSchemaResolvedEvidence?: MasterSchemaResolvedEvidenceView;
   annotationCorrections?: AnnotationCorrections | null;
   forensicRenderJobs?: ForensicRenderJob[];
   sourceSamples?: SourceSample[];
@@ -2836,6 +3063,16 @@ export class VideoService {
           : undefined,
         corrections,
       );
+      const masterSchemaResolvedEvidence = buildMasterSchemaResolvedEvidenceView({
+        transcript: correctedTranscript,
+        objects: mergedProfiledObjects,
+        ocr: correctedOCR,
+        expressions: correctedExpressions,
+        nativeAnnotations,
+        corrections,
+        identityRefinement: status.identity_refinement || null,
+        secondOrderLabelProliferation: status.second_order_label_proliferation || null,
+      });
 
       const analysisData = {
         quantAnalysis: correctedQuantAnalysis,
@@ -2852,6 +3089,7 @@ export class VideoService {
         quantityDetection: mergedProfiledObjects,
         annotations: nativeAnnotations,
         manualAnnotationsByCategory,
+        masterSchemaResolvedEvidence,
         annotationCorrections: corrections,
         forensicRenderJobs: status.forensic_render_jobs || [],
         sourceSamples: status.source_samples || [],

@@ -4,6 +4,38 @@ VAA1 is an open-source pipeline designed to automate the first stages of video a
 
 ---
 
+## Quick Start On Mac For Local Development
+
+The current Mac development startup path is:
+
+```bash
+bash scripts/start_vaa1_macos.sh
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3001/dashboard
+```
+
+For first setup, dependency repair, or after Mac environment files change:
+
+```bash
+bash scripts/start_vaa1_macos.sh --setup-envs --replace
+```
+
+The Mac launcher uses the repository Conda environments:
+
+* `vaa1_core` from `environment-MacOS-core.yml`
+* `vaa1_face` from `environment-MacOS-face.yml`
+
+It binds services to `127.0.0.1`, keeps runtime caches inside `.cache/vaa1-runtime`, checks the
+backend health route, and verifies that the evidence proliferation matching route is present.
+See `docs/vaa1_macos_startup_runbook_2026-05-03.md` for recovery options and manual fallback
+commands.
+
+---
+
 ## Quick Start (Recommended — One‑Click on Windows)
 
 VAA1 is currently being tested on **Windows** and can be run using a **single installer or launcher**. No terminal usage is required.

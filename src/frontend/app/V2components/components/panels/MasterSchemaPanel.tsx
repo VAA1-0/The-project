@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
-import { VideoService } from "@/lib/video-service";
+import {
+  VideoService,
+  type AnalysisData,
+  type MatureEvidenceAuthority,
+} from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import type {
   IdentityCandidate,
@@ -17,27 +21,24 @@ import {
   closeManualAnnotationInVideo,
   openManualAnnotationInVideo,
 } from "@/lib/video-navigation";
-import {
-  SecondOrderLabelAffirmationChips,
-  SecondOrderLabelReviewTray,
-} from "./SecondOrderLabelAffirmations";
+import { useLayoutHost } from "../LayoutHost";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
-  "OBJ",
-  "OCR",
-  "Expressions",
-  "Cinematic Cues",
+  "Action",
   "Audio",
-  "Transcription",
+  "Cinematic Cues",
+  "Expressions",
   "Genre",
-  "Scene",
-  "Role",
   "Identification",
   "Interaction",
-  "Action",
-  "Movement",
   "Metadata",
+  "Movement",
   "Notes",
+  "OBJ",
+  "OCR",
+  "Role",
+  "Scene",
+  "Transcription",
 ];
 
 const MANUAL_SUBCATEGORIES: Record<ManualVisualAnnotation["category"], string[]> = {
@@ -172,25 +173,9 @@ function getManualAnnotationTitle(item: ManualVisualAnnotation): string {
   return item.label || item.custom_label || "Manual annotation";
 }
 
-function getManualAnnotationSourceLabel(item: ManualVisualAnnotation): string {
-  const targetLabel = String(item.metadata_correlation?.target_label || "").trim();
-  const targetId = item.metadata_correlation?.target_id;
-  const targetType = String(item.metadata_correlation?.target_type || "").trim();
-  if (targetLabel) {
-    return targetLabel;
-  }
-  if (targetType && targetId !== undefined && targetId !== null) {
-    return `${targetType} ${targetId}`;
-  }
-  return "";
-}
-
 function getManualAnnotationDetail(item: ManualVisualAnnotation): string {
   const details = [
     item.subcategory || "Unspecified subcategory",
-    getManualAnnotationSourceLabel(item)
-      ? `source: ${getManualAnnotationSourceLabel(item)}`
-      : "",
     item.label && item.label !== getManualAnnotationTitle(item) ? item.label : "",
     item.identity_affirmation && item.category !== "Identification"
       ? `identity: ${item.identity_affirmation}`
@@ -429,6 +414,44 @@ function AutomaticEvidenceSection({
   return null;
 }
 
+function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | null }) {
+  const resolved = analysisData?.masterSchemaResolvedEvidence;
+  if (!resolved) return null;
+  const labels: Record<string, string> = {
+    manual_correction: "Manual corrections",
+    manual_annotation: "Manual annotations",
+    mature_triangulated: "Triangulated",
+    interpreted_detection: "Interpreted",
+    raw_detection: "Raw",
+  };
+  const order: MatureEvidenceAuthority[] = resolved.authorityOrder || [];
+  const counts = resolved.counts || {};
+  return (
+    <section className="mb-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-200">
+            Mature Evidence View
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
+            Master Schema first-read layer; raw repositories remain preserved.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {order.map((authority) => (
+            <span
+              key={authority}
+              className="rounded border border-slate-700 bg-[#111214] px-2 py-1 text-[10px] text-slate-200"
+            >
+              {labels[authority] || authority}: {counts[authority] || 0}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function MasterSchemaPanel({
   videoId: initialVideoId = "",
   category,
@@ -440,6 +463,7 @@ export default function MasterSchemaPanel({
   panelTitle?: string;
   panelDescription?: string;
 }) {
+  const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [identityLedger, setIdentityLedger] =
@@ -777,16 +801,26 @@ export default function MasterSchemaPanel({
         <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
           {panelTitle}
         </span>
-        <span className="text-[10px] text-[var(--ui-passive-text)]">
-          {totalAnnotations} manual annotation{totalAnnotations === 1 ? "" : "s"}
-        </span>
+        <div className="flex items-center gap-2">
+          {category === "Scene" && (
+            <button
+              type="button"
+              onClick={() => openPanel("SceneCards", videoId ? { videoId } : {})}
+              className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-200 hover:border-lime-500/70 hover:bg-lime-950/20"
+            >
+              Scene Cards
+            </button>
+          )}
+          <span className="text-[10px] text-[var(--ui-passive-text)]">
+            {totalAnnotations} manual annotation{totalAnnotations === 1 ? "" : "s"}
+          </span>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
         <div className="my-2 rounded border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-[11px] text-sky-100">
           {panelDescription}
         </div>
-        <SecondOrderLabelReviewTray plan={analysisData?.secondOrderLabelProliferation} />
 
         {isLoading ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
@@ -794,6 +828,7 @@ export default function MasterSchemaPanel({
           </div>
         ) : (
           <>
+            <MatureEvidenceStrip analysisData={analysisData} />
             <AutomaticEvidenceSection
               category={category}
               analysisData={analysisData}
@@ -863,23 +898,6 @@ export default function MasterSchemaPanel({
                               {item.open_note}
                             </div>
                           ) : null}
-                          <div className="mt-1">
-                            <SecondOrderLabelAffirmationChips
-                              plan={analysisData?.secondOrderLabelProliferation}
-                              surface="master_schema"
-                              targetLabelFamilies={[item.category]}
-                              timeSpan={{
-                                start: item.start_seconds ?? item.timestamp_seconds ?? 0,
-                                end:
-                                  item.end_seconds ??
-                                  item.start_seconds ??
-                                  item.timestamp_seconds ??
-                                  0,
-                              }}
-                              compact
-                              limit={3}
-                            />
-                          </div>
                         </button>
 
                         {selected ? (

@@ -52,13 +52,15 @@ import {
   getPrimarySecondOrderInstruction,
   SecondOrderLabelAffirmationChips,
 } from "./SecondOrderLabelAffirmations";
-import type { ManualVisualAnnotation } from "@/lib/api-service";
+import { apiService, type EvidenceProliferationCandidate, type ManualVisualAnnotation } from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
 const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
 const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
 const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 0.5;
+const SELECTED_OVERLAY_STACK_RANK = 50000;
+const VIDEO_CONTROL_CLEARANCE_PX = 52;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -178,7 +180,12 @@ type ProliferationLauncherState = {
   open: boolean;
   scope: ProliferationScope;
   target: ProliferationTarget;
+  requestProgress?: number;
+  matchingProgress?: number;
+  candidateCount?: number;
+  candidates?: EvidenceProliferationCandidate[];
   message?: string;
+  error?: string;
 };
 
 const PROLIFERATION_SCOPE_OPTIONS: Array<{
@@ -214,6 +221,8 @@ const DEFAULT_PROLIFERATION_LAUNCHER: ProliferationLauncherState = {
   open: false,
   scope: "same_video",
   target: "character_continuity",
+  requestProgress: 0,
+  matchingProgress: 0,
 };
 
 type PendingObjectOverlayEdit = {
@@ -234,6 +243,15 @@ type LocalObjectLabelOverride = {
   label: string;
   start?: number;
   end?: number;
+};
+
+type StoredProliferationMatch = {
+  videoId?: string;
+  overlayKey?: string;
+  request_id?: string;
+  candidate_count?: number;
+  candidates?: EvidenceProliferationCandidate[];
+  updated_at?: string;
 };
 
 type ForensicRegionSelectedPayload = {
@@ -264,13 +282,13 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
   value: ForensicRoiIntent;
   label: string;
 }> = [
-  { value: "identification", label: "Identification" },
   { value: "expression", label: "Expressions" },
+  { value: "identification", label: "Identification" },
+  { value: "interaction", label: "Interaction" },
   { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
-  { value: "object", label: "Object" },
   { value: "ocr", label: "OCR" },
-  { value: "interaction", label: "Interaction" },
+  { value: "object", label: "Object" },
   { value: "other", label: "Other" },
 ];
 
@@ -570,6 +588,132 @@ function formatPreciseTime(value: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
+function formatCandidateTime(candidate: EvidenceProliferationCandidate): string {
+  const start = Number(candidate.time?.start);
+  const end = Number(candidate.time?.end);
+  if (!Number.isFinite(start)) {
+    return "time open";
+  }
+  if (!Number.isFinite(end) || Math.abs(end - start) < 0.001) {
+    return formatPreciseTime(start);
+  }
+  return `${formatPreciseTime(start)}-${formatPreciseTime(end)}`;
+}
+
+function formatCandidateSource(value?: string): string {
+  return String(value || "evidence")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function candidateProbability(candidate: EvidenceProliferationCandidate): number {
+  return Number(candidate.match_probability ?? candidate.match_score ?? 0);
+}
+
+function loadStoredProliferationMatches(): StoredProliferationMatch[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem("vaa1.proliferation.matches") || "[]",
+    );
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sourceEvidenceFromCandidate(
+  candidate: EvidenceProliferationCandidate,
+): Record<string, unknown> {
+  const sourceEvidence = candidate.provenance?.source_evidence;
+  return sourceEvidence && typeof sourceEvidence === "object" && !Array.isArray(sourceEvidence)
+    ? sourceEvidence as Record<string, unknown>
+    : {};
+}
+
+function candidateTrackTargetId(candidate: EvidenceProliferationCandidate): string | null {
+  const rawTrackId = candidate.raw?.track_id ?? candidate.raw?.trackId;
+  if (rawTrackId !== undefined && rawTrackId !== null) {
+    return String(rawTrackId);
+  }
+  const evidenceId = String(candidate.evidence_id || "");
+  const objectMatch = evidenceId.match(/^object:(.+)$/);
+  return objectMatch?.[1] || null;
+}
+
+function isMatureProliferationCandidate(
+  candidate: EvidenceProliferationCandidate,
+): boolean {
+  if (isManualProliferationCandidate(candidate)) {
+    return false;
+  }
+  const reviewState = String(candidate.review_state || "").toLowerCase();
+  if (
+    [
+      "supported",
+      "probable",
+      "strong_support",
+      "strongly_supported",
+      "analyst_supported",
+      "confirmed",
+    ].includes(reviewState)
+  ) {
+    return true;
+  }
+  return candidateProbability(candidate) >= 0.5;
+}
+
+function resolveProliferatedDisplayLabel(
+  candidate: EvidenceProliferationCandidate,
+): string {
+  const sourceEvidence = sourceEvidenceFromCandidate(candidate);
+  const sourceLabel =
+    String(sourceEvidence.label || sourceEvidence.source_label || "").trim();
+  const targetLabel = String(candidate.label || "").trim();
+  const normalizedSource = normalizeEvidenceLabel(sourceLabel);
+  const normalizedTarget = normalizeEvidenceLabel(targetLabel);
+
+  if (
+    sourceLabel &&
+    normalizedSource &&
+    normalizedSource !== normalizedTarget &&
+    !["object", "person", "track"].includes(normalizedSource)
+  ) {
+    return sourceLabel;
+  }
+  return targetLabel || sourceLabel || "proliferated candidate";
+}
+
+function isInteractiveElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return Boolean(
+    target.closest("input, textarea, select, button, [contenteditable='true']"),
+  );
+}
+
+function isManualProliferationCandidate(candidate: EvidenceProliferationCandidate): boolean {
+  return candidate.source_panel === "manual_visual_annotations" ||
+    candidate.source_kind === "manual_annotation" ||
+    candidate.source_kind === "manual_correction";
+}
+
+function orderVisibleProliferationCandidates(
+  candidates: EvidenceProliferationCandidate[],
+): EvidenceProliferationCandidate[] {
+  return [...candidates].sort((left, right) => {
+    const leftManual = isManualProliferationCandidate(left);
+    const rightManual = isManualProliferationCandidate(right);
+    if (leftManual !== rightManual) {
+      return leftManual ? 1 : -1;
+    }
+    return candidateProbability(right) - candidateProbability(left);
+  });
+}
+
 function parsePreciseTimeInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -596,7 +740,7 @@ function getOverlayStackRank(
   modality: OverlayBox["modality"],
   normalizedBox: DraftBox,
 ): number {
-  const area = Math.max(0.000001, normalizedBox.w * normalizedBox.h);
+  const area = clamp(Math.max(0.000001, normalizedBox.w * normalizedBox.h), 0, 1);
   const specificity =
     modality === "expression"
       ? 4000
@@ -605,7 +749,8 @@ function getOverlayStackRank(
         : modality === "manual"
           ? 2000
           : 1000;
-  return specificity + Math.round(1000000 / area);
+  const smallBoxPriority = Math.round((1 - area) * 900);
+  return specificity + smallBoxPriority;
 }
 
 function resolveObjectOverlayBBox(
@@ -706,6 +851,34 @@ function normalizeDraftBox(box: DraftBox): DraftBox {
   };
 }
 
+function calculateDraftBoxIoU(left: DraftBox | null, right: DraftBox | null): number {
+  if (!left || !right) {
+    return 0;
+  }
+  const leftX2 = left.x + left.w;
+  const leftY2 = left.y + left.h;
+  const rightX2 = right.x + right.w;
+  const rightY2 = right.y + right.h;
+  const intersectionW = Math.max(0, Math.min(leftX2, rightX2) - Math.max(left.x, right.x));
+  const intersectionH = Math.max(0, Math.min(leftY2, rightY2) - Math.max(left.y, right.y));
+  const intersection = intersectionW * intersectionH;
+  if (intersection <= 0) {
+    return 0;
+  }
+  const union = (left.w * left.h) + (right.w * right.h) - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function calculateDraftBoxCenterDistance(left: DraftBox | null, right: DraftBox | null): number {
+  if (!left || !right) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.hypot(
+    left.x + left.w / 2 - (right.x + right.w / 2),
+    left.y + left.h / 2 - (right.y + right.h / 2),
+  );
+}
+
 function detectedObjectToNormalizedBox(
   item: DetectedObject | undefined,
   videoWidth: number,
@@ -735,6 +908,66 @@ function detectedObjectToNormalizedBox(
     });
   }
   return null;
+}
+
+function geometryToNormalizedBox(
+  geometry: unknown,
+  videoWidth: number,
+  videoHeight: number,
+): DraftBox | null {
+  const geometryRecord =
+    geometry && typeof geometry === "object" && !Array.isArray(geometry)
+      ? geometry as Record<string, unknown>
+      : null;
+  const rawBox =
+    geometryRecord?.bbox && typeof geometryRecord.bbox === "object"
+      ? geometryRecord.bbox as Record<string, unknown>
+      : geometryRecord;
+  if (!rawBox) {
+    return null;
+  }
+  const x = Number(rawBox.x ?? rawBox.left ?? rawBox.x1);
+  const y = Number(rawBox.y ?? rawBox.top ?? rawBox.y1);
+  const rawWidth = Number(rawBox.width ?? rawBox.w);
+  const rawHeight = Number(rawBox.height ?? rawBox.h);
+  const x2 = Number(rawBox.x2);
+  const y2 = Number(rawBox.y2);
+  let width = Number.isFinite(rawWidth) ? rawWidth : Number.NaN;
+  let height = Number.isFinite(rawHeight) ? rawHeight : Number.NaN;
+  if (!Number.isFinite(width) && Number.isFinite(x) && Number.isFinite(x2)) {
+    width = x2 - x;
+  }
+  if (!Number.isFinite(height) && Number.isFinite(y) && Number.isFinite(y2)) {
+    height = y2 - y;
+  }
+  if (![x, y, width, height].every(Number.isFinite) || width === 0 || height === 0) {
+    return null;
+  }
+  const values = [x, y, x + width, y + height].map(Math.abs);
+  const appearsNormalized = Math.max(...values) <= 1.5;
+  const scaleX = appearsNormalized ? 1 : Math.max(1, videoWidth);
+  const scaleY = appearsNormalized ? 1 : Math.max(1, videoHeight);
+  return normalizeDraftBox({
+    x: Math.min(x, x + width) / scaleX,
+    y: Math.min(y, y + height) / scaleY,
+    w: Math.abs(width) / scaleX,
+    h: Math.abs(height) / scaleY,
+  });
+}
+
+function isSameSpaceBoxMatch(left: DraftBox | null, right: DraftBox | null): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  const iou = calculateDraftBoxIoU(left, right);
+  if (iou >= 0.45) {
+    return true;
+  }
+  const centerDistance = calculateDraftBoxCenterDistance(left, right);
+  const areaRatio =
+    Math.min(left.w * left.h, right.w * right.h) /
+    Math.max(left.w * left.h, right.w * right.h, 0.000001);
+  return iou >= 0.25 && centerDistance <= 0.06 && areaRatio >= 0.35;
 }
 
 function interpolateBoxes(
@@ -1135,7 +1368,7 @@ function buildLocalObjectOverlays(
   const accepted: DetectedObject[] = [];
 
   for (const item of sorted) {
-    const duplicate = accepted.find((existing) => {
+    const duplicateIndex = accepted.findIndex((existing) => {
       if (existing.class_name !== item.class_name) {
         return false;
       }
@@ -1145,7 +1378,29 @@ function buildLocalObjectOverlays(
       return iou >= 0.45 || (item.class_name !== "person" && distance <= 70);
     });
 
-    if (duplicate) {
+    if (duplicateIndex >= 0) {
+      const existing = accepted[duplicateIndex];
+      const existingCount = existing.occurrenceCount || 1;
+      const itemCount = item.occurrenceCount || 1;
+      const duplicateTrackIds = new Set(
+        [
+          ...(((existing as any).duplicateTrackIds as Array<number | string> | undefined) || []),
+          existing.trackId,
+          item.trackId,
+        ].filter((value) => value !== undefined && value !== null),
+      );
+      const stronger = (item.confidence || 0) > (existing.confidence || 0) ? item : existing;
+      accepted[duplicateIndex] = {
+        ...stronger,
+        occurrenceCount: existingCount + itemCount,
+        displayLabel:
+          item.class_name === "person"
+            ? `Person track x${existingCount + itemCount}`
+            : stronger.displayLabel || stronger.class_name,
+        ...(duplicateTrackIds.size > 0
+          ? { duplicateTrackIds: Array.from(duplicateTrackIds) }
+          : {}),
+      } as DetectedObject;
       continue;
     }
 
@@ -1153,7 +1408,17 @@ function buildLocalObjectOverlays(
       isFallbackPersonDetection(item)
         ? {
             ...item,
-            displayLabel: item.displayLabel || "person • fallback",
+            displayLabel: item.displayLabel || "Person track • fallback",
+          }
+        : item.class_name === "person"
+        ? {
+            ...item,
+            displayLabel:
+              item.displayLabel &&
+              normalizeEvidenceLabel(item.displayLabel) !== "person" &&
+              !normalizeEvidenceLabel(item.displayLabel).startsWith("person track")
+                ? item.displayLabel
+                : "Person track",
           }
         : item,
     );
@@ -1540,6 +1805,9 @@ export default function VideoPanel() {
   const [localObjectLabelOverrides, setLocalObjectLabelOverrides] = useState<
     LocalObjectLabelOverride[]
   >([]);
+  const [storedProliferationMatches, setStoredProliferationMatches] = useState<
+    StoredProliferationMatch[]
+  >(() => loadStoredProliferationMatches());
   const [annotationWorkspaceActive, setAnnotationWorkspaceActive] = useState(false);
   const [nativeAnnotationMode, setNativeAnnotationMode] = useState(false);
   const [forensicRoiMode, setForensicRoiMode] = useState(false);
@@ -1743,10 +2011,50 @@ export default function VideoPanel() {
 
   const nudgeTime = React.useCallback(
     (deltaSeconds: number) => {
-      jumpToTime(currentTime + deltaSeconds);
+      const baseTime = videoRef.current?.currentTime ?? currentTime;
+      jumpToTime(baseTime + deltaSeconds);
     },
     [currentTime, jumpToTime],
   );
+
+  const togglePrimaryPlayback = React.useCallback(() => {
+    const videoElement = videoRef.current;
+    if (!videoElement) {
+      return;
+    }
+    if (videoElement.paused || videoElement.ended) {
+      void videoElement.play().catch(() => {});
+    } else {
+      videoElement.pause();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!videoId || isInteractiveElement(event.target)) {
+        return;
+      }
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        togglePrimaryPlayback();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        nudgeTime(event.shiftKey ? -0.1 : -1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        nudgeTime(event.shiftKey ? 0.1 : 1);
+      }
+    };
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
+  }, [nudgeTime, togglePrimaryPlayback, videoId]);
 
   const setSingleSourceMark = React.useCallback(
     (mark: "a" | "b") => {
@@ -2110,6 +2418,10 @@ export default function VideoPanel() {
       eventBus.off<string>("workspacePresetChanged", handler);
     };
   }, []);
+
+  useEffect(() => {
+    setStoredProliferationMatches(loadStoredProliferationMatches());
+  }, [videoId]);
 
   useEffect(() => {
     const handler = () => {
@@ -3056,10 +3368,84 @@ export default function VideoPanel() {
         currentTime <= Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
       );
     });
+    const activeManualSpatialOverrides = allManualVisualAnnotations
+      .map((item) => {
+        if (
+          item.geometry_type !== "box" ||
+          !(
+            isManualAnnotationVisibleAtTime(item, currentTime) ||
+            isManualAnnotationVisibleInSelectedWorkspace(item)
+          )
+        ) {
+          return null;
+        }
+        const box = resolveManualGeometryAtTime(item, currentTime);
+        return box ? { item, box } : null;
+      })
+      .filter(Boolean) as Array<{ item: ManualVisualAnnotation; box: DraftBox }>;
+    const matureProliferationByObjectTrack = new Map<
+      string,
+      { candidate: EvidenceProliferationCandidate; updatedAt: number }
+    >();
+    const matureProliferationSpatialCandidates: Array<{
+      candidate: EvidenceProliferationCandidate;
+      box: DraftBox;
+      updatedAt: number;
+    }> = [];
+    storedProliferationMatches.forEach((match) => {
+      if (match.videoId && match.videoId !== videoId) {
+        return;
+      }
+      const updatedAt = Date.parse(match.updated_at || "");
+      const matchUpdatedAt = Number.isFinite(updatedAt) ? updatedAt : 0;
+      (match.candidates || []).forEach((candidate) => {
+        if (!isMatureProliferationCandidate(candidate)) {
+          return;
+        }
+        const trackId = candidateTrackTargetId(candidate);
+        const start = Number(candidate.time?.start);
+        const end = Number(candidate.time?.end ?? start);
+        if (
+          Number.isFinite(start) &&
+          currentTime < Math.min(start, end) - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+        ) {
+          return;
+        }
+        if (
+          Number.isFinite(end) &&
+          currentTime > Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+        ) {
+          return;
+        }
+        const candidateBox = geometryToNormalizedBox(candidate.geometry, videoWidth, videoHeight);
+        if (candidateBox) {
+          matureProliferationSpatialCandidates.push({
+            candidate,
+            box: candidateBox,
+            updatedAt: matchUpdatedAt,
+          });
+        }
+        if (trackId) {
+          const existing = matureProliferationByObjectTrack.get(trackId);
+          const candidateScore =
+            matchUpdatedAt + (candidateProbability(candidate) * 1000);
+          const existingScore = existing
+            ? existing.updatedAt + (candidateProbability(existing.candidate) * 1000)
+            : Number.NEGATIVE_INFINITY;
+          if (!existing || candidateScore > existingScore) {
+            matureProliferationByObjectTrack.set(trackId, {
+              candidate,
+              updatedAt: matchUpdatedAt,
+            });
+          }
+        }
+      });
+    });
 
     if (overlayToggles.objects) {
       activeRawObjects.forEach((item: DetectedObject, index: number) => {
         const targetId = objectTrackTargetId(item);
+        const objectNormalizedBox = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
         const manualOverride = (() => {
           const trackMatches =
             targetId && manualOverridesByObjectTrack.has(targetId)
@@ -3092,6 +3478,24 @@ export default function VideoPanel() {
               return manualOverridesBySourceLabel.get(label);
             }
           }
+          if (objectNormalizedBox) {
+            const spatialMatches = activeManualSpatialOverrides
+              .filter(({ item: manualItem, box }) => {
+                const manualLabel = resolveManualVisualDisplayLabel(manualItem);
+                return (
+                  Boolean(manualLabel) &&
+                  isSameSpaceBoxMatch(objectNormalizedBox, box)
+                );
+              })
+              .sort(
+                (left, right) =>
+                  calculateDraftBoxIoU(objectNormalizedBox, right.box) -
+                  calculateDraftBoxIoU(objectNormalizedBox, left.box),
+              );
+            if (spatialMatches[0]) {
+              return spatialMatches[0].item;
+            }
+          }
           return undefined;
         })();
         const manualOverrideActive =
@@ -3115,6 +3519,33 @@ export default function VideoPanel() {
             const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
             return sameTrack || Boolean(overrideSource && sourceLabels.includes(overrideSource));
           });
+        })();
+        const matureProliferatedOverride = (() => {
+          if (manualOverrideActive || localOverride) {
+            return undefined;
+          }
+          const trackCandidate = targetId
+            ? matureProliferationByObjectTrack.get(targetId)?.candidate
+            : undefined;
+          if (trackCandidate) {
+            return trackCandidate;
+          }
+          if (!objectNormalizedBox) {
+            return undefined;
+          }
+          return matureProliferationSpatialCandidates
+            .filter(({ box }) => isSameSpaceBoxMatch(objectNormalizedBox, box))
+            .sort((left, right) => {
+              const rightScore =
+                calculateDraftBoxIoU(objectNormalizedBox, right.box) * 2 +
+                candidateProbability(right.candidate) +
+                right.updatedAt / 10000000000000;
+              const leftScore =
+                calculateDraftBoxIoU(objectNormalizedBox, left.box) * 2 +
+                candidateProbability(left.candidate) +
+                left.updatedAt / 10000000000000;
+              return rightScore - leftScore;
+            })[0]?.candidate;
         })();
         const resolvedBox =
           manualOverrideActive && manualOverride?.geometry_type === "box"
@@ -3145,11 +3576,16 @@ export default function VideoPanel() {
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
           label: localOverride?.label ||
+            (matureProliferatedOverride
+              ? resolveProliferatedDisplayLabel(matureProliferatedOverride)
+              : undefined) ||
             (manualOverrideActive
             ? resolveManualVisualDisplayLabel(manualOverride)
             : item.displayLabel || item.class_name),
           color: localOverride || manualOverrideActive
             ? "border-emerald-300/80 bg-emerald-300/10"
+            : matureProliferatedOverride
+            ? "border-sky-300/85 bg-sky-300/10"
             : isFallbackPersonDetection(item)
             ? "border-amber-300/80 bg-amber-300/10"
             : "border-cyan-300/70 bg-transparent",
@@ -3162,6 +3598,12 @@ export default function VideoPanel() {
               ? {
                   ...item,
                   manual_annotation: manualOverride,
+                }
+              : matureProliferatedOverride
+              ? {
+                  ...item,
+                  proliferated_annotation: matureProliferatedOverride,
+                  displayLabel: resolveProliferatedDisplayLabel(matureProliferatedOverride),
                 }
               : item,
         });
@@ -3317,6 +3759,7 @@ export default function VideoPanel() {
     overlayToggles,
     resolveManualGeometryAtTime,
     isManualAnnotationVisibleInSelectedWorkspace,
+    storedProliferationMatches,
     duration,
     selectedIndicationEdits,
     selectedOverlayKey,
@@ -3650,6 +4093,20 @@ export default function VideoPanel() {
       launcher: ProliferationLauncherState,
       sourceLabel: string,
     ) => {
+      const normalizedBox = getOverlayNormalizedBox(overlay);
+      const sourceItem =
+        overlay.sourceItem && typeof overlay.sourceItem === "object"
+          ? (overlay.sourceItem as Record<string, unknown>)
+          : {};
+      const sourceCorrelation =
+        sourceItem.metadata_correlation && typeof sourceItem.metadata_correlation === "object"
+          ? (sourceItem.metadata_correlation as Record<string, unknown>)
+          : {};
+      const sourceTrackId =
+        sourceItem.trackId ??
+        sourceItem.track_id ??
+        sourceCorrelation.target_id ??
+        sourceCorrelation.track_id;
       const request = {
         request_id: `proliferate-${Date.now()}-${overlay.key}`,
         created_at: new Date().toISOString(),
@@ -3660,6 +4117,22 @@ export default function VideoPanel() {
           label: edit.label || overlay.label,
           source_label: sourceLabel || overlay.label,
           category: edit.category,
+          source_track_id:
+            sourceTrackId !== undefined && sourceTrackId !== null ? String(sourceTrackId) : undefined,
+          source_target_type:
+            typeof sourceCorrelation.target_type === "string"
+              ? sourceCorrelation.target_type
+              : overlay.modality,
+          geometry: {
+            geometry_type: "bbox",
+            coordinate_system: "normalized",
+            bbox: {
+              x: Number(normalizedBox.x.toFixed(6)),
+              y: Number(normalizedBox.y.toFixed(6)),
+              width: Number(normalizedBox.w.toFixed(6)),
+              height: Number(normalizedBox.h.toFixed(6)),
+            },
+          },
           interval: {
             start: Number(edit.start.toFixed(3)),
             end: Number(edit.end.toFixed(3)),
@@ -3686,10 +4159,70 @@ export default function VideoPanel() {
       eventBus.emit("evidenceProliferationRequested", request);
       updateSelectedOverlayProliferation(overlay.key, {
         open: true,
-        message: "Candidate search request prepared.",
+        requestProgress: 100,
+        matchingProgress: 25,
+        candidateCount: 0,
+        candidates: [],
+        error: undefined,
+        message: "Request prepared. Matching candidates...",
       });
+      void apiService
+        .matchEvidenceProliferation(videoId, request)
+        .then((result) => {
+          eventBus.emit("evidenceProliferationMatched", {
+            videoId,
+            overlayKey: overlay.key,
+            request,
+            result,
+          });
+          if (typeof window !== "undefined") {
+            const storageKey = "vaa1.proliferation.matches";
+            const existing = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+            const nextMatches = [
+              {
+                videoId,
+                overlayKey: overlay.key,
+                request_id: result.request_id,
+                candidate_count: result.candidate_count,
+                candidates: result.candidates || [],
+                updated_at: new Date().toISOString(),
+              },
+              ...(Array.isArray(existing) ? existing : []),
+            ].slice(0, 25);
+            window.localStorage.setItem(storageKey, JSON.stringify(nextMatches));
+            setStoredProliferationMatches(nextMatches);
+          }
+          updateSelectedOverlayProliferation(overlay.key, {
+            open: true,
+            requestProgress: result.progress?.request_preparation ?? 100,
+            matchingProgress: result.progress?.candidate_matching ?? 100,
+            candidateCount: result.candidate_count ?? result.candidates?.length ?? 0,
+            candidates: result.candidates || [],
+            error: undefined,
+            message: `Candidate matching complete: ${
+              result.candidate_count ?? result.candidates?.length ?? 0
+            } candidate${(result.candidate_count ?? result.candidates?.length ?? 0) === 1 ? "" : "s"}.`,
+          });
+        })
+        .catch((error) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const backendNeedsRefresh = errorMessage.includes("404");
+          updateSelectedOverlayProliferation(overlay.key, {
+            open: true,
+            requestProgress: 100,
+            matchingProgress: 0,
+            candidateCount: 0,
+            candidates: [],
+            error: backendNeedsRefresh
+              ? "Candidate search is not available in the running analysis service yet. Refresh the analysis service, then prepare candidates again."
+              : errorMessage,
+            message: backendNeedsRefresh
+              ? "Request prepared. Candidate search service needs refresh."
+              : "Request prepared. Candidate matching could not run.",
+          });
+        });
     },
-    [updateSelectedOverlayProliferation, videoId],
+    [getOverlayNormalizedBox, updateSelectedOverlayProliferation, videoId],
   );
 
   const cutSelectedIndicationOut = React.useCallback(
@@ -5569,7 +6102,7 @@ export default function VideoPanel() {
                       const endInputKey = `${overlay.key}:end`;
                       const normalizedBox = getOverlayNormalizedBox(overlay);
                       const overlayStackRank = selected
-                        ? 9000
+                        ? SELECTED_OVERLAY_STACK_RANK
                         : getOverlayStackRank(overlay.modality, normalizedBox);
                       const overdraftActive = Boolean(selectedOverlayOverdrafts[overlay.key]);
                       const timelinePadding = selectedOverlayTimelinePadding[overlay.key] || {
@@ -5636,6 +6169,9 @@ export default function VideoPanel() {
                       const overlayTopPx = normalizedBox.y * renderedVideoRect.height;
                       const overlayWidthPx = normalizedBox.w * renderedVideoRect.width;
                       const overlayHeightPx = normalizedBox.h * renderedVideoRect.height;
+                      const overlapsVideoControls =
+                        overlayTopPx + overlayHeightPx >
+                        renderedVideoRect.height - VIDEO_CONTROL_CLEARANCE_PX;
                       const selectedEditorWidthPx = Math.min(
                         360,
                         Math.max(280, renderedVideoRect.width - 16),
@@ -5728,6 +6264,9 @@ export default function VideoPanel() {
                             selectOverlayForEditing(overlay);
                           }}
                           onKeyDown={(event) => {
+                            if (isInteractiveElement(event.target)) {
+                              return;
+                            }
                             if (event.key !== "Enter" && event.key !== " ") {
                               return;
                             }
@@ -5736,7 +6275,9 @@ export default function VideoPanel() {
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
                           }}
-                          className={`pointer-events-auto absolute rounded border ${overlay.color} ${
+                          className={`${
+                            overlapsVideoControls ? "pointer-events-none" : "pointer-events-auto"
+                          } absolute rounded border ${overlay.color} ${
                             selected ? "overflow-visible" : "overflow-hidden"
                           } ${
                             "cursor-pointer"
@@ -5804,7 +6345,7 @@ export default function VideoPanel() {
                                 +
                               </button>
                               <div
-                                className="absolute z-20 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-2 py-1.5 shadow-lg"
+                                className="absolute z-50 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-2 py-1.5 shadow-lg"
                                 style={selectedEditorStyle}
                                 onClick={(event) => event.stopPropagation()}
                                 onMouseDown={(event) => event.stopPropagation()}
@@ -6126,8 +6667,24 @@ export default function VideoPanel() {
                                             : edit.identityAffirmation,
                                       })
                                     }
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => {
+                                      event.stopPropagation();
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void saveSelectedIndication(overlay, {
+                                          ...edit,
+                                          label: event.currentTarget.value,
+                                          identityAffirmation:
+                                            edit.category === "Identification"
+                                              ? event.currentTarget.value
+                                              : edit.identityAffirmation,
+                                        });
+                                      }
+                                    }}
                                     className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                    placeholder="Label or identity"
+                                    placeholder="Full label or identity"
                                     aria-label="Indication label"
                                   />
                                   <button
@@ -6278,6 +6835,11 @@ export default function VideoPanel() {
                                           updateSelectedOverlayProliferation(overlay.key, {
                                             scope: event.target.value as ProliferationScope,
                                             message: undefined,
+                                            requestProgress: 0,
+                                            matchingProgress: 0,
+                                            candidateCount: 0,
+                                            candidates: [],
+                                            error: undefined,
                                           })
                                         }
                                         className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
@@ -6295,6 +6857,11 @@ export default function VideoPanel() {
                                           updateSelectedOverlayProliferation(overlay.key, {
                                             target: event.target.value as ProliferationTarget,
                                             message: undefined,
+                                            requestProgress: 0,
+                                            matchingProgress: 0,
+                                            candidateCount: 0,
+                                            candidates: [],
+                                            error: undefined,
                                           })
                                         }
                                         className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
@@ -6324,11 +6891,143 @@ export default function VideoPanel() {
                                         Prepare candidates
                                       </button>
                                       {proliferationLauncher.message ? (
-                                        <span className="text-[9px] text-cyan-200/80">
+                                        <span
+                                          className={`text-[9px] ${
+                                            proliferationLauncher.error
+                                              ? "text-amber-200/90"
+                                              : "text-cyan-200/80"
+                                          }`}
+                                        >
                                           {proliferationLauncher.message}
                                         </span>
                                       ) : null}
                                     </div>
+                                    {proliferationLauncher.message ? (
+                                      <div className="mt-1 space-y-1 text-[9px] text-cyan-100/80">
+                                        <div>
+                                          <div className="mb-0.5 flex items-center justify-between gap-2">
+                                            <span>Request preparation</span>
+                                            <span>{proliferationLauncher.requestProgress ?? 0}%</span>
+                                          </div>
+                                          <div className="h-1.5 overflow-hidden rounded bg-slate-800">
+                                            <div
+                                              className="h-full rounded bg-cyan-400"
+                                              style={{
+                                                width: `${clamp(
+                                                  proliferationLauncher.requestProgress ?? 0,
+                                                  0,
+                                                  100,
+                                                )}%`,
+                                              }}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <div className="mb-0.5 flex items-center justify-between gap-2">
+                                            <span>Candidate matching</span>
+                                            <span>{proliferationLauncher.matchingProgress ?? 0}%</span>
+                                          </div>
+                                          <div className="h-1.5 overflow-hidden rounded bg-slate-800">
+                                            <div
+                                              className="h-full rounded bg-amber-400/80"
+                                              style={{
+                                                width: `${clamp(
+                                                  proliferationLauncher.matchingProgress ?? 0,
+                                                  0,
+                                                  100,
+                                                )}%`,
+                                              }}
+                                            />
+                                          </div>
+                                          {proliferationLauncher.matchingProgress === 0 ? (
+                                            <div className="mt-0.5 text-slate-500">
+                                              Matching has not returned candidates yet.
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                        {proliferationLauncher.candidates?.length ? (
+                                          <div className="max-h-40 space-y-1 overflow-y-auto rounded border border-cyan-900/50 bg-black/35 p-1.5">
+                                            <div className="flex items-center justify-between gap-2 text-[9px] uppercase text-cyan-100/70">
+                                              <span>Closest similar profiles</span>
+                                              <span>{proliferationLauncher.candidateCount || 0}</span>
+                                            </div>
+                                            {orderVisibleProliferationCandidates(proliferationLauncher.candidates).slice(0, 8).map((candidate) => (
+                                              <div
+                                                key={candidate.candidate_id}
+                                                className="rounded border border-slate-800 bg-slate-950/70 p-1 text-slate-300"
+                                              >
+                                                <div className="flex items-start justify-between gap-2">
+                                                  <span className="min-w-0 truncate font-medium text-slate-100">
+                                                    {candidate.label || candidate.evidence_id || "Candidate"}
+                                                  </span>
+                                                  <span className="shrink-0 rounded bg-cyan-950 px-1 text-cyan-100">
+                                                    {Math.round(candidateProbability(candidate) * 100)}%
+                                                  </span>
+                                                </div>
+                                                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[8px] text-slate-400">
+                                                  <span className="rounded bg-cyan-950/80 px-1 text-cyan-100/85">
+                                                    closest match
+                                                  </span>
+                                                  {isManualProliferationCandidate(candidate) ? (
+                                                    <span className="rounded bg-slate-900 px-1 text-slate-500">
+                                                      manual source
+                                                    </span>
+                                                  ) : (
+                                                    <span className="rounded bg-emerald-950/60 px-1 text-emerald-100/80">
+                                                      similar profile
+                                                    </span>
+                                                  )}
+                                                  <span className="rounded bg-slate-900 px-1">
+                                                    {formatCandidateSource(candidate.source_panel)}
+                                                  </span>
+                                                  {candidate.category ? (
+                                                    <span className="rounded bg-slate-900 px-1">
+                                                      {candidate.category}
+                                                    </span>
+                                                  ) : null}
+                                                  <span className="rounded bg-slate-900 px-1">
+                                                    {formatCandidateTime(candidate)}
+                                                  </span>
+                                                  <span className="rounded bg-amber-950/70 px-1 text-amber-100/80">
+                                                    {candidate.review_state || "candidate"}
+                                                  </span>
+                                                </div>
+                                                {candidate.closest_match?.components ? (
+                                                  <div className="mt-0.5 grid grid-cols-3 gap-0.5 text-[8px] text-slate-500">
+                                                    {[
+                                                      ["time", candidate.closest_match.components.time_proximity],
+                                                      ["space", candidate.closest_match.components.spatial_consistency],
+                                                      ["track", candidate.closest_match.components.track_continuity],
+                                                    ].map(([label, value]) => (
+                                                      <span key={String(label)} className="truncate">
+                                                        {label}:{" "}
+                                                        {typeof value === "number"
+                                                          ? `${Math.round(value * 100)}%`
+                                                          : "open"}
+                                                      </span>
+                                                    ))}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            ))}
+                                            {(proliferationLauncher.candidateCount || 0) > 8 ? (
+                                              <div className="text-slate-500">
+                                                +{(proliferationLauncher.candidateCount || 0) - 8} more
+                                                candidate
+                                                {(proliferationLauncher.candidateCount || 0) - 8 === 1
+                                                  ? ""
+                                                  : "s"}
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        ) : null}
+                                        {proliferationLauncher.error ? (
+                                          <div className="line-clamp-2 text-amber-200/80">
+                                            {proliferationLauncher.error}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : null}
                               </div>

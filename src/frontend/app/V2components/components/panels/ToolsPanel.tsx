@@ -10,6 +10,8 @@ import {
   SmilePlus,
   Languages,
   Crosshair,
+  Bot,
+  FileCheck2,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,6 +52,7 @@ import type {
 import { apiService } from "@/lib/api-service";
 import type {
   AnalysisEvent,
+  AiAgentFeatureStarterManifest,
   ForensicRenderRegionKeyframe,
   ForensicRenderJob,
   ManualVisualAnnotation,
@@ -81,7 +84,8 @@ type ToolsWorkspace =
   | "language"
   | "mission"
   | "expression"
-  | "forensic";
+  | "forensic"
+  | "ai_agent";
 
 type VisualWorkspaceView = "cinematic" | "inspectors";
 type AnnotationPluginView = "menu" | "cvat";
@@ -115,13 +119,13 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
   value: ForensicRoiIntent;
   label: string;
 }> = [
-  { value: "identification", label: "Identification" },
   { value: "expression", label: "Expressions" },
+  { value: "identification", label: "Identification" },
+  { value: "interaction", label: "Interaction" },
   { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
-  { value: "object", label: "Object" },
   { value: "ocr", label: "OCR" },
-  { value: "interaction", label: "Interaction" },
+  { value: "object", label: "Object" },
   { value: "other", label: "Other" },
 ];
 
@@ -352,30 +356,6 @@ function contextRefLabels(value: unknown, limit = 5): string[] {
     .slice(0, limit);
 }
 
-function manualAnnotationDisplayLabel(item: ManualVisualAnnotation, fallback: string): string {
-  return (
-    item.identity_affirmation ||
-    item.role_affirmation ||
-    item.custom_label ||
-    item.label ||
-    item.subcategory ||
-    fallback
-  );
-}
-
-function manualAnnotationSourceLabel(item: ManualVisualAnnotation): string {
-  const targetLabel = String(item.metadata_correlation?.target_label || "").trim();
-  const targetId = item.metadata_correlation?.target_id;
-  const targetType = String(item.metadata_correlation?.target_type || "").trim();
-  if (targetLabel) {
-    return targetLabel;
-  }
-  if (targetType && targetId !== undefined && targetId !== null) {
-    return `${targetType} ${targetId}`;
-  }
-  return "";
-}
-
 function ManualAnnotationLeafSection({
   title,
   categoryTone,
@@ -418,7 +398,7 @@ function ManualAnnotationLeafSection({
           >
             <div className="flex items-center justify-between gap-3">
               <span className="min-w-0 truncate font-medium text-slate-100">
-                {manualAnnotationDisplayLabel(item, title)}
+                {item.label || item.subcategory || title}
               </span>
               <span className="shrink-0 text-slate-500">
                 {formatSeconds(item.timestamp_seconds)}
@@ -427,11 +407,6 @@ function ManualAnnotationLeafSection({
             <div className="mt-1 text-slate-400">
               {item.subcategory || item.category}
             </div>
-            {manualAnnotationSourceLabel(item) ? (
-              <div className="mt-1 text-[10px] text-cyan-200/80">
-                Source track: {manualAnnotationSourceLabel(item)}
-              </div>
-            ) : null}
             {item.open_note ? (
               <div className="mt-1 text-slate-400">{item.open_note}</div>
             ) : null}
@@ -636,6 +611,17 @@ export default function ToolsPanel() {
   const [morphologyCatalogError, setMorphologyCatalogError] = useState<
     string | null
   >(null);
+  const [aiAgentManifest, setAiAgentManifest] =
+    useState<AiAgentFeatureStarterManifest | null>(null);
+  const [aiAgentManifestLoading, setAiAgentManifestLoading] = useState(false);
+  const [aiAgentManifestError, setAiAgentManifestError] = useState<
+    string | null
+  >(null);
+  const [aiAgentManifestWriteNote, setAiAgentManifestWriteNote] = useState("");
+  const [aiAgentManifestWriting, setAiAgentManifestWriting] = useState(false);
+  const [aiAgentReportDraftNote, setAiAgentReportDraftNote] = useState("");
+  const [aiAgentReportDraftWriting, setAiAgentReportDraftWriting] =
+    useState(false);
   const [showMorphologyRecords, setShowMorphologyRecords] = useState(false);
   const [showFaceRecords, setShowFaceRecords] = useState(false);
   const [showLanguageRecords, setShowLanguageRecords] = useState(false);
@@ -656,6 +642,7 @@ export default function ToolsPanel() {
     { key: "mission", label: "Mission records" },
     { key: "expression", label: "Expression records" },
     { key: "forensic", label: "Forensic render" },
+    { key: "ai_agent", label: "AI Agent processes" },
   ];
 
   const activateWorkspaceSection = (section: ToolsWorkspace) => {
@@ -727,6 +714,10 @@ export default function ToolsPanel() {
     }
     if (section === "forensic") {
       setActiveWorkspace("forensic");
+      return;
+    }
+    if (section === "ai_agent") {
+      setActiveWorkspace("ai_agent");
     }
   };
 
@@ -751,6 +742,22 @@ export default function ToolsPanel() {
       .filter((sample: ExpressionSample) => sample?.dominant_emotion)
       .slice(0, expressionPreviewCount[0] ?? 4);
   }, [analysisData, expressionPreviewCount]);
+
+  const aiAgentProcessSummary = React.useMemo(() => {
+    const features = aiAgentManifest?.features ?? [];
+    let coreCompatible = 0;
+    let isolated = 0;
+    for (const feature of features) {
+      for (const candidate of feature.candidates ?? []) {
+        if (candidate.core_compatible) {
+          coreCompatible += 1;
+        } else if (candidate.license_policy === "isolate_or_avoid") {
+          isolated += 1;
+        }
+      }
+    }
+    return { featureCount: features.length, coreCompatible, isolated };
+  }, [aiAgentManifest]);
 
   const openMicroExpressionForensicSample = React.useCallback(
     (sample: ExpressionSample) => {
@@ -1922,6 +1929,74 @@ export default function ToolsPanel() {
     };
   }, []);
 
+  const loadAiAgentFeatureStarters = React.useCallback(async () => {
+    try {
+      setAiAgentManifestLoading(true);
+      setAiAgentManifestError(null);
+      const manifest = await apiService.getAiAgentFeatureStarters();
+      setAiAgentManifest(manifest);
+    } catch (error) {
+      setAiAgentManifestError(
+        error instanceof Error
+          ? error.message
+          : "Could not load AI Agent process manifest.",
+      );
+    } finally {
+      setAiAgentManifestLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeWorkspace === "ai_agent" && !aiAgentManifest && !aiAgentManifestLoading) {
+      void loadAiAgentFeatureStarters();
+    }
+  }, [activeWorkspace, aiAgentManifest, aiAgentManifestLoading, loadAiAgentFeatureStarters]);
+
+  const persistAiAgentFeatureStarters = React.useCallback(async () => {
+    try {
+      setAiAgentManifestWriting(true);
+      setAiAgentManifestError(null);
+      setAiAgentManifestWriteNote("");
+      const result = await apiService.writeAiAgentFeatureStarters();
+      setAiAgentManifest(result.manifest);
+      setAiAgentManifestWriteNote(
+        `Manifest written with ${result.feature_count} process families.`,
+      );
+    } catch (error) {
+      setAiAgentManifestError(
+        error instanceof Error
+          ? error.message
+          : "Could not write AI Agent process manifest.",
+      );
+    } finally {
+      setAiAgentManifestWriting(false);
+    }
+  }, []);
+
+  const writeSceneCardReportDraft = React.useCallback(async () => {
+    if (!videoId) {
+      setAiAgentReportDraftNote("Open an analysed media item before writing a Scene Card report draft.");
+      return;
+    }
+    try {
+      setAiAgentReportDraftWriting(true);
+      setAiAgentManifestError(null);
+      setAiAgentReportDraftNote("");
+      const result = await apiService.writeAiAgentSceneCardReportDraft(videoId);
+      setAiAgentReportDraftNote(
+        `Scene Card report draft written with ${result.scene_count} scenes.`,
+      );
+    } catch (error) {
+      setAiAgentManifestError(
+        error instanceof Error
+          ? error.message
+          : "Could not write Scene Card report draft.",
+      );
+    } finally {
+      setAiAgentReportDraftWriting(false);
+    }
+  }, [videoId]);
+
   useEffect(() => {
     const focusSection = (section: string) => {
       const nextSection = workspaceOptions.find((item) => item.key === section);
@@ -2235,6 +2310,14 @@ export default function ToolsPanel() {
         setActiveWorkspace("forensic");
       },
       disabled: !videoId || isAnalyzing,
+    },
+    {
+      icon: Bot,
+      label: "AI Agent processes",
+      onClick: () => {
+        setActiveWorkspace("ai_agent");
+      },
+      disabled: isAnalyzing,
     },
     {
       icon: Languages,
@@ -3771,6 +3854,196 @@ export default function ToolsPanel() {
                         No source samples are recorded for this analysis yet.
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {activeWorkspace === "ai_agent" && (
+                <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 text-sm text-slate-200">
+                        <Bot className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+                        AI Agent processes
+                      </div>
+                      <div className="max-w-2xl text-xs text-slate-500">
+                        Governed starter contracts for optional metadata, web comparison,
+                        LLM, report, audio command, and learning processes.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void loadAiAgentFeatureStarters()}
+                        disabled={aiAgentManifestLoading || aiAgentManifestWriting}
+                        className="border-white/12 bg-[#202020] text-slate-200 hover:bg-[#252525]"
+                      >
+                        Refresh
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void persistAiAgentFeatureStarters()}
+                        disabled={aiAgentManifestLoading || aiAgentManifestWriting}
+                        className="bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25"
+                      >
+                        <FileCheck2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                        Write manifest
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void writeSceneCardReportDraft()}
+                        disabled={!videoId || aiAgentReportDraftWriting}
+                        className="border-white/12 bg-[#202020] text-slate-200 hover:bg-[#252525]"
+                      >
+                        Scene Card report draft
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-4">
+                    <div className="rounded border border-white/8 bg-[#141414] px-3 py-2">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                        Processes
+                      </div>
+                      <div className="mt-1 text-lg text-slate-100">
+                        {aiAgentProcessSummary.featureCount}
+                      </div>
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-3 py-2">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                        Core-compatible
+                      </div>
+                      <div className="mt-1 text-lg text-emerald-200">
+                        {aiAgentProcessSummary.coreCompatible}
+                      </div>
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-3 py-2">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                        Isolated
+                      </div>
+                      <div className="mt-1 text-lg text-amber-200">
+                        {aiAgentProcessSummary.isolated}
+                      </div>
+                    </div>
+                    <div className="rounded border border-white/8 bg-[#141414] px-3 py-2">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                        Network
+                      </div>
+                      <div className="mt-1 text-sm text-slate-200">
+                        {aiAgentManifest?.governance?.no_hidden_network_calls
+                          ? "explicit only"
+                          : "review"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {aiAgentManifestError && (
+                    <div className="rounded border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      {aiAgentManifestError}
+                    </div>
+                  )}
+
+                  {aiAgentManifestWriteNote && (
+                    <div className="rounded border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+                      {aiAgentManifestWriteNote}
+                    </div>
+                  )}
+
+                  {aiAgentReportDraftNote && (
+                    <div className="rounded border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                      {aiAgentReportDraftNote}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {aiAgentManifestLoading && (
+                      <div className="text-xs text-slate-500">
+                        Loading AI Agent process manifest...
+                      </div>
+                    )}
+
+                    {(aiAgentManifest?.features ?? []).map((feature) => {
+                      const coreCandidates = feature.candidates.filter(
+                        (candidate) => candidate.core_compatible,
+                      );
+                      const isolatedCandidates = feature.candidates.filter(
+                        (candidate) => !candidate.core_compatible,
+                      );
+                      return (
+                        <div
+                          key={feature.feature_id}
+                          className="rounded-md border border-white/8 bg-[#141414] p-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 space-y-1">
+                              <div className="text-sm text-slate-100">
+                                {feature.title}
+                              </div>
+                              <div className="max-w-3xl text-xs text-slate-400">
+                                {feature.purpose}
+                              </div>
+                            </div>
+                            <span className="rounded border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[11px] text-cyan-100">
+                              {feature.status.replaceAll("_", " ")}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+                            <div className="space-y-1">
+                              <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                                Boundary
+                              </div>
+                              <div className="text-xs text-slate-300">
+                                {feature.starter_boundary}
+                              </div>
+                              <div className="pt-1 text-[11px] text-slate-500">
+                                {feature.immediate_action}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap gap-1.5">
+                                {coreCandidates.map((candidate) => (
+                                  <span
+                                    key={`${feature.feature_id}-${candidate.name}`}
+                                    className="rounded border border-emerald-400/20 bg-emerald-400/10 px-2 py-1 text-[11px] text-emerald-100"
+                                    title={`${candidate.role} / ${candidate.license}`}
+                                  >
+                                    {candidate.name}
+                                  </span>
+                                ))}
+                              </div>
+                              {isolatedCandidates.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {isolatedCandidates.map((candidate) => (
+                                    <span
+                                      key={`${feature.feature_id}-${candidate.name}`}
+                                      className="rounded border border-amber-400/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-100"
+                                      title={`${candidate.role} / ${candidate.license}`}
+                                    >
+                                      isolate: {candidate.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {!aiAgentManifestLoading &&
+                      !aiAgentManifest &&
+                      !aiAgentManifestError && (
+                        <div className="text-xs text-slate-500">
+                          No AI Agent process manifest loaded yet.
+                        </div>
+                      )}
                   </div>
                 </div>
               )}

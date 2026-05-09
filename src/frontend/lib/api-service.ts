@@ -105,6 +105,7 @@ export interface AnalysisStatus {
     audio_sample_cloud_error?: string;
     identity_triangulation_error?: string;
     second_order_label_proliferation_error?: string;
+    mise_en_scene_scene_cards_error?: string;
     pos_error?: string;
     quan_error?: string;
     language_support?: {
@@ -201,6 +202,28 @@ export interface AnalysisStatus {
   identity_refinement?: IdentityRefinementStatus | null;
   identity_triangulation?: IdentityTriangulationStatus | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
+  mise_en_scene_scene_cards?: {
+    schema?: string;
+    scene_card_count?: number;
+    output_json_path?: string;
+    source_extraction_metadata_summary_path?: string;
+    updated_at?: string;
+  } | null;
+  source_extraction_metadata_summary?: {
+    schema?: string;
+    status?: string;
+    summary?: string;
+    supporting_scenes?: string[];
+    output_json_path?: string;
+    updated_at?: string;
+  } | null;
+  evidence_proliferation_matches?: Array<{
+    request_id?: string;
+    status?: string;
+    candidate_count?: number;
+    output_json_path?: string;
+    updated_at?: string;
+  }>;
   audio_diarization?: AudioDiarizationScaffold | null;
   audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
@@ -347,6 +370,61 @@ export interface SecondOrderLabelProliferationPlan {
   };
   governance?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
+}
+
+export interface EvidenceProliferationRequest {
+  request_id: string;
+  created_at?: string;
+  video_id?: string;
+  evidence?: Record<string, unknown>;
+  scope?: string;
+  target?: string;
+  governance?: Record<string, unknown>;
+}
+
+export interface EvidenceProliferationCandidate {
+  candidate_id: string;
+  evidence_id?: string;
+  analysis_id?: string;
+  label?: string;
+  category?: string;
+  source_kind?: string;
+  source_panel?: string;
+  match_score?: number;
+  match_probability?: number;
+  legacy_match_score?: number;
+  review_state?: "candidate" | string;
+  time?: {
+    start?: number | null;
+    end?: number | null;
+  };
+  geometry?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+  source_timesphere?: Record<string, unknown>;
+  closest_match?: {
+    principle?: "closest_match" | string;
+    match_probability?: number;
+    components?: Record<string, number | null | undefined>;
+    weights?: Record<string, number>;
+    source_timesphere?: Record<string, unknown>;
+    seed_timesphere?: Record<string, unknown>;
+  };
+  provenance?: Record<string, unknown>;
+}
+
+export interface EvidenceProliferationMatch {
+  schema: "vaa1.evidence_proliferation_match.v1" | string;
+  analysis_id?: string;
+  request_id?: string;
+  status?: "completed" | string;
+  progress?: {
+    request_preparation?: number;
+    candidate_matching?: number;
+  };
+  candidate_count?: number;
+  governance?: Record<string, unknown>;
+  request?: EvidenceProliferationRequest;
+  candidates?: EvidenceProliferationCandidate[];
 }
 
 export interface AudioDiarizationScaffold {
@@ -556,6 +634,52 @@ export interface WorkspaceInfo {
   results_dir: string;
   imported_work_dir: string;
   downloads_note: string;
+}
+
+export interface AiAgentFeatureCandidate {
+  name: string;
+  license: string;
+  role: string;
+  integration_policy: string;
+  license_policy: string;
+  core_compatible: boolean;
+}
+
+export interface AiAgentFeatureStarter {
+  feature_id: string;
+  title: string;
+  purpose: string;
+  starter_boundary: string;
+  immediate_action: string;
+  status: string;
+  candidates: AiAgentFeatureCandidate[];
+}
+
+export interface AiAgentFeatureStarterManifest {
+  schema: string;
+  generated_at: string;
+  governance: {
+    no_hidden_network_calls: boolean;
+    manual_correction_wins: boolean;
+    raw_outputs_preserved: boolean;
+    strong_copyleft_is_isolated_or_avoided: boolean;
+  };
+  features: AiAgentFeatureStarter[];
+}
+
+export interface AiAgentFeatureStarterWriteResponse {
+  status: string;
+  path: string;
+  feature_count: number;
+  manifest: AiAgentFeatureStarterManifest;
+}
+
+export interface AiAgentSceneCardReportDraftResponse {
+  status: string;
+  analysis_id: string;
+  path: string;
+  scene_count: number;
+  markdown: string;
 }
 
 export interface SourceMediaMetadata {
@@ -1126,6 +1250,29 @@ class ApiService {
     return response.json();
   }
 
+  async matchEvidenceProliferation(
+    analysisId: string,
+    request: EvidenceProliferationRequest,
+  ): Promise<EvidenceProliferationMatch> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/proliferation/match`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Evidence proliferation matching failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
   async updateCvatLink(analysisId: string, cvatID: number): Promise<any> {
     try {
       const response = await fetch(`${this.baseURL}/api/status/${analysisId}/cvat-link`, {
@@ -1249,8 +1396,10 @@ class ApiService {
       return new Blob([mockContent], { type: this.getMimeType(fileType) });
     }
 
+    const noCacheToken = Date.now().toString(36);
     const response = await fetch(
-      `${this.baseURL}/api/download/${analysisId}/${fileType}`,
+      `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
+      { cache: "no-store" },
     );
 
     if (!response.ok) {
@@ -1827,6 +1976,52 @@ class ApiService {
     return response.json();
   }
 
+  async getAiAgentFeatureStarters(): Promise<AiAgentFeatureStarterManifest> {
+    const response = await fetch(`${this.baseURL}/api/ai-agent/feature-starters`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `AI Agent feature starters fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async writeAiAgentFeatureStarters(): Promise<AiAgentFeatureStarterWriteResponse> {
+    const response = await fetch(`${this.baseURL}/api/ai-agent/feature-starters/write`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `AI Agent feature starters write failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  async writeAiAgentSceneCardReportDraft(
+    analysisId: string,
+  ): Promise<AiAgentSceneCardReportDraftResponse> {
+    const response = await fetch(
+      `${this.baseURL}/api/ai-agent/${analysisId}/scene-card-report-draft`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Scene card report draft failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
   async revealWorkspacePath(pathType: WorkspacePathType): Promise<void> {
     const response = await fetch(
       `${this.baseURL}/api/reveal-workspace-path/${pathType}`,
@@ -1916,6 +2111,9 @@ class ApiService {
       "dependency_sfl_stage1",
       "multimodal_meaning_stage1",
       "second_order_label_proliferation",
+      "mise_en_scene_scene_cards",
+      "mise_en_scene_scene_card_report_draft_md",
+      "source_extraction_metadata_summary",
       "annotation_corrections",
       // Edit By Runzhou: add pos_analysis file type
       "pos_analysis",
@@ -1943,6 +2141,10 @@ class ApiService {
       dependency_sfl_stage1: "Dependency + SFL Stage 1 (JSON)",
       multimodal_meaning_stage1: "Multimodal Meaning Stage 1 (JSON)",
       second_order_label_proliferation: "Second-Order Label Proliferation (JSON)",
+      mise_en_scene_scene_cards: "Mise-en-Scene Scene Card Report (JSON)",
+      mise_en_scene_scene_card_report_draft_md: "Scene Card Report Draft (Markdown)",
+      source_extraction_metadata_summary:
+        "Scene Card Source Extraction Metadata Summary (JSON)",
       annotation_corrections: "Annotation Corrections (JSON)",
       // Edit By Runzhou: add pos_analysis display name
       pos_analysis: "Position Analysis (JSON)",
@@ -1972,6 +2174,9 @@ class ApiService {
       dependency_sfl_stage1: ".json",
       multimodal_meaning_stage1: ".json",
       second_order_label_proliferation: ".json",
+      mise_en_scene_scene_cards: ".json",
+      mise_en_scene_scene_card_report_draft_md: ".md",
+      source_extraction_metadata_summary: ".json",
       annotation_corrections: ".json",
       // Edit By Runzhou: add pos_analysis file extension
       pos_analysis: ".json",

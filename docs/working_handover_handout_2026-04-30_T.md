@@ -395,6 +395,11 @@ Current design:
 - label proliferation should eventually support Identification, Interaction, Action, Role,
   Scene, Episode, Relationship, Intensity, and report-writing pathways
 
+Related 2026-05-03 proliferation intelligence notes:
+
+- `docs/vaa1_closest_match_evidence_proliferation_note_2026-05-03.md`
+- `docs/vaa1_detection_annotation_proliferation_intelligence_schema_note_2026-05-03.md`
+
 ## 9. Meaning / Plot Panel Status
 
 The Meaning / Plot panel is delivered as a first navigable UI.
@@ -534,26 +539,28 @@ Known repository oddity:
 git status --short --branch
 ```
 
-3. Start backend:
+3. Start VAA1 with the current Mac launcher:
 
 ```bash
 cd "/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project"
-source .venv/bin/activate
-python -m uvicorn api_server:app --host 127.0.0.1 --port 8000
+bash scripts/start_vaa1_macos.sh
 ```
 
-4. Start frontend:
+4. If packages or ports are stale, use the repair path:
 
 ```bash
-cd "/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project/src/frontend"
-npm run dev
+bash scripts/start_vaa1_macos.sh --setup-envs --replace
 ```
 
 5. Validate health/status:
 
 ```bash
 curl http://127.0.0.1:8000/api/health
+curl -fsS http://127.0.0.1:8000/openapi.json | grep '/api/analysis/{analysis_id}/proliferation/match'
 ```
+
+Note: the backend should start from `vaa1_core`, not `.venv`. The current canonical runbook is
+`docs/vaa1_macos_startup_runbook_2026-05-03.md`.
 
 ## 17. Recommended Next Manual Tests
 
@@ -616,6 +623,9 @@ Important but later:
 - richer plot visualization across Aristotle/Freytag/Campbell/Frye/Booker
 - agentic/LLM review pass for second-order labels
 - mass preview/approval tray for label proliferation
+- closest-match proliferation mitigation for scene changes, costume/location shifts, action
+  scenes, and split-screen duplicate appearances; see
+  `docs/vaa1_closest_match_evidence_proliferation_note_2026-05-03.md`
 - mouse wheel/right-click BBox/ROI speed affordances
 - stronger forensic render manual validation
 - automated metadata scraper for web sources such as IMSDb, Wikipedia, and comparable public

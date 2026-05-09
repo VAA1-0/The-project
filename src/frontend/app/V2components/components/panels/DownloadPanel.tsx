@@ -34,6 +34,8 @@ interface DownloadFile {
   icon: React.ReactNode;
   description: string;
   available: boolean;
+  availabilityLabel: string;
+  unavailableActionLabel?: string;
   size?: string;
 }
 
@@ -188,6 +190,9 @@ export default function DownloadPanel() {
       quant_matrix: "Quant Matrix",
       expression_json: "Expressions",
       face_anonymization_manifest: "Face Manifest",
+      mise_en_scene_scene_cards: "Scene Card Report",
+      mise_en_scene_scene_card_report_draft_md: "Scene Card Draft",
+      source_extraction_metadata_summary: "Scene Card Metadata Summary",
     };
 
     return shortNames[fileType] || getFileTypeConfig(fileType).name;
@@ -321,6 +326,7 @@ export default function DownloadPanel() {
               icon: getFileIcon(fileType, "size-5"),
               description: config.description,
               available: true,
+              availabilityLabel: "Ready",
               size:
                 fileType === "video"
                   ? "~50MB"
@@ -330,14 +336,21 @@ export default function DownloadPanel() {
             });
           } else {
             debugLog += `   ⚠️ ${fileType}: NOT AVAILABLE\n`;
+            const isStillProcessing = apiStatus.status === "processing";
+            const isOptionalOptIn = fileType === "face_anonymization_manifest";
             const unavailableDescription =
-              fileType === "face_anonymization_manifest"
+              isOptionalOptIn
                 ? apiStatus.apply_face_anonymization
                   ? "Face anonymization was engaged, but the manifest has not reported in yet"
                   : "Available when face anonymization is engaged before analysis"
-                : apiStatus.status === "processing"
+                : isStillProcessing
                   ? "Generating after analysis completes"
-                  : "Not available in this analysis";
+                  : "This optional output was not produced for this analysis";
+            const availabilityLabel = isStillProcessing
+              ? "Pending"
+              : isOptionalOptIn && !apiStatus.apply_face_anonymization
+                ? "Opt-in"
+                : "Not produced";
             files.push({
               name: getDownloadFileName(baseName, fileType),
               shortName: getShortDownloadName(fileType),
@@ -348,6 +361,10 @@ export default function DownloadPanel() {
                 config.description ? `. ${config.description}` : ""
               }`,
               available: false,
+              availabilityLabel,
+              unavailableActionLabel: isStillProcessing
+                ? "Not yet on channel"
+                : "No file for this run",
             });
           }
         }
@@ -935,16 +952,16 @@ export default function DownloadPanel() {
                         className={`text-xs px-2 py-1 rounded ${
                           file.available
                             ? "text-green-400 bg-green-500/10"
-                            : "text-[var(--ui-passive-text)] bg-slate-900/50"
+                            : file.availabilityLabel === "Pending"
+                              ? "text-yellow-300 bg-yellow-500/10"
+                              : "text-[var(--ui-passive-text)] bg-slate-900/50"
                         }`}
                       >
-                        {file.available ? "Ready" : "Pending"}
+                        {file.availabilityLabel}
                       </span>
                     </div>
                     <div className="mb-1 text-[11px] leading-5 text-[var(--ui-passive-text)] line-clamp-2">
-                      {file.available
-                        ? file.description
-                        : `Stand by. ${file.description}`}
+                      {file.description}
                     </div>
                     <div className="flex items-center gap-3 text-[11px] text-slate-700">
                       {file.available && (
@@ -966,7 +983,7 @@ export default function DownloadPanel() {
                     </button>
                   ) : (
                     <div className="px-3 py-2 text-[11px] italic text-[var(--ui-passive-text)] border border-slate-800 rounded">
-                      Not yet on channel
+                      {file.unavailableActionLabel || "No file"}
                     </div>
                   )}
                 </div>
