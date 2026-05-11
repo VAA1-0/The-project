@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -13,7 +14,7 @@ SCENE_CARD_SCHEMA = "vaa1.scene_card.v1"
 SOURCE_EXTRACTION_METADATA_SUMMARY_SCHEMA = "vaa1.source_extraction_metadata_summary.v1"
 SCENE_CARD_REPORT_TITLE = "Mise-en-Scene Scene Card Report"
 SOURCE_EXTRACTION_METADATA_SUMMARY_TITLE = "Scene Card Source Extraction Metadata Summary"
-NLP_SCENE_SUMMARY_VERSION = 3
+NLP_SCENE_SUMMARY_VERSION = 7
 
 LIKELIHOOD_SYMBOLS = {
     "manual": "✓",
@@ -277,6 +278,39 @@ def _safe_text(value: Any, fallback: str = "") -> str:
     return text or fallback
 
 
+def _clean_metadata_label(value: Any) -> str:
+    text = _safe_text(value)
+    if not text:
+        return ""
+    replacements = {
+        "Finaland": "Finland",
+        "jounalism": "journalism",
+        "REsearcher": "Researcher",
+        "interveiws": "interviews",
+    }
+    for raw, corrected in replacements.items():
+        text = re.sub(rf"\b{re.escape(raw)}\b", corrected, text)
+    return " ".join(text.split())
+
+
+def _fold_text(value: Any) -> str:
+    text = _clean_metadata_label(value).lower()
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
+def _dedupe_text(values: Iterable[Any]) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        text = _clean_metadata_label(value)
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
 def _safe_float(value: Any, fallback: Optional[float] = None) -> Optional[float]:
     try:
         return float(value)
@@ -301,6 +335,20 @@ def _first_value(mapping: Dict[str, Any], keys: Iterable[str]) -> Any:
 
 
 def _interval_ms(item: Dict[str, Any]) -> Tuple[int, int]:
+    interval = item.get("time_interval") if isinstance(item.get("time_interval"), dict) else {}
+    if interval:
+        merged = dict(item)
+        for source_key, target_key in (
+            ("start_ms", "start_ms"),
+            ("end_ms", "end_ms"),
+            ("start", "start"),
+            ("end", "end"),
+            ("start_seconds", "start_seconds"),
+            ("end_seconds", "end_seconds"),
+        ):
+            if merged.get(target_key) is None and interval.get(source_key) is not None:
+                merged[target_key] = interval.get(source_key)
+        item = merged
     start = _first_value(
         item,
         (
@@ -424,16 +472,20 @@ def _normalize_csv_object(row: Dict[str, Any], index: int) -> Dict[str, Any]:
 
 
 def _extract_source_metadata(status: Dict[str, Any]) -> Dict[str, Any]:
-    for key in ("source_metadata", "source_media_metadata", "metadata", "archive_metadata"):
+    merged: Dict[str, Any] = {}
+    for key in ("metadata", "archive_metadata", "source_metadata", "source_media_metadata"):
         value = status.get(key)
         if isinstance(value, dict):
-            return deepcopy(value)
+            merged.update(deepcopy(value))
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
-    for key in ("source_metadata", "source_media_metadata", "metadata", "archive_metadata"):
+    for key in ("metadata", "archive_metadata", "source_metadata", "source_media_metadata"):
         value = results.get(key)
         if isinstance(value, dict):
-            return deepcopy(value)
-    return {}
+            merged.update(deepcopy(value))
+    artifact = _read_json_artifact(_output_file(status, "source_media_metadata_json"))
+    if isinstance(artifact, dict):
+        merged.update(deepcopy(artifact))
+    return merged
 
 
 def _extract_scenes(
@@ -670,6 +722,30 @@ def _extract_second_order_instructions(status: Dict[str, Any]) -> List[Dict[str,
 def _extract_meaning_events(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     artifact = _read_json_artifact(_output_file(status, "multimodal_meaning_stage1"))
     return _list_from_json_payload(artifact, ("feature_events", "events", "items"))
+
+
+def _extract_sfl_utterances(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    payload = status.get("dependency_sfl_stage1") or results.get("dependency_sfl_stage1")
+    if isinstance(payload, dict):
+        utterances = _list_from_json_payload(payload, ("utterances", "items", "segments"))
+        if utterances:
+            return utterances
+    artifact = _read_json_artifact(_output_file(status, "dependency_sfl_stage1"))
+    return _list_from_json_payload(artifact, ("utterances", "items", "segments"))
+
+
+def _extract_pos_analysis(status: Dict[str, Any]) -> Dict[str, Any]:
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    for payload in (
+        status.get("pos_analysis"),
+        results.get("pos_analysis"),
+        results.get("pos"),
+    ):
+        if isinstance(payload, dict):
+            return payload
+    artifact = _read_json_artifact(_output_file(status, "pos_analysis"))
+    return artifact if isinstance(artifact, dict) else {}
 
 
 def _seconds_value(value: Any, fallback: float = 0.0) -> float:
@@ -1026,6 +1102,22 @@ def _manual_visual_annotations_for_scene(
     ]
 
 
+def _manual_scene_account_override(scene_manual: List[Dict[str, Any]]) -> str:
+    for item in reversed(scene_manual):
+        correlation = (
+            item.get("metadata_correlation")
+            if isinstance(item.get("metadata_correlation"), dict)
+            else {}
+        )
+        target_type = _safe_text(correlation.get("target_type")).lower()
+        subcategory = _safe_text(item.get("subcategory")).lower()
+        if target_type in {"scene_card_account", "scene_account"} or "scene account" in subcategory:
+            note = _clean_metadata_label(item.get("open_note"))
+            if note:
+                return note
+    return ""
+
+
 def _compact_expression_label(item: Dict[str, Any]) -> str:
     raw_label = (
         item.get("dominant_emotion")
@@ -1120,7 +1212,7 @@ def _unique_item_labels(
 
 
 def _join_phrase(values: List[str]) -> str:
-    clean = [_safe_text(value) for value in values if _safe_text(value)]
+    clean = _dedupe_text(value for value in values if _safe_text(value))
     if not clean:
         return ""
     if len(clean) == 1:
@@ -1159,6 +1251,17 @@ GENERIC_PERSON_LABEL_PATTERNS = (
     "screen",
 )
 
+ROLE_LABEL_PATTERNS = (
+    "anchor",
+    "editor",
+    "interviewer",
+    "interviewed",
+    "minister",
+    "presenter",
+    "reporter",
+    "respondent",
+)
+
 
 def _is_mature_identity_label(value: str) -> bool:
     label = _safe_text(value)
@@ -1174,6 +1277,18 @@ def _is_mature_identity_label(value: str) -> bool:
     return True
 
 
+def _is_role_label(value: str) -> bool:
+    lowered = _safe_text(value).lower()
+    if any(separator in lowered for separator in (" - ", " — ", "/", ";")):
+        return False
+    return any(
+        lowered == term
+        or lowered.startswith(f"{term} ")
+        or lowered.endswith(f" {term}")
+        for term in ROLE_LABEL_PATTERNS
+    )
+
+
 def _identity_context_from_items(items: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
     identities: List[str] = []
     roles: List[str] = []
@@ -1182,11 +1297,15 @@ def _identity_context_from_items(items: List[Dict[str, Any]]) -> Tuple[List[str]
         label = _safe_text(item.get("label"))
         manual_category = _safe_text(item.get("manual_category"))
         status = _safe_text(item.get("status"))
+        if _is_role_label(label):
+            if label and label not in roles:
+                roles.append(label)
+            continue
         if category == "persons" and _is_mature_identity_label(label):
             if label not in identities:
                 identities.append(label)
         if manual_category in {"Role", "Genre", "Identification"} and _is_mature_identity_label(label):
-            target = roles if any(term in label.lower() for term in ("anchor", "reporter", "editor", "minister", "interviewer")) else identities
+            target = roles if _is_role_label(label) else identities
             if label not in target:
                 target.append(label)
         if status == "manual" and category == "persons" and _is_mature_identity_label(label):
@@ -1378,6 +1497,591 @@ def _meaning_summary_labels(meaning_plot: Dict[str, Any], limit: int = 2) -> Lis
     return labels
 
 
+def _source_annotations(source_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    annotations = source_metadata.get("user_annotations")
+    return annotations if isinstance(annotations, dict) else {}
+
+
+def _listish_text(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [_clean_metadata_label(item) for item in value if _clean_metadata_label(item)]
+    text = _clean_metadata_label(value)
+    return [text] if text else []
+
+
+def _metadata_place_bits(source_metadata: Dict[str, Any]) -> List[str]:
+    annotations = _source_annotations(source_metadata)
+    bits: List[str] = []
+    for key in ("location_place", "location_city", "location_country", "location_room"):
+        value = _clean_metadata_label(annotations.get(key) or source_metadata.get(key))
+        if value and value not in bits:
+            bits.append(value)
+    return bits
+
+
+def _metadata_time_bits(source_metadata: Dict[str, Any]) -> List[str]:
+    annotations = _source_annotations(source_metadata)
+    bits: List[str] = []
+    for key in ("time_moment", "time_year", "time_era"):
+        value = _clean_metadata_label(annotations.get(key) or source_metadata.get(key))
+        if value and value not in bits:
+            bits.append(value)
+    if len(bits) > 1:
+        bits = [bit for bit in bits if not any(bit != other and bit in other for other in bits)]
+    return bits
+
+
+def _metadata_format_bits(source_metadata: Dict[str, Any]) -> List[str]:
+    annotations = _source_annotations(source_metadata)
+    bits: List[str] = []
+    for key in ("genre", "genre_subtype", "situational_genre", "situational_subtype"):
+        value = _clean_metadata_label(annotations.get(key) or source_metadata.get(key))
+        if value and value not in bits:
+            bits.append(value)
+    return bits
+
+
+def _metadata_person_role_context(source_metadata: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    annotations = _source_annotations(source_metadata)
+    text_sources = [
+        _clean_metadata_label(annotations.get("editor_notes")),
+        _clean_metadata_label(annotations.get("source_context")),
+        _clean_metadata_label(annotations.get("provenance_notes")),
+    ]
+    people = _listish_text(annotations.get("persons")) + _listish_text(
+        annotations.get("reference_speakers")
+    )
+    roles: List[str] = []
+    joined = " ".join(text_sources)
+    researcher_match = re.search(
+        r"\b(PhD\s+Researcher\s+[A-ZÅÄÖ][\wÅÄÖåäö'´-]+(?:\s+[A-ZÅÄÖ][\wÅÄÖåäö'´-]+){0,3})",
+        joined,
+    )
+    if researcher_match:
+        label = researcher_match.group(1).replace("  ", " ").strip()
+        if label not in people:
+            people.append(label)
+        if "interviewer" not in roles:
+            roles.append("interviewer")
+    if any(term in joined.lower() for term in ("interview", "searching for wisdom")):
+        if "interviewer" not in roles:
+            roles.append("interviewer")
+    relation = _safe_text(annotations.get("relations"))
+    if "interviewer" in relation.lower() and "interviewer" not in roles:
+        roles.append("interviewer")
+    return people[:4], roles[:4]
+
+
+def _metadata_context_sentence(source_metadata: Dict[str, Any]) -> str:
+    annotations = _source_annotations(source_metadata)
+    for key in ("source_context", "editor_notes", "description"):
+        value = _clean_metadata_label(annotations.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _short_metadata_terms(text: str, limit: int = 4) -> List[str]:
+    clean = _safe_text(text)
+    if not clean:
+        return []
+    phrases = re.split(r"[.;\n]+", clean)
+    terms: List[str] = []
+    for phrase in phrases:
+        compact = " ".join(phrase.split()).strip(" ,")
+        if 3 <= len(compact) <= 90 and compact not in terms:
+            terms.append(compact)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _metadata_schema_facets(source_metadata: Dict[str, Any]) -> Dict[str, List[Tuple[str, str, str]]]:
+    annotations = _source_annotations(source_metadata)
+    facets: Dict[str, List[Tuple[str, str, str]]] = {facet: [] for facet in FACETS}
+
+    def add(category: str, label: Any, key: str, likelihood: str = "observed") -> None:
+        clean = _safe_text(label)
+        if not clean or category not in facets:
+            return
+        pair = (clean, key, likelihood)
+        if pair not in facets[category]:
+            facets[category].append(pair)
+
+    for key in ("location_place", "location_city", "location_country", "location_room"):
+        if _safe_text(annotations.get(key)):
+            add("places", _clean_metadata_label(annotations.get(key)), key, "manual")
+        else:
+            add("places", _clean_metadata_label(source_metadata.get(key)), key, "observed")
+    for key in ("genre", "genre_subtype", "situational_genre", "situational_subtype"):
+        if _safe_text(annotations.get(key)):
+            add("genre_form", _clean_metadata_label(annotations.get(key)), key, "manual")
+        else:
+            add("genre_form", _clean_metadata_label(source_metadata.get(key)), key, "observed")
+    for key in ("situation_event", "interaction_dynamics", "relations"):
+        if _safe_text(annotations.get(key)):
+            add("situations", _clean_metadata_label(annotations.get(key)), key, "manual")
+        else:
+            add("situations", _clean_metadata_label(source_metadata.get(key)), key, "observed")
+    for key in ("narrative_development", "performance_expression", "privacy_axis", "expertise_axis"):
+        if _safe_text(annotations.get(key)):
+            add("themes", _clean_metadata_label(annotations.get(key)), key, "manual")
+        else:
+            add("themes", _clean_metadata_label(source_metadata.get(key)), key, "observed")
+    for key in ("title", "scope", "description", "source_context", "editor_notes"):
+        annotation_value = annotations.get(key)
+        source_value = source_metadata.get(key)
+        likelihood = "manual" if _safe_text(annotation_value) else "observed"
+        for term in _short_metadata_terms(annotation_value or source_value, limit=3):
+            add("subject_domain", term, key, likelihood)
+    for keyword in _listish_text(annotations.get("keywords") or source_metadata.get("keywords")):
+        add("subject_domain", keyword, "keywords", "manual" if annotations.get("keywords") else "observed")
+
+    metadata_people, metadata_roles = _metadata_person_role_context(source_metadata)
+    for person in metadata_people:
+        add("persons", person, "persons", "manual")
+    for role in metadata_roles:
+        add("persons", role, "roles", "manual")
+    return facets
+
+
+def _ocr_text(item: Dict[str, Any]) -> str:
+    return _clean_metadata_label(
+        item.get("text")
+        or item.get("ocr_text")
+        or item.get("label")
+        or item.get("raw_text")
+    )
+
+
+def _ocr_place_labels(text: str, source_metadata: Dict[str, Any]) -> List[str]:
+    folded = _fold_text(text)
+    labels: List[str] = []
+    for place in _metadata_place_bits(source_metadata):
+        place_folded = _fold_text(place)
+        if place_folded and place_folded in folded:
+            labels.append(place)
+    known_places = {
+        "helsinki": "Helsinki",
+        "finland": "Finland",
+        "belem": "Belem",
+        "brazil": "Brazil",
+    }
+    for needle, label in known_places.items():
+        if re.search(rf"\b{re.escape(needle)}\b", folded):
+            labels.append(label)
+    return _dedupe_text(labels)
+
+
+def _ocr_subject_labels(text: str) -> List[str]:
+    clean = _clean_metadata_label(text)
+    folded = _fold_text(clean)
+    labels: List[str] = []
+    if re.search(r"\bcop\s*30\b", folded):
+        labels.append("COP30")
+    if re.search(r"\bbbc\b", folded):
+        labels.append("BBC")
+    if "planet helsinki" in folded:
+        labels.append("Planet Helsinki")
+    return _dedupe_text(labels)
+
+
+def _clean_sfl_candidate_label(value: Any) -> str:
+    if isinstance(value, dict):
+        label = _safe_text(value.get("candidate_label") or value.get("label"))
+        family = _safe_text(value.get("label_family") or value.get("target_label_family"))
+        if family and label:
+            return f"{family}: {label.replace('_', ' ')}"
+        return (label or family).replace("_", " ")
+    return _safe_text(value).replace("_", " ")
+
+
+def _sfl_scene_profile(sfl_utterances: List[Dict[str, Any]]) -> Dict[str, Any]:
+    speech_functions: List[str] = []
+    process_types: List[str] = []
+    affect: List[str] = []
+    stance: List[str] = []
+    modality: List[str] = []
+    candidate_labels: List[str] = []
+
+    for utterance in sfl_utterances:
+        sfl = utterance.get("sfl_lite") if isinstance(utterance.get("sfl_lite"), dict) else {}
+        interpersonal = (
+            sfl.get("interpersonal") if isinstance(sfl.get("interpersonal"), dict) else {}
+        )
+        ideational = sfl.get("ideational") if isinstance(sfl.get("ideational"), dict) else {}
+        support = (
+            utterance.get("interpretation_support")
+            if isinstance(utterance.get("interpretation_support"), dict)
+            else {}
+        )
+        for target, value in (
+            (speech_functions, interpersonal.get("speech_function")),
+            (process_types, ideational.get("process_type")),
+            (affect, interpersonal.get("affect")),
+            (stance, interpersonal.get("stance")),
+            (modality, interpersonal.get("modality")),
+        ):
+            clean = _safe_text(value).replace("_", " ")
+            if clean and clean not in target:
+                target.append(clean)
+        for label in support.get("candidate_labels") or []:
+            clean = _clean_sfl_candidate_label(label)
+            if clean and clean not in candidate_labels:
+                candidate_labels.append(clean)
+
+    return {
+        "utterance_count": len(sfl_utterances),
+        "speech_functions": speech_functions[:6],
+        "process_types": process_types[:6],
+        "affect": affect[:6],
+        "stance": stance[:6],
+        "modality": modality[:6],
+        "candidate_labels": candidate_labels[:8],
+    }
+
+
+def _sentence(text: str) -> str:
+    clean = " ".join(_safe_text(text).split())
+    if not clean:
+        return ""
+    return clean if clean.endswith((".", "!", "?")) else clean + "."
+
+
+def _evidence_basis_sentence(
+    *,
+    transcript: List[Dict[str, Any]],
+    items: List[Dict[str, Any]],
+    sfl_profile: Dict[str, Any],
+    meaning_plot: Dict[str, Any],
+) -> str:
+    basis: List[str] = []
+    if transcript:
+        basis.append("mature transcript")
+    if sfl_profile.get("utterance_count"):
+        basis.append("SFL interaction analysis")
+    if meaning_plot.get("instructions") or meaning_plot.get("meaning_events"):
+        basis.append("Plot / Meaning indicators")
+    mature_sources = []
+    for item in items:
+        source = _safe_text(item.get("source"))
+        status = _safe_text(item.get("status"))
+        if status in {"manual", "observed"} and source and source not in mature_sources:
+            mature_sources.append(source)
+    if mature_sources:
+        basis.append("resolved " + _join_phrase(mature_sources[:3]))
+    if not basis:
+        return "The prose is based on the available scene-card evidence; raw detections remain preserved separately for audit."
+    return (
+        "The prose is routed through "
+        + _join_phrase(basis[:4])
+        + "; raw detections remain preserved separately for audit."
+    )
+
+
+def _pos_interrogative_lens(pos_analysis: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
+    if not isinstance(pos_analysis, dict):
+        return {}
+    lens = pos_analysis.get("interrogative_lens")
+    if not isinstance(lens, dict):
+        return {}
+    normalized: Dict[str, List[str]] = {}
+    for key, value in lens.items():
+        if isinstance(value, list):
+            normalized[str(key)] = _dedupe_text(value)[:6]
+    return normalized
+
+
+def _scene_interrogative_schema(
+    *,
+    who_is_speaking: str,
+    topic_summary: Dict[str, Any],
+    discourse_form: str,
+    place_labels: List[str],
+    prop_labels: List[str],
+    source_metadata: Dict[str, Any],
+    meanings_constructed: str,
+    phenomena: str,
+    sfl_profile: Dict[str, Any],
+    event_labels: List[str],
+    action_labels: List[str],
+    meaning_labels: List[str],
+    subject_labels: List[str],
+    pos_analysis: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    pos_lens = _pos_interrogative_lens(pos_analysis)
+    places = _dedupe_text([*_metadata_place_bits(source_metadata), *place_labels])
+    times = _metadata_time_bits(source_metadata)
+    what_bits = _dedupe_text(
+        [
+            *subject_labels[:3],
+            topic_summary.get("summary"),
+            topic_summary.get("situation"),
+            *_metadata_format_bits(source_metadata)[:2],
+        ]
+    )
+    how_bits = _dedupe_text(
+        [
+            discourse_form,
+            *_safe_list(sfl_profile.get("speech_functions")),
+            *_safe_list(sfl_profile.get("process_types")),
+            *action_labels,
+            *event_labels,
+        ]
+    )
+    why_bits = _dedupe_text(
+        [
+            topic_summary.get("meaning"),
+            topic_summary.get("phenomena"),
+            *meaning_labels,
+        ]
+    )
+
+    schema: Dict[str, Any] = {
+        "who": _sentence(who_is_speaking) if who_is_speaking else "",
+        "what": _sentence(_join_phrase(what_bits[:4])) if what_bits else "",
+        "where": _sentence(_join_phrase(places[:4])) if places else "",
+        "when": _sentence(_join_phrase(times[:3])) if times else "",
+        "how": _sentence(_join_phrase(how_bits[:5])) if how_bits else "",
+        "why_or_meaning": meanings_constructed or _sentence(_join_phrase(why_bits[:4])),
+        "phenomena": phenomena,
+        "pos_support": pos_lens,
+    }
+    for key, pos_key in (
+        ("who", "who"),
+        ("what", "what"),
+        ("where", "where"),
+        ("when", "when"),
+        ("how", "how"),
+        ("why_or_meaning", "why"),
+    ):
+        if not schema.get(key) and pos_lens.get(pos_key):
+            schema[key] = _sentence(_join_phrase(pos_lens[pos_key][:4]))
+    return {key: value for key, value in schema.items() if value}
+
+
+def _safe_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [_safe_text(item) for item in value if _safe_text(item)]
+    text = _safe_text(value)
+    return [text] if text else []
+
+
+def _scene_prose_sections(
+    *,
+    transcript: List[Dict[str, Any]],
+    person_count: int,
+    place_labels: List[str],
+    prop_labels: List[str],
+    items: List[Dict[str, Any]],
+    meaning_plot: Dict[str, Any],
+    sfl_utterances: List[Dict[str, Any]],
+    scene_boundary_source: str,
+    overview: str,
+    speech_clause: str,
+    discourse_form: str,
+    topic_summary: Dict[str, Any],
+    identity_labels: List[str],
+    role_labels: List[str],
+    source_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    source_metadata = source_metadata or {}
+    sfl_profile = _sfl_scene_profile(sfl_utterances)
+    action_labels = _unique_item_labels(items, ("actions",), limit=3)
+    situation_labels = _unique_item_labels(items, ("situations",), limit=3)
+    event_labels = _unique_item_labels(items, ("events",), limit=3)
+    theme_labels = _unique_item_labels(items, ("themes",), limit=3)
+    expression_labels = _unique_item_labels(items, ("situations",), limit=4)
+    costume_labels = _unique_item_labels(items, ("costume",), limit=3)
+    cinematic_labels = _unique_item_labels(items, ("cinematic_cues",), limit=4)
+    genre_labels = _unique_item_labels(items, ("genre_form",), limit=2)
+    topic_labels = topic_summary.get("labels") or _transcript_topic_labels(transcript)
+    meaning_labels = _meaning_summary_labels(meaning_plot, limit=4)
+    unique_places = _dedupe_text(place_labels)[:3]
+    unique_props = _dedupe_text(prop_labels)[:5]
+    metadata_places = _metadata_place_bits(source_metadata)
+    metadata_times = _metadata_time_bits(source_metadata)
+    metadata_formats = _metadata_format_bits(source_metadata)
+    metadata_people, metadata_roles = _metadata_person_role_context(source_metadata)
+    metadata_context = _metadata_context_sentence(source_metadata)
+
+    role_terms = _dedupe_text([*role_labels[:3], *metadata_roles[:3]])
+    identity_terms = _dedupe_text([*identity_labels[:3], *metadata_people[:3]])
+    role_phrase = _join_phrase(_dedupe_text([*role_terms[:2], *identity_terms[:2]]))
+    topic_phrase = topic_summary.get("summary") or _join_phrase(topic_labels[:3])
+    meaning_phrase = (
+        topic_summary.get("meaning")
+        or meaning_plot.get("summary")
+        or _join_phrase([*meaning_labels[:2], *theme_labels[:2]])
+    )
+
+    summary_parts: List[str] = []
+    if discourse_form:
+        summary_parts.append(f"a {discourse_form}")
+    if topic_phrase:
+        summary_parts.append(f"about {topic_phrase}")
+    summary_role_terms = role_terms
+    if discourse_form and "interview" in discourse_form and identity_terms:
+        summary_role_terms = []
+    summary_role_phrase = _join_phrase(_dedupe_text([*summary_role_terms[:2], *identity_terms[:2]]))
+    if summary_role_phrase:
+        summary_parts.append(f"with {summary_role_phrase}")
+    elif speech_clause:
+        summary_parts.append(speech_clause)
+    if meaning_phrase:
+        summary_parts.append(f"constructing {meaning_phrase}")
+    if unique_props:
+        summary_parts.append(f"while visible cues include {_join_phrase(unique_props[:3])}")
+    if summary_parts:
+        summary = "This mise-en-scene reads as " + "; ".join(summary_parts[:5])
+    elif overview:
+        summary = overview
+    else:
+        summary = "This mise-en-scene has limited mature evidence for a coherent prose account"
+
+    if metadata_places or unique_places or metadata_times or metadata_formats:
+        setting = "The setting is anchored by "
+        setting_bits = []
+        if metadata_places:
+            setting_bits.append(_join_phrase(metadata_places))
+        if metadata_times:
+            setting_bits.append(_join_phrase(metadata_times[:2]))
+        non_repeated_places = [
+            place
+            for place in unique_places
+            if place.lower() not in {metadata_place.lower() for metadata_place in metadata_places}
+        ]
+        if non_repeated_places:
+            setting_bits.append(_join_phrase(non_repeated_places))
+        if metadata_formats:
+            setting_bits.append(f"source metadata frames it as {_join_phrase(metadata_formats[:3])}")
+        elif genre_labels:
+            setting_bits.append(f"genre-form evidence such as {_join_phrase(genre_labels)}")
+        setting += _join_phrase(setting_bits)
+    else:
+        setting = ""
+
+    props = (
+        f"Props and set-dressing cues foreground {_join_phrase(unique_props)}"
+        if unique_props
+        else ""
+    )
+
+    costume = (
+        f"Costume, hair, and makeup evidence currently points to {_join_phrase(costume_labels)}"
+        if costume_labels
+        else ""
+    )
+
+    performance_bits: List[str] = []
+    if role_terms and identity_terms:
+        performance_bits.append(
+            f"{_join_phrase(role_terms[:2])} structures the speaking role, with identified participant evidence including {_join_phrase(identity_terms[:2])}"
+        )
+    elif role_terms:
+        performance_bits.append(f"{_join_phrase(role_terms[:2])} structures the speaking role")
+    elif identity_terms:
+        performance_bits.append(
+            f"identified participant evidence includes {_join_phrase(identity_terms[:2])}"
+        )
+    elif speech_clause:
+        performance_bits.append(speech_clause)
+    if sfl_profile["speech_functions"]:
+        performance_bits.append(
+            "SFL reads the interaction as "
+            + _join_phrase([str(value) for value in sfl_profile["speech_functions"][:3]])
+        )
+    if sfl_profile["process_types"]:
+        performance_bits.append(
+            "with "
+            + _join_phrase([str(value) for value in sfl_profile["process_types"][:3]])
+            + " process cues"
+        )
+    if action_labels:
+        performance_bits.append(f"blocking/action cues include {_join_phrase(action_labels)}")
+    if expression_labels:
+        performance_bits.append(f"expression evidence includes {_join_phrase(expression_labels[:2])}")
+    performance = (
+        "; ".join(performance_bits[:4])
+        if performance_bits
+        else ""
+    )
+
+    outdoor_context = any(
+        term in " ".join([metadata_context, *metadata_places]).lower()
+        for term in ("square", "city center", "city centre", "outdoor", "street")
+    )
+    if any("light" in label.lower() or "color" in label.lower() or "colour" in label.lower() for label in cinematic_labels):
+        lighting = f"Lighting and colour are represented by mature cinematic cues such as {_join_phrase(cinematic_labels)}"
+    elif outdoor_context:
+        lighting = "Lighting and colour read as outdoor public-space footage from the source context and visible city-square setting"
+    else:
+        lighting = ""
+
+    framing = (
+        f"Cinematography and framing evidence currently surfaces {_join_phrase(cinematic_labels)}"
+        if cinematic_labels
+        else ""
+    )
+
+    editing = ""
+    if scene_boundary_source:
+        if "transcript" in scene_boundary_source:
+            editing = "The scene boundary is currently a working transcript-window division rather than a final edit decision"
+        else:
+            editing = "The scene boundary follows the available visual or detected transition evidence"
+    if meaning_labels:
+        editing += (
+            (", and " if editing else "")
+            + "Plot / Meaning cues mark "
+            + _join_phrase(meaning_labels[:3])
+        )
+
+    sound_bits: List[str] = []
+    joined_events = " ".join(event_labels).lower()
+    if transcript:
+        if "foreground speech" not in joined_events:
+            sound_bits.append("foreground speech")
+    if event_labels:
+        sound_bits.append(_join_phrase(event_labels[:3]))
+    if sfl_profile["affect"]:
+        sound_bits.append("SFL affect cues such as " + _join_phrase(sfl_profile["affect"][:3]))
+    sound = (
+        "Sound design evidence includes " + _join_phrase(sound_bits)
+        if sound_bits
+        else ""
+    )
+
+    meaning_plot_text = meaning_phrase or "No stable Plot / Meaning indicator has surfaced yet"
+    if meaning_labels:
+        meaning_plot_text += "; Plot / Meaning indicators include " + _join_phrase(meaning_labels[:3])
+    if sfl_profile["candidate_labels"]:
+        meaning_plot_text += "; SFL interaction cues include " + _join_phrase(sfl_profile["candidate_labels"][:3])
+    if theme_labels:
+        meaning_plot_text += "; thematic evidence includes " + _join_phrase(theme_labels[:3])
+
+    return {
+        "summary": _sentence(summary),
+        "setting_and_set_design": _sentence(setting),
+        "props": _sentence(props),
+        "costume_hair_makeup": _sentence(costume),
+        "performance_and_blocking": _sentence(performance),
+        "lighting_and_color": _sentence(lighting),
+        "cinematography_and_framing": _sentence(framing),
+        "editing": _sentence(editing),
+        "sound_design": _sentence(sound),
+        "meaning_and_plot": _sentence(str(meaning_plot_text)),
+        "evidence_basis": _sentence(
+            _evidence_basis_sentence(
+                transcript=transcript,
+                items=items,
+                sfl_profile=sfl_profile,
+                meaning_plot=meaning_plot,
+            )
+        ),
+    }
+
+
 def _scene_nlp_summary(
     *,
     transcript: List[Dict[str, Any]],
@@ -1386,6 +2090,11 @@ def _scene_nlp_summary(
     prop_labels: List[str],
     items: List[Dict[str, Any]],
     meaning_plot: Dict[str, Any],
+    sfl_utterances: Optional[List[Dict[str, Any]]] = None,
+    scene_boundary_source: str = "",
+    overview: str = "",
+    source_metadata: Optional[Dict[str, Any]] = None,
+    pos_analysis: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     clauses: List[str] = []
     evidence_ids: List[str] = []
@@ -1402,12 +2111,22 @@ def _scene_nlp_summary(
     situation_labels = _unique_item_labels(items, ("situations",), limit=2)
     theme_labels = _unique_item_labels(items, ("themes",), limit=2)
     event_labels = _unique_item_labels(items, ("events",), limit=2)
+    subject_labels = _unique_item_labels(items, ("subject_domain",), limit=4)
     meaning_labels = _meaning_summary_labels(meaning_plot, limit=2)
     transcript_topics = _transcript_topic_labels(transcript)
     topic_summary = _transcript_topic_summary(transcript)
     topic_labels = topic_summary.get("labels") or transcript_topics
     discourse_form = _transcript_discourse_form(transcript)
     identity_labels, role_labels = _identity_context_from_items(items)
+    metadata_identity_labels, metadata_role_labels = _metadata_person_role_context(
+        source_metadata or {}
+    )
+    for label in metadata_identity_labels:
+        if label not in identity_labels:
+            identity_labels.append(label)
+    for label in metadata_role_labels:
+        if label not in role_labels:
+            role_labels.append(label)
     if topic_summary.get("summary"):
         clauses.append(f"the transcript centers on {topic_summary['summary']}")
 
@@ -1484,6 +2203,43 @@ def _scene_nlp_summary(
     else:
         phenomena = "The material includes " + "; ".join(phenomena_parts[:3]) + "."
 
+    prose_sections = _scene_prose_sections(
+        transcript=transcript,
+        person_count=person_count,
+        place_labels=place_labels,
+        prop_labels=prop_labels,
+        items=items,
+        meaning_plot=meaning_plot,
+        sfl_utterances=sfl_utterances or [],
+        scene_boundary_source=scene_boundary_source,
+        overview=overview,
+        speech_clause=speech_clause,
+        discourse_form=discourse_form,
+        topic_summary=topic_summary,
+        identity_labels=identity_labels,
+        role_labels=role_labels,
+        source_metadata=source_metadata,
+    )
+    sentence = prose_sections.get("summary") or sentence
+    what_is_happening = sentence
+    sfl_profile = _sfl_scene_profile(sfl_utterances or [])
+    interrogative_schema = _scene_interrogative_schema(
+        who_is_speaking=who_is_speaking,
+        topic_summary=topic_summary,
+        discourse_form=discourse_form,
+        place_labels=place_labels,
+        prop_labels=unique_props,
+        source_metadata=source_metadata or {},
+        meanings_constructed=meanings_constructed,
+        phenomena=phenomena,
+        sfl_profile=sfl_profile,
+        event_labels=event_labels,
+        action_labels=action_labels,
+        meaning_labels=meaning_labels,
+        subject_labels=subject_labels,
+        pos_analysis=pos_analysis,
+    )
+
     item_evidence_refs: List[str] = []
     for item in items:
         for ref in item.get("evidence_refs") or []:
@@ -1496,6 +2252,8 @@ def _scene_nlp_summary(
     return {
         "version": NLP_SCENE_SUMMARY_VERSION,
         "sentence": sentence,
+        "prose_sections": prose_sections,
+        "interrogative_schema": interrogative_schema,
         "description": {
             "what_is_happening": what_is_happening,
             "who_is_speaking": who_is_speaking,
@@ -1514,11 +2272,14 @@ def _scene_nlp_summary(
             "themes": theme_labels,
             "events": event_labels,
             "meaning_plot": meaning_labels,
+            "subject_domain": subject_labels,
             "transcript_topics": transcript_topics,
             "transcript_topic_model": topic_summary,
             "identity_labels": identity_labels,
             "role_labels": role_labels,
             "discourse_form": discourse_form,
+            "sfl_profile": sfl_profile,
+            "pos_interrogative_lens": _pos_interrogative_lens(pos_analysis),
         },
         "source_evidence_ids": list(dict.fromkeys([*evidence_ids, *item_evidence_refs]))[:12],
     }
@@ -1549,6 +2310,7 @@ def build_mise_en_scene_scene_cards(
 
     source_video_id = source_video_id or _safe_text(status.get("video_id"), analysis_id)
     source_metadata = _extract_source_metadata(status)
+    metadata_facets = _metadata_schema_facets(source_metadata)
     corrections = _corrections_payload(status)
     transcript = _apply_transcript_corrections(_extract_transcript(status), corrections)
     scenes = _extract_scenes(status, analysis_id, transcript)
@@ -1573,6 +2335,8 @@ def build_mise_en_scene_scene_cards(
     audio_prosody = _extract_audio_prosody(status)
     meaning_instructions = _extract_second_order_instructions(status)
     meaning_events = _extract_meaning_events(status)
+    sfl_utterances = _extract_sfl_utterances(status)
+    pos_analysis = _extract_pos_analysis(status)
     cards: List[Dict[str, Any]] = []
 
     for scene_index, scene in enumerate(scenes, start=1):
@@ -1583,6 +2347,9 @@ def build_mise_en_scene_scene_cards(
         scene_ocr = [item for item in ocr if _overlaps(item, scene_start_ms, scene_end_ms)]
         scene_expressions = [item for item in expressions if _overlaps(item, scene_start_ms, scene_end_ms)]
         scene_audio = [item for item in audio_prosody if _overlaps(item, scene_start_ms, scene_end_ms)]
+        scene_sfl_utterances = [
+            item for item in sfl_utterances if _overlaps(item, scene_start_ms, scene_end_ms)
+        ]
         scene_manual = _manual_visual_annotations_for_scene(corrections, scene_start_ms, scene_end_ms)
 
         items: List[Dict[str, Any]] = []
@@ -1632,6 +2399,7 @@ def build_mise_en_scene_scene_cards(
 
         person_count = 0
         prop_labels: List[str] = []
+        place_labels: List[str] = []
         for index, obj in enumerate(scene_objects):
             label = _safe_text(
                 obj.get("displayLabel")
@@ -1689,7 +2457,7 @@ def build_mise_en_scene_scene_cards(
                     )
 
         for index, item in enumerate(scene_ocr):
-            text = _safe_text(item.get("text"))
+            text = _ocr_text(item)
             if not text:
                 continue
             evidence_ref = _evidence_id("ocr", scene_index, index, item)
@@ -1712,6 +2480,45 @@ def build_mise_en_scene_scene_cards(
                     source="ocr",
                 ),
             )
+            for place_label in _ocr_place_labels(text, source_metadata):
+                place_labels.append(place_label)
+                _add_item(
+                    items,
+                    _new_item(
+                        scene_id=scene_id,
+                        category="places",
+                        label=place_label,
+                        likelihood="observed",
+                        evidence_refs=[evidence_ref],
+                        navigation=_navigation(
+                            analysis_id=analysis_id,
+                            source_video_id=source_video_id,
+                            time_ms=start_ms,
+                            panel="OCRPanel",
+                            evidence_refs=[evidence_ref],
+                        ),
+                        source="ocr",
+                    ),
+                )
+            for subject_label in _ocr_subject_labels(text):
+                _add_item(
+                    items,
+                    _new_item(
+                        scene_id=scene_id,
+                        category="subject_domain",
+                        label=subject_label,
+                        likelihood="observed",
+                        evidence_refs=[evidence_ref],
+                        navigation=_navigation(
+                            analysis_id=analysis_id,
+                            source_video_id=source_video_id,
+                            time_ms=start_ms,
+                            panel="OCRPanel",
+                            evidence_refs=[evidence_ref],
+                        ),
+                        source="ocr",
+                    ),
+                )
 
         for index, item in enumerate(scene_expressions):
             label = _compact_expression_label(item)
@@ -1912,7 +2719,6 @@ def build_mise_en_scene_scene_cards(
                 ),
             )
 
-        place_labels: List[str] = []
         for key in ("place", "location", "setting"):
             value = _safe_text(source_metadata.get(key))
             if value:
@@ -1934,6 +2740,34 @@ def build_mise_en_scene_scene_cards(
                         ),
                         source="source_metadata",
                     ),
+                )
+
+        for category, pairs in metadata_facets.items():
+            for label, key, likelihood in pairs:
+                if category == "places" and label in place_labels:
+                    continue
+                if category == "places":
+                    place_labels.append(label)
+                metadata_item = _new_item(
+                    scene_id=scene_id,
+                    category=category,
+                    label=label,
+                    likelihood=likelihood,
+                    evidence_refs=[f"source_media_metadata:{key}"],
+                    navigation=_navigation(
+                        analysis_id=analysis_id,
+                        source_video_id=source_video_id,
+                        time_ms=scene_start_ms,
+                        panel="MetadataPanel",
+                        evidence_refs=[f"source_media_metadata:{key}"],
+                    ),
+                    source="source_media_metadata",
+                )
+                if key == "roles":
+                    metadata_item["manual_category"] = "Role"
+                _add_item(
+                    items,
+                    metadata_item,
                 )
 
         for label, path in _genre_labels(source_metadata, scene_transcript):
@@ -1988,6 +2822,14 @@ def build_mise_en_scene_scene_cards(
             instructions=meaning_instructions,
             meaning_events=meaning_events,
         )
+        scene_boundary_source = scene.get("scene_boundary_source") or scene.get("source") or "detected"
+        overview = _overview(
+            transcript=scene_transcript,
+            person_count=person_count,
+            prop_labels=prop_labels,
+            place_labels=place_labels,
+            situation_labels=situation_labels,
+        )
         nlp_summary = _scene_nlp_summary(
             transcript=scene_transcript,
             person_count=person_count,
@@ -1995,7 +2837,18 @@ def build_mise_en_scene_scene_cards(
             prop_labels=prop_labels,
             items=items,
             meaning_plot=meaning_plot,
+            sfl_utterances=scene_sfl_utterances,
+            scene_boundary_source=scene_boundary_source,
+            overview=overview,
+            source_metadata=source_metadata,
+            pos_analysis=pos_analysis,
         )
+        manual_account = _manual_scene_account_override(scene_manual)
+        if manual_account:
+            nlp_summary["sentence"] = _sentence(manual_account)
+            nlp_summary["prose_sections"]["summary"] = _sentence(manual_account)
+            nlp_summary["description"]["what_is_happening"] = _sentence(manual_account)
+            nlp_summary["summary_inputs"]["manual_scene_account_override"] = True
 
         card = {
             "schema": SCENE_CARD_SCHEMA,
@@ -2005,17 +2858,13 @@ def build_mise_en_scene_scene_cards(
             "analysis_id": analysis_id,
             "source_video_id": source_video_id,
             "time_interval": {"start_ms": scene_start_ms, "end_ms": scene_end_ms},
-            "scene_boundary_source": scene.get("scene_boundary_source") or scene.get("source") or "detected",
-            "overview": _overview(
-                transcript=scene_transcript,
-                person_count=person_count,
-                prop_labels=prop_labels,
-                place_labels=place_labels,
-                situation_labels=situation_labels,
-            ),
+            "scene_boundary_source": scene_boundary_source,
+            "overview": overview,
             "nlp_scene_summary_sentence": nlp_summary["sentence"],
             "nlp_scene_summary": nlp_summary,
             "mise_en_scene_description": nlp_summary["description"],
+            "prose_sections": nlp_summary["prose_sections"],
+            "interrogative_schema": nlp_summary["interrogative_schema"],
             "tags": _scene_card_tags(items),
             "said_in_scene": said_in_scene,
             "meaning_plot": meaning_plot,

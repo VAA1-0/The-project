@@ -1396,7 +1396,7 @@ def mise_en_scene_artifacts_need_refresh(status: Dict[str, Any]) -> bool:
     if not first_card.get("nlp_scene_summary_sentence"):
         return True
     nlp_summary = first_card.get("nlp_scene_summary")
-    if not isinstance(nlp_summary, dict) or int(nlp_summary.get("version") or 0) < 3:
+    if not isinstance(nlp_summary, dict) or int(nlp_summary.get("version") or 0) < 7:
         return True
     if len(scene_cards) <= 1 and _status_has_long_transcript_for_scene_windows(status, first_card):
         return True

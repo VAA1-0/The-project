@@ -97,9 +97,25 @@ type SceneMeaningPlot = {
 type SceneNlpSummary = {
   sentence?: string;
   authority?: string;
+  prose_sections?: SceneProseSections;
+  interrogative_schema?: SceneInterrogativeSchema;
   description?: SceneMiseEnSceneDescription;
   summary_inputs?: Record<string, unknown>;
   source_evidence_ids?: string[];
+};
+
+type SceneProseSections = {
+  summary?: string;
+  setting_and_set_design?: string;
+  props?: string;
+  costume_hair_makeup?: string;
+  performance_and_blocking?: string;
+  lighting_and_color?: string;
+  cinematography_and_framing?: string;
+  editing?: string;
+  sound_design?: string;
+  meaning_and_plot?: string;
+  evidence_basis?: string;
 };
 
 type SceneMiseEnSceneDescription = {
@@ -110,6 +126,17 @@ type SceneMiseEnSceneDescription = {
   phenomena?: string;
 };
 
+type SceneInterrogativeSchema = {
+  who?: string;
+  what?: string;
+  where?: string;
+  when?: string;
+  how?: string;
+  why_or_meaning?: string;
+  phenomena?: string;
+  pos_support?: Record<string, unknown>;
+};
+
 type SceneCard = {
   schema?: string;
   title?: string;
@@ -118,6 +145,8 @@ type SceneCard = {
   overview?: string;
   nlp_scene_summary_sentence?: string;
   nlp_scene_summary?: SceneNlpSummary;
+  prose_sections?: SceneProseSections;
+  interrogative_schema?: SceneInterrogativeSchema;
   mise_en_scene_description?: SceneMiseEnSceneDescription;
   scene_boundary_source?: string;
   time_interval?: {
@@ -146,6 +175,18 @@ const FACET_ORDER = [
   "subject_domain",
 ];
 
+const PROSE_SECTION_LABELS: Array<[keyof SceneProseSections, string]> = [
+  ["setting_and_set_design", "Setting / Set Design"],
+  ["props", "Props"],
+  ["costume_hair_makeup", "Costume / Hair / Makeup"],
+  ["performance_and_blocking", "Performance / Blocking"],
+  ["lighting_and_color", "Lighting / Color"],
+  ["cinematography_and_framing", "Cinematography / Framing"],
+  ["editing", "Editing"],
+  ["sound_design", "Sound Design"],
+  ["meaning_and_plot", "Meaning / Plot"],
+];
+
 function secondsFromMs(value?: number): number {
   return Math.max(0, Number(value || 0) / 1000);
 }
@@ -155,6 +196,19 @@ function formatTime(seconds: number): string {
   const minutes = Math.floor(safe / 60);
   const wholeSeconds = Math.floor(safe % 60);
   return `${minutes}:${String(wholeSeconds).padStart(2, "0")}`;
+}
+
+function compactReportTitle(title?: string): string {
+  const clean = String(title || "").trim();
+  return clean.replace(/^Mise-en-Scene\s+/i, "") || "Scene Card Report";
+}
+
+function sceneBoundaryLabel(source?: string): string {
+  const clean = String(source || "").trim();
+  if (!clean) return "working boundary";
+  if (clean.includes("transcript")) return "transcript-window boundary";
+  if (clean.includes("single")) return "single-extent boundary";
+  return clean.replaceAll("_", " ");
 }
 
 function titleCaseFacet(value: string): string {
@@ -488,6 +542,32 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
     );
   }, [selectedCard?.mise_en_scene_description, selectedCard?.nlp_scene_summary?.description]);
 
+  const proseSections = useMemo(() => {
+    return selectedCard?.prose_sections || selectedCard?.nlp_scene_summary?.prose_sections || null;
+  }, [selectedCard?.prose_sections, selectedCard?.nlp_scene_summary?.prose_sections]);
+
+  const proseSectionEntries = useMemo(() => {
+    if (!proseSections) return [];
+    return PROSE_SECTION_LABELS.map(([key, label]) => [key, label, proseSections[key]] as const).filter(
+      ([, , value]) => Boolean(value),
+    );
+  }, [proseSections]);
+
+  const sceneAccountText = useMemo(() => {
+    return (
+      proseSections?.summary ||
+      selectedCard?.nlp_scene_summary_sentence ||
+      selectedCard?.nlp_scene_summary?.sentence ||
+      selectedCard?.overview ||
+      ""
+    );
+  }, [
+    proseSections?.summary,
+    selectedCard?.nlp_scene_summary_sentence,
+    selectedCard?.nlp_scene_summary?.sentence,
+    selectedCard?.overview,
+  ]);
+
   useEffect(() => {
     if (!selectedCard) {
       setNoteDraft("");
@@ -495,10 +575,10 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       setSaveMessage("");
       return;
     }
-    setNoteDraft(selectedCard.overview || "");
+    setNoteDraft(sceneAccountText);
     setShowNoteEditor(false);
     setSaveMessage("");
-  }, [selectedCard?.scene_id, selectedCard]);
+  }, [selectedCard?.scene_id, selectedCard, sceneAccountText]);
 
   const navigateToTime = (seconds: number) => {
     if (!selectedVideoId) return;
@@ -543,9 +623,9 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       const annotation: ManualVisualAnnotation = {
         id: `scene-card-note:${selectedCard.scene_id || "scene"}:${Math.round(sceneStart * 1000)}`,
         category: "Scene",
-        subcategory: "mise-en-scene note",
-        label: "Mise-en-scene scene note",
-        custom_label: "Mise-en-scene scene note",
+        subcategory: "mise-en-scene scene account correction",
+        label: "Mise-en-scene scene account correction",
+        custom_label: "Mise-en-scene scene account correction",
         geometry_type: "box",
         coordinates: { x: 0, y: 0, w: 1, h: 1 },
         timestamp_seconds: sceneStart,
@@ -553,11 +633,11 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
         end_seconds: sceneEnd || sceneStart,
         open_note: noteDraft.trim(),
         metadata_correlation: {
-          target_type: "scene_card",
+          target_type: "scene_card_account",
           target_id: selectedCard.scene_id || selectedCard.title || "scene_card",
-          target_label: selectedCard.display_title || selectedCard.title || "Scene Card",
+          target_label: "Scene Account",
           relation: "extends",
-          note: "Created from the Mise-en-Scene Scene Card panel.",
+          note: "Manual correction for the first-read Scene Account prose.",
         },
         teaches_regime: true,
         updated_at: new Date().toISOString(),
@@ -567,7 +647,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       const nextCorrections = upsertManualVisualAnnotation(existing || baseCorrections, annotation);
       await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
       broadcastAnalysisCorrectionRefresh(selectedVideoId);
-      setSaveMessage("Saved to the manual Scene leaf.");
+      setSaveMessage("Saved as the manual Scene Account correction.");
       openPanel("ManualScene", { videoId: selectedVideoId });
     } catch (saveError) {
       setSaveMessage(saveError instanceof Error ? saveError.message : "Scene note save failed.");
@@ -603,7 +683,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
               Mise-en-Scene
             </div>
             <h2 className="truncate text-sm font-semibold text-slate-100">
-              {bundle?.title || "Scene Card Report"}
+              {compactReportTitle(bundle?.title)}
             </h2>
             <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
               {selectedVideoId ? `${cards.length} scene card${cards.length === 1 ? "" : "s"}` : "No analysis selected"}
@@ -665,7 +745,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       {card.display_title || card.title || `Scene ${index + 1}`}
                     </div>
                     <div className="mt-1 text-[10px] text-slate-500">
-                      {formatTime(start)} • {card.scene_boundary_source || "detected"}
+                      {formatTime(start)} • {sceneBoundaryLabel(card.scene_boundary_source)}
                     </div>
                   </button>
                 );
@@ -693,7 +773,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                           <Clock className="size-3" />
                           {formatTime(sceneStart)}-{formatTime(sceneEnd)}
                         </span>
-                        <span>{selectedCard.scene_boundary_source || "detected"}</span>
+                        <span>{sceneBoundaryLabel(selectedCard.scene_boundary_source)}</span>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -708,7 +788,10 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       </button>
                       <button
                         type="button"
-                        onClick={() => setShowNoteEditor((value) => !value)}
+                        onClick={() => {
+                          setNoteDraft(sceneAccountText);
+                          setShowNoteEditor((value) => !value);
+                        }}
                         className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:border-amber-500/70 hover:bg-amber-950/20"
                         title="Save a manual correction or note for this scene"
                       >
@@ -726,22 +809,43 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       </button>
                     </div>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-slate-300">
-                    {selectedCard.overview || "No overview available."}
-                  </p>
                   {(selectedCard.nlp_scene_summary_sentence ||
-                    selectedCard.nlp_scene_summary?.sentence) && (
+                    selectedCard.nlp_scene_summary?.sentence ||
+                    proseSections?.summary) && (
                     <div className="mt-3 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
-                        What Is Happening
+                        Scene Account
                       </div>
                       <p className="text-sm leading-6 text-slate-100">
-                        {selectedCard.nlp_scene_summary_sentence ||
+                        {proseSections?.summary ||
+                          selectedCard.nlp_scene_summary_sentence ||
                           selectedCard.nlp_scene_summary?.sentence}
                       </p>
                       {selectedCard.nlp_scene_summary?.authority && (
                         <div className="mt-1 text-[10px] text-slate-500">
                           {selectedCard.nlp_scene_summary.authority.replaceAll("_", " ")}
+                        </div>
+                      )}
+                      {proseSectionEntries.length > 0 && (
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          {proseSectionEntries.map(([key, label, value]) => (
+                            <div
+                              key={key}
+                              className="rounded border border-cyan-900/60 bg-[#0d1417] px-2 py-2"
+                            >
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-400/80">
+                                {label}
+                              </div>
+                              <div className="mt-1 text-[12px] leading-5 text-slate-200">
+                                {value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {proseSections?.evidence_basis && (
+                        <div className="mt-2 text-[10px] leading-4 text-slate-500">
+                          {proseSections.evidence_basis}
                         </div>
                       )}
                       {miseEnSceneDescription && (
@@ -779,7 +883,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   {showNoteEditor && (
                     <div className="mt-3 border border-slate-800 bg-[#111] p-3">
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                        Manual Scene Note
+                        Scene Account Correction
                       </label>
                       <textarea
                         value={noteDraft}
@@ -794,7 +898,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                           className="inline-flex items-center gap-1 rounded border border-amber-700/70 px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-950/30 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <Save className="size-3" />
-                          {savingNote ? "Saving..." : "Save to Scene leaf"}
+                          {savingNote ? "Saving..." : "Save Scene Account"}
                         </button>
                         {saveMessage && (
                           <span className="text-[11px] text-slate-400">{saveMessage}</span>

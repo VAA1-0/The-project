@@ -148,6 +148,54 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
                         }
                     ]
                 },
+                "dependency_sfl_stage1": {
+                    "utterances": [
+                        {
+                            "utterance_id": "sfl-1",
+                            "speaker_id": "SPEAKER_01",
+                            "time_interval": {"start_ms": 43120, "end_ms": 45500},
+                            "text": "We need to finish this before tomorrow.",
+                            "sfl_lite": {
+                                "ideational": {"process_type": "material"},
+                                "interpersonal": {
+                                    "speech_function": "proposal",
+                                    "modality": "obligation",
+                                    "affect": "urgency",
+                                },
+                            },
+                            "interpretation_support": {
+                                "candidate_labels": ["Interaction: deadline pressure"]
+                            },
+                        },
+                        {
+                            "utterance_id": "sfl-2",
+                            "speaker_id": "SPEAKER_01",
+                            "time_interval": {"start_ms": 55000, "end_ms": 56400},
+                            "text": "Then call her now?",
+                            "sfl_lite": {
+                                "ideational": {"process_type": "verbal"},
+                                "interpersonal": {
+                                    "speech_function": "question",
+                                    "modality": "directive",
+                                    "affect": "concern",
+                                },
+                            },
+                            "interpretation_support": {
+                                "candidate_labels": ["Action: urgent coordination"]
+                            },
+                        },
+                    ]
+                },
+                "pos_analysis": {
+                    "interrogative_lens": {
+                        "who": ["producer"],
+                        "what": ["production deadline"],
+                        "where": ["studio"],
+                        "when": ["tomorrow"],
+                        "why": ["deadline pressure"],
+                        "how": ["question"],
+                    }
+                },
             },
         }
 
@@ -201,11 +249,159 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
         )
         self.assertIn("summary_inputs", card["nlp_scene_summary"])
         self.assertIn("mise_en_scene_description", card)
+        self.assertIn("prose_sections", card)
+        self.assertIn("interrogative_schema", card)
+        self.assertIn("what", card["interrogative_schema"])
+        self.assertIn("performance_and_blocking", card["prose_sections"])
+        self.assertIn("meaning_and_plot", card["prose_sections"])
         self.assertIn("what_is_happening", card["mise_en_scene_description"])
         self.assertIn("who_is_speaking", card["mise_en_scene_description"])
         self.assertIn("situation", card["mise_en_scene_description"])
         self.assertIn("meanings_constructed", card["mise_en_scene_description"])
         self.assertIn("phenomena", card["mise_en_scene_description"])
+
+    def test_scene_card_prose_uses_master_sfl_and_plot_meaning_evidence(self):
+        card = scene_cards.build_mise_en_scene_scene_cards(
+            "analysis-1",
+            self.sample_status(),
+        )["scene_cards"][0]
+
+        prose = card["prose_sections"]
+        self.assertEqual(card["nlp_scene_summary"]["version"], 7)
+        self.assertIn("Plot / Meaning indicators", prose["evidence_basis"])
+        self.assertIn("SFL interaction analysis", prose["evidence_basis"])
+        self.assertIn("opening question", prose["meaning_and_plot"])
+        self.assertIn("SFL reads the interaction", prose["performance_and_blocking"])
+        self.assertIn("question", prose["performance_and_blocking"])
+        self.assertIn("Props and set-dressing", prose["props"])
+        self.assertIn("Costume", prose["costume_hair_makeup"])
+        self.assertIn("Cinematography", prose["cinematography_and_framing"])
+        self.assertIn("Sound design", prose["sound_design"])
+        self.assertIn("raw detections remain preserved separately", prose["evidence_basis"])
+
+    def test_scene_card_prose_uses_source_media_metadata_annotations(self):
+        status = self.sample_status()
+        status["source_media_metadata"] = {
+            "user_annotations": {
+                "editor_notes": "Planet Helsinki October 2023: PhD Researcher Petteri Laine searching for wisdom in the Helsinki city center Alexanders Square.",
+                "source_context": "PhD Researcher Petteri Laine conducts street interviews in Alexanders Square.",
+                "relations": "interviewer — interviewed",
+                "location_country": "Finaland",
+                "location_city": "Helsinki",
+                "location_place": "Alexanders Square",
+                "time_moment": "October 2023",
+                "time_year": "2023",
+                "genre": "research video",
+                "genre_subtype": "research interview",
+                "situational_genre": "interview",
+            }
+        }
+        status["results"]["dependency_sfl_stage1"]["utterances"][0][
+            "interpretation_support"
+        ]["candidate_labels"] = [
+            {
+                "label_family": "Interaction",
+                "candidate_label": "directive_candidate",
+                "support": "speech_function",
+            }
+        ]
+
+        card = scene_cards.build_mise_en_scene_scene_cards(
+            "analysis-1",
+            status,
+        )["scene_cards"][0]
+        prose = card["prose_sections"]
+
+        self.assertIn("Alexanders Square", prose["setting_and_set_design"])
+        self.assertIn("Helsinki", prose["setting_and_set_design"])
+        self.assertIn("Finland", prose["setting_and_set_design"])
+        self.assertNotIn("Finaland", prose["setting_and_set_design"])
+        self.assertIn("October 2023", prose["setting_and_set_design"])
+        self.assertEqual(prose["setting_and_set_design"].count("Alexanders Square"), 1)
+        self.assertEqual(prose["setting_and_set_design"].count("2023"), 1)
+        self.assertIn("outdoor public-space footage", prose["lighting_and_color"])
+        self.assertNotIn("not yet", prose["setting_and_set_design"].lower())
+        self.assertIn("Petteri Laine", card["mise_en_scene_description"]["who_is_speaking"])
+        self.assertIn("Petteri Laine", card["interrogative_schema"]["who"])
+        self.assertIn("Alexanders Square", card["interrogative_schema"]["where"])
+        self.assertIn("October 2023", card["interrogative_schema"]["when"])
+        self.assertEqual(card["nlp_scene_summary_sentence"].count("interviewer"), 1)
+        self.assertEqual(
+            card["prose_sections"]["performance_and_blocking"].count("interviewer"),
+            1,
+        )
+        labels = {item["label"]: item for item in card["items"]}
+        self.assertEqual(labels["Alexanders Square"]["category"], "places")
+        self.assertEqual(labels["Alexanders Square"]["symbol"], "✓")
+        self.assertEqual(labels["research interview"]["category"], "genre_form")
+        self.assertEqual(labels["interviewer"]["category"], "persons")
+        self.assertIn("Interaction: directive candidate", prose["meaning_and_plot"])
+        self.assertNotIn("{", prose["meaning_and_plot"])
+
+    def test_scene_card_uses_ocr_and_pos_interrogatives_for_where_and_what(self):
+        status = self.sample_status()
+        status["source_media_metadata"] = {
+            "user_annotations": {
+                "location_country": "Brazil",
+                "location_city": "Belem",
+                "situation_event": "COP30 climate summit",
+                "genre": "news report",
+            }
+        }
+        status["results"]["visual_analysis"]["ocr_results"] = [
+            {
+                "id": "ocr-cop30",
+                "timestamp": 46.0,
+                "text": "BBC COP30 BELEM 25",
+            }
+        ]
+        status["results"]["pos_analysis"]["interrogative_lens"]["where"] = ["Belem"]
+        status["results"]["pos_analysis"]["interrogative_lens"]["what"] = ["COP30"]
+
+        card = scene_cards.build_mise_en_scene_scene_cards(
+            "analysis-1",
+            status,
+        )["scene_cards"][0]
+
+        labels = {item["label"]: item for item in card["items"]}
+        self.assertEqual(labels["Belem"]["category"], "places")
+        self.assertEqual(labels["COP30"]["category"], "subject_domain")
+        self.assertIn("Belem", card["interrogative_schema"]["where"])
+        self.assertIn("COP30", card["interrogative_schema"]["what"])
+        self.assertIn("Belem", card["prose_sections"]["setting_and_set_design"])
+
+    def test_scene_account_manual_correction_overrides_first_read_prose(self):
+        status = self.sample_status()
+        status["annotation_corrections"] = {
+            "manual_visual_annotations": [
+                {
+                    "id": "manual-scene-account-1",
+                    "category": "Scene",
+                    "subcategory": "mise-en-scene scene account correction",
+                    "label": "Mise-en-scene scene account correction",
+                    "open_note": "A researcher-led interview frames an urgent production problem.",
+                    "start_seconds": 43.0,
+                    "end_seconds": 69.0,
+                    "metadata_correlation": {
+                        "target_type": "scene_card_account",
+                        "relation": "overrides",
+                    },
+                }
+            ]
+        }
+
+        card = scene_cards.build_mise_en_scene_scene_cards(
+            "analysis-1",
+            status,
+        )["scene_cards"][0]
+
+        self.assertEqual(
+            card["prose_sections"]["summary"],
+            "A researcher-led interview frames an urgent production problem.",
+        )
+        self.assertTrue(
+            card["nlp_scene_summary"]["summary_inputs"]["manual_scene_account_override"]
+        )
 
     def test_scene_card_supports_costume_action_and_genre_facets(self):
         card = scene_cards.build_mise_en_scene_scene_cards(
@@ -532,6 +728,11 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
         self.assertIn("ManualScene", SCENE_CARD_PANEL)
         self.assertIn("nlp_scene_summary_sentence", SCENE_CARD_PANEL)
         self.assertIn("mise_en_scene_description", SCENE_CARD_PANEL)
+        self.assertIn("prose_sections", SCENE_CARD_PANEL)
+        self.assertIn("Performance / Blocking", SCENE_CARD_PANEL)
+        self.assertIn("Meaning / Plot", SCENE_CARD_PANEL)
+        self.assertIn("Scene Account Correction", SCENE_CARD_PANEL)
+        self.assertIn("scene_card_account", SCENE_CARD_PANEL)
 
 
 if __name__ == "__main__":
