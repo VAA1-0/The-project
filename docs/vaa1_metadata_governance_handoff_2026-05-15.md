@@ -73,6 +73,214 @@ Expected: `200`.
 
 - Character-role prose should become more archive-useful, e.g.
   "James Bond / 007 (Daniel Craig): male protagonist; retired MI6 secret agent."
+- Character names, roles, and relations are not yet proliferating according to the VAA1 maturity plan. The next pass should find character names, role descriptions, and relations to the extent possible, then route them through Master Schema maturity before surfacing them in Source Media, Scene Cards, Identification, and linked-data views.
 - Scraped character roles should feed Primary Metadata and Master Schema maturity routes deliberately.
 - External metadata sources should support source preference and confirmation before overwriting curated manual fields.
 - Backend startup is still too slow due heavy imports/model initialization; consider a light API boot path and lazy-load analysis stack.
+
+## Next Pass: Dramatic Character Archetypes
+
+VAA1 should aim to deliver practical synthesis of dramatic character archetypes drawn from major dramaturgical traditions, operationalized as interpretive multimodal analysis categories.
+
+The key idea: VAA1 should not treat archetypes as rigid literary labels. They should be probabilistic narrative functions, situational roles, relational positions, rhetorical behaviors, and evolving dramaturgical trajectories.
+
+Recommended representation:
+
+```text
+Person X:
+- 0.72 Mentor
+- 0.61 Sage
+- 0.55 Gatekeeper
+- 0.48 Bureaucrat
+
+Scene:
+- rising antagonism
+- unstable authority
+- comic tension
+- sacrificial framing
+```
+
+### Core Dramatic Function Archetypes
+
+Structural narrative functions:
+
+- Protagonist: central agency carrier; screen time, conversational centrality, goal pursuit.
+- Antagonist: obstacle or opposition force; conflict language, interruption, contradiction.
+- Deuteragonist: secondary lead; alliance behavior and shared mission.
+- Tritagonist: third balancing role; mediation and triangulation.
+- Supporting Character: contextual support role with low narrative initiative.
+- Foil: contrasting mirror; opposing traits and rhetorical inversion.
+- Confidant: receives private information; intimacy and disclosure scenes.
+- Love Interest: romantic or erotic gravitational role; flirtation, gaze, proximity.
+- Rival: competitive mirror; dominance contest.
+- Catalyst: triggers change; event transition proximity.
+- Chorus Figure: collective commentary; audience framing and moral commentary.
+- Witness: observes key events; low intervention, high perceptual presence.
+- Sacrificial Figure: bears system cost; suffering concentration.
+- False Hero: appears heroic but fails morally; reputation/action mismatch.
+- Shadow Figure: embodies suppressed traits; taboo, secrecy, projection.
+- Trickster: disrupts structure through ambiguity; humor and unpredictability.
+- Mentor / Sage: provides orientation or wisdom; explanatory discourse.
+- Threshold Guardian: controls access; permission logic and gatekeeping.
+- Herald: announces transformation; alerts and revelations.
+- Innocent: moral or experiential purity; naivete signals.
+- Outcast: marginalized social position; exclusion markers.
+- Rebel: challenges norms; anti-authority discourse.
+- Tyrant: coercive authority; command density and punishment.
+- Caregiver: maintains emotional/social cohesion; soothing language.
+- Tempter: pulls others toward risk/desire; seduction and manipulation.
+
+### Jungian / Mythic Archetypes
+
+Useful for symbolic analysis through language, visual motifs, costume/color patterns, repeated emotional framing, and dreamlike narrative structures:
+
+- Hero
+- Shadow
+- Anima / Animus
+- Wise Old Man / Wise Woman
+- Great Mother
+- Eternal Child
+- Trickster
+- Persona
+- Self
+
+### Campbellian Journey Roles
+
+Useful for long-form narrative trajectory detection, transition phases, transformation arcs, and threshold crossings:
+
+- Hero
+- Mentor
+- Ally
+- Threshold Guardian
+- Herald
+- Shapeshifter
+- Shadow
+- Trickster
+
+### Comedic Archetypes
+
+Important because tragedy-only models fail in social media and documentary analysis:
+
+- Fool
+- Clown
+- Buffoon
+- Straight Man
+- Schemer
+- Parasite
+- Braggart
+- Cynic
+- Romantic Idealist
+- Social Climber
+- Absurd Bureaucrat
+- Fish Out of Water
+
+Detection signals include laughter synchronization, contradiction between competence claims and outcomes, irony markers, and social embarrassment events.
+
+### Melodramatic / Political Archetypes
+
+Useful for political speeches, activism, news, propaganda, and institutional narratives:
+
+- Victim
+- Oppressor
+- Savior
+- Martyr
+- Corrupt Elite
+- Revolutionary
+- Bureaucratic Machine
+- Whistleblower
+- Prophet
+- Moral Crusader
+- Scapegoat
+
+These map into rhetorical framing, emotional mobilization, and collective identity construction.
+
+### Social Power Archetypes
+
+Useful for real-world interaction analysis:
+
+- Alpha / Dominant: interruption success, spatial control.
+- Diplomat: conflict mediation.
+- Seducer: attraction signaling.
+- Controller: agenda enforcement.
+- Servant: low-status compliance.
+- Performer: attention attraction.
+- Intellectual: abstraction density.
+- Bureaucrat: procedural orientation.
+- Visionary: future-oriented language.
+- Operator: tactical manipulation.
+- Caretaker: emotional maintenance.
+- Predator: coercive targeting.
+
+These are important for meetings, negotiations, interviews, podcasts, political events, and relationship analysis.
+
+### Relational Dramatic Dynamics
+
+VAA1 should detect archetype relations, not only isolated individuals:
+
+- Mentor <-> Apprentice
+- Tyrant <-> Rebel
+- Seducer <-> Resister
+- Hero <-> Shadow
+- Caregiver <-> Dependent
+- Rival <-> Rival
+- Trickster <-> Institution
+- Prophet <-> Crowd
+- Scapegoat <-> Collective
+
+Dramatic meaning often emerges from interaction topology.
+
+### Multimodal Detection Layers
+
+- Linguistic: speech acts, modality, commands, valence, certainty, metaphors, rhetorical style, interruption patterns.
+- Visual: framing centrality, posture, costume, color symbolism, gaze, movement dominance, spatial hierarchy.
+- Audio: prosody, intensity, hesitation, dominance, laughter, silence, vocal warmth/coldness.
+- Interaction: turn-taking, alliance formation, conflict frequency, audience attention.
+- Narrative: transformation, revelation, sacrifice, threshold crossing, reversal, collapse, redemption.
+
+### Deployment Priority
+
+Phase 1, high detectability:
+
+- protagonist
+- antagonist
+- mentor
+- rival
+- fool
+- authority
+- victim
+- caregiver
+- rebel
+- bureaucrat
+
+Phase 2, relational dynamics:
+
+- mentor-apprentice
+- dominance hierarchy
+- alliance structures
+- seduction dynamics
+- scapegoating
+- coalition formation
+
+Phase 3, advanced symbolic models:
+
+- shadow projection
+- mythic transformation
+- tragic inevitability
+- comic reversal
+- ideological archetypes
+- symbolic motifs
+
+### Theoretical Foundations
+
+Recommended synthesis for VAA1:
+
+- Aristotle: structural drama.
+- Carl Jung: symbolic archetypes.
+- Joseph Campbell: transformational journeys.
+- Erving Goffman: social performance.
+- Kenneth Burke: dramatism.
+- Mikhail Bakhtin: polyphony/dialogism.
+- David Boje: antenarrative emergence.
+- Victor Turner: liminality/social drama.
+
+This combination gives classical structure, symbolic depth, interaction sociology, emergent narrative dynamics, and real-world applicability.
