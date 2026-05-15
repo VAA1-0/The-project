@@ -131,6 +131,13 @@ type WebProductionCrewRole = {
   department?: string;
 };
 
+type WebMetadataFields = NonNullable<WebMetadataSource["fields"]>;
+type WebMetadataCandidateRow = NonNullable<WebMetadataSource["candidates"]>[number];
+type WebSourceDraft = {
+  fields?: WebMetadataFields;
+  candidates?: WebMetadataCandidateRow[];
+};
+
 type CharacterDefinition = NonNullable<
   NonNullable<SourceMediaMetadata["user_annotations"]>["character_definitions"]
 >[number];
@@ -185,12 +192,11 @@ function formatWebCharacterRoleForGovernedField(role: WebCharacterRole): string 
   return [head, tail].filter(Boolean).join(": ");
 }
 
-function formatWebProductionCrew(role: WebProductionCrewRole): string {
-  return [role?.person, role?.department].filter(Boolean).join(": ");
-}
-
-function visibleWebMetadataCandidates(source: WebMetadataSource) {
-  return (source.candidates || []).filter(
+function visibleWebMetadataCandidates(
+  source: WebMetadataSource,
+  candidates = source.candidates || [],
+) {
+  return candidates.filter(
     (candidate) => !displayedWebCandidateFields.has(candidate.field || ""),
   );
 }
@@ -208,6 +214,13 @@ function mergeCsvValues(current: string, incoming: string[]): string {
     values.push(cleaned);
   });
   return values.join(", ");
+}
+
+function splitEditableList(value: string): string[] {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function formatCharacterDefinition(definition: CharacterDefinition): string {
@@ -269,6 +282,7 @@ export default function SourceMediaMetadataPanel() {
   const [isHarvestingWebMetadata, setIsHarvestingWebMetadata] = useState(false);
   const [webMetadataActionId, setWebMetadataActionId] = useState<string | null>(null);
   const [webRoleEdits, setWebRoleEdits] = useState<Record<string, WebCharacterRole[]>>({});
+  const [webSourceEdits, setWebSourceEdits] = useState<Record<string, WebSourceDraft>>({});
   const [referenceRelation, setReferenceRelation] = useState("");
   const [referenceSource, setReferenceSource] = useState("");
   const [confidence, setConfidence] = useState("");
@@ -282,11 +296,75 @@ export default function SourceMediaMetadataPanel() {
     expertiseAxis: "",
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isRefreshingMaturity, setIsRefreshingMaturity] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [, setTaxonomyRefreshNonce] = useState(0);
   const [sharedTaxonomyLabels, setSharedTaxonomyLabels] = useState<
     SharedTaxonomyLabel[]
   >([]);
+
+  const hydrateMetadataState = (nextMetadata: SourceMediaMetadata) => {
+    setMetadata(nextMetadata);
+    setEditorNotes(nextMetadata.user_annotations?.editor_notes || "");
+    setSourceContext(nextMetadata.user_annotations?.source_context || "");
+    setProvenanceNotes(nextMetadata.user_annotations?.provenance_notes || "");
+    setUserTitle(nextMetadata.user_annotations?.title || "");
+    setScope(nextMetadata.user_annotations?.scope || "");
+    setDescription(nextMetadata.user_annotations?.description || "");
+    setPersons((nextMetadata.user_annotations?.persons || []).join(", "));
+    setCharacterRoles((nextMetadata.user_annotations?.character_roles || []).join("\n"));
+    setRelations(nextMetadata.user_annotations?.relations || "");
+    setLocationCountry(nextMetadata.user_annotations?.location_country || "");
+    setLocationCity(nextMetadata.user_annotations?.location_city || "");
+    setLocationPlace(nextMetadata.user_annotations?.location_place || "");
+    setLocationRoom(nextMetadata.user_annotations?.location_room || "");
+    setTimeEra(nextMetadata.user_annotations?.time_era || "");
+    setTimeYear(nextMetadata.user_annotations?.time_year || "");
+    setTimeMoment(nextMetadata.user_annotations?.time_moment || "");
+    setSituationEvent(nextMetadata.user_annotations?.situation_event || "");
+    setKeywords((nextMetadata.user_annotations?.keywords || []).join(", "));
+    setInteractionDynamics(
+      nextMetadata.user_annotations?.interaction_dynamics || "",
+    );
+    setNarrativeDevelopment(
+      nextMetadata.user_annotations?.narrative_development || "",
+    );
+    setPerformanceExpression(
+      nextMetadata.user_annotations?.performance_expression || "",
+    );
+    setGenre(nextMetadata.user_annotations?.genre || "");
+    setGenreSubtype(nextMetadata.user_annotations?.genre_subtype || "");
+    setSituationalGenre(
+      nextMetadata.user_annotations?.situational_genre || "",
+    );
+    setSituationalSubtype(
+      nextMetadata.user_annotations?.situational_subtype || "",
+    );
+    setPrivacyAxis(nextMetadata.user_annotations?.privacy_axis || "");
+    setExpertiseAxis(nextMetadata.user_annotations?.expertise_axis || "");
+    setReferences((nextMetadata.user_annotations?.references || []).join("\n"));
+    setReferenceSpeakers(
+      (nextMetadata.user_annotations?.reference_speakers || []).map((speaker) => ({
+        speaker_label: speaker.speaker_label || "",
+        identity_label: speaker.identity_label || "",
+        relation: speaker.relation || "",
+        reference_file: speaker.reference_file || "",
+        notes: speaker.notes || "",
+      })),
+    );
+    setReferenceRelation(nextMetadata.user_annotations?.reference_relation || "");
+    setReferenceSource(nextMetadata.user_annotations?.reference_source || "");
+    setConfidence(nextMetadata.user_annotations?.confidence || "");
+    setNotes(nextMetadata.user_annotations?.notes || "");
+    setCustomTaxonomyInputs({
+      genre: "",
+      genreSubtype: "",
+      situationalGenre: "",
+      situationalSubtype: "",
+      privacyAxis: "",
+      expertiseAxis: "",
+    });
+  };
 
   useEffect(() => {
     const handler = (id: string) => {
@@ -342,6 +420,7 @@ export default function SourceMediaMetadataPanel() {
         setWebMetadataUrl("");
         setWebMetadataActionId(null);
         setWebRoleEdits({});
+        setWebSourceEdits({});
         setReferenceRelation("");
         setReferenceSource("");
         setConfidence("");
@@ -359,66 +438,7 @@ export default function SourceMediaMetadataPanel() {
 
       try {
         const nextMetadata = await apiService.getSourceMediaMetadata(videoId);
-        setMetadata(nextMetadata);
-        setEditorNotes(nextMetadata.user_annotations?.editor_notes || "");
-        setSourceContext(nextMetadata.user_annotations?.source_context || "");
-        setProvenanceNotes(nextMetadata.user_annotations?.provenance_notes || "");
-        setUserTitle(nextMetadata.user_annotations?.title || "");
-        setScope(nextMetadata.user_annotations?.scope || "");
-        setDescription(nextMetadata.user_annotations?.description || "");
-        setPersons((nextMetadata.user_annotations?.persons || []).join(", "));
-        setCharacterRoles((nextMetadata.user_annotations?.character_roles || []).join("\n"));
-        setRelations(nextMetadata.user_annotations?.relations || "");
-        setLocationCountry(nextMetadata.user_annotations?.location_country || "");
-        setLocationCity(nextMetadata.user_annotations?.location_city || "");
-        setLocationPlace(nextMetadata.user_annotations?.location_place || "");
-        setLocationRoom(nextMetadata.user_annotations?.location_room || "");
-        setTimeEra(nextMetadata.user_annotations?.time_era || "");
-        setTimeYear(nextMetadata.user_annotations?.time_year || "");
-        setTimeMoment(nextMetadata.user_annotations?.time_moment || "");
-        setSituationEvent(nextMetadata.user_annotations?.situation_event || "");
-        setKeywords((nextMetadata.user_annotations?.keywords || []).join(", "));
-        setInteractionDynamics(
-          nextMetadata.user_annotations?.interaction_dynamics || "",
-        );
-        setNarrativeDevelopment(
-          nextMetadata.user_annotations?.narrative_development || "",
-        );
-        setPerformanceExpression(
-          nextMetadata.user_annotations?.performance_expression || "",
-        );
-        setGenre(nextMetadata.user_annotations?.genre || "");
-        setGenreSubtype(nextMetadata.user_annotations?.genre_subtype || "");
-        setSituationalGenre(
-          nextMetadata.user_annotations?.situational_genre || "",
-        );
-        setSituationalSubtype(
-          nextMetadata.user_annotations?.situational_subtype || "",
-        );
-        setPrivacyAxis(nextMetadata.user_annotations?.privacy_axis || "");
-        setExpertiseAxis(nextMetadata.user_annotations?.expertise_axis || "");
-        setReferences((nextMetadata.user_annotations?.references || []).join("\n"));
-        setReferenceSpeakers(
-          (nextMetadata.user_annotations?.reference_speakers || []).map((speaker) => ({
-            speaker_label: speaker.speaker_label || "",
-            identity_label: speaker.identity_label || "",
-            relation: speaker.relation || "",
-            reference_file: speaker.reference_file || "",
-            notes: speaker.notes || "",
-          })),
-        );
-        setReferenceRelation(nextMetadata.user_annotations?.reference_relation || "");
-        setReferenceSource(nextMetadata.user_annotations?.reference_source || "");
-        setConfidence(nextMetadata.user_annotations?.confidence || "");
-        setNotes(nextMetadata.user_annotations?.notes || "");
-        setCustomTaxonomyInputs({
-          genre: "",
-          genreSubtype: "",
-          situationalGenre: "",
-          situationalSubtype: "",
-          privacyAxis: "",
-          expertiseAxis: "",
-        });
+        hydrateMetadataState(nextMetadata);
       } catch (error) {
         console.error("Failed to load source media metadata:", error);
         setMetadata(null);
@@ -635,9 +655,95 @@ export default function SourceMediaMetadataPanel() {
   const sourceRoleKey = (source: WebMetadataSource, index: number) =>
     source.id || source.url || `source-${index}`;
 
+  const getEditableWebFields = (source: WebMetadataSource, sourceIndex: number) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    return webSourceEdits[key]?.fields || source.fields || {};
+  };
+
+  const getEditableWebCandidates = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+  ) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    return webSourceEdits[key]?.candidates || source.candidates || [];
+  };
+
+  const updateEditableWebField = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    field: keyof WebMetadataFields,
+    value: WebMetadataFields[keyof WebMetadataFields],
+  ) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    const fields = getEditableWebFields(source, sourceIndex);
+    setWebSourceEdits((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        fields: {
+          ...fields,
+          [field]: value,
+        },
+      },
+    }));
+  };
+
+  const updateEditableProductionCrew = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    crewIndex: number,
+    field: keyof WebProductionCrewRole,
+    value: string,
+  ) => {
+    const fields = getEditableWebFields(source, sourceIndex);
+    const crew = fields.production_crew || [];
+    updateEditableWebField(
+      source,
+      sourceIndex,
+      "production_crew",
+      crew.map((item, index) =>
+        index === crewIndex ? { ...item, [field]: value } : item,
+      ),
+    );
+  };
+
+  const dropEditableProductionCrew = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    crewIndex: number,
+  ) => {
+    const fields = getEditableWebFields(source, sourceIndex);
+    updateEditableWebField(
+      source,
+      sourceIndex,
+      "production_crew",
+      (fields.production_crew || []).filter((_, index) => index !== crewIndex),
+    );
+  };
+
+  const updateEditableWebCandidate = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    candidateIndex: number,
+    field: keyof WebMetadataCandidateRow,
+    value: string,
+  ) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    const candidates = getEditableWebCandidates(source, sourceIndex);
+    setWebSourceEdits((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        candidates: candidates.map((candidate, index) =>
+          index === candidateIndex ? { ...candidate, [field]: value } : candidate,
+        ),
+      },
+    }));
+  };
+
   const getEditableWebRoles = (source: WebMetadataSource, sourceIndex: number) => {
     const key = sourceRoleKey(source, sourceIndex);
-    return webRoleEdits[key] || source.fields?.character_roles || [];
+    return webRoleEdits[key] || getEditableWebFields(source, sourceIndex).character_roles || [];
   };
 
   const updateEditableWebRole = (
@@ -648,7 +754,7 @@ export default function SourceMediaMetadataPanel() {
     value: string,
   ) => {
     const key = sourceRoleKey(source, sourceIndex);
-    const baseRoles = webRoleEdits[key] || source.fields?.character_roles || [];
+    const baseRoles = webRoleEdits[key] || getEditableWebFields(source, sourceIndex).character_roles || [];
     setWebRoleEdits((current) => ({
       ...current,
       [key]: baseRoles.map((role, index) =>
@@ -663,11 +769,45 @@ export default function SourceMediaMetadataPanel() {
     roleIndex: number,
   ) => {
     const key = sourceRoleKey(source, sourceIndex);
-    const baseRoles = webRoleEdits[key] || source.fields?.character_roles || [];
+    const baseRoles = webRoleEdits[key] || getEditableWebFields(source, sourceIndex).character_roles || [];
     setWebRoleEdits((current) => ({
       ...current,
       [key]: baseRoles.filter((_, index) => index !== roleIndex),
     }));
+  };
+
+  const saveWebSourceCorrections = async (
+    source: WebMetadataSource,
+    sourceIndex: number,
+  ) => {
+    if (!videoId || !source.id) {
+      return;
+    }
+    const fields = getEditableWebFields(source, sourceIndex);
+    const candidates = getEditableWebCandidates(source, sourceIndex);
+    setWebMetadataActionId(source.id);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.updateSourceMediaWebMetadataSource(
+        videoId,
+        source.id,
+        {
+          fields: {
+            ...fields,
+            character_roles: getEditableWebRoles(source, sourceIndex),
+          },
+          candidates,
+        },
+      );
+      hydrateMetadataState(saved);
+      setSaveMessage("Web source corrections saved.");
+      window.setTimeout(() => setSaveMessage(null), 2400);
+    } catch (error) {
+      console.error("Failed to save web source corrections:", error);
+      setSaveMessage("Could not save web source corrections.");
+    } finally {
+      setWebMetadataActionId(null);
+    }
   };
 
   const uploadReferenceFiles = async () => {
@@ -915,6 +1055,7 @@ export default function SourceMediaMetadataPanel() {
   const characterDefinitions = metadata?.user_annotations?.character_definitions || [];
   const narrativeAgentProfiles = metadata?.user_annotations?.narrative_agent_profiles || [];
   const narrativeAgentProfileCount = narrativeAgentProfiles.length || characterDefinitions.length;
+  const maturityIteration = metadata?.maturity_iteration;
   const referenceFiles = metadata?.user_annotations?.reference_files || [];
   const webMetadataPreferenceRank: Record<WebMetadataPreference, number> = {
     main: 0,
@@ -1038,7 +1179,7 @@ export default function SourceMediaMetadataPanel() {
     source: WebMetadataSource,
     sourceIndex: number,
   ) => {
-    const fields = source.fields || {};
+    const fields = getEditableWebFields(source, sourceIndex);
     const roles = getEditableWebRoles(source, sourceIndex);
     const roleLines = roles
       .map(formatWebCharacterRoleForGovernedField)
@@ -1078,8 +1219,30 @@ export default function SourceMediaMetadataPanel() {
       "Web narrative metadata saved to governed fields.",
     );
   };
+  const refreshMaturity = async () => {
+    if (!videoId) {
+      return;
+    }
+    setIsRefreshingMaturity(true);
+    setSaveMessage(null);
+    try {
+      const refreshed = await apiService.refreshSourceMediaMaturity(videoId);
+      hydrateMetadataState(refreshed);
+      const iteration = refreshed.maturity_iteration;
+      setSaveMessage(
+        `Maturity refreshed: ${iteration?.filled_count || 0} filled, ${iteration?.manual_protected_count || 0} manual protected, ${iteration?.review_candidate_count || 0} review candidates.`,
+      );
+      window.setTimeout(() => setSaveMessage(null), 3600);
+    } catch (error) {
+      console.error("Failed to refresh source media maturity:", error);
+      setSaveMessage("Could not refresh maturity.");
+    } finally {
+      setIsRefreshingMaturity(false);
+    }
+  };
+
   const refreshMetadata = () => {
-    setRefreshNonce((value) => value + 1);
+    void refreshMaturity();
   };
   const fieldLabelClass =
     "mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500";
@@ -1129,9 +1292,10 @@ export default function SourceMediaMetadataPanel() {
               <button
                 type="button"
                 onClick={refreshMetadata}
+                disabled={isRefreshingMaturity}
                 className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/60"
               >
-                Refresh maturity
+                {isRefreshingMaturity ? "Refreshing..." : "Refresh maturity"}
               </button>
               <button
                 type="button"
@@ -1365,9 +1529,21 @@ export default function SourceMediaMetadataPanel() {
             ) : null}
             {maturityHighlights.length > 0 ? (
               <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
-                <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
-                  Mature Video-Internal Fill
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                    Mature Video-Internal Fill
+                  </div>
+                  {maturityIteration ? (
+                    <div className="text-[10px] text-slate-500">
+                      {maturityIteration.filled_count || 0} filled / {maturityIteration.manual_protected_count || 0} protected / {maturityIteration.review_candidate_count || 0} review
+                    </div>
+                  ) : null}
                 </div>
+                {maturityIteration?.process?.length ? (
+                  <div className="mt-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[11px] leading-relaxed text-slate-500">
+                    Iteration rhythm: {maturityIteration.process.join(" -> ")}
+                  </div>
+                ) : null}
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   {maturityHighlights.map(([label, value]) => (
                     <div
@@ -1591,7 +1767,7 @@ export default function SourceMediaMetadataPanel() {
                       >
                         <summary className="cursor-pointer px-2 py-2 text-xs text-slate-300">
                           <span className="font-medium text-slate-200">
-                            {source.fields?.title || source.url || "Web metadata source"}
+                            {getEditableWebFields(source, sourceIndex).title || source.url || "Web metadata source"}
                           </span>
                           <span className="ml-2 rounded border border-cyan-500/20 bg-cyan-950/20 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-cyan-100/80">
                             {source.preference === "main"
@@ -1655,6 +1831,22 @@ export default function SourceMediaMetadataPanel() {
                           <div className="grid gap-2 md:grid-cols-2">
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Source URL</div>
+                              <label className="block">
+                                <div className="mb-1 text-[10px] text-slate-600">Source title</div>
+                                <input
+                                  value={getEditableWebFields(source, sourceIndex).title || ""}
+                                  onChange={(event) =>
+                                    updateEditableWebField(
+                                      source,
+                                      sourceIndex,
+                                      "title",
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Web source title"
+                                  className="mb-1 w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-500/50"
+                                />
+                              </label>
                               <div className="break-words text-xs text-slate-300">
                                 {source.url}
                               </div>
@@ -1667,9 +1859,20 @@ export default function SourceMediaMetadataPanel() {
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Description / synopsis</div>
-                              <div className="max-h-32 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
-                                {source.fields?.description || "Not available"}
-                              </div>
+                              <textarea
+                                value={getEditableWebFields(source, sourceIndex).description || ""}
+                                onChange={(event) =>
+                                  updateEditableWebField(
+                                    source,
+                                    sourceIndex,
+                                    "description",
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="Not available"
+                                rows={5}
+                                className="max-h-36 w-full resize-y rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-xs leading-relaxed text-slate-300 outline-none focus:border-cyan-500/50"
+                              />
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Cast / character roles</div>
@@ -1759,37 +1962,142 @@ export default function SourceMediaMetadataPanel() {
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Production crew</div>
-                              <div className="max-h-28 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
-                                {(source.fields?.production_crew || [])
-                                  .map(formatWebProductionCrew)
-                                  .filter(Boolean)
-                                  .join("\n") || "Not available"}
+                              <div className="max-h-36 space-y-1 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
+                                {(getEditableWebFields(source, sourceIndex).production_crew || []).length > 0 ? (
+                                  (getEditableWebFields(source, sourceIndex).production_crew || []).map((crew, index) => (
+                                    <div
+                                      key={`${crew.person || "crew"}-${crew.department || index}`}
+                                      className="flex gap-1 rounded border border-slate-800 bg-slate-950/30 px-2 py-1"
+                                    >
+                                      <input
+                                        value={crew.person || ""}
+                                        onChange={(event) =>
+                                          updateEditableProductionCrew(
+                                            source,
+                                            sourceIndex,
+                                            index,
+                                            "person",
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="Person"
+                                        className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-cyan-500/50"
+                                      />
+                                      <input
+                                        value={crew.department || ""}
+                                        onChange={(event) =>
+                                          updateEditableProductionCrew(
+                                            source,
+                                            sourceIndex,
+                                            index,
+                                            "department",
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="Role / department"
+                                        className="min-w-0 flex-1 rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-400 outline-none focus:border-cyan-500/50"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          dropEditableProductionCrew(source, sourceIndex, index)
+                                        }
+                                        className="rounded border border-rose-500/25 px-1.5 py-1 text-[10px] text-rose-100 transition hover:bg-rose-950/25"
+                                      >
+                                        Drop
+                                      </button>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div>Not available</div>
+                                )}
                               </div>
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Narrative agents / world</div>
-                              <div className="max-h-28 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
-                                {[
-                                  ...(source.fields?.persons || []),
-                                  ...(source.fields?.places || []),
-                                  ...(source.fields?.dates || []),
-                                ].join(", ") || "Not available"}
-                              </div>
+                              <label className="block">
+                                <div className="mb-1 text-[10px] text-slate-600">Narrative agents</div>
+                                <textarea
+                                  value={(getEditableWebFields(source, sourceIndex).persons || []).join(", ")}
+                                  onChange={(event) =>
+                                    updateEditableWebField(
+                                      source,
+                                      sourceIndex,
+                                      "persons",
+                                      splitEditableList(event.target.value),
+                                    )
+                                  }
+                                  placeholder="Comma separated"
+                                  rows={2}
+                                  className="w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-cyan-500/50"
+                                />
+                              </label>
+                              <label className="mt-1 block">
+                                <div className="mb-1 text-[10px] text-slate-600">Places</div>
+                                <input
+                                  value={(getEditableWebFields(source, sourceIndex).places || []).join(", ")}
+                                  onChange={(event) =>
+                                    updateEditableWebField(
+                                      source,
+                                      sourceIndex,
+                                      "places",
+                                      splitEditableList(event.target.value),
+                                    )
+                                  }
+                                  placeholder="Comma separated"
+                                  className="w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-cyan-500/50"
+                                />
+                              </label>
+                              <label className="mt-1 block">
+                                <div className="mb-1 text-[10px] text-slate-600">Dates / temporal cues</div>
+                                <input
+                                  value={(getEditableWebFields(source, sourceIndex).dates || []).join(", ")}
+                                  onChange={(event) =>
+                                    updateEditableWebField(
+                                      source,
+                                      sourceIndex,
+                                      "dates",
+                                      splitEditableList(event.target.value),
+                                    )
+                                  }
+                                  placeholder="Comma separated"
+                                  className="w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-cyan-500/50"
+                                />
+                              </label>
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5 md:col-span-2">
                               <div className={fieldLabelClass}>Operational cues</div>
-                              <div className="max-h-20 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
-                                {(source.fields?.keywords || []).join(", ") || "Not available"}
-                              </div>
+                              <textarea
+                                value={(getEditableWebFields(source, sourceIndex).keywords || []).join(", ")}
+                                onChange={(event) =>
+                                  updateEditableWebField(
+                                    source,
+                                    sourceIndex,
+                                    "keywords",
+                                    splitEditableList(event.target.value),
+                                  )
+                                }
+                                placeholder="Comma separated"
+                                rows={2}
+                                className="w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-xs text-slate-300 outline-none focus:border-cyan-500/50"
+                              />
                             </div>
                           </div>
-                          {(source.fields?.character_roles || []).length > 0 ||
-                          (source.fields?.persons || []).length > 0 ||
-                          (source.fields?.keywords || []).length > 0 ? (
-                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/10 bg-slate-950/20 px-2 py-2">
-                              <div className="text-[11px] text-slate-500">
-                                Stage narrative agents, roles, and operational cues into governed metadata before saving.
-                              </div>
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/10 bg-slate-950/20 px-2 py-2">
+                            <div className="text-[11px] text-slate-500">
+                              Save source corrections or stage narrative agents, roles, and operational cues into governed metadata.
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                disabled={!source.id || webMetadataActionId === source.id}
+                                onClick={() => {
+                                  void saveWebSourceCorrections(source, sourceIndex);
+                                }}
+                                className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {webMetadataActionId === source.id ? "Saving..." : "Save source corrections"}
+                              </button>
                               <button
                                 type="button"
                                 disabled={isSaving}
@@ -1799,8 +2107,8 @@ export default function SourceMediaMetadataPanel() {
                                 {isSaving ? "Saving..." : "Use narrative metadata"}
                               </button>
                             </div>
-                          ) : null}
-                          {visibleWebMetadataCandidates(source).length > 0 ? (
+                          </div>
+                          {visibleWebMetadataCandidates(source, getEditableWebCandidates(source, sourceIndex)).length > 0 ? (
                             <div className="mt-2 overflow-x-auto">
                               <table className="w-full min-w-[620px] border-separate border-spacing-y-1 text-left text-xs">
                                 <thead className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -1812,18 +2120,33 @@ export default function SourceMediaMetadataPanel() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {visibleWebMetadataCandidates(source).slice(0, 12).map((candidate, index) => (
+                                  {getEditableWebCandidates(source, sourceIndex)
+                                    .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
+                                    .filter(({ candidate }) => !displayedWebCandidateFields.has(candidate.field || ""))
+                                    .slice(0, 12)
+                                    .map(({ candidate, candidateIndex }) => (
                                     <tr
-                                      key={`${candidate.field || "field"}-${candidate.value || index}`}
+                                      key={`${candidate.field || "field"}-${candidate.value || candidateIndex}`}
                                       className="bg-slate-900/40"
                                     >
                                       <td className="rounded-l border-y border-l border-slate-800 px-2 py-1.5 text-slate-300">
                                         {candidate.field}
                                       </td>
                                       <td className="border-y border-slate-800 px-2 py-1.5 text-slate-100">
-                                        <div className="max-h-20 overflow-y-auto pr-1 leading-relaxed">
-                                          {candidate.value}
-                                        </div>
+                                        <textarea
+                                          value={candidate.value || ""}
+                                          onChange={(event) =>
+                                            updateEditableWebCandidate(
+                                              source,
+                                              sourceIndex,
+                                              candidateIndex,
+                                              "value",
+                                              event.target.value,
+                                            )
+                                          }
+                                          rows={2}
+                                          className="w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] leading-relaxed text-slate-100 outline-none focus:border-cyan-500/50"
+                                        />
                                       </td>
                                       <td className="border-y border-slate-800 px-2 py-1.5 text-slate-400">
                                         {candidate.confidence || "candidate"}

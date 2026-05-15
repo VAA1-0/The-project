@@ -335,6 +335,17 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
             payload["annotation_maturity"]["title"]["traceback"]["route"],
             "source_media.manual_metadata_governance",
         )
+        iteration = payload["maturity_iteration"]
+        self.assertIn("protect_manual_fields", iteration["process"])
+        self.assertIn("route_mature_fields_to_master_schema", iteration["process"])
+        self.assertIn("title", iteration["manual_protected_fields"])
+        self.assertGreaterEqual(iteration["manual_protected_count"], 3)
+        self.assertTrue(
+            any(candidate["field"] == "title" for candidate in iteration["review_candidates"])
+        )
+        self.assertTrue(
+            any(item["field"] == "description" for item in iteration["filled_from_maturity"])
+        )
 
     def test_video_internal_maturity_harvest_consults_shared_evidence_families(self):
         status = {

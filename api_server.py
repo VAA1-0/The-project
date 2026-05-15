@@ -2874,6 +2874,57 @@ def resolve_source_media_annotations(status: Dict[str, Any], stored_probe: Dict[
     return resolved
 
 
+def build_source_media_maturity_iteration(status: Dict[str, Any]) -> Dict[str, Any]:
+    manual_annotations = status.get("source_media_annotations") if isinstance(status.get("source_media_annotations"), dict) else {}
+    harvest = status.get("source_media_video_internal_harvest") if isinstance(status.get("source_media_video_internal_harvest"), dict) else {}
+    derived_annotations = harvest.get("annotations") if isinstance(harvest.get("annotations"), dict) else {}
+    field_sources = harvest.get("field_sources") if isinstance(harvest.get("field_sources"), dict) else {}
+    maturity = status.get("source_media_annotation_maturity") if isinstance(status.get("source_media_annotation_maturity"), dict) else {}
+
+    filled_from_maturity: List[Dict[str, Any]] = []
+    manual_protected_fields: List[str] = []
+    review_candidates: List[Dict[str, Any]] = []
+    for key, source in sorted(field_sources.items()):
+        derived_value = derived_annotations.get(key)
+        manual_value = manual_annotations.get(key)
+        route = (source.get("traceback") or {}).get("route") or "source_media.video_internal_maturity_harvest"
+        entry = {
+            "field": key,
+            "maturity": source.get("maturity") or "derived_video_internal",
+            "route": route,
+            "evidence_sources": source.get("evidence_sources") or [],
+        }
+        if annotation_has_value(manual_value):
+            manual_protected_fields.append(key)
+            if annotation_has_value(derived_value) and clean_source_label(manual_value) != clean_source_label(derived_value):
+                review_candidates.append({**entry, "status": "manual_field_protected"})
+            continue
+        if annotation_has_value(derived_value):
+            filled_from_maturity.append(entry)
+
+    iteration = {
+        "iteration_id": f"source-media-maturity-{utc_now_iso()}",
+        "updated_at": utc_now_iso(),
+        "process": [
+            "harvest_available_source_evidence",
+            "protect_manual_fields",
+            "fill_empty_governed_fields",
+            "surface_review_candidates",
+            "route_mature_fields_to_master_schema",
+        ],
+        "filled_from_maturity": filled_from_maturity,
+        "manual_protected_fields": manual_protected_fields,
+        "review_candidates": review_candidates,
+        "evidence_counts": harvest.get("evidence_counts") or {},
+        "field_count": len(maturity),
+        "filled_count": len(filled_from_maturity),
+        "manual_protected_count": len(manual_protected_fields),
+        "review_candidate_count": len(review_candidates),
+    }
+    status["source_media_maturity_iteration"] = iteration
+    return iteration
+
+
 def build_source_media_metadata_payload(
     status: Dict[str, Any],
     *,
@@ -2894,6 +2945,7 @@ def build_source_media_metadata_payload(
         **(media_probe or {}),
     }
     user_annotations = resolve_source_media_annotations(status, stored_probe)
+    maturity_iteration = build_source_media_maturity_iteration(status)
 
     payload = {
         "analysis_id": status.get("analysis_id"),
@@ -2970,6 +3022,7 @@ def build_source_media_metadata_payload(
         },
         "annotation_maturity": status.get("source_media_annotation_maturity", {}),
         "video_internal_harvest": status.get("source_media_video_internal_harvest", {}),
+        "maturity_iteration": maturity_iteration,
     }
 
     if path_obj and path_obj.exists():
@@ -7448,6 +7501,35 @@ async def get_source_media_metadata(analysis_id: str) -> dict:
     }
 
 
+@app.post("/api/source-media/{analysis_id}/refresh-maturity", response_model=dict)
+async def refresh_source_media_maturity(analysis_id: str) -> dict:
+    """Run a visible Source Media metadata maturity iteration."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    write_source_media_metadata_files(status)
+    persist_analysis_record_for_status(status)
+    metadata = status.get("source_media_metadata", {})
+    append_analysis_event(
+        status,
+        "source_media_maturity_refreshed",
+        {
+            "field_count": (metadata.get("maturity_iteration") or {}).get("field_count", 0),
+            "filled_count": (metadata.get("maturity_iteration") or {}).get("filled_count", 0),
+            "manual_protected_count": (metadata.get("maturity_iteration") or {}).get("manual_protected_count", 0),
+            "review_candidate_count": (metadata.get("maturity_iteration") or {}).get("review_candidate_count", 0),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "analysis_id": analysis_id,
+        "source_media_metadata": metadata,
+        "maturity_iteration": metadata.get("maturity_iteration", {}),
+    }
+
+
 @app.post("/api/status/{analysis_id}/cvat-link", response_model=dict)
 async def update_cvat_link(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
     """Persist or update the CVAT task linkage for an analysis."""
@@ -7842,25 +7924,44 @@ async def update_source_media_web_metadata_source(
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
-    preference = str(payload.get("preference") or "").strip().lower()
-    if preference not in {"main", "supporting", "background"}:
-        raise HTTPException(status_code=400, detail="Preference must be main, supporting, or background")
-
     sources = status.setdefault("source_media_web_metadata_sources", [])
     target = next((item for item in sources if str(item.get("id")) == source_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="Web metadata source not found")
-    target["preference"] = preference
+
+    preference = str(payload.get("preference") or "").strip().lower()
+    if "preference" in payload:
+        if preference not in {"main", "supporting", "background"}:
+            raise HTTPException(status_code=400, detail="Preference must be main, supporting, or background")
+        target["preference"] = preference
+    if "fields" in payload:
+        fields = payload.get("fields")
+        if not isinstance(fields, dict):
+            raise HTTPException(status_code=400, detail="Web metadata fields must be an object")
+        existing_fields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
+        existing_fields.update(fields)
+        target["fields"] = existing_fields
+        target["corrected_at"] = utc_now_iso()
+        target["review_state"] = "corrected_candidate"
+    if "candidates" in payload:
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list):
+            raise HTTPException(status_code=400, detail="Web metadata candidates must be a list")
+        target["candidates"] = [item for item in candidates if isinstance(item, dict)]
+        target["corrected_at"] = utc_now_iso()
+        target["review_state"] = "corrected_candidate"
     sources[:] = sorted(sources, key=web_metadata_source_sort_key)
 
     write_source_media_metadata_files(status)
     append_analysis_event(
         status,
-        "source_media_web_metadata_preference_updated",
+        "source_media_web_metadata_source_updated",
         details={
             "source_id": source_id,
             "url": target.get("url"),
-            "preference": preference,
+            "preference": target.get("preference"),
+            "fields_corrected": "fields" in payload,
+            "candidates_corrected": "candidates" in payload,
         },
     )
     persist_analysis_record_for_status(status)

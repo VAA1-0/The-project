@@ -747,6 +747,30 @@ export interface SourceMediaMetadata {
     >;
     evidence_counts?: Record<string, number>;
   };
+  maturity_iteration?: {
+    iteration_id?: string;
+    updated_at?: string;
+    process?: string[];
+    filled_from_maturity?: Array<{
+      field?: string;
+      maturity?: string;
+      route?: string;
+      evidence_sources?: string[];
+    }>;
+    manual_protected_fields?: string[];
+    review_candidates?: Array<{
+      field?: string;
+      status?: string;
+      maturity?: string;
+      route?: string;
+      evidence_sources?: string[];
+    }>;
+    evidence_counts?: Record<string, number>;
+    field_count?: number;
+    filled_count?: number;
+    manual_protected_count?: number;
+    review_candidate_count?: number;
+  };
   user_annotations?: {
     editor_notes?: string;
     source_context?: string;
@@ -1842,6 +1866,7 @@ class ApiService {
       persons?: string[];
       character_roles?: string[];
       character_definitions?: Array<Record<string, unknown>>;
+      narrative_agent_profiles?: Array<Record<string, unknown>>;
       relations?: string;
       location_country?: string;
       location_city?: string;
@@ -1887,6 +1912,25 @@ class ApiService {
       const errorText = await response.text();
       throw new Error(
         `Source media metadata save failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async refreshSourceMediaMaturity(
+    analysisId: string,
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/refresh-maturity`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source media maturity refresh failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 
@@ -1972,6 +2016,20 @@ class ApiService {
     sourceId: string,
     preference: "main" | "supporting" | "background",
   ): Promise<SourceMediaMetadata> {
+    return this.updateSourceMediaWebMetadataSource(analysisId, sourceId, {
+      preference,
+    });
+  }
+
+  async updateSourceMediaWebMetadataSource(
+    analysisId: string,
+    sourceId: string,
+    payload: {
+      preference?: "main" | "supporting" | "background";
+      fields?: Record<string, unknown>;
+      candidates?: Array<Record<string, unknown>>;
+    },
+  ): Promise<SourceMediaMetadata> {
     const response = await fetch(
       `${this.baseURL}/api/source-media/${analysisId}/web-metadata/${sourceId}`,
       {
@@ -1979,14 +2037,14 @@ class ApiService {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ preference }),
+        body: JSON.stringify(payload),
       },
     );
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Web metadata preference update failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Web metadata source update failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 

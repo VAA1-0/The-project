@@ -146,6 +146,35 @@ Genre-specific needs should be handled through profile extensions instead of blo
 - political/media extension: legitimacy frame, audience management, coalition movement, public/private persona shift.
 - documentary/interview extension: witness function, testimony relation, credibility cues, institutional position.
 
+## Maturity Iteration And Testing Regime
+
+The Source Media metadata panel should behave as a rhythmic maturity loop, not as a one-shot scrape:
+
+```text
+harvest available evidence
+-> protect manual fields
+-> fill empty governed fields
+-> surface review candidates
+-> route mature fields to Master Schema
+-> expose mature data in downstream panels
+```
+
+The `Refresh maturity` action should run a visible maturity iteration and report:
+
+- fields filled from maturity
+- manual fields protected
+- candidates requiring analyst review
+- evidence counts consulted
+- maturity routes used
+
+Testing regime:
+
+- Unit/contract tests must prove manual fields are protected while empty fields are filled.
+- Web metadata tests must prove narrative agents, Narrative Agent Profiles, and profile governance survive the route.
+- Master Schema tests must prove mature Source Media data exports as schema annotations.
+- UI/type checks must prove Source Media can render maturity iteration summaries, electable profile extensions, and review candidates.
+- Future integration tests should verify that Scene Cards, Identification, Meaning Plot, and reporting surfaces consume the same mature Source Media metadata rather than stale local copies.
+
 Recommended representation:
 
 ```text
