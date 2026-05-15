@@ -1,7 +1,19 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Clock, Edit3, FileText, RefreshCcw, Save, Tags, Video } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Database,
+  Edit3,
+  FileText,
+  Link2,
+  Mic,
+  RefreshCcw,
+  Save,
+  Tags,
+  Video,
+} from "lucide-react";
 import {
   apiService,
   type ManualVisualAnnotation,
@@ -133,8 +145,12 @@ type SceneInterrogativeSchema = {
   when?: string;
   how?: string;
   why_or_meaning?: string;
+  by_what_means?: string;
+  towards_what_end?: string;
+  by_what_consequences?: string;
   phenomena?: string;
   pos_support?: Record<string, unknown>;
+  description_evidence?: Record<string, string[]>;
 };
 
 type SceneCard = {
@@ -158,6 +174,23 @@ type SceneCard = {
   meaning_plot?: SceneMeaningPlot;
   items?: SceneCardItem[];
   resolved_items?: SceneCardItem[];
+};
+
+type EvidenceContextPayload = {
+  kind: "scene_account" | "utterance" | "meaning_plot" | "facet" | "evidence_item";
+  label: string;
+  value?: string;
+  evidenceId?: string;
+  category?: string;
+  sourcePanel?: string;
+  timeSeconds?: number;
+  sceneId?: string;
+};
+
+type EvidenceContextMenuState = {
+  x: number;
+  y: number;
+  payload: EvidenceContextPayload;
 };
 
 const FACET_ORDER = [
@@ -277,6 +310,24 @@ function meaningLensTerms(instruction: SecondOrderLabelInstruction): string[] {
   return terms.slice(0, 8);
 }
 
+function appendUniqueListValue(values: string[] | undefined, nextValue: string): string[] {
+  const clean = nextValue.trim();
+  if (!clean) return values || [];
+  const existing = values || [];
+  if (existing.some((value) => value.toLowerCase() === clean.toLowerCase())) {
+    return existing;
+  }
+  return [...existing, clean];
+}
+
+function appendTextValue(existing: string | undefined, nextValue: string): string {
+  const clean = nextValue.trim();
+  if (!clean) return existing || "";
+  if (!existing?.trim()) return clean;
+  if (existing.toLowerCase().includes(clean.toLowerCase())) return existing;
+  return `${existing.trim()}\n${clean}`;
+}
+
 async function loadJsonDownload<T>(analysisId: string, fileType: string): Promise<T | null> {
   try {
     const blob = await apiService.downloadFile(analysisId, fileType);
@@ -303,6 +354,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   const [saveMessage, setSaveMessage] = useState("");
   const [reportDraftWriting, setReportDraftWriting] = useState(false);
   const [reportDraftMessage, setReportDraftMessage] = useState("");
+  const [evidenceMenu, setEvidenceMenu] = useState<EvidenceContextMenuState | null>(null);
 
   useEffect(() => {
     const handler = (id: string) => setSelectedVideoId(id);
@@ -318,6 +370,17 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
   }, [selectedVideoId]);
+
+  useEffect(() => {
+    if (!evidenceMenu) return undefined;
+    const closeMenu = () => setEvidenceMenu(null);
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenu);
+    };
+  }, [evidenceMenu]);
 
   useEffect(() => {
     if (!selectedVideoId) {
@@ -613,6 +676,179 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
     }
   };
 
+  const openEvidenceContextMenu = (
+    event: React.MouseEvent,
+    payload: EvidenceContextPayload,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEvidenceMenu({
+      x: Math.min(event.clientX, window.innerWidth - 260),
+      y: Math.min(event.clientY, window.innerHeight - 240),
+      payload: {
+        ...payload,
+        sceneId: payload.sceneId || selectedCard?.scene_id,
+        timeSeconds: payload.timeSeconds ?? sceneStart,
+      },
+    });
+  };
+
+  const saveGovernedEvidenceAnnotation = async (
+    payload: EvidenceContextPayload,
+    options: {
+      category?: ManualVisualAnnotation["category"];
+      subcategory: string;
+      label: string;
+      relation?: "extends" | "matches" | "supports" | "unknown";
+      note: string;
+    },
+  ) => {
+    if (!selectedVideoId) return;
+    const timestamp = payload.timeSeconds ?? sceneStart;
+    const existing = await apiService.getAnnotationCorrections(selectedVideoId);
+    const baseCorrections = createEmptyCorrections(existing);
+    const annotation: ManualVisualAnnotation = {
+      id: `${options.subcategory}:${payload.evidenceId || payload.kind}:${Date.now()}`,
+      category: options.category || "Metadata",
+      subcategory: options.subcategory,
+      label: options.label,
+      custom_label: options.label,
+      geometry_type: "box",
+      coordinates: { x: 0, y: 0, w: 1, h: 1 },
+      timestamp_seconds: timestamp,
+      start_seconds: timestamp,
+      end_seconds: sceneEnd || timestamp,
+      open_note: options.note,
+      metadata_correlation: {
+        target_type: payload.kind,
+        target_id: payload.evidenceId || payload.sceneId || payload.label,
+        target_label: payload.label,
+        relation: options.relation || "supports",
+        note: options.note,
+      },
+      teaches_regime: true,
+      updated_at: new Date().toISOString(),
+      updated_by: "analyst",
+    };
+    pushCorrectionSnapshot(selectedVideoId, existing || baseCorrections);
+    const nextCorrections = upsertManualVisualAnnotation(existing || baseCorrections, annotation);
+    await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
+    broadcastAnalysisCorrectionRefresh(selectedVideoId);
+  };
+
+  const promoteEvidenceToMetadata = async (payload: EvidenceContextPayload) => {
+    if (!selectedVideoId) return;
+    const field = window.prompt(
+      "Promote evidence to metadata field:\nkeywords, persons, description, situation_event, notes, provenance_notes",
+      payload.category?.toLowerCase().includes("person") || payload.kind === "utterance"
+        ? "keywords"
+        : "keywords",
+    );
+    const normalizedField = String(field || "").trim() as
+      | "keywords"
+      | "persons"
+      | "description"
+      | "situation_event"
+      | "notes"
+      | "provenance_notes";
+    if (!normalizedField) return;
+    const allowedFields = new Set([
+      "keywords",
+      "persons",
+      "description",
+      "situation_event",
+      "notes",
+      "provenance_notes",
+    ]);
+    if (!allowedFields.has(normalizedField)) {
+      window.alert("Please use one of: keywords, persons, description, situation_event, notes, provenance_notes.");
+      return;
+    }
+    const value = payload.value || payload.label;
+    const metadata = await apiService.getSourceMediaMetadata(selectedVideoId);
+    const annotations = metadata.user_annotations || {};
+    const updatePayload: Record<string, string | string[]> = {};
+    if (normalizedField === "keywords" || normalizedField === "persons") {
+      updatePayload[normalizedField] = appendUniqueListValue(
+        annotations[normalizedField],
+        value,
+      );
+    } else {
+      updatePayload[normalizedField] = appendTextValue(annotations[normalizedField], value);
+    }
+    await apiService.updateSourceMediaMetadata(selectedVideoId, updatePayload);
+    eventBus.emit("sourceMediaMetadataChanged", selectedVideoId);
+    await saveGovernedEvidenceAnnotation(payload, {
+      subcategory: "metadata evidence promotion",
+      label: `Promoted evidence: ${payload.label}`,
+      relation: "supports",
+      note: `Promoted "${value}" to Source Media metadata field "${normalizedField}".`,
+    });
+    setSaveMessage(`Promoted "${payload.label}" to Source Media metadata.`);
+    openPanel("SourceMediaMetadata", { videoId: selectedVideoId });
+  };
+
+  const linkEvidenceToEntity = async (payload: EvidenceContextPayload) => {
+    const entity = window.prompt("Link to existing entity:", payload.value || payload.label);
+    if (!entity?.trim()) return;
+    const relation = window.prompt(
+      "Relation to entity:",
+      payload.kind === "utterance" ? "mentions" : "supports",
+    );
+    await saveGovernedEvidenceAnnotation(payload, {
+      subcategory: "linked data entity relation",
+      label: entity.trim(),
+      relation: "supports",
+      note: `Evidence "${payload.label}" linked to entity "${entity.trim()}" as "${relation?.trim() || "supports"}".`,
+    });
+    setSaveMessage(`Linked evidence to entity "${entity.trim()}".`);
+    if (selectedVideoId) {
+      openPanel("MasterSchema", { videoId: selectedVideoId });
+    }
+  };
+
+  const confirmEvidenceAsManual = async (payload: EvidenceContextPayload) => {
+    await saveGovernedEvidenceAnnotation(payload, {
+      subcategory: "manual evidence confirmation",
+      label: payload.value || payload.label,
+      relation: "matches",
+      note: `Analyst confirmed evidence "${payload.label}" as a governed manual indication.`,
+    });
+    setSaveMessage(`Confirmed "${payload.label}" as manual governed evidence.`);
+  };
+
+  const captureVoiceNotePlaceholder = async (payload: EvidenceContextPayload) => {
+    const note = window.prompt(
+      "Voice note / spoken command transcript:",
+      `Note about ${payload.label}: `,
+    );
+    if (!note?.trim()) return;
+    await saveGovernedEvidenceAnnotation(payload, {
+      category: "Notes",
+      subcategory: "voice note command transcript",
+      label: `Voice note: ${payload.label}`,
+      relation: "extends",
+      note: note.trim(),
+    });
+    setSaveMessage("Voice note saved as a governed note transcript.");
+  };
+
+  const viewEvidenceTraceback = (payload: EvidenceContextPayload) => {
+    window.alert(
+      [
+        `Evidence: ${payload.label}`,
+        `Kind: ${payload.kind}`,
+        payload.category ? `Category: ${payload.category}` : "",
+        payload.evidenceId ? `Evidence ID: ${payload.evidenceId}` : "",
+        `Time: ${formatTime(payload.timeSeconds ?? sceneStart)}`,
+        payload.sourcePanel ? `Source panel: ${payload.sourcePanel}` : "",
+        payload.sceneId ? `Scene: ${payload.sceneId}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  };
+
   const saveSceneNote = async () => {
     if (!selectedVideoId || !selectedCard || !noteDraft.trim()) return;
     setSavingNote(true);
@@ -812,7 +1048,22 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   {(selectedCard.nlp_scene_summary_sentence ||
                     selectedCard.nlp_scene_summary?.sentence ||
                     proseSections?.summary) && (
-                    <div className="mt-3 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
+                    <div
+                      className="mt-3 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2"
+                      onContextMenu={(event) =>
+                        openEvidenceContextMenu(event, {
+                          kind: "scene_account",
+                          label: "Scene Account",
+                          value:
+                            proseSections?.summary ||
+                            selectedCard.nlp_scene_summary_sentence ||
+                            selectedCard.nlp_scene_summary?.sentence ||
+                            "",
+                          evidenceId: selectedCard.scene_id || selectedCard.title,
+                          sourcePanel: "Scene Cards",
+                        })
+                      }
+                    >
                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
                         Scene Account
                       </div>
@@ -832,6 +1083,16 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                             <div
                               key={key}
                               className="rounded border border-cyan-900/60 bg-[#0d1417] px-2 py-2"
+                              onContextMenu={(event) =>
+                                openEvidenceContextMenu(event, {
+                                  kind: "scene_account",
+                                  label,
+                                  value: value || "",
+                                  evidenceId: `${selectedCard.scene_id || "scene"}:${key}`,
+                                  category: "mise-en-scene prose",
+                                  sourcePanel: "Scene Cards",
+                                })
+                              }
                             >
                               <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-400/80">
                                 {label}
@@ -867,6 +1128,16 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                               <div
                                 key={label}
                                 className="rounded border border-cyan-900/60 bg-[#0d1417] px-2 py-2"
+                                onContextMenu={(event) =>
+                                  openEvidenceContextMenu(event, {
+                                    kind: "scene_account",
+                                    label: String(label || "Scene evidence"),
+                                    value: value || "",
+                                    evidenceId: `${selectedCard.scene_id || "scene"}:${String(label || "scene-evidence")}`,
+                                    category: "interrogative scene account",
+                                    sourcePanel: "Scene Cards",
+                                  })
+                                }
                               >
                                 <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-400/80">
                                   {label}
@@ -922,6 +1193,17 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                         <button
                           key={utterance.evidence_id || index}
                           type="button"
+                          onContextMenu={(event) =>
+                            openEvidenceContextMenu(event, {
+                              kind: "utterance",
+                              label: utterance.text || "Scene utterance",
+                              value: utterance.text || "",
+                              evidenceId: utterance.evidence_id || `utterance:${index}`,
+                              category: "transcript",
+                              sourcePanel: "Transcript",
+                              timeSeconds: start,
+                            })
+                          }
                           onClick={() => {
                             navigateToTime(start);
                             openPanel("Transcript", selectedVideoId ? { videoId: selectedVideoId } : {});
@@ -962,6 +1244,17 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                             <button
                               key={item.instruction_id || item.event_id || index}
                               type="button"
+                              onContextMenu={(event) =>
+                                openEvidenceContextMenu(event, {
+                                  kind: "meaning_plot",
+                                  label: item.label || "meaning candidate",
+                                  value: item.label || "",
+                                  evidenceId: item.instruction_id || item.event_id || `meaning:${index}`,
+                                  category: item.target_label_family || "meaning / plot",
+                                  sourcePanel: "MeaningPlot",
+                                  timeSeconds: start,
+                                })
+                              }
                               onClick={() => navigateToMeaningPlot(item)}
                               className="border border-violet-900/60 bg-violet-950/10 px-2 py-2 text-left hover:border-violet-500/70 hover:bg-violet-950/20"
                               title="Open this meaning / plot candidate"
@@ -1020,6 +1313,16 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                             {values.slice(0, 18).map((value) => (
                               <span
                                 key={value}
+                                onContextMenu={(event) =>
+                                  openEvidenceContextMenu(event, {
+                                    kind: "facet",
+                                    label: value,
+                                    value,
+                                    evidenceId: `${selectedCard.scene_id || "scene"}:${facet}:${value}`,
+                                    category: titleCaseFacet(facet),
+                                    sourcePanel: "Scene Cards",
+                                  })
+                                }
                                 className="rounded border border-slate-800 bg-[#151515] px-2 py-1 text-[11px] text-slate-200"
                               >
                                 {value}
@@ -1046,6 +1349,20 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       <button
                         key={item.item_id || `${item.category}-${item.label}-${index}`}
                         type="button"
+                        onContextMenu={(event) =>
+                          openEvidenceContextMenu(event, {
+                            kind: "evidence_item",
+                            label: item.label || "Unnamed evidence",
+                            value: item.label || "",
+                            evidenceId: item.item_id || `${item.category}-${item.label}-${index}`,
+                            category: item.category,
+                            sourcePanel: item.navigation?.panel || "Scene Cards",
+                            timeSeconds:
+                              typeof item.navigation?.time_seconds === "number"
+                                ? item.navigation.time_seconds
+                                : sceneStart,
+                          })
+                        }
                         onClick={() => navigateToEvidence(item)}
                         className="flex items-start justify-between gap-2 border border-slate-800 bg-[#111] px-2 py-2 text-left hover:border-cyan-500/70 hover:bg-cyan-950/10"
                         title="Open the source evidence"
@@ -1066,6 +1383,84 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
               </div>
             )}
           </main>
+        </div>
+      )}
+      {evidenceMenu && (
+        <div
+          className="fixed z-[1000] w-64 rounded border border-slate-700 bg-[#101418] p-1.5 shadow-2xl shadow-black/60"
+          style={{ left: evidenceMenu.x, top: evidenceMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="border-b border-slate-800 px-2 py-1.5">
+            <div className="truncate text-[11px] font-semibold text-slate-100">
+              {evidenceMenu.payload.label}
+            </div>
+            <div className="mt-0.5 truncate text-[10px] text-slate-500">
+              {evidenceMenu.payload.category || evidenceMenu.payload.kind} •{" "}
+              {formatTime(evidenceMenu.payload.timeSeconds ?? sceneStart)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const payload = evidenceMenu.payload;
+              setEvidenceMenu(null);
+              void promoteEvidenceToMetadata(payload);
+            }}
+            className="mt-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-slate-200 hover:bg-cyan-950/30 hover:text-cyan-100"
+          >
+            <Database className="size-3.5" />
+            Promote to metadata
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const payload = evidenceMenu.payload;
+              setEvidenceMenu(null);
+              void linkEvidenceToEntity(payload);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-slate-200 hover:bg-lime-950/30 hover:text-lime-100"
+          >
+            <Link2 className="size-3.5" />
+            Link to existing entity
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const payload = evidenceMenu.payload;
+              setEvidenceMenu(null);
+              void confirmEvidenceAsManual(payload);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-slate-200 hover:bg-amber-950/30 hover:text-amber-100"
+          >
+            <CheckCircle2 className="size-3.5" />
+            Confirm as manual evidence
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const payload = evidenceMenu.payload;
+              setEvidenceMenu(null);
+              void captureVoiceNotePlaceholder(payload);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-slate-200 hover:bg-violet-950/30 hover:text-violet-100"
+          >
+            <Mic className="size-3.5" />
+            Voice note / spoken command
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const payload = evidenceMenu.payload;
+              setEvidenceMenu(null);
+              viewEvidenceTraceback(payload);
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-slate-200 hover:bg-slate-800"
+          >
+            <FileText className="size-3.5" />
+            View traceback
+          </button>
         </div>
       )}
     </div>

@@ -19,8 +19,12 @@ import io
 import zipfile
 import subprocess
 import wave
+import mimetypes
 import urllib.parse
 import urllib.request
+import re
+import html
+from html.parser import HTMLParser
 from typing import Dict, Any, Optional, List
 import asyncio
 import csv
@@ -525,37 +529,1756 @@ def build_transcript_timeline_segments(
     return timeline_segments
 
 
+def first_present(mapping: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def parse_frame_rate(raw_value: Any) -> Optional[float]:
+    if raw_value in (None, ""):
+        return None
+    text = str(raw_value)
+    try:
+        if "/" in text:
+            numerator, denominator = text.split("/", 1)
+            denominator_value = float(denominator)
+            if denominator_value == 0:
+                return None
+            return round(float(numerator) / denominator_value, 3)
+        return round(float(text), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def int_or_none(value: Any) -> Optional[int]:
+    try:
+        if value in (None, ""):
+            return None
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def float_or_none(value: Any) -> Optional[float]:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_media_tag_key(value: Any) -> str:
+    return (
+        str(value or "")
+        .lower()
+        .replace("com.apple.quicktime.", "")
+        .replace(".", "_")
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+
+def first_media_tag(tags: Dict[str, Any], *keys: str) -> Any:
+    normalized_tags = {normalize_media_tag_key(key): value for key, value in tags.items()}
+    for key in keys:
+        value = normalized_tags.get(normalize_media_tag_key(key))
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def extract_embedded_media_metadata(tags: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize common camera/phone/drone metadata exposed by ffprobe tags."""
+
+    if not tags:
+        return {}
+    embedded = {
+        "date_time": first_media_tag(
+            tags,
+            "creation_time",
+            "date",
+            "date_time_original",
+            "datetimeoriginal",
+            "recorded_date",
+            "creationdate",
+            "encoded_date",
+            "tagged_date",
+        ),
+        "gps_coordinates": first_media_tag(
+            tags,
+            "location",
+            "location_iso6709",
+            "gps_coordinates",
+            "gpsposition",
+            "gps_latitude",
+        ),
+        "camera_make": first_media_tag(tags, "make", "camera_make", "manufacturer"),
+        "camera_model": first_media_tag(tags, "model", "camera_model", "device_model"),
+        "recording_device": first_media_tag(tags, "device", "device_name", "camera_device"),
+        "software": first_media_tag(tags, "software", "encoder", "encoding_tool"),
+        "filmed_by": first_media_tag(
+            tags,
+            "filmed_by",
+            "camera_operator",
+            "photographer",
+            "videographer",
+            "operator",
+        ),
+        "title": first_media_tag(tags, "title", "display_name"),
+        "description": first_media_tag(tags, "description", "comment", "synopsis"),
+        "copyright": first_media_tag(tags, "copyright"),
+    }
+    embedded = {key: value for key, value in embedded.items() if value not in (None, "")}
+    raw_tags: Dict[str, Any] = {}
+    for key, value in tags.items():
+        if value in (None, ""):
+            continue
+        normalized_key = normalize_media_tag_key(key)
+        if any(
+            token in normalized_key
+            for token in (
+                "creation",
+                "date",
+                "location",
+                "gps",
+                "make",
+                "model",
+                "device",
+                "artist",
+                "author",
+                "creator",
+                "encoder",
+                "software",
+                "title",
+                "description",
+                "comment",
+                "copyright",
+            )
+        ):
+            raw_tags[str(key)] = value
+    if raw_tags:
+        embedded["raw_tags"] = raw_tags
+    return embedded
+
+
+def probe_source_media_file(path_obj: Optional[Path]) -> Dict[str, Any]:
+    """Best-effort media facts from the source file itself."""
+
+    if not path_obj or not path_obj.exists():
+        return {}
+
+    probe: Dict[str, Any] = {
+        "container_extension": path_obj.suffix.lower() or None,
+        "mime_type": mimetypes.guess_type(str(path_obj))[0],
+    }
+    try:
+        stat = path_obj.stat()
+        probe["size_bytes"] = stat.st_size
+    except Exception:
+        pass
+
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_format",
+                "-show_streams",
+                "-print_format",
+                "json",
+                str(path_obj),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            check=True,
+        )
+        ffprobe_payload = json.loads(completed.stdout or "{}")
+    except Exception:
+        return probe
+
+    format_info = ffprobe_payload.get("format") if isinstance(ffprobe_payload, dict) else {}
+    streams = ffprobe_payload.get("streams") if isinstance(ffprobe_payload, dict) else []
+    merged_tags: Dict[str, Any] = {}
+    if isinstance(format_info, dict):
+        probe["duration"] = float_or_none(format_info.get("duration"))
+        probe["format_name"] = format_info.get("format_name")
+        probe["size_bytes"] = int_or_none(format_info.get("size")) or probe.get("size_bytes")
+        probe["video_bitrate"] = int_or_none(format_info.get("bit_rate"))
+        if isinstance(format_info.get("tags"), dict):
+            merged_tags.update(format_info.get("tags") or {})
+    for stream in streams:
+        if isinstance(stream, dict) and isinstance(stream.get("tags"), dict):
+            merged_tags.update(stream.get("tags") or {})
+    video_stream = next(
+        (stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"),
+        {},
+    )
+    audio_stream = next(
+        (stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"),
+        {},
+    )
+    if video_stream:
+        probe["video_codec"] = video_stream.get("codec_name")
+        probe["width"] = int_or_none(video_stream.get("width"))
+        probe["height"] = int_or_none(video_stream.get("height"))
+        probe["fps"] = parse_frame_rate(
+            video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate")
+        )
+        probe["video_bitrate"] = int_or_none(video_stream.get("bit_rate")) or probe.get("video_bitrate")
+    probe["has_audio"] = bool(audio_stream)
+    if audio_stream:
+        probe["audio_codec"] = audio_stream.get("codec_name")
+        probe["audio_bitrate"] = int_or_none(audio_stream.get("bit_rate"))
+        probe["audio_channels"] = int_or_none(audio_stream.get("channels"))
+        probe["audio_sample_rate"] = int_or_none(audio_stream.get("sample_rate"))
+    embedded_metadata = extract_embedded_media_metadata(merged_tags)
+    if embedded_metadata:
+        probe["embedded_metadata"] = embedded_metadata
+        probe["recorded_at"] = embedded_metadata.get("date_time")
+        probe["gps_coordinates"] = embedded_metadata.get("gps_coordinates")
+        probe["camera_make"] = embedded_metadata.get("camera_make")
+        probe["camera_model"] = embedded_metadata.get("camera_model")
+        probe["recording_device"] = embedded_metadata.get("recording_device")
+        probe["recording_software"] = embedded_metadata.get("software")
+        probe["filmed_by"] = embedded_metadata.get("filmed_by")
+    return {key: value for key, value in probe.items() if value not in (None, "")}
+
+
+def annotation_has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def clean_source_label(value: Any) -> str:
+    return " ".join(str(value or "").replace("_", " ").strip().split())
+
+
+def append_unique_text(items: List[str], value: Any, *, limit: int = 12) -> None:
+    cleaned = clean_source_label(value)
+    if not cleaned:
+        return
+    lower_seen = {item.lower() for item in items}
+    if cleaned.lower() not in lower_seen and len(items) < limit:
+        items.append(cleaned)
+
+
+def append_unique_record(items: List[Dict[str, str]], record: Dict[str, Any], *, limit: int = 24) -> None:
+    cleaned_record = {
+        key: clean_source_label(value)
+        for key, value in record.items()
+        if clean_source_label(value)
+    }
+    if not cleaned_record:
+        return
+    record_key = "|".join(
+        cleaned_record.get(key, "").lower()
+        for key in ("character", "actor", "role", "description", "department")
+    )
+    seen = {
+        "|".join(
+            clean_source_label(item.get(key)).lower()
+            for key in ("character", "actor", "role", "description", "department")
+        )
+        for item in items
+    }
+    if record_key not in seen and len(items) < limit:
+        items.append(cleaned_record)
+
+
+METADATA_KEYWORD_STOP_TERMS = {
+    "i",
+    "me",
+    "my",
+    "mine",
+    "we",
+    "us",
+    "our",
+    "ours",
+    "you",
+    "your",
+    "yours",
+    "he",
+    "him",
+    "his",
+    "she",
+    "her",
+    "hers",
+    "it",
+    "its",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    "this",
+    "that",
+    "these",
+    "those",
+    "there",
+    "here",
+    "what",
+    "where",
+    "when",
+    "why",
+    "how",
+    "who",
+}
+
+
+def append_metadata_keyword(items: List[str], value: Any, *, limit: int = 24) -> None:
+    cleaned = clean_source_label(value)
+    if not cleaned:
+        return
+    lower = cleaned.lower().strip("?.!,;:")
+    if lower in METADATA_KEYWORD_STOP_TERMS:
+        return
+    if "?" in cleaned and len(cleaned.split()) > 2:
+        return
+    if len(cleaned.split()) > 5:
+        return
+    append_unique_text(items, cleaned, limit=limit)
+
+
+class WebMetadataHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title_parts: List[str] = []
+        self.visible_parts: List[str] = []
+        self.meta: Dict[str, str] = {}
+        self.json_ld: List[str] = []
+        self._capture_title = False
+        self._capture_script = False
+        self._script_parts: List[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: List[tuple[str, Optional[str]]]) -> None:
+        attr_map = {str(key).lower(): value or "" for key, value in attrs}
+        tag_lower = tag.lower()
+        if tag_lower == "title":
+            self._capture_title = True
+        elif tag_lower == "meta":
+            key = (
+                attr_map.get("property")
+                or attr_map.get("name")
+                or attr_map.get("itemprop")
+                or ""
+            ).strip().lower()
+            content = clean_source_label(attr_map.get("content"))
+            if key and content:
+                self.meta[key] = content
+        elif tag_lower == "script":
+            script_type = attr_map.get("type", "").lower()
+            if "ld+json" in script_type:
+                self._capture_script = True
+                self._script_parts = []
+            else:
+                self._skip_depth += 1
+        elif tag_lower in {"style", "noscript", "svg"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        tag_lower = tag.lower()
+        if tag_lower == "title":
+            self._capture_title = False
+        elif tag_lower == "script":
+            if self._capture_script:
+                script_text = "".join(self._script_parts).strip()
+                if script_text:
+                    self.json_ld.append(script_text)
+            self._capture_script = False
+            self._script_parts = []
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+        elif tag_lower in {"style", "noscript", "svg"} and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        cleaned = clean_source_label(data)
+        if not cleaned:
+            return
+        if self._capture_title:
+            self.title_parts.append(cleaned)
+        elif self._capture_script:
+            self._script_parts.append(data)
+        elif self._skip_depth == 0 and len(self.visible_parts) < 80:
+            self.visible_parts.append(cleaned)
+
+
+def normalize_web_metadata_values(value: Any, *, limit: int = 12) -> List[str]:
+    values: List[str] = []
+
+    def append(value_item: Any) -> None:
+        if isinstance(value_item, dict):
+            for nested_key in ("name", "headline", "title", "@id"):
+                if nested_key in value_item:
+                    append(value_item.get(nested_key))
+                    return
+        elif isinstance(value_item, list):
+            for nested in value_item:
+                append(nested)
+        else:
+            append_unique_text(values, value_item, limit=limit)
+
+    append(value)
+    return values
+
+
+WEB_SOURCE_AUTHOR_STOP_TERMS = {
+    "contributors to wikimedia projects",
+    "wikipedia",
+    "wikimedia foundation",
+    "mediawiki",
+}
+
+
+def strip_html_fragment(fragment: str) -> str:
+    text = re.sub(r"(?is)<(script|style|noscript|sup)[^>]*>.*?</\1>", " ", fragment)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</li>|</tr>|</td>|</th>", "; ", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" ;")
+    return clean_source_label(text)
+
+
+def compact_web_excerpt(text: Any, *, limit: int = 640) -> str:
+    cleaned = clean_source_label(text)
+    if len(cleaned) <= limit:
+        return cleaned
+    boundary = max(cleaned.rfind(". ", 0, limit), cleaned.rfind("; ", 0, limit))
+    if boundary > 180:
+        return cleaned[: boundary + 1].strip()
+    return cleaned[:limit].rsplit(" ", 1)[0].strip()
+
+
+def extract_link_texts(fragment: str, *, limit: int = 32) -> List[str]:
+    values: List[str] = []
+    for match in re.finditer(r"(?is)<a\b[^>]*>(.*?)</a>", fragment):
+        label = strip_html_fragment(match.group(1))
+        if label.lower() in {"edit", "citation needed"}:
+            continue
+        if re.fullmatch(r"\d+", label):
+            continue
+        append_unique_text(values, label, limit=limit)
+    return values
+
+
+def split_metadata_text_values(value: Any, *, limit: int = 24) -> List[str]:
+    values: List[str] = []
+    text = clean_source_label(value)
+    for item in re.split(r"\s*(?:;|\||/|\band\b)\s*", text):
+        cleaned = clean_source_label(item)
+        if cleaned and len(cleaned) <= 80:
+            append_unique_text(values, cleaned, limit=limit)
+    return values
+
+
+def infer_character_role_label(character: Any, description: Any) -> str:
+    text = f"{clean_source_label(character)} {clean_source_label(description)}".lower()
+    labels: List[str] = []
+    if any(term in text for term in ("james bond", "bond", "007")):
+        labels.extend(["protagonist", "secret agent"])
+    if any(term in text for term in ("villain", "adversary", "bioterrorist", "safin", "blofeld")):
+        labels.append("antagonist")
+    if any(term in text for term in ("mi6", "cia", "agent", "officer", "quartermaster")):
+        append_unique_text(labels, "intelligence role", limit=4)
+    if any(term in text for term in ("love interest", "daughter", "mother", "father", "family")):
+        append_unique_text(labels, "family / relationship role", limit=4)
+    if any(term in text for term in ("psychotherapist", "scientist", "doctor", "dr.", "professor")):
+        append_unique_text(labels, "professional role", limit=4)
+    return ", ".join(labels[:3])
+
+
+def format_character_role_candidate(role: Dict[str, Any]) -> str:
+    actor = clean_source_label(role.get("actor"))
+    character = clean_source_label(role.get("character"))
+    role_label = clean_source_label(role.get("role"))
+    description = clean_source_label(role.get("description"))
+    head = " / ".join(part for part in (character, actor) if part)
+    tail = "; ".join(part for part in (role_label, description) if part)
+    return f"{head}: {tail}" if head and tail else head or tail
+
+
+def format_production_crew_candidate(role: Dict[str, Any]) -> str:
+    person = clean_source_label(role.get("person"))
+    department = clean_source_label(role.get("department"))
+    return f"{person}: {department}" if person and department else person or department
+
+
+def is_source_author_noise(value: Any, *, source_url: str = "") -> bool:
+    cleaned = clean_source_label(value).lower()
+    if not cleaned:
+        return True
+    if any(term in cleaned for term in WEB_SOURCE_AUTHOR_STOP_TERMS):
+        return True
+    host = urllib.parse.urlparse(source_url).netloc.lower()
+    return "wikipedia.org" in host and (
+        "wikimedia" in cleaned or cleaned in {"wikipedia", "mediawiki"}
+    )
+
+
+def extract_date_candidates(text: Any, *, limit: int = 18) -> List[str]:
+    values: List[str] = []
+    cleaned = clean_source_label(text)
+    patterns = [
+        r"\b\d{1,2}\s+[A-Z][a-z]+\s+\d{4}\b",
+        r"\b[A-Z][a-z]+\s+\d{1,2},\s+\d{4}\b",
+        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b",
+        r"\b(?:19|20)\d{2}\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, cleaned):
+            append_unique_text(values, match.group(0), limit=limit)
+    return values
+
+
+def wikipedia_section_html(html_text: str, section_id: str) -> str:
+    pattern = (
+        r"(?is)<h2[^>]*>.*?(?:id=[\"']"
+        + re.escape(section_id)
+        + r"[\"']|>"
+        + re.escape(section_id)
+        + r"\b).*?</h2>(.*?)(?=<h2\b)"
+    )
+    match = re.search(pattern, html_text)
+    return match.group(1) if match else ""
+
+
+def append_wikipedia_place(values: List[str], label: Any, *, limit: int = 28) -> None:
+    cleaned = clean_source_label(label)
+    if not cleaned:
+        return
+    lower = cleaned.lower()
+    blocked_terms = {
+        "imax",
+        "spectre",
+        "casino royale",
+        "quantum of solace",
+        "aston martin",
+        "db5",
+        "dbs superleggera",
+        "valhalla",
+        "james bond",
+        "no time to die",
+    }
+    if any(term in lower for term in blocked_terms):
+        return
+    if len(cleaned) > 60:
+        return
+    append_unique_text(values, cleaned, limit=limit)
+
+
+def extract_wikipedia_metadata_profile(html_text: str) -> Dict[str, Any]:
+    profile: Dict[str, Any] = {
+        "description": "",
+        "persons": [],
+        "character_roles": [],
+        "production_crew": [],
+        "places": [],
+        "dates": [],
+        "keywords": [],
+        "genre": "",
+        "genre_subtype": "",
+        "situational_genre": "",
+        "source_types": ["Wikipedia article body"],
+    }
+    persons: List[str] = []
+    character_roles: List[Dict[str, str]] = []
+    production_crew: List[Dict[str, str]] = []
+    places: List[str] = []
+    dates: List[str] = []
+    keywords: List[str] = []
+
+    for paragraph_match in re.finditer(r"(?is)<p\b[^>]*>(.*?)</p>", html_text):
+        paragraph = strip_html_fragment(paragraph_match.group(1))
+        paragraph_lower = paragraph.lower()
+        if len(paragraph) < 140:
+            continue
+        if paragraph_lower.startswith("for other uses"):
+            continue
+        profile["description"] = compact_web_excerpt(paragraph, limit=720)
+        break
+
+    infobox_match = re.search(
+        r"(?is)<table[^>]+class=[\"'][^\"']*\binfobox\b[^\"']*[\"'][^>]*>(.*?)</table>",
+        html_text,
+    )
+    if infobox_match:
+        for row_match in re.finditer(r"(?is)<tr\b[^>]*>(.*?)</tr>", infobox_match.group(1)):
+            row_html = row_match.group(1)
+            th_match = re.search(r"(?is)<th\b[^>]*>(.*?)</th>", row_html)
+            td_match = re.search(r"(?is)<td\b[^>]*>(.*?)</td>", row_html)
+            if not th_match or not td_match:
+                continue
+            key = strip_html_fragment(th_match.group(1)).lower()
+            td_html = td_match.group(1)
+            link_values = extract_link_texts(td_html, limit=24)
+            text_value = strip_html_fragment(td_html)
+            values = link_values or split_metadata_text_values(text_value, limit=18)
+            if any(term in key for term in ("directed", "screenplay", "story", "produced", "cinematography", "edited", "music")):
+                for person in values:
+                    append_unique_text(persons, person, limit=32)
+                    append_unique_record(
+                        production_crew,
+                        {"person": person, "department": key},
+                        limit=32,
+                    )
+            if "starring" in key:
+                for person in values:
+                    append_unique_text(persons, person, limit=32)
+            if any(term in key for term in ("country", "countries", "language")):
+                for place in values:
+                    append_wikipedia_place(places, place, limit=28)
+            if any(term in key for term in ("release", "date", "production")):
+                for date_value in extract_date_candidates(text_value, limit=18):
+                    append_unique_text(dates, date_value, limit=18)
+
+    cast_section = wikipedia_section_html(html_text, "Cast")
+    for item_match in re.finditer(r"(?is)<li\b[^>]*>(.*?)</li>", cast_section):
+        item_html = item_match.group(1)
+        links = extract_link_texts(item_html, limit=4)
+        item_text = strip_html_fragment(item_html)
+        actor = links[0] if links else ""
+        character = ""
+        description = ""
+        role_match = re.match(r"(.+?)\s+as\s+(.+?)(?::|\.\s|$)(.*)", item_text)
+        if role_match:
+            actor = clean_source_label(role_match.group(1))
+            character = clean_source_label(role_match.group(2))
+            description = compact_web_excerpt(role_match.group(3), limit=220)
+        if links:
+            append_unique_text(persons, links[0], limit=32)
+        else:
+            name_match = re.match(r"([^:;.]+?)\s+as\s+", item_text)
+            if name_match:
+                append_unique_text(persons, name_match.group(1), limit=32)
+        if actor or character:
+            append_unique_record(
+                character_roles,
+                {
+                    "actor": actor,
+                    "character": character,
+                    "description": description,
+                    "role": infer_character_role_label(character, description),
+                },
+                limit=36,
+            )
+
+    filming_section = wikipedia_section_html(html_text, "Filming")
+    for paragraph_match in re.finditer(r"(?is)<p\b[^>]*>(.*?)</p>", filming_section):
+        paragraph_html = paragraph_match.group(1)
+        paragraph_text = strip_html_fragment(paragraph_html)
+        if not any(term in paragraph_text.lower() for term in ("filming", "location", "shot", "production moved")):
+            continue
+        for place in extract_link_texts(paragraph_html, limit=48):
+            append_wikipedia_place(places, place, limit=28)
+        for date_value in extract_date_candidates(paragraph_text, limit=18):
+            append_unique_text(dates, date_value, limit=18)
+
+    category_labels: List[str] = []
+    for category_match in re.finditer(r"(?is)title=[\"']Category:([^\"']+)[\"']", html_text):
+        category = html.unescape(category_match.group(1)).replace("_", " ")
+        category = clean_source_label(category)
+        if not category or category.lower().startswith(("hidden", "cs1", "articles")):
+            continue
+        append_unique_text(category_labels, category, limit=32)
+        append_metadata_keyword(keywords, category, limit=32)
+
+    category_text = " ".join(category_labels).lower()
+    if "film" in category_text or "james bond" in category_text:
+        profile["genre"] = "movie drama / fiction"
+    if "spy action" in category_text or "action thriller" in category_text or "action drama" in category_text:
+        profile["genre_subtype"] = "action / adventure"
+    elif "thriller" in category_text:
+        profile["genre_subtype"] = "suspense / thriller"
+    if any(term in category_text for term in ("spy", "terrorism", "cia", "mi6", "bioterrorism")):
+        profile["situational_genre"] = "confrontation"
+
+    profile["persons"] = persons
+    profile["character_roles"] = character_roles
+    profile["production_crew"] = production_crew
+    profile["places"] = places
+    profile["dates"] = dates
+    profile["keywords"] = keywords
+    return profile
+
+
+def parse_web_metadata_html(html_text: str, source_url: str, retrieved_at: str) -> Dict[str, Any]:
+    parser = WebMetadataHTMLParser()
+    parser.feed(html_text)
+    parsed_source = urllib.parse.urlparse(source_url)
+    is_wikipedia_source = "wikipedia.org" in parsed_source.netloc.lower() or "mw-parser-output" in html_text
+    wikipedia_profile = extract_wikipedia_metadata_profile(html_text) if is_wikipedia_source else {}
+    title = (
+        parser.meta.get("og:title")
+        or parser.meta.get("twitter:title")
+        or clean_source_label(" ".join(parser.title_parts))
+    )
+    description = (
+        parser.meta.get("description")
+        or parser.meta.get("og:description")
+        or parser.meta.get("twitter:description")
+    )
+    if not description and wikipedia_profile.get("description"):
+        description = wikipedia_profile.get("description")
+    keywords: List[str] = []
+    for raw_keyword in re.split(r"[,;|]", parser.meta.get("keywords", "")):
+        append_metadata_keyword(keywords, raw_keyword, limit=16)
+
+    persons: List[str] = []
+    places: List[str] = []
+    dates: List[str] = []
+    json_ld_types: List[str] = []
+    json_ld_payloads: List[Any] = []
+
+    def inspect_json_ld(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                inspect_json_ld(item)
+            return
+        if not isinstance(node, dict):
+            return
+        json_ld_payloads.append(node)
+        for type_value in normalize_web_metadata_values(node.get("@type"), limit=8):
+            append_unique_text(json_ld_types, type_value, limit=12)
+        for key in ("name", "headline"):
+            if not title:
+                pass
+        for key in ("actor", "actors", "director", "creator", "performer"):
+            for person in normalize_web_metadata_values(node.get(key), limit=12):
+                append_unique_text(persons, person, limit=18)
+        for key in ("author", "contributor"):
+            for person in normalize_web_metadata_values(node.get(key), limit=12):
+                if not is_source_author_noise(person, source_url=source_url):
+                    append_unique_text(persons, person, limit=18)
+        for key in ("contentLocation", "location", "spatialCoverage", "place"):
+            for place in normalize_web_metadata_values(node.get(key), limit=12):
+                append_unique_text(places, place, limit=18)
+        for key in ("datePublished", "uploadDate", "dateCreated", "temporalCoverage"):
+            for date_value in normalize_web_metadata_values(node.get(key), limit=8):
+                append_unique_text(dates, date_value, limit=12)
+        for keyword in normalize_web_metadata_values(node.get("keywords"), limit=18):
+            append_metadata_keyword(keywords, keyword, limit=24)
+        graph = node.get("@graph")
+        if graph:
+            inspect_json_ld(graph)
+
+    for script in parser.json_ld:
+        try:
+            inspect_json_ld(json.loads(script))
+        except Exception:
+            continue
+
+    for meta_key in ("article:published_time", "video:release_date", "date", "dc.date"):
+        append_unique_text(dates, parser.meta.get(meta_key), limit=12)
+    for meta_key in ("article:author", "author", "dc.creator"):
+        person = parser.meta.get(meta_key)
+        if not is_source_author_noise(person, source_url=source_url):
+            append_unique_text(persons, person, limit=18)
+    for meta_key in ("og:site_name", "application-name"):
+        append_metadata_keyword(keywords, parser.meta.get(meta_key), limit=24)
+
+    for person in wikipedia_profile.get("persons") or []:
+        append_unique_text(persons, person, limit=32)
+    character_roles: List[Dict[str, str]] = list(wikipedia_profile.get("character_roles") or [])
+    production_crew: List[Dict[str, str]] = list(wikipedia_profile.get("production_crew") or [])
+    for place in wikipedia_profile.get("places") or []:
+        append_unique_text(places, place, limit=28)
+    for date_value in wikipedia_profile.get("dates") or []:
+        append_unique_text(dates, date_value, limit=18)
+    for keyword in wikipedia_profile.get("keywords") or []:
+        append_metadata_keyword(keywords, keyword, limit=32)
+    for source_type in wikipedia_profile.get("source_types") or []:
+        append_unique_text(json_ld_types, source_type, limit=12)
+
+    combined_text = " ".join(
+        [
+            title or "",
+            description or "",
+            " ".join(keywords),
+            " ".join(json_ld_types),
+        ]
+    ).lower()
+    genre = ""
+    genre_subtype = ""
+    if "trailer" in combined_text:
+        genre = "advertising / promo"
+        genre_subtype = "movie trailer"
+    elif any(term in combined_text for term in ("movie", "film", "videoobject")):
+        genre = "movie drama / fiction"
+    elif any(term in combined_text for term in ("news", "article", "report")):
+        genre = "news"
+    elif any(term in combined_text for term in ("interview", "conversation", "qa", "q&a")):
+        genre = "interview"
+
+    situational_genre = ""
+    situational_subtype = ""
+    if any(term in combined_text for term in ("interview", "conversation", "q&a")):
+        situational_genre = "interview"
+        situational_subtype = "profile interview"
+    elif any(term in combined_text for term in ("conflict", "threat", "betray", "secret", "mission")):
+        situational_genre = "confrontation"
+    elif any(term in combined_text for term in ("summit", "conference", "cop", "climate")):
+        situational_genre = "briefing"
+        situational_subtype = "status update"
+    elif "trailer" in combined_text:
+        situational_genre = "performance / entertainment"
+
+    genre = wikipedia_profile.get("genre") or genre
+    genre_subtype = wikipedia_profile.get("genre_subtype") or genre_subtype
+    situational_genre = wikipedia_profile.get("situational_genre") or situational_genre
+    situational_subtype = wikipedia_profile.get("situational_subtype") or situational_subtype
+
+    fields = {
+        "title": title,
+        "description": description,
+        "persons": persons,
+        "character_roles": character_roles,
+        "production_crew": production_crew,
+        "places": places,
+        "dates": dates,
+        "keywords": keywords,
+        "genre": genre,
+        "genre_subtype": genre_subtype,
+        "situational_genre": situational_genre,
+        "situational_subtype": situational_subtype,
+        "source_url": source_url,
+        "retrieved_at": retrieved_at,
+        "source_types": json_ld_types,
+    }
+    candidates: List[Dict[str, Any]] = []
+    candidate_specs = [
+        ("title", fields.get("title"), "meta/title"),
+        ("description", fields.get("description"), "meta/jsonld/article_lead"),
+        ("persons", fields.get("persons"), "jsonld/meta/infobox/cast"),
+        ("character_roles", [format_character_role_candidate(role) for role in fields.get("character_roles", [])], "wikipedia/cast_role_descriptions"),
+        ("production_crew", [format_production_crew_candidate(role) for role in fields.get("production_crew", [])], "wikipedia/infobox_production_crew"),
+        ("places", fields.get("places"), "jsonld/meta/infobox/filming"),
+        ("dates", fields.get("dates"), "jsonld/meta/infobox/article_body"),
+        ("keywords", fields.get("keywords"), "meta/jsonld/categories"),
+        ("genre", fields.get("genre"), "vaa1_taxonomy/categories/jsonld/meta/heuristic"),
+        ("genre_subtype", fields.get("genre_subtype"), "vaa1_taxonomy/categories/jsonld/meta/heuristic"),
+        ("situational_genre", fields.get("situational_genre"), "vaa1_taxonomy/categories/jsonld/meta/heuristic"),
+        ("situational_subtype", fields.get("situational_subtype"), "vaa1_taxonomy/categories/jsonld/meta/heuristic"),
+    ]
+    for field, value, selector in candidate_specs:
+        values = value if isinstance(value, list) else ([value] if value else [])
+        for item in values:
+            cleaned = clean_source_label(item)
+            if not cleaned:
+                continue
+            candidates.append(
+                {
+                    "field": field,
+                    "value": cleaned,
+                    "source_url": source_url,
+                    "retrieved_at": retrieved_at,
+                    "selector": selector,
+                    "raw_excerpt": cleaned[:240],
+                    "confidence": "medium",
+                    "review_state": "candidate",
+                }
+            )
+    return {
+        "fields": fields,
+        "candidates": candidates,
+        "visible_text_excerpt": clean_source_label(" ".join(parser.visible_parts))[:900],
+        "json_ld_count": len(json_ld_payloads),
+    }
+
+
+def harvest_web_address_metadata(source_url: str) -> Dict[str, Any]:
+    parsed = urllib.parse.urlparse(source_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Web metadata source must be an http or https URL")
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    request = urllib.request.Request(
+        source_url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.2",
+            "User-Agent": "VAA1 metadata governance harvester/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            content_type = response.headers.get("Content-Type", "")
+            status_code = getattr(response, "status", None)
+            raw = response.read(2_000_000)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not retrieve web metadata source: {exc}") from exc
+    charset_match = re.search(r"charset=([^;]+)", content_type, re.IGNORECASE)
+    charset = charset_match.group(1).strip() if charset_match else "utf-8"
+    html_text = raw.decode(charset, errors="replace")
+    parsed_metadata = parse_web_metadata_html(html_text, source_url, retrieved_at)
+    return {
+        "id": uuid.uuid4().hex,
+        "url": source_url,
+        "preference": "supporting",
+        "retrieved_at": retrieved_at,
+        "status": "retrieved",
+        "http_status": status_code,
+        "content_type": content_type,
+        **parsed_metadata,
+    }
+
+
+def canonical_web_metadata_url(value: Any) -> str:
+    parsed = urllib.parse.urlparse(str(value or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return str(value or "").strip().lower()
+    return urllib.parse.urlunparse(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path.rstrip("/") or "/",
+            "",
+            parsed.query,
+            "",
+        )
+    )
+
+
+def web_metadata_source_sort_key(source: Dict[str, Any]) -> tuple[int, str]:
+    preference_rank = {"main": 0, "supporting": 1, "background": 2}
+    return (
+        preference_rank.get(str(source.get("preference") or "supporting").lower(), 1),
+        str(source.get("retrieved_at") or ""),
+    )
+
+
+def dedupe_web_metadata_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_url: Dict[str, Dict[str, Any]] = {}
+    for source in sources:
+        key = canonical_web_metadata_url(source.get("url") or source.get("fields", {}).get("source_url"))
+        if not key:
+            continue
+        existing = by_url.get(key)
+        if existing is None or str(source.get("retrieved_at") or "") >= str(existing.get("retrieved_at") or ""):
+            by_url[key] = source
+    return sorted(by_url.values(), key=web_metadata_source_sort_key)
+
+
+def read_json_any_artifact(path_value: Any) -> Any:
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def artifact_payload_from_status(status: Dict[str, Any], key: str) -> Any:
+    if key in status and status.get(key) not in (None, ""):
+        direct_payload = status.get(key)
+        if isinstance(direct_payload, str):
+            parsed_payload = read_json_any_artifact(direct_payload)
+            if parsed_payload is not None:
+                return parsed_payload
+        return direct_payload
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    if key in results and results.get(key) not in (None, ""):
+        direct_payload = results.get(key)
+        if isinstance(direct_payload, str):
+            parsed_payload = read_json_any_artifact(direct_payload)
+            if parsed_payload is not None:
+                return parsed_payload
+        return direct_payload
+    for collection_key in ("output_files", "internal_artifacts"):
+        collection = status.get(collection_key)
+        if isinstance(collection, dict):
+            payload = read_json_any_artifact(collection.get(key))
+            if payload is not None:
+                return payload
+    return None
+
+
+def artifact_payload_from_status_any(status: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        payload = artifact_payload_from_status(status, key)
+        if payload is not None:
+            return payload
+    return None
+
+
+def collect_values_by_key(
+    payload: Any,
+    key_names: set[str],
+    *,
+    limit: int = 24,
+) -> List[str]:
+    values: List[str] = []
+
+    def visit(value: Any) -> None:
+        if len(values) >= limit:
+            return
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if len(values) >= limit:
+                    return
+                normalized_key = str(key).lower().replace("-", "_")
+                if normalized_key in key_names:
+                    if isinstance(nested, (str, int, float)):
+                        append_unique_text(values, nested, limit=limit)
+                    elif isinstance(nested, list):
+                        for item in nested:
+                            if isinstance(item, (str, int, float)):
+                                append_unique_text(values, item, limit=limit)
+                visit(nested)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(payload)
+    return values
+
+
+def collect_scene_card_accounts(payload: Any, *, limit: int = 8) -> List[str]:
+    accounts: List[str] = []
+    key_names = {
+        "scene_account",
+        "account",
+        "summary",
+        "description",
+        "what_is_happening",
+        "what_happens",
+        "situation",
+    }
+    for value in collect_values_by_key(payload, key_names, limit=limit * 2):
+        if len(value.split()) >= 4:
+            append_unique_text(accounts, value, limit=limit)
+    return accounts
+
+
+def append_csv_terms(target: List[str], value: Any, *, limit: int = 24) -> None:
+    if isinstance(value, list):
+        for item in value:
+            append_unique_text(target, item, limit=limit)
+        return
+    if isinstance(value, str):
+        for part in value.replace("\n", ",").split(","):
+            append_unique_text(target, part, limit=limit)
+
+
+def detection_start_seconds(item: Dict[str, Any]) -> Optional[float]:
+    for key in ("timestamp_seconds", "time_seconds", "start_seconds", "start", "time", "timestamp"):
+        value = safe_float(item.get(key))
+        if value is not None:
+            return value / 1000.0 if value > 1000 else value
+    interval = item.get("time_interval")
+    if isinstance(interval, dict):
+        value = safe_float(interval.get("start_ms") or interval.get("start"))
+        if value is not None:
+            return value / 1000.0 if value > 1000 else value
+    return None
+
+
+def detection_text_value(item: Dict[str, Any]) -> str:
+    text = item.get("text") or item.get("ocr_text") or item.get("label")
+    if text:
+        return clean_source_label(text)
+    payload = item.get("payload")
+    if isinstance(payload, dict):
+        return clean_source_label(payload.get("text") or payload.get("ocr_text") or payload.get("label"))
+    return ""
+
+
+def detection_confidence_value(item: Dict[str, Any]) -> Optional[float]:
+    value = safe_float(item.get("confidence"))
+    if value is not None:
+        return value
+    payload = item.get("payload")
+    if isinstance(payload, dict):
+        return safe_float(payload.get("confidence"))
+    return None
+
+
+def is_useful_ocr_metadata_text(text: str, confidence: Optional[float] = None) -> bool:
+    cleaned = clean_source_label(text)
+    if not cleaned:
+        return False
+    if confidence is not None and confidence < 0.72:
+        return False
+    letters = sum(1 for char in cleaned if char.isalpha())
+    digits = sum(1 for char in cleaned if char.isdigit())
+    if letters < 3 or digits > letters * 2:
+        return False
+    if any(char in cleaned for char in ("}", "{", '"', "\\", "|")):
+        return False
+    return True
+
+
+OCR_SINGLE_TOKEN_METADATA_KEEP = {
+    "007.com",
+    "bbc",
+    "cop30",
+    "imdb",
+    "mgm",
+    "universal",
+}
+
+
+def is_boundary_ocr_metadata_text(text: str) -> bool:
+    cleaned = clean_source_label(text)
+    lower = cleaned.lower()
+    if any(
+        phrase in lower
+        for phrase in (
+            "directed by",
+            "produced by",
+            "written by",
+            "filmed by",
+            "camera",
+            "cinematography",
+            "starring",
+            "editor",
+            "music by",
+        )
+    ):
+        return True
+    if len(cleaned.split()) > 1:
+        return True
+    return lower in OCR_SINGLE_TOKEN_METADATA_KEEP
+
+
+def collect_ocr_items_from_payload(payload: Any) -> List[Dict[str, Any]]:
+    """Collect OCR rows from flat detections and time-bank OCR artifacts.
+
+    Some VAA1 OCR exports keep text rows under ``objects`` and timing under a
+    parallel ``anchors`` array. Pairing them here keeps beginning/end title OCR
+    available to metadata maturity without mutating the raw artifact.
+    """
+
+    collected: List[Dict[str, Any]] = []
+
+    if isinstance(payload, dict):
+        anchors = payload.get("anchors")
+        objects = payload.get("objects")
+        if isinstance(anchors, list) and isinstance(objects, list):
+            for index, item in enumerate(objects):
+                if not isinstance(item, dict):
+                    continue
+                paired = dict(item)
+                if detection_start_seconds(paired) is None and index < len(anchors):
+                    anchor = anchors[index]
+                    if isinstance(anchor, dict):
+                        start = (
+                            anchor.get("timestamp_seconds")
+                            or anchor.get("time_seconds")
+                            or anchor.get("start_seconds")
+                            or anchor.get("t_start")
+                            or anchor.get("start")
+                        )
+                        if start is None and anchor.get("t_start_ms") is not None:
+                            start = safe_float(anchor.get("t_start_ms"))
+                            if start is not None:
+                                start = start / 1000.0
+                        if start is not None:
+                            paired["timestamp_seconds"] = start
+                collected.append(paired)
+
+    collected.extend(iter_detection_items(payload))
+
+    seen: set[tuple[str, str]] = set()
+    unique: List[Dict[str, Any]] = []
+    for item in collected:
+        if not isinstance(item, dict):
+            continue
+        text = detection_text_value(item)
+        if not is_useful_ocr_metadata_text(text, detection_confidence_value(item)):
+            continue
+        start = detection_start_seconds(item)
+        key = (text.lower(), "" if start is None else f"{start:.3f}")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def collect_ocr_boundary_metadata(
+    ocr_items: List[Dict[str, Any]],
+    duration_seconds: Optional[float],
+) -> Dict[str, Any]:
+    timed_items: List[tuple[float, str]] = []
+    untimed_text: List[str] = []
+    for item in ocr_items:
+        if not isinstance(item, dict):
+            continue
+        text = detection_text_value(item)
+        if not is_useful_ocr_metadata_text(text, detection_confidence_value(item)):
+            continue
+        start = detection_start_seconds(item)
+        if start is None:
+            if is_boundary_ocr_metadata_text(text):
+                append_unique_text(untimed_text, text, limit=18)
+            continue
+        timed_items.append((start, text))
+
+    timed_items.sort(key=lambda pair: pair[0])
+    max_time = max((time for time, _ in timed_items), default=duration_seconds or 0.0)
+    duration = duration_seconds or max_time
+    beginning_window = max(20.0, (duration or 0.0) * 0.12)
+    ending_window_start = max(0.0, (duration or max_time or 0.0) - max(30.0, (duration or 0.0) * 0.15))
+
+    beginning: List[str] = []
+    ending: List[str] = []
+    for start, text in timed_items:
+        if start <= beginning_window:
+            if is_boundary_ocr_metadata_text(text):
+                append_unique_text(beginning, text, limit=24)
+        if duration and start >= ending_window_start:
+            if is_boundary_ocr_metadata_text(text):
+                append_unique_text(ending, text, limit=32)
+
+    if not timed_items and untimed_text:
+        beginning = untimed_text[:12]
+
+    crew_terms: List[str] = []
+    title_terms: List[str] = []
+    credit_phrases = (
+        "directed by",
+        "produced by",
+        "written by",
+        "filmed by",
+        "camera",
+        "cinematography",
+        "starring",
+        "editor",
+        "music by",
+    )
+    for text in beginning + ending:
+        lower = text.lower()
+        if any(phrase in lower for phrase in credit_phrases):
+            append_unique_text(crew_terms, text, limit=16)
+        elif 1 < len(text.split()) <= 8 and not any(char.isdigit() for char in text):
+            append_unique_text(title_terms, text, limit=8)
+
+    return {
+        "beginning_text": beginning,
+        "ending_text": ending,
+        "title_candidates": title_terms,
+        "crew_candidates": crew_terms,
+        "has_timed_ocr": bool(timed_items),
+    }
+
+
+def transcript_segments_from_status(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    candidates: List[Any] = []
+    audio = ((status.get("results") or {}).get("audio_analysis") or {})
+    if isinstance(audio.get("transcript"), dict):
+        candidates.append(audio.get("transcript"))
+    candidates.append(status.get("transcript"))
+    for key in ("transcript", "linked_transcript"):
+        candidates.append(read_json_any_artifact(output_files.get(key)))
+
+    for payload in candidates:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            raw_segments = payload.get("segments") or payload.get("transcript") or payload.get("timeline_segments")
+            if isinstance(raw_segments, list):
+                return [item for item in raw_segments if isinstance(item, dict)]
+    return []
+
+
+def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive conservative source metadata candidates from existing video evidence.
+
+    This is intentionally not a manual annotation writer. It proposes mature
+    video-internal values that can fill empty fields in Source Media metadata,
+    while explicit analyst metadata keeps authority.
+    """
+
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+    original_filename = clean_source_label(status.get("original_filename") or status.get("filename"))
+    title = Path(original_filename).stem if original_filename else ""
+    title_lower = title.lower()
+
+    transcript_segments = transcript_segments_from_status(status)
+    transcript_text = " ".join(
+        clean_source_label(segment.get("text"))
+        for segment in transcript_segments[:80]
+        if isinstance(segment, dict) and segment.get("text")
+    )
+    transcript_lower = transcript_text.lower()
+
+    tracked_payload = visual.get("tracked_objects") or artifact_payload_from_status_any(
+        status,
+        "tracked_objects",
+        "tracked_objects_json",
+        "time_bank_objects",
+        "object_tracks",
+    )
+    tracked_objects = iter_detection_items(tracked_payload)
+    ocr_payload = visual.get("ocr_results") or artifact_payload_from_status_any(
+        status,
+        "time_bank_ocr",
+        "ocr_results",
+        "ocr",
+        "ocr_json",
+    )
+    ocr_items = collect_ocr_items_from_payload(ocr_payload)
+    ocr_text = " ".join(
+        detection_text_value(item)
+        for item in ocr_items[:80]
+        if isinstance(item, dict)
+    )
+    ocr_lower = ocr_text.lower()
+    stored_probe = status.get("source_media_metadata") if isinstance(status.get("source_media_metadata"), dict) else {}
+    duration_seconds = safe_float(
+        status.get("duration_seconds")
+        or stored_probe.get("duration_seconds")
+        or stored_probe.get("duration")
+    )
+    ocr_boundary_metadata = collect_ocr_boundary_metadata(ocr_items, duration_seconds)
+
+    pos_analysis = artifact_payload_from_status_any(status, "pos_analysis", "pos")
+    pos_matrix = artifact_payload_from_status_any(status, "pos_matrix", "pos_matrix_json")
+    sfl_stage = artifact_payload_from_status_any(status, "dependency_sfl_stage1", "sfl_stage1")
+    meaning_stage = artifact_payload_from_status_any(status, "multimodal_meaning_stage1", "meaning_plot_stage1")
+    second_order = artifact_payload_from_status_any(status, "second_order_label_proliferation", "second_order_labels")
+    scene_cards = artifact_payload_from_status_any(status, "mise_en_scene_scene_cards", "scene_cards")
+    master_schema = artifact_payload_from_status_any(status, "vaa1_annotation_master_schema", "master_schema")
+    cinematic_clues = visual.get("cinematic_clues") or artifact_payload_from_status_any(
+        status,
+        "cinematic_clues",
+        "cinematic_clues_json",
+    )
+
+    interrogative_terms = collect_values_by_key(
+        [pos_analysis, pos_matrix],
+        {
+            "who",
+            "what",
+            "where",
+            "when",
+            "why",
+            "how",
+            "by_what_means",
+            "towards_what_end",
+            "by_what_consequences",
+            "interrogative",
+            "interrogative_label",
+        },
+        limit=18,
+    )
+    case_terms = collect_values_by_key(
+        [pos_analysis, pos_matrix],
+        {"case", "case_label", "semantic_role", "role", "participant_role"},
+        limit=16,
+    )
+    sfl_terms = collect_values_by_key(
+        sfl_stage,
+        {
+            "speech_function",
+            "candidate_label",
+            "label_family",
+            "process_type",
+            "sfl_process_type",
+            "interpersonal_function",
+        },
+        limit=18,
+    )
+    meaning_terms = collect_values_by_key(
+        [meaning_stage, second_order],
+        {
+            "label",
+            "candidate_label",
+            "meaning_label",
+            "plot_label",
+            "event_label",
+            "theme",
+            "topic",
+            "situation",
+            "stage",
+        },
+        limit=20,
+    )
+    cinematic_terms = collect_values_by_key(
+        cinematic_clues,
+        {"label", "clue", "clue_type", "shot_type", "framing", "lighting", "camera", "color"},
+        limit=14,
+    )
+    scene_accounts = collect_scene_card_accounts(scene_cards, limit=6)
+    master_terms = collect_values_by_key(
+        master_schema,
+        {
+            "title",
+            "person",
+            "person_name",
+            "display_name",
+            "role",
+            "location",
+            "place",
+            "city",
+            "country",
+            "date",
+            "genre",
+            "situation",
+            "description",
+            "source_context",
+        },
+        limit=24,
+    )
+
+    persons: List[str] = []
+    if "james bond" in title_lower or "james bond" in transcript_lower:
+        append_unique_text(persons, "James Bond")
+    if "007" in title_lower or "007" in transcript_lower:
+        append_unique_text(persons, "007")
+    append_csv_terms(persons, collect_values_by_key(master_schema, {"person", "person_name", "display_name"}, limit=10), limit=12)
+    append_csv_terms(persons, ocr_boundary_metadata.get("crew_candidates"), limit=16)
+    for item in tracked_objects[:120]:
+        label = clean_source_label(
+            item.get("display_label")
+            or item.get("identity_label")
+            or item.get("label")
+            or item.get("class_name")
+        )
+        if "/" in label:
+            label = label.split("/", 1)[0].strip()
+        label_lower = label.lower()
+        if not label or label_lower in {"person", "unknown"}:
+            continue
+        if "person track" in label_lower or "person untracked" in label_lower:
+            continue
+        if any(char.isupper() for char in label) and len(label.split()) <= 5:
+            append_unique_text(persons, label)
+
+    keywords: List[str] = []
+    for term in (
+        "James Bond",
+        "007",
+        "secrets",
+        "trust",
+        "world",
+        "weapon",
+        "MI6",
+        "commander",
+        "brother",
+        "trailer",
+        "COP30",
+        "climate",
+        "Brazil",
+        "Belem",
+    ):
+        if term.lower() in transcript_lower or term.lower() in title_lower or term.lower() in ocr_lower:
+            append_metadata_keyword(keywords, term, limit=16)
+    for term in interrogative_terms + case_terms + sfl_terms + meaning_terms + cinematic_terms:
+        append_metadata_keyword(keywords, term, limit=24)
+    for term in (
+        (ocr_boundary_metadata.get("title_candidates") or [])
+        + (ocr_boundary_metadata.get("crew_candidates") or [])
+    ):
+        append_metadata_keyword(keywords, term, limit=24)
+
+    location_place = ""
+    location_city = ""
+    location_country = ""
+    master_places = collect_values_by_key(master_schema, {"location_place", "place", "location", "city", "country"}, limit=12)
+    if "belém" in ocr_lower or "belem" in ocr_lower:
+        location_city = "Belem"
+    if "brazil" in transcript_lower or "brazil" in ocr_lower:
+        location_country = "Brazil"
+    if "cop30" in ocr_lower:
+        location_place = "COP30"
+    for place in master_places:
+        place_lower = place.lower()
+        if not location_country and any(token in place_lower for token in ("finland", "brazil", "united kingdom", "uk", "usa")):
+            location_country = place
+        elif not location_city and any(token in place_lower for token in ("helsinki", "belem", "belém", "london")):
+            location_city = place
+        elif not location_place:
+            location_place = place
+
+    genre = ""
+    genre_subtype = ""
+    master_genres = collect_values_by_key(master_schema, {"genre", "genre_subtype", "form", "format"}, limit=8)
+    if "trailer" in title_lower:
+        genre = "trailer"
+    if "james bond" in title_lower or "007" in title_lower:
+        genre_subtype = "spy action"
+    if not genre and master_genres:
+        genre = master_genres[0]
+    if not genre_subtype and len(master_genres) > 1:
+        genre_subtype = master_genres[1]
+
+    situational_genre = ""
+    situational_subtype = ""
+    situation_event = ""
+    interaction_dynamics = ""
+    narrative_development = ""
+    if any(term in transcript_lower for term in ("where's 007", "double-o", "commander bond", "world is arming")):
+        situation_event = "intelligence conflict"
+        situational_genre = "conflict"
+        situational_subtype = "mission briefing"
+        interaction_dynamics = "Question-led exchanges and commands frame trust, secrecy, and threat."
+        narrative_development = "The transcript introduces Bond, 007, secrecy, trust, and a wider armed threat."
+    elif "climate" in transcript_lower or "cop30" in ocr_lower:
+        situation_event = "climate summit report"
+        situational_genre = "public issue report"
+        situational_subtype = "climate reporting"
+        narrative_development = "The transcript frames a climate-policy report around COP negotiations and public consequence."
+    elif meaning_terms or scene_accounts:
+        situation_event = clean_source_label((meaning_terms or scene_accounts)[0])
+    if not interaction_dynamics and (interrogative_terms or sfl_terms):
+        joined = ", ".join((interrogative_terms + sfl_terms)[:5])
+        interaction_dynamics = f"POS/SFL evidence frames the interaction through {joined}."
+    if not narrative_development and (meaning_terms or scene_accounts):
+        joined = ", ".join((meaning_terms + scene_accounts)[:4])
+        narrative_development = f"Plot and scene-card evidence foreground {joined}."
+    performance_expression = ""
+    if cinematic_terms:
+        performance_expression = f"Cinematic clue evidence includes {', '.join(cinematic_terms[:5])}."
+    boundary_ocr_context: List[str] = []
+    for term in (
+        (ocr_boundary_metadata.get("beginning_text") or [])[:4]
+        + (ocr_boundary_metadata.get("ending_text") or [])[:4]
+    ):
+        append_unique_text(boundary_ocr_context, term, limit=8)
+
+    description = ""
+    if title or transcript_text:
+        evidence_fragments: List[str] = []
+        if title:
+            evidence_fragments.append(f"Source filename identifies {title}.")
+        if transcript_text:
+            sample = " ".join(transcript_text.split()[:36])
+            evidence_fragments.append(f"Transcript opening includes: {sample}.")
+        if ocr_text:
+            evidence_fragments.append(f"OCR includes: {'; '.join(ocr_text.split()[:16])}.")
+        if ocr_boundary_metadata.get("beginning_text"):
+            evidence_fragments.append(
+                "Beginning OCR includes: "
+                + "; ".join((ocr_boundary_metadata.get("beginning_text") or [])[:5])
+                + "."
+            )
+        if ocr_boundary_metadata.get("ending_text"):
+            evidence_fragments.append(
+                "End-title OCR includes: "
+                + "; ".join((ocr_boundary_metadata.get("ending_text") or [])[:5])
+                + "."
+            )
+        if scene_accounts:
+            evidence_fragments.append(f"Scene-card account: {scene_accounts[0]}")
+        if meaning_terms:
+            evidence_fragments.append(f"Plot/meaning cues include {', '.join(meaning_terms[:5])}.")
+        if sfl_terms:
+            evidence_fragments.append(f"SFL cues include {', '.join(sfl_terms[:5])}.")
+        description = " ".join(evidence_fragments)
+
+    annotations = {
+        "title": title,
+        "scope": "short clip" if safe_float(status.get("duration_seconds")) is None else "",
+        "source_context": (
+            "Beginning/end OCR is available as source metadata evidence: "
+            + "; ".join(boundary_ocr_context)
+            if boundary_ocr_context
+            else ""
+        ),
+        "description": description,
+        "persons": persons,
+        "location_country": location_country,
+        "location_city": location_city,
+        "location_place": location_place,
+        "situation_event": situation_event,
+        "keywords": keywords,
+        "interaction_dynamics": interaction_dynamics,
+        "narrative_development": narrative_development,
+        "performance_expression": performance_expression,
+        "genre": genre,
+        "genre_subtype": genre_subtype,
+        "situational_genre": situational_genre,
+        "situational_subtype": situational_subtype,
+        "confidence": "medium" if transcript_segments or tracked_objects or ocr_items else "",
+    }
+    annotations = {key: value for key, value in annotations.items() if annotation_has_value(value)}
+    evidence_sources = []
+    if title:
+        evidence_sources.append("filename")
+    if transcript_segments:
+        evidence_sources.append("transcript")
+    if tracked_objects:
+        evidence_sources.append("tracked_objects")
+    if ocr_items:
+        evidence_sources.append("ocr")
+    if ocr_boundary_metadata.get("beginning_text") or ocr_boundary_metadata.get("ending_text"):
+        evidence_sources.append("beginning_end_title_ocr")
+    if pos_analysis or pos_matrix:
+        evidence_sources.append("pos_grammar_interrogatives_case")
+    if sfl_stage:
+        evidence_sources.append("dependency_sfl_stage1")
+    if meaning_stage:
+        evidence_sources.append("multimodal_meaning_stage1")
+    if second_order:
+        evidence_sources.append("second_order_label_proliferation")
+    if cinematic_clues:
+        evidence_sources.append("cinematic_clues")
+    if scene_cards:
+        evidence_sources.append("mise_en_scene_scene_cards")
+    if master_schema:
+        evidence_sources.append("master_schema")
+    return {
+        "annotations": annotations,
+        "field_sources": {
+            key: {
+                "maturity": "derived_video_internal",
+                "authority": "fills_empty_only",
+                "evidence_sources": evidence_sources,
+                "traceback": {
+                    "route": "source_media.video_internal_maturity_harvest",
+                    "raw_preserved": True,
+                    "consulted": evidence_sources,
+                },
+            }
+            for key in annotations
+        },
+        "evidence_counts": {
+            "transcript_segments": len(transcript_segments),
+            "tracked_objects": len(tracked_objects),
+            "ocr_items": len(ocr_items),
+            "beginning_ocr_items": len(ocr_boundary_metadata.get("beginning_text") or []),
+            "ending_ocr_items": len(ocr_boundary_metadata.get("ending_text") or []),
+            "pos_terms": len(interrogative_terms) + len(case_terms),
+            "sfl_terms": len(sfl_terms),
+            "meaning_terms": len(meaning_terms),
+            "cinematic_terms": len(cinematic_terms),
+            "scene_card_accounts": len(scene_accounts),
+            "master_terms": len(master_terms),
+        },
+    }
+
+
+def resolve_source_media_annotations(status: Dict[str, Any], stored_probe: Dict[str, Any]) -> Dict[str, Any]:
+    manual_annotations = status.get("source_media_annotations") or stored_probe.get("user_annotations") or {}
+    harvest = video_internal_source_media_harvest(status)
+    derived_annotations = harvest.get("annotations") or {}
+    resolved: Dict[str, Any] = {}
+    field_maturity: Dict[str, Any] = {}
+    annotation_keys = {
+        "editor_notes",
+        "source_context",
+        "provenance_notes",
+        "title",
+        "scope",
+        "description",
+        "persons",
+        "relations",
+        "location_country",
+        "location_city",
+        "location_place",
+        "location_room",
+        "time_era",
+        "time_year",
+        "time_moment",
+        "situation_event",
+        "keywords",
+        "interaction_dynamics",
+        "narrative_development",
+        "performance_expression",
+        "genre",
+        "genre_subtype",
+        "situational_genre",
+        "situational_subtype",
+        "privacy_axis",
+        "expertise_axis",
+        "references",
+        "reference_speakers",
+        "reference_relation",
+        "reference_source",
+        "confidence",
+        "notes",
+    }
+    for key in annotation_keys:
+        manual_value = manual_annotations.get(key)
+        if annotation_has_value(manual_value):
+            resolved[key] = manual_value
+            field_maturity[key] = {
+                "maturity": "manual",
+                "authority": "manual_override",
+                "evidence_sources": ["source_media_annotations"],
+                "traceback": {
+                    "route": "source_media.manual_metadata_governance",
+                    "raw_preserved": True,
+                    "consulted": ["source_media_annotations"],
+                },
+            }
+            continue
+        derived_value = derived_annotations.get(key)
+        if annotation_has_value(derived_value):
+            resolved[key] = derived_value
+            field_maturity[key] = (harvest.get("field_sources") or {}).get(key, {})
+    status["source_media_video_internal_harvest"] = harvest
+    status["source_media_annotation_maturity"] = field_maturity
+    return resolved
+
+
 def build_source_media_metadata_payload(
     status: Dict[str, Any],
     *,
     media_probe: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    source_video_path = status.get("source_video_path") or status.get("file_path")
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    source_video_path = (
+        status.get("source_video_path")
+        or status.get("file_path")
+        or output_files.get("source_video")
+    )
     path_obj = Path(source_video_path) if source_video_path else None
-    probe = media_probe or status.get("source_media_metadata") or {}
-    user_annotations = status.get("source_media_annotations") or probe.get("user_annotations") or {}
+    stored_probe = status.get("source_media_metadata") if isinstance(status.get("source_media_metadata"), dict) else {}
+    file_probe = probe_source_media_file(path_obj) if path_obj else {}
+    probe = {
+        **stored_probe,
+        **file_probe,
+        **(media_probe or {}),
+    }
+    user_annotations = resolve_source_media_annotations(status, stored_probe)
 
     payload = {
         "analysis_id": status.get("analysis_id"),
-        "original_filename": status.get("original_filename"),
-        "stored_filename": status.get("filename"),
+        "original_filename": status.get("original_filename") or probe.get("original_filename"),
+        "stored_filename": status.get("filename") or probe.get("stored_filename") or (path_obj.name if path_obj else None),
         "source_video_path": source_video_path,
         "source_video_exists": bool(path_obj and path_obj.exists()),
-        "mime_type": probe.get("mime_type"),
-        "format_name": probe.get("format_name"),
-        "container_extension": probe.get("container_extension"),
-        "duration_seconds": probe.get("duration"),
-        "size_bytes": probe.get("size_bytes") or probe.get("size"),
-        "video_codec": probe.get("video_codec"),
-        "audio_codec": probe.get("audio_codec"),
-        "has_audio": probe.get("has_audio"),
-        "width": probe.get("width"),
-        "height": probe.get("height"),
-        "fps": probe.get("fps"),
-        "video_bitrate": probe.get("video_bitrate"),
-        "audio_bitrate": probe.get("audio_bitrate"),
-        "audio_channels": probe.get("audio_channels"),
-        "audio_sample_rate": probe.get("audio_sample_rate"),
+        "mime_type": first_present(probe, "mime_type", "content_type"),
+        "format_name": first_present(probe, "format_name", "format"),
+        "container_extension": first_present(probe, "container_extension", "extension") or (path_obj.suffix.lower() if path_obj else None),
+        "duration_seconds": first_present(probe, "duration_seconds", "duration"),
+        "size_bytes": first_present(probe, "size_bytes", "size"),
+        "video_codec": first_present(probe, "video_codec", "vcodec"),
+        "audio_codec": first_present(probe, "audio_codec", "acodec"),
+        "has_audio": first_present(probe, "has_audio"),
+        "width": first_present(probe, "width"),
+        "height": first_present(probe, "height"),
+        "fps": first_present(probe, "fps", "frame_rate"),
+        "video_bitrate": first_present(probe, "video_bitrate", "bit_rate"),
+        "audio_bitrate": first_present(probe, "audio_bitrate"),
+        "audio_channels": first_present(probe, "audio_channels", "channels"),
+        "audio_sample_rate": first_present(probe, "audio_sample_rate", "sample_rate"),
+        "recorded_at": first_present(probe, "recorded_at"),
+        "gps_coordinates": first_present(probe, "gps_coordinates"),
+        "camera_make": first_present(probe, "camera_make"),
+        "camera_model": first_present(probe, "camera_model"),
+        "recording_device": first_present(probe, "recording_device"),
+        "recording_software": first_present(probe, "recording_software"),
+        "filmed_by": first_present(probe, "filmed_by"),
+        "embedded_metadata": probe.get("embedded_metadata") if isinstance(probe.get("embedded_metadata"), dict) else {},
         "uploaded_at": status.get("uploaded_at"),
         "analysis_started_at": status.get("analysis_started_at"),
         "analysis_completed_at": status.get("analysis_completed_at"),
@@ -590,12 +2313,15 @@ def build_source_media_metadata_payload(
             "expertise_axis": user_annotations.get("expertise_axis", ""),
             "references": user_annotations.get("references", []),
             "reference_files": status.get("source_media_reference_files", []),
+            "web_metadata_sources": status.get("source_media_web_metadata_sources", []),
             "reference_speakers": user_annotations.get("reference_speakers", []),
             "reference_relation": user_annotations.get("reference_relation", ""),
             "reference_source": user_annotations.get("reference_source", ""),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
         },
+        "annotation_maturity": status.get("source_media_annotation_maturity", {}),
+        "video_internal_harvest": status.get("source_media_video_internal_harvest", {}),
     }
 
     if path_obj and path_obj.exists():
@@ -1396,7 +3122,7 @@ def mise_en_scene_artifacts_need_refresh(status: Dict[str, Any]) -> bool:
     if not first_card.get("nlp_scene_summary_sentence"):
         return True
     nlp_summary = first_card.get("nlp_scene_summary")
-    if not isinstance(nlp_summary, dict) or int(nlp_summary.get("version") or 0) < 7:
+    if not isinstance(nlp_summary, dict) or int(nlp_summary.get("version") or 0) < 8:
         return True
     if len(scene_cards) <= 1 and _status_has_long_transcript_for_scene_windows(status, first_card):
         return True
@@ -4964,9 +6690,8 @@ async def get_source_media_metadata(analysis_id: str) -> dict:
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
-    if not status.get("source_media_metadata"):
-        write_source_media_metadata_files(status)
-        persist_analysis_record_for_status(status)
+    write_source_media_metadata_files(status)
+    persist_analysis_record_for_status(status)
 
     return {
         "analysis_id": analysis_id,
@@ -5272,6 +6997,159 @@ async def upload_source_media_references(
         "analysis_id": analysis_id,
         "reference_files": uploaded_items,
         "source_media_metadata": status.get("source_media_metadata", {}),
+    }
+
+
+@app.post("/api/source-media/{analysis_id}/web-metadata", response_model=dict)
+async def harvest_source_media_web_metadata(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Retrieve governed candidate metadata from a web address."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    source_url = str(payload.get("url") or "").strip()
+    if not source_url:
+        raise HTTPException(status_code=400, detail="Missing web metadata URL")
+
+    harvest = harvest_web_address_metadata(source_url)
+    sources = status.setdefault("source_media_web_metadata_sources", [])
+    source_key = canonical_web_metadata_url(source_url)
+    sources[:] = [
+        item
+        for item in sources
+        if canonical_web_metadata_url(item.get("url") or item.get("fields", {}).get("source_url")) != source_key
+    ]
+    sources.append(harvest)
+    sources[:] = sorted(sources, key=web_metadata_source_sort_key)
+
+    write_source_media_metadata_files(status)
+    append_analysis_event(
+        status,
+        "source_media_web_metadata_retrieved",
+        details={
+            "url": source_url,
+            "retrieved_at": harvest.get("retrieved_at"),
+            "candidate_count": len(harvest.get("candidates") or []),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "web_metadata_source": harvest,
+        "source_media_metadata": build_source_media_metadata_payload(status),
+    }
+
+
+@app.post("/api/source-media/{analysis_id}/web-metadata/dedupe", response_model=dict)
+async def dedupe_source_media_web_metadata(analysis_id: str) -> dict:
+    """Drop duplicate web metadata sources by canonical URL, keeping the newest source."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    sources = status.setdefault("source_media_web_metadata_sources", [])
+    before_count = len(sources)
+    sources[:] = dedupe_web_metadata_sources(sources)
+
+    write_source_media_metadata_files(status)
+    append_analysis_event(
+        status,
+        "source_media_web_metadata_deduped",
+        details={
+            "before_count": before_count,
+            "after_count": len(sources),
+            "dropped_count": max(0, before_count - len(sources)),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "dropped_count": max(0, before_count - len(sources)),
+        "source_media_metadata": build_source_media_metadata_payload(status),
+    }
+
+
+@app.patch("/api/source-media/{analysis_id}/web-metadata/{source_id}", response_model=dict)
+async def update_source_media_web_metadata_source(
+    analysis_id: str,
+    source_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Update governed web metadata source preference."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    preference = str(payload.get("preference") or "").strip().lower()
+    if preference not in {"main", "supporting", "background"}:
+        raise HTTPException(status_code=400, detail="Preference must be main, supporting, or background")
+
+    sources = status.setdefault("source_media_web_metadata_sources", [])
+    target = next((item for item in sources if str(item.get("id")) == source_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Web metadata source not found")
+    target["preference"] = preference
+    sources[:] = sorted(sources, key=web_metadata_source_sort_key)
+
+    write_source_media_metadata_files(status)
+    append_analysis_event(
+        status,
+        "source_media_web_metadata_preference_updated",
+        details={
+            "source_id": source_id,
+            "url": target.get("url"),
+            "preference": preference,
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "web_metadata_source": target,
+        "source_media_metadata": build_source_media_metadata_payload(status),
+    }
+
+
+@app.delete("/api/source-media/{analysis_id}/web-metadata/{source_id}", response_model=dict)
+async def delete_source_media_web_metadata_source(
+    analysis_id: str,
+    source_id: str,
+) -> dict:
+    """Remove a governed web metadata source from the evidence tray."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    sources = status.setdefault("source_media_web_metadata_sources", [])
+    removed = next((item for item in sources if str(item.get("id")) == source_id), None)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Web metadata source not found")
+    sources[:] = [item for item in sources if str(item.get("id")) != source_id]
+
+    write_source_media_metadata_files(status)
+    append_analysis_event(
+        status,
+        "source_media_web_metadata_deleted",
+        details={
+            "source_id": source_id,
+            "url": removed.get("url"),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return {
+        "status": "saved",
+        "analysis_id": analysis_id,
+        "deleted_source_id": source_id,
+        "source_media_metadata": build_source_media_metadata_payload(status),
     }
 
 

@@ -103,8 +103,65 @@ type ReferenceSpeakerDraft = {
   notes: string;
 };
 
+type MetadataCandidate = {
+  key: string;
+  label: string;
+  current: string;
+  suggestion: string;
+  maturity: string;
+  route: string;
+  evidenceSources: string[];
+};
+
+type WebMetadataPreference = "main" | "supporting" | "background";
+
+type WebMetadataSource = NonNullable<
+  NonNullable<SourceMediaMetadata["user_annotations"]>["web_metadata_sources"]
+>[number];
+
+type WebCharacterRole = {
+  actor?: string;
+  character?: string;
+  role?: string;
+  description?: string;
+};
+
+type WebProductionCrewRole = {
+  person?: string;
+  department?: string;
+};
+
+function formatCandidateValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).join(", ");
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function sameCandidateValue(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function formatWebCharacterRole(role: WebCharacterRole): string {
+  const actor = String(role?.actor || "").trim();
+  const character = String(role?.character || "").trim();
+  const roleLabel = String(role?.role || "").trim();
+  const description = String(role?.description || "").trim();
+  const head = [character, actor ? `(${actor})` : ""].filter(Boolean).join(" ");
+  const tail = [roleLabel, description].filter(Boolean).join("; ");
+  return [head, tail].filter(Boolean).join(": ");
+}
+
+function formatWebProductionCrew(role: WebProductionCrewRole): string {
+  return [role?.person, role?.department].filter(Boolean).join(": ");
+}
+
 export default function SourceMediaMetadataPanel() {
   const [videoId, setVideoId] = useState("");
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
   const [editorNotes, setEditorNotes] = useState("");
   const [sourceContext, setSourceContext] = useState("");
@@ -136,6 +193,9 @@ export default function SourceMediaMetadataPanel() {
   const [referenceSpeakers, setReferenceSpeakers] = useState<ReferenceSpeakerDraft[]>([]);
   const [referenceUploadFiles, setReferenceUploadFiles] = useState<File[]>([]);
   const [isUploadingReferences, setIsUploadingReferences] = useState(false);
+  const [webMetadataUrl, setWebMetadataUrl] = useState("");
+  const [isHarvestingWebMetadata, setIsHarvestingWebMetadata] = useState(false);
+  const [webMetadataActionId, setWebMetadataActionId] = useState<string | null>(null);
   const [referenceRelation, setReferenceRelation] = useState("");
   const [referenceSource, setReferenceSource] = useState("");
   const [confidence, setConfidence] = useState("");
@@ -159,11 +219,18 @@ export default function SourceMediaMetadataPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
+    const metadataHandler = (id: string) => {
+      if (id === videoId) {
+        setRefreshNonce((value) => value + 1);
+      }
+    };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("sourceMediaMetadataChanged", metadataHandler);
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("sourceMediaMetadataChanged", metadataHandler);
     };
-  }, []);
+  }, [videoId]);
 
   useEffect(() => {
     async function load() {
@@ -198,6 +265,8 @@ export default function SourceMediaMetadataPanel() {
         setReferences("");
         setReferenceSpeakers([]);
         setReferenceUploadFiles([]);
+        setWebMetadataUrl("");
+        setWebMetadataActionId(null);
         setReferenceRelation("");
         setReferenceSource("");
         setConfidence("");
@@ -280,7 +349,7 @@ export default function SourceMediaMetadataPanel() {
       }
     }
     void load();
-  }, [videoId]);
+  }, [videoId, refreshNonce]);
 
   useEffect(() => {
     async function loadSharedTaxonomy() {
@@ -421,6 +490,86 @@ export default function SourceMediaMetadataPanel() {
     }
   };
 
+  const harvestWebMetadata = async () => {
+    const trimmedUrl = webMetadataUrl.trim();
+    if (!videoId || !trimmedUrl) return;
+    setIsHarvestingWebMetadata(true);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.harvestSourceMediaWebMetadata(
+        videoId,
+        trimmedUrl,
+      );
+      setMetadata(saved);
+      setWebMetadataUrl("");
+      setSaveMessage("Web metadata candidates retrieved.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to harvest web metadata:", error);
+      setSaveMessage("Could not retrieve web metadata.");
+    } finally {
+      setIsHarvestingWebMetadata(false);
+    }
+  };
+
+  const dedupeWebMetadataSources = async () => {
+    if (!videoId) return;
+    setWebMetadataActionId("dedupe");
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.dedupeSourceMediaWebMetadata(videoId);
+      setMetadata(saved);
+      setSaveMessage("Duplicate web metadata sources dropped.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to drop duplicate web metadata sources:", error);
+      setSaveMessage("Could not drop duplicate web metadata sources.");
+    } finally {
+      setWebMetadataActionId(null);
+    }
+  };
+
+  const updateWebMetadataPreference = async (
+    sourceId: string | undefined,
+    preference: WebMetadataPreference,
+  ) => {
+    if (!videoId || !sourceId) return;
+    setWebMetadataActionId(sourceId);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.updateSourceMediaWebMetadataPreference(
+        videoId,
+        sourceId,
+        preference,
+      );
+      setMetadata(saved);
+      setSaveMessage("Web metadata source preference updated.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to update web metadata source preference:", error);
+      setSaveMessage("Could not update source preference.");
+    } finally {
+      setWebMetadataActionId(null);
+    }
+  };
+
+  const deleteWebMetadataSource = async (sourceId: string | undefined) => {
+    if (!videoId || !sourceId) return;
+    setWebMetadataActionId(sourceId);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.deleteSourceMediaWebMetadata(videoId, sourceId);
+      setMetadata(saved);
+      setSaveMessage("Web metadata source dropped.");
+      window.setTimeout(() => setSaveMessage(null), 1800);
+    } catch (error) {
+      console.error("Failed to drop web metadata source:", error);
+      setSaveMessage("Could not drop web metadata source.");
+    } finally {
+      setWebMetadataActionId(null);
+    }
+  };
+
   const removeLearnedTaxonomy = (
     scope: CustomTaxonomyScope,
     label: string,
@@ -545,6 +694,13 @@ export default function SourceMediaMetadataPanel() {
     ["FPS", metadata?.fps],
     ["Audio channels", metadata?.audio_channels],
     ["Sample rate", metadata?.audio_sample_rate],
+    ["Recorded date/time", metadata?.recorded_at],
+    ["GPS coordinates", metadata?.gps_coordinates],
+    ["Camera make", metadata?.camera_make],
+    ["Camera model", metadata?.camera_model],
+    ["Recording device", metadata?.recording_device],
+    ["Recording software", metadata?.recording_software],
+    ["Filmed by", metadata?.filmed_by],
     ["Container extension", metadata?.container_extension],
     ["Has audio", metadata?.has_audio],
     ["Video bitrate", metadata?.video_bitrate],
@@ -556,6 +712,137 @@ export default function SourceMediaMetadataPanel() {
   ] as const;
   const characterSupport = deriveCharacterDetectionSupport(metadata);
   const referenceFiles = metadata?.user_annotations?.reference_files || [];
+  const webMetadataPreferenceRank: Record<WebMetadataPreference, number> = {
+    main: 0,
+    supporting: 1,
+    background: 2,
+  };
+  const webMetadataSources: WebMetadataSource[] = [
+    ...(metadata?.user_annotations?.web_metadata_sources || []),
+  ].sort((left, right) => {
+    const leftPreference = left.preference || "supporting";
+    const rightPreference = right.preference || "supporting";
+    const preferenceDelta =
+      webMetadataPreferenceRank[leftPreference] -
+      webMetadataPreferenceRank[rightPreference];
+    if (preferenceDelta !== 0) {
+      return preferenceDelta;
+    }
+    return (right.retrieved_at || "").localeCompare(left.retrieved_at || "");
+  });
+  const webMetadataCandidateCount = webMetadataSources.reduce(
+    (total, source) => total + (source.candidates?.length || 0),
+    0,
+  );
+  const placeSummary =
+    [locationPlace, locationCity, locationCountry].filter(Boolean).join(", ") ||
+    "Not set";
+  const timeSummary =
+    [timeMoment, timeYear, timeEra].filter(Boolean).join(", ") || "Not set";
+  const situationSummary =
+    [situationalGenre, situationalSubtype, situationEvent]
+      .filter(Boolean)
+      .join(" / ") || "Not set";
+  const sourceSummaryRows = [
+    ["Duration", metadata?.duration_seconds ? `${formatValue(metadata.duration_seconds)} s` : null],
+    ["Resolution", metadata?.width && metadata?.height ? `${metadata.width} x ${metadata.height}` : null],
+    ["Format", metadata?.format_name || metadata?.container_extension],
+    ["Source present", metadata?.source_video_exists],
+  ] as const;
+  const maturityHighlights = [
+    ["Situation / event", situationEvent],
+    ["Keywords", keywords],
+    ["Interaction", interactionDynamics],
+    ["Narrative", narrativeDevelopment],
+    ["Source context", sourceContext],
+  ].filter(([, value]) => Boolean(String(value || "").trim()));
+  const candidateFieldConfig = [
+    { key: "title", label: "Title", current: userTitle },
+    { key: "persons", label: "People / roles", current: persons },
+    { key: "location_place", label: "Place", current: locationPlace },
+    { key: "location_city", label: "City", current: locationCity },
+    { key: "location_country", label: "Country", current: locationCountry },
+    { key: "time_moment", label: "Time", current: timeMoment },
+    { key: "source_context", label: "Source context", current: sourceContext },
+    { key: "description", label: "Description / synopsis", current: description },
+    { key: "situation_event", label: "Situation", current: situationEvent },
+    { key: "keywords", label: "Keywords", current: keywords },
+    { key: "interaction_dynamics", label: "Interaction", current: interactionDynamics },
+    { key: "narrative_development", label: "Narrative development", current: narrativeDevelopment },
+    { key: "performance_expression", label: "Performance / expression", current: performanceExpression },
+    { key: "genre", label: "Genre", current: genre },
+    { key: "genre_subtype", label: "Genre subtype", current: genreSubtype },
+    { key: "situational_genre", label: "Situational genre", current: situationalGenre },
+    { key: "situational_subtype", label: "Situational subtype", current: situationalSubtype },
+    { key: "confidence", label: "Confidence", current: confidence },
+  ];
+  const maturityCandidateRows: MetadataCandidate[] = candidateFieldConfig
+    .map((field) => {
+      const suggestion = formatCandidateValue(
+        metadata?.video_internal_harvest?.annotations?.[field.key],
+      );
+      if (!suggestion || sameCandidateValue(field.current, suggestion)) {
+        return null;
+      }
+      const fieldSource =
+        metadata?.video_internal_harvest?.field_sources?.[field.key] ||
+        metadata?.annotation_maturity?.[field.key] ||
+        {};
+      return {
+        key: field.key,
+        label: field.label,
+        current: field.current,
+        suggestion,
+        maturity: fieldSource.maturity || "derived_video_internal",
+        route: fieldSource.traceback?.route || "source_media.video_internal_maturity_harvest",
+        evidenceSources: fieldSource.evidence_sources || [],
+      };
+    })
+    .filter((row): row is MetadataCandidate => Boolean(row));
+  const applyMaturityCandidate = (key: string, suggestion: string) => {
+    if (key === "title") setUserTitle(suggestion);
+    else if (key === "persons") setPersons(suggestion);
+    else if (key === "location_place") setLocationPlace(suggestion);
+    else if (key === "location_city") setLocationCity(suggestion);
+    else if (key === "location_country") setLocationCountry(suggestion);
+    else if (key === "time_moment") setTimeMoment(suggestion);
+    else if (key === "source_context") setSourceContext(suggestion);
+    else if (key === "description") setDescription(suggestion);
+    else if (key === "situation_event") setSituationEvent(suggestion);
+    else if (key === "keywords") setKeywords(suggestion);
+    else if (key === "interaction_dynamics") setInteractionDynamics(suggestion);
+    else if (key === "narrative_development") setNarrativeDevelopment(suggestion);
+    else if (key === "performance_expression") setPerformanceExpression(suggestion);
+    else if (key === "genre") setGenre(suggestion);
+    else if (key === "genre_subtype") setGenreSubtype(suggestion);
+    else if (key === "situational_genre") setSituationalGenre(suggestion);
+    else if (key === "situational_subtype") setSituationalSubtype(suggestion);
+    else if (key === "confidence") setConfidence(suggestion.toLowerCase());
+  };
+  const applyEmptyMaturityCandidates = () => {
+    maturityCandidateRows.forEach((row) => {
+      if (!row.current.trim()) {
+        applyMaturityCandidate(row.key, row.suggestion);
+      }
+    });
+  };
+  const refreshMetadata = () => {
+    setRefreshNonce((value) => value + 1);
+  };
+  const fieldLabelClass =
+    "mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500";
+  const compactInputClass =
+    "w-full rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500/60";
+  const compactTextareaClass =
+    "w-full rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-500/60";
+  const subDetailClass =
+    "rounded-md border border-slate-800 bg-slate-950/20";
+  const subSummaryClass =
+    "cursor-pointer px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-slate-300";
+  const detailClass =
+    "mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/35";
+  const summaryClass =
+    "cursor-pointer px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-300";
 
   return (
     <main className="h-full overflow-y-auto bg-[#111111] px-3 py-3 text-slate-200">
@@ -577,28 +864,540 @@ export default function SourceMediaMetadataPanel() {
         </div>
       ) : (
         <>
-          <div className="mt-3 rounded-lg bg-slate-700/20 p-3">
-            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
-              Media Facts
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {coreRows.map(([label, value]) => (
-                <div key={label} className="rounded-md bg-slate-800/35 px-3 py-2">
-                  <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                    {label}
-                  </div>
-                  <div className="mt-1 text-sm text-slate-200 break-words">
-                    {formatValue(value)}
-                  </div>
+          <div className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-950/10 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.16em] text-cyan-200/80">
+                  Primary Metadata
                 </div>
-              ))}
+                <div className="mt-1 text-xs text-slate-400">
+                  Editable first-read metadata for the Master Schema.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={refreshMetadata}
+                className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800/60"
+              >
+                Refresh maturity
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void saveMetadata();
+                }}
+                disabled={isSaving}
+                className="rounded-md border border-cyan-500/25 px-3 py-1.5 text-xs text-cyan-100 transition hover:bg-cyan-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </button>
             </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-4">
+              <label className="block">
+                <div className={fieldLabelClass}>Title</div>
+                <input
+                  value={userTitle}
+                  onChange={(e) => setUserTitle(e.target.value)}
+                  placeholder={metadata?.original_filename || "Title"}
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>People / roles</div>
+                <input
+                  value={persons}
+                  onChange={(e) => setPersons(e.target.value)}
+                  placeholder="Comma separated"
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Place</div>
+                <input
+                  value={locationPlace}
+                  onChange={(e) => setLocationPlace(e.target.value)}
+                  placeholder={placeSummary}
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>City</div>
+                <input
+                  value={locationCity}
+                  onChange={(e) => setLocationCity(e.target.value)}
+                  placeholder="City"
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Country</div>
+                <input
+                  value={locationCountry}
+                  onChange={(e) => setLocationCountry(e.target.value)}
+                  placeholder="Country"
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Time</div>
+                <input
+                  value={timeMoment}
+                  onChange={(e) => setTimeMoment(e.target.value)}
+                  placeholder={timeSummary}
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Keywords</div>
+                <input
+                  value={keywords}
+                  onChange={(e) => setKeywords(e.target.value)}
+                  placeholder="Comma separated"
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Source context</div>
+                <textarea
+                  value={sourceContext}
+                  onChange={(e) => setSourceContext(e.target.value)}
+                  rows={2}
+                  className={compactTextareaClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Interaction</div>
+                <textarea
+                  value={interactionDynamics}
+                  onChange={(e) => setInteractionDynamics(e.target.value)}
+                  rows={2}
+                  className={compactTextareaClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Narrative development</div>
+                <textarea
+                  value={narrativeDevelopment}
+                  onChange={(e) => setNarrativeDevelopment(e.target.value)}
+                  rows={2}
+                  className={compactTextareaClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Description / synopsis</div>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={2}
+                  className={compactTextareaClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Situation</div>
+                <input
+                  value={situationEvent}
+                  onChange={(e) => setSituationEvent(e.target.value)}
+                  placeholder={situationSummary}
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Confidence</div>
+                <select
+                  value={confidence}
+                  onChange={(e) => setConfidence(e.target.value)}
+                  className={compactInputClass}
+                >
+                  <option value="">Not set</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+            </div>
+            {saveMessage ? (
+              <div className="mt-2 text-xs text-slate-400">{saveMessage}</div>
+            ) : null}
+            {maturityHighlights.length > 0 ? (
+              <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
+                <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                  Mature Video-Internal Fill
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {maturityHighlights.map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                        {label}
+                      </div>
+                      <div className="mt-1 line-clamp-3 text-xs text-slate-200">
+                        {value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <details className="mt-3 rounded-md border border-slate-800 bg-slate-950/25">
+              <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-slate-300">
+                <span>Maturity candidates</span>
+                <span className="normal-case tracking-normal text-slate-500">
+                  {maturityCandidateRows.length} complements
+                </span>
+              </summary>
+              <div className="border-t border-slate-800 p-2">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-500">
+                    Derived values are proposed as linked-data candidates; accepting a row only fills the local form until saved.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyEmptyMaturityCandidates}
+                    disabled={maturityCandidateRows.every((row) => row.current.trim())}
+                    className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Fill blanks
+                  </button>
+                </div>
+                {maturityCandidateRows.length === 0 ? (
+                  <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-xs text-slate-400">
+                    Current governed fields already match the mature video-internal suggestions.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] border-separate border-spacing-y-1 text-left text-xs">
+                      <thead className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                        <tr>
+                          <th className="px-2 py-1 font-medium">Field</th>
+                          <th className="px-2 py-1 font-medium">Current</th>
+                          <th className="px-2 py-1 font-medium">Suggestion</th>
+                          <th className="px-2 py-1 font-medium">Traceback</th>
+                          <th className="px-2 py-1 font-medium">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {maturityCandidateRows.map((row) => (
+                          <tr key={row.key} className="bg-slate-900/40">
+                            <td className="rounded-l border-y border-l border-slate-800 px-2 py-2 align-top text-slate-200">
+                              <div>{row.label}</div>
+                              <div className="mt-1 text-[10px] text-cyan-300/70">
+                                {row.maturity}
+                              </div>
+                            </td>
+                            <td className="max-w-[220px] border-y border-slate-800 px-2 py-2 align-top text-slate-400">
+                              <div className="line-clamp-3">
+                                {row.current || "Blank"}
+                              </div>
+                            </td>
+                            <td className="max-w-[280px] border-y border-slate-800 px-2 py-2 align-top text-slate-100">
+                              <div className="line-clamp-4">{row.suggestion}</div>
+                            </td>
+                            <td className="max-w-[220px] border-y border-slate-800 px-2 py-2 align-top text-slate-500">
+                              <div className="line-clamp-2">{row.route}</div>
+                              {row.evidenceSources.length > 0 ? (
+                                <div className="mt-1 line-clamp-2 text-[10px] text-slate-600">
+                                  {row.evidenceSources.slice(0, 5).join(", ")}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="rounded-r border-y border-r border-slate-800 px-2 py-2 align-top">
+                              <button
+                                type="button"
+                                onClick={() => applyMaturityCandidate(row.key, row.suggestion)}
+                                className="rounded border border-cyan-500/30 px-2 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-900/20"
+                              >
+                                Use
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
 
-          <div className="mt-3 rounded-lg bg-slate-700/20 p-3">
-            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
-              Reference Files
+          <details open className={detailClass}>
+            <summary className={summaryClass}>
+              Media Facts
+              <span className="ml-2 normal-case tracking-normal text-slate-500">
+                file-derived evidence
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
+              <div className="grid gap-2 md:grid-cols-4">
+                {sourceSummaryRows.map(([label, value]) => (
+                  <div key={label} className="rounded-md bg-slate-800/35 px-2 py-2">
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                      {label}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-200 break-words">
+                      {formatValue(value)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                {coreRows.map(([label, value]) => (
+                  <div key={label} className="rounded-md bg-slate-800/25 px-2 py-1.5">
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                      {label}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-200 break-words">
+                      {formatValue(value)}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
+          </details>
+
+          <details className={detailClass}>
+            <summary className={summaryClass}>
+              Governed Evidence Inputs
+              <span className="ml-2 normal-case tracking-normal text-slate-500">
+                files, web addresses, metadata libraries
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
+              <div className="grid gap-2 md:grid-cols-3">
+                <div className="rounded-md border border-slate-800 bg-slate-950/30 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    Reference files
+                  </div>
+                  <div className="mt-1 text-xs text-slate-300">
+                    Upload supporting documents, images, or audio for governed confirmation.
+                  </div>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/30 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    Web address metadata
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Retrieve title, synopsis, people/roles, places, dates, keywords, source URL, and exact retrieval date-time.
+                  </div>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/30 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    Archive/library metadata
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Planned confirmation route for catalog records and institutional authority data.
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 rounded-md border border-cyan-500/15 bg-cyan-950/10 px-3 py-3">
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="min-w-[260px] flex-1">
+                    <div className={fieldLabelClass}>Web address</div>
+                    <input
+                      value={webMetadataUrl}
+                      onChange={(event) => setWebMetadataUrl(event.target.value)}
+                      placeholder="https://example.org/source-page"
+                      className={compactInputClass}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isHarvestingWebMetadata || !webMetadataUrl.trim()}
+                    onClick={() => {
+                      void harvestWebMetadata();
+                    }}
+                    className="rounded-md border border-cyan-500/25 px-3 py-1.5 text-xs text-cyan-100 transition hover:bg-cyan-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isHarvestingWebMetadata ? "Retrieving..." : "Retrieve metadata"}
+                  </button>
+                </div>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  Retrieved web values stay as governed candidates until an analyst accepts them.
+                </div>
+              </div>
+              {webMetadataSources.length > 0 ? (
+                <div className="mt-3 rounded-md border border-slate-800 bg-slate-950/25 p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                      Web metadata sources
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-[11px] text-slate-500">
+                        {webMetadataSources.length} sources / {webMetadataCandidateCount} candidates
+                      </div>
+                      <button
+                        type="button"
+                        disabled={webMetadataActionId === "dedupe" || webMetadataSources.length < 2}
+                        onClick={() => {
+                          void dedupeWebMetadataSources();
+                        }}
+                        className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {webMetadataActionId === "dedupe" ? "Dropping..." : "Drop duplicates"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {webMetadataSources.map((source) => (
+                      <details
+                        key={source.id || source.url}
+                        className="rounded border border-slate-800 bg-slate-900/35"
+                      >
+                        <summary className="cursor-pointer px-2 py-2 text-xs text-slate-300">
+                          <span className="font-medium text-slate-200">
+                            {source.fields?.title || source.url || "Web metadata source"}
+                          </span>
+                          <span className="ml-2 rounded border border-cyan-500/20 bg-cyan-950/20 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.1em] text-cyan-100/80">
+                            {source.preference === "main"
+                              ? "Main source"
+                              : source.preference === "background"
+                                ? "Background"
+                                : "Supporting"}
+                          </span>
+                          <span className="ml-2 text-[11px] text-slate-500">
+                            retrieved {source.retrieved_at || "unknown time"}
+                          </span>
+                        </summary>
+                        <div className="border-t border-slate-800 p-2">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/25 px-2 py-2">
+                            <div>
+                              <div className={fieldLabelClass}>Source governance</div>
+                              <div className="text-[11px] text-slate-500">
+                                Main sources lead metadata synthesis; supporting and background sources remain audit evidence.
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {(["main", "supporting", "background"] as WebMetadataPreference[]).map(
+                                (preference) => {
+                                  const selected =
+                                    (source.preference || "supporting") === preference;
+                                  return (
+                                    <button
+                                      key={preference}
+                                      type="button"
+                                      disabled={!source.id || webMetadataActionId === source.id}
+                                      onClick={() => {
+                                        void updateWebMetadataPreference(source.id, preference);
+                                      }}
+                                      className={`rounded border px-2 py-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                                        selected
+                                          ? "border-cyan-500/40 bg-cyan-950/30 text-cyan-100"
+                                          : "border-slate-700 text-slate-300 hover:bg-slate-800/60"
+                                      }`}
+                                    >
+                                      {preference === "main"
+                                        ? "Main"
+                                        : preference === "supporting"
+                                          ? "Supporting"
+                                          : "Background"}
+                                    </button>
+                                  );
+                                },
+                              )}
+                              <button
+                                type="button"
+                                disabled={!source.id || webMetadataActionId === source.id}
+                                onClick={() => {
+                                  void deleteWebMetadataSource(source.id);
+                                }}
+                                className="rounded border border-rose-500/30 px-2 py-1 text-[11px] text-rose-100 transition hover:bg-rose-950/25 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {webMetadataActionId === source.id ? "Working..." : "Drop"}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>Source URL</div>
+                              <div className="break-words text-xs text-slate-300">
+                                {source.url}
+                              </div>
+                            </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>Retrieved at</div>
+                              <div className="text-xs text-slate-300">
+                                {source.retrieved_at}
+                              </div>
+                            </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>Description / synopsis</div>
+                              <div className="max-h-32 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
+                                {source.fields?.description || "Not available"}
+                              </div>
+                            </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>Cast / character roles</div>
+                              <div className="max-h-32 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
+                                {(source.fields?.character_roles || [])
+                                  .map(formatWebCharacterRole)
+                                  .filter(Boolean)
+                                  .join("\n") || "Not available"}
+                              </div>
+                            </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>Production crew</div>
+                              <div className="max-h-28 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
+                                {(source.fields?.production_crew || [])
+                                  .map(formatWebProductionCrew)
+                                  .filter(Boolean)
+                                  .join("\n") || "Not available"}
+                              </div>
+                            </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5">
+                              <div className={fieldLabelClass}>People / places / dates</div>
+                              <div className="max-h-28 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
+                                {[
+                                  ...(source.fields?.persons || []),
+                                  ...(source.fields?.places || []),
+                                  ...(source.fields?.dates || []),
+                                ].join(", ") || "Not available"}
+                              </div>
+                            </div>
+                          </div>
+                          {(source.candidates || []).length > 0 ? (
+                            <div className="mt-2 overflow-x-auto">
+                              <table className="w-full min-w-[620px] border-separate border-spacing-y-1 text-left text-xs">
+                                <thead className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                                  <tr>
+                                    <th className="px-2 py-1 font-medium">Field</th>
+                                    <th className="px-2 py-1 font-medium">Value</th>
+                                    <th className="px-2 py-1 font-medium">Confidence</th>
+                                    <th className="px-2 py-1 font-medium">Review</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(source.candidates || []).slice(0, 12).map((candidate, index) => (
+                                    <tr
+                                      key={`${candidate.field || "field"}-${candidate.value || index}`}
+                                      className="bg-slate-900/40"
+                                    >
+                                      <td className="rounded-l border-y border-l border-slate-800 px-2 py-1.5 text-slate-300">
+                                        {candidate.field}
+                                      </td>
+                                      <td className="border-y border-slate-800 px-2 py-1.5 text-slate-100">
+                                        <div className="max-h-20 overflow-y-auto pr-1 leading-relaxed">
+                                          {candidate.value}
+                                        </div>
+                                      </td>
+                                      <td className="border-y border-slate-800 px-2 py-1.5 text-slate-400">
+                                        {candidate.confidence || "candidate"}
+                                      </td>
+                                      <td className="rounded-r border-y border-r border-slate-800 px-2 py-1.5 text-slate-500">
+                                        {candidate.review_state || "candidate"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             <div className="mt-3 rounded-md border border-slate-700/70 bg-[#151515] px-3 py-3">
               <input
                 type="file"
@@ -667,13 +1466,18 @@ export default function SourceMediaMetadataPanel() {
                 })}
               </div>
             )}
-          </div>
-
-          <div className="mt-3 rounded-lg bg-slate-700/20 p-3">
-            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
-              Character Detection Support
             </div>
-            <div className="mt-2 text-sm text-slate-200">
+          </details>
+
+          <details className={detailClass}>
+            <summary className={summaryClass}>
+              Character Detection Support
+              <span className="ml-2 normal-case tracking-normal text-slate-500">
+                indirect source quality signal
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
+              <div className="text-sm text-slate-200">
               {characterSupport.level}
               <span className="ml-2 text-xs text-slate-400">
                 Metadata supports character detection indirectly, not as proof.
@@ -715,13 +1519,21 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="mt-3 rounded-lg bg-slate-700/20 p-3">
-            <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
-              Added Information
             </div>
-            <div className="mt-3 space-y-3">
+          </details>
+
+          <details className={detailClass}>
+            <summary className={summaryClass}>
+              Curated Metadata Fields
+              <span className="ml-2 normal-case tracking-normal text-slate-500">
+                description, time, space, situation, and audit notes
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
+            <div className="space-y-2">
+              <details open className={subDetailClass}>
+                <summary className={subSummaryClass}>Primary Description</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   Title
@@ -759,6 +1571,11 @@ export default function SourceMediaMetadataPanel() {
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
+                </div>
+              </details>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>People and Identity</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   Persons
@@ -781,6 +1598,11 @@ export default function SourceMediaMetadataPanel() {
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
+                </div>
+              </details>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>Time and Space</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="block">
                   <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -855,6 +1677,11 @@ export default function SourceMediaMetadataPanel() {
                   />
                 </label>
               </div>
+                </div>
+              </details>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>Situation and Description Evidence</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   Scene / event
@@ -909,6 +1736,11 @@ export default function SourceMediaMetadataPanel() {
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
+                </div>
+              </details>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>Genre and Governance Axes</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <CustomizableSelectField
                 label="Genre"
                 value={genre}
@@ -1135,6 +1967,11 @@ export default function SourceMediaMetadataPanel() {
                   }
                 />
               </div>
+                </div>
+              </details>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>References and Audit</summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   References
@@ -1351,7 +2188,10 @@ export default function SourceMediaMetadataPanel() {
                 ) : null}
               </div>
             </div>
-          </div>
+              </details>
+            </div>
+            </div>
+          </details>
         </>
       )}
     </main>

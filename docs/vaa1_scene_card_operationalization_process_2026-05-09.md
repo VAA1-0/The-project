@@ -51,22 +51,30 @@
 - Source Extraction Metadata Summary exists separately so original media metadata is not diluted, but archive metadata contribution workflows need user review states.
 - Manual correction UX exists, but faster inline editing of Scene Card fields remains to be operationalized.
 - AI/LLM annotations are only represented as governed starter contracts. Real API-backed annotations should remain opt-in, auditable, and clearly separated from deterministic evidence.
+- Analysis rhythm needs a deliberate source-metadata opening pass: VAA1 should read beginning/title-card OCR, end-title/credit OCR, embedded camera/device metadata, GPS/date tags, and source-file media facts early, build a governed metadata schema from that evidence, and only then proliferate probable identities, places, roles, production crew, topics, and scene-card hints into downstream panels. Raw OCR and embedded tags must remain separately auditable.
+- Next-stage maturation should include analyst-confirmed pattern naming. VAA1 can detect recurring visual, audio, narrative, SFL/interaction, prosody, object/person, or scene-structure patterns, but should ask the user to confirm, rename, merge, or reject important patterns before treating them as mature linked data. Confirmed pattern names should feed Master Schema, Scene Cards, Source Media metadata, Traceback, and later learning loops with source evidence and review state intact.
 
 ## Recommended next sprint
 
 1. Strengthen Scene Card prose generation.
    Add better sentence templates, topic weighting, and domain-specific summaries for news, trailers, interviews, archive footage, and institutional recordings.
 
-2. Implement scene-boundary pass v1.
+2. Implement source-metadata rhythm pass v1.
+   Prioritize beginning/end OCR, embedded media tags, media facts, title cards, end credits, GPS/date/device metadata, and production-crew cues before later interpretation. Feed confirmed/proposed fields into Master Schema and Source Media metadata with maturity state and traceback.
+
+3. Implement scene-boundary pass v1.
    Combine transcript gaps, audio prosody shifts, OCR/title-card cues, visual object/person continuity, and shot/transition clues into a candidate scene boundary artifact.
 
-3. Mature identity routing.
+4. Mature identity routing.
    Feed identity triangulation and manual role evidence into Master Schema first, then redistribute mature identity labels to Scene Cards, Transcript, OBJ, and Meaning / Plot panels.
 
-4. Add inline Scene Card corrections.
+5. Add analyst-confirmed pattern naming.
+   Present detected visual, audio, narrative, interaction, and prosody patterns as compact candidates. Let the user confirm names, link them to existing entities or pattern families, reject weak candidates, and preserve each decision in Master Schema with traceback.
+
+6. Add inline Scene Card corrections.
    Let archive users correct topic, role, situation, genre, and summary text from the Scene Card panel while preserving raw detections.
 
-5. Add report export polish.
+7. Add report export polish.
    Turn the current Markdown draft into a cleaner archive-facing report with evidence links, scene navigation, and source extraction metadata separation.
 
 ## Validation run before push
@@ -75,4 +83,3 @@
 - `conda run -n vaa1_core python -m py_compile api_server.py src/backend/analysis/mise_en_scene_scene_card.py`
 - `npx tsc --noEmit`
 - `npx eslint app/V2components/components/panels/SceneCardPanel.tsx`
-

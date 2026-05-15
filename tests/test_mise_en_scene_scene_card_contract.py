@@ -194,6 +194,9 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
                         "when": ["tomorrow"],
                         "why": ["deadline pressure"],
                         "how": ["question"],
+                        "by_what_means": ["using a production meeting"],
+                        "towards_what_end": ["to finish the files"],
+                        "by_what_consequence": ["therefore the deadline pressure rises"],
                     }
                 },
             },
@@ -252,6 +255,9 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
         self.assertIn("prose_sections", card)
         self.assertIn("interrogative_schema", card)
         self.assertIn("what", card["interrogative_schema"])
+        self.assertIn("by_what_means", card["interrogative_schema"])
+        self.assertIn("towards_what_end", card["interrogative_schema"])
+        self.assertIn("by_what_consequences", card["interrogative_schema"])
         self.assertIn("performance_and_blocking", card["prose_sections"])
         self.assertIn("meaning_and_plot", card["prose_sections"])
         self.assertIn("what_is_happening", card["mise_en_scene_description"])
@@ -267,7 +273,7 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
         )["scene_cards"][0]
 
         prose = card["prose_sections"]
-        self.assertEqual(card["nlp_scene_summary"]["version"], 7)
+        self.assertEqual(card["nlp_scene_summary"]["version"], 8)
         self.assertIn("Plot / Meaning indicators", prose["evidence_basis"])
         self.assertIn("SFL interaction analysis", prose["evidence_basis"])
         self.assertIn("opening question", prose["meaning_and_plot"])
@@ -369,6 +375,36 @@ class MiseEnSceneSceneCardContractTest(unittest.TestCase):
         self.assertIn("Belem", card["interrogative_schema"]["where"])
         self.assertIn("COP30", card["interrogative_schema"]["what"])
         self.assertIn("Belem", card["prose_sections"]["setting_and_set_design"])
+
+    def test_description_evidence_adds_means_ends_and_consequences(self):
+        status = self.sample_status()
+        status["source_media_metadata"] = {
+            "user_annotations": {
+                "description": (
+                    "The researcher gathers public reflections through street interviews "
+                    "to understand how people describe existence. As a result, the video "
+                    "documents uncertainty and belonging."
+                )
+            }
+        }
+
+        card = scene_cards.build_mise_en_scene_scene_cards(
+            "analysis-1",
+            status,
+        )["scene_cards"][0]
+        schema = card["interrogative_schema"]
+
+        self.assertIn("through street interviews", schema["by_what_means"])
+        self.assertIn("to understand", schema["towards_what_end"])
+        self.assertIn("As a result", schema["by_what_consequences"])
+        self.assertIn(
+            "description_interrogatives",
+            card["nlp_scene_summary"]["summary_inputs"],
+        )
+        self.assertIn(
+            "by_what_means",
+            card["nlp_scene_summary"]["summary_inputs"]["description_interrogatives"],
+        )
 
     def test_scene_account_manual_correction_overrides_first_read_prose(self):
         status = self.sample_status()

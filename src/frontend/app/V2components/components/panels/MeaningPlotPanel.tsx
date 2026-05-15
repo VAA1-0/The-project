@@ -253,8 +253,44 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
 
       <div className="flex-1 overflow-auto p-3">
         {loading ? (
-          <div className="rounded border border-white/8 bg-[#121212] px-4 py-4 text-sm text-slate-400">
-            Loading meaning paths...
+          <div className="grid h-full min-h-0 min-w-[980px] grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3">
+            <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
+              <div className="border-b border-white/8 px-3 py-2">
+                <div className="h-3 w-24 animate-pulse rounded bg-slate-800"></div>
+                <div className="mt-2 h-2 w-48 animate-pulse rounded bg-slate-800"></div>
+              </div>
+              <div className="flex-1 space-y-2 p-2">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={`plot-skel-${i}`} className="h-[52px] w-full animate-pulse rounded border border-slate-800 bg-[#101010] px-2.5 py-2">
+                    <div className="h-3 w-1/2 rounded bg-slate-700/50"></div>
+                    <div className="mt-2 h-2 w-1/3 rounded bg-slate-800"></div>
+                  </div>
+                ))}
+              </div>
+            </section>
+            <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
+              <div className="border-b border-white/8 px-3 py-2">
+                <div className="h-3 w-32 animate-pulse rounded bg-slate-800"></div>
+                <div className="mt-2 h-2 w-56 animate-pulse rounded bg-slate-800"></div>
+              </div>
+              <div className="flex-1 space-y-3 p-2">
+                {[1, 2].map((i) => (
+                  <div key={`char-skel-${i}`} className="rounded border border-slate-800 bg-[#101010]/60">
+                    <div className="border-b border-slate-800 px-2.5 py-2">
+                      <div className="h-2 w-20 animate-pulse rounded bg-slate-800"></div>
+                    </div>
+                    <div className="space-y-1.5 p-1.5">
+                      {[1, 2, 3].map((j) => (
+                        <div key={`char-skel-item-${j}`} className="h-[52px] w-full animate-pulse rounded border border-slate-800 bg-[#101010] px-2.5 py-2">
+                          <div className="h-3 w-1/2 rounded bg-slate-700/50"></div>
+                          <div className="mt-2 h-2 w-1/3 rounded bg-slate-800"></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
         ) : !selectedVideoId ? (
           <div className="rounded border border-white/8 bg-[#121212] px-4 py-4 text-sm text-slate-400">

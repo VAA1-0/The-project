@@ -703,12 +703,50 @@ export interface SourceMediaMetadata {
   audio_bitrate?: number | null;
   audio_channels?: number | null;
   audio_sample_rate?: number | string | null;
+  recorded_at?: string | null;
+  gps_coordinates?: string | null;
+  camera_make?: string | null;
+  camera_model?: string | null;
+  recording_device?: string | null;
+  recording_software?: string | null;
+  filmed_by?: string | null;
+  embedded_metadata?: Record<string, unknown>;
   uploaded_at?: string;
   analysis_started_at?: string;
   analysis_completed_at?: string;
   pipeline_type?: string;
   cvatID?: number;
   filesystem_modified_at?: string;
+  annotation_maturity?: Record<
+    string,
+    {
+      maturity?: string;
+      authority?: string;
+      evidence_sources?: string[];
+      traceback?: {
+        route?: string;
+        raw_preserved?: boolean;
+        consulted?: string[];
+      };
+    }
+  >;
+  video_internal_harvest?: {
+    annotations?: Record<string, unknown>;
+    field_sources?: Record<
+      string,
+      {
+        maturity?: string;
+        authority?: string;
+        evidence_sources?: string[];
+        traceback?: {
+          route?: string;
+          raw_preserved?: boolean;
+          consulted?: string[];
+        };
+      }
+    >;
+    evidence_counts?: Record<string, number>;
+  };
   user_annotations?: {
     editor_notes?: string;
     source_context?: string;
@@ -743,6 +781,52 @@ export interface SourceMediaMetadata {
       media_type?: string;
       size_bytes?: number;
       download_url?: string;
+    }>;
+    web_metadata_sources?: Array<{
+      id?: string;
+      url?: string;
+      preference?: "main" | "supporting" | "background";
+      retrieved_at?: string;
+      status?: string;
+      http_status?: number;
+      content_type?: string;
+      fields?: {
+        title?: string;
+        description?: string;
+        persons?: string[];
+        character_roles?: Array<{
+          actor?: string;
+          character?: string;
+          role?: string;
+          description?: string;
+        }>;
+        production_crew?: Array<{
+          person?: string;
+          department?: string;
+        }>;
+        places?: string[];
+        dates?: string[];
+        keywords?: string[];
+        genre?: string;
+        genre_subtype?: string;
+        situational_genre?: string;
+        situational_subtype?: string;
+        source_url?: string;
+        retrieved_at?: string;
+        source_types?: string[];
+      };
+      candidates?: Array<{
+        field?: string;
+        value?: string;
+        source_url?: string;
+        retrieved_at?: string;
+        selector?: string;
+        raw_excerpt?: string;
+        confidence?: string;
+        review_state?: string;
+      }>;
+      visible_text_excerpt?: string;
+      json_ld_count?: number;
     }>;
     reference_speakers?: Array<{
       speaker_label?: string;
@@ -1740,6 +1824,98 @@ class ApiService {
       const errorText = await response.text();
       throw new Error(
         `Reference upload failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async harvestSourceMediaWebMetadata(
+    analysisId: string,
+    url: string,
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/web-metadata`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Web metadata harvest failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async dedupeSourceMediaWebMetadata(
+    analysisId: string,
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/web-metadata/dedupe`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Web metadata dedupe failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async updateSourceMediaWebMetadataPreference(
+    analysisId: string,
+    sourceId: string,
+    preference: "main" | "supporting" | "background",
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/web-metadata/${sourceId}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ preference }),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Web metadata preference update failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.source_media_metadata || {};
+  }
+
+  async deleteSourceMediaWebMetadata(
+    analysisId: string,
+    sourceId: string,
+  ): Promise<SourceMediaMetadata> {
+    const response = await fetch(
+      `${this.baseURL}/api/source-media/${analysisId}/web-metadata/${sourceId}`,
+      { method: "DELETE" },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Web metadata source delete failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 

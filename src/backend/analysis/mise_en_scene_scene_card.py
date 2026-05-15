@@ -14,7 +14,7 @@ SCENE_CARD_SCHEMA = "vaa1.scene_card.v1"
 SOURCE_EXTRACTION_METADATA_SUMMARY_SCHEMA = "vaa1.source_extraction_metadata_summary.v1"
 SCENE_CARD_REPORT_TITLE = "Mise-en-Scene Scene Card Report"
 SOURCE_EXTRACTION_METADATA_SUMMARY_TITLE = "Scene Card Source Extraction Metadata Summary"
-NLP_SCENE_SUMMARY_VERSION = 7
+NLP_SCENE_SUMMARY_VERSION = 8
 
 LIKELIHOOD_SYMBOLS = {
     "manual": "✓",
@@ -1581,6 +1581,77 @@ def _metadata_context_sentence(source_metadata: Dict[str, Any]) -> str:
     return ""
 
 
+def _metadata_description_text(source_metadata: Dict[str, Any]) -> str:
+    annotations = _source_annotations(source_metadata)
+    parts: List[str] = []
+    for key in (
+        "description",
+        "synopsis",
+        "summary",
+        "source_context",
+        "editor_notes",
+        "scope",
+    ):
+        parts.extend(_listish_text(annotations.get(key)))
+        parts.extend(_listish_text(source_metadata.get(key)))
+    return " ".join(_dedupe_text(parts))
+
+
+def _description_interrogative_evidence(source_metadata: Dict[str, Any]) -> Dict[str, List[str]]:
+    annotations = _source_annotations(source_metadata)
+    evidence: Dict[str, List[str]] = {
+        "by_what_means": [],
+        "towards_what_end": [],
+        "by_what_consequences": [],
+    }
+    explicit_keys = {
+        "by_what_means": ("by_what_means", "means", "method", "methods"),
+        "towards_what_end": ("towards_what_end", "purpose", "goal", "intended_outcome"),
+        "by_what_consequences": (
+            "by_what_consequence",
+            "by_what_consequences",
+            "consequence",
+            "consequences",
+            "effects",
+            "outcomes",
+        ),
+    }
+    for target, keys in explicit_keys.items():
+        for key in keys:
+            evidence[target].extend(_listish_text(annotations.get(key)))
+            evidence[target].extend(_listish_text(source_metadata.get(key)))
+
+    description = _metadata_description_text(source_metadata)
+    if not description:
+        return {key: _dedupe_text(values)[:4] for key, values in evidence.items() if values}
+
+    sentences = [
+        _clean_metadata_label(sentence)
+        for sentence in re.split(r"(?<=[.!?])\s+|[;\n]+", description)
+        if _clean_metadata_label(sentence)
+    ]
+    marker_patterns = {
+        "by_what_means": re.compile(
+            r"\b(by|through|via|using|with|from|through the use of|by means of)\b",
+            re.IGNORECASE,
+        ),
+        "towards_what_end": re.compile(
+            r"\b(to|in order to|so as to|for the purpose of|aims? to|intends? to|seeks? to)\b",
+            re.IGNORECASE,
+        ),
+        "by_what_consequences": re.compile(
+            r"\b(so|therefore|thus|hence|leading to|resulting in|causing|causes|as a result|consequently|which leads to)\b",
+            re.IGNORECASE,
+        ),
+    }
+    for sentence in sentences:
+        for target, pattern in marker_patterns.items():
+            if pattern.search(sentence):
+                evidence[target].append(sentence)
+
+    return {key: _dedupe_text(values)[:4] for key, values in evidence.items() if values}
+
+
 def _short_metadata_terms(text: str, limit: int = 4) -> List[str]:
     clean = _safe_text(text)
     if not clean:
@@ -1807,6 +1878,7 @@ def _scene_interrogative_schema(
     action_labels: List[str],
     meaning_labels: List[str],
     subject_labels: List[str],
+    description_evidence: Dict[str, List[str]],
     pos_analysis: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     pos_lens = _pos_interrogative_lens(pos_analysis)
@@ -1844,8 +1916,34 @@ def _scene_interrogative_schema(
         "when": _sentence(_join_phrase(times[:3])) if times else "",
         "how": _sentence(_join_phrase(how_bits[:5])) if how_bits else "",
         "why_or_meaning": meanings_constructed or _sentence(_join_phrase(why_bits[:4])),
+        "by_what_means": _sentence(
+            _join_phrase(
+                [
+                    *description_evidence.get("by_what_means", [])[:3],
+                    *pos_lens.get("by_what_means", [])[:2],
+                ][:4]
+            )
+        ),
+        "towards_what_end": _sentence(
+            _join_phrase(
+                [
+                    *description_evidence.get("towards_what_end", [])[:3],
+                    *pos_lens.get("towards_what_end", [])[:2],
+                ][:4]
+            )
+        ),
+        "by_what_consequences": _sentence(
+            _join_phrase(
+                [
+                    *description_evidence.get("by_what_consequences", [])[:3],
+                    *pos_lens.get("by_what_consequence", [])[:2],
+                    *pos_lens.get("by_what_consequences", [])[:2],
+                ][:4]
+            )
+        ),
         "phenomena": phenomena,
         "pos_support": pos_lens,
+        "description_evidence": description_evidence,
     }
     for key, pos_key in (
         ("who", "who"),
@@ -1854,6 +1952,9 @@ def _scene_interrogative_schema(
         ("when", "when"),
         ("how", "how"),
         ("why_or_meaning", "why"),
+        ("by_what_means", "by_what_means"),
+        ("towards_what_end", "towards_what_end"),
+        ("by_what_consequences", "by_what_consequence"),
     ):
         if not schema.get(key) and pos_lens.get(pos_key):
             schema[key] = _sentence(_join_phrase(pos_lens[pos_key][:4]))
@@ -2096,6 +2197,7 @@ def _scene_nlp_summary(
     source_metadata: Optional[Dict[str, Any]] = None,
     pos_analysis: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    source_metadata = source_metadata or {}
     clauses: List[str] = []
     evidence_ids: List[str] = []
 
@@ -2118,9 +2220,7 @@ def _scene_nlp_summary(
     topic_labels = topic_summary.get("labels") or transcript_topics
     discourse_form = _transcript_discourse_form(transcript)
     identity_labels, role_labels = _identity_context_from_items(items)
-    metadata_identity_labels, metadata_role_labels = _metadata_person_role_context(
-        source_metadata or {}
-    )
+    metadata_identity_labels, metadata_role_labels = _metadata_person_role_context(source_metadata)
     for label in metadata_identity_labels:
         if label not in identity_labels:
             identity_labels.append(label)
@@ -2237,6 +2337,7 @@ def _scene_nlp_summary(
         action_labels=action_labels,
         meaning_labels=meaning_labels,
         subject_labels=subject_labels,
+        description_evidence=_description_interrogative_evidence(source_metadata),
         pos_analysis=pos_analysis,
     )
 
@@ -2275,6 +2376,7 @@ def _scene_nlp_summary(
             "subject_domain": subject_labels,
             "transcript_topics": transcript_topics,
             "transcript_topic_model": topic_summary,
+            "description_interrogatives": interrogative_schema.get("description_evidence", {}),
             "identity_labels": identity_labels,
             "role_labels": role_labels,
             "discourse_form": discourse_form,
