@@ -80,6 +80,8 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
                     <li><a>Daniel Craig</a> as James Bond: Former MI6 agent.</li>
                     <li><a>Lashana Lynch</a> as Nomi: A new agent assigned the 007 number.</li>
                   </ul>
+                  <h2><span id="Plot">Plot</span></h2>
+                  <p>Five years later, Bond is living in <a>Jamaica</a> and is asked by the <a>CIA</a> to extract Obruchev from <a>Cuba</a>. Nomi warns him not to interfere with her own extraction. Bond uncovers a weapons plot that threatens civilians and draws him back into the conflict.</p>
                   <h2><span id="Filming">Filming</span></h2>
                   <p>Filming locations included <a>Italy</a>, <a>Jamaica</a>, <a>Norway</a>, the <a>Faroe Islands</a> and <a>London</a>, in addition to <a>Pinewood Studios</a>. In late August 2019, the second unit moved to southern Italy where they began to shoot a chase sequence through the streets of <a>Matera</a>.</p>
                   <h2>References</h2>
@@ -97,17 +99,80 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
 
         fields = payload["fields"]
 
-        self.assertIn("2021 spy thriller film", fields["description"])
+        self.assertIn("Five years later, Bond is living in Jamaica", fields["description"])
+        self.assertIn("weapons plot", fields["description"])
+        self.assertNotIn("twenty-fifth film in the James Bond series", fields["description"])
         self.assertNotIn("Contributors to Wikimedia projects", fields["persons"])
-        self.assertIn("Daniel Craig", fields["persons"])
-        self.assertIn("Cary Joji Fukunaga", fields["persons"])
-        self.assertIn("Matera", fields["places"])
-        self.assertIn("United Kingdom", fields["places"])
-        self.assertIn("28 September 2021", fields["dates"])
+        self.assertIn("James Bond", fields["persons"])
+        self.assertIn("Nomi", fields["persons"])
+        self.assertNotIn("Cary Joji Fukunaga", fields["persons"])
+        self.assertTrue(any(role["actor"] == "Daniel Craig" for role in fields["character_roles"]))
+        self.assertTrue(any(role["person"] == "Cary Joji Fukunaga" for role in fields["production_crew"]))
+        self.assertIn("Jamaica", fields["places"])
+        self.assertIn("CIA", fields["places"])
+        self.assertIn("Five years later", fields["dates"])
+        self.assertNotIn("2012-12-27T23:33:31Z", fields["dates"])
+        self.assertIn("James Bond films", fields["keywords"])
+        self.assertNotIn("British spy action films", fields["keywords"])
+        self.assertNotIn("2021 films", fields["keywords"])
         self.assertEqual(fields["genre"], "movie drama / fiction")
         self.assertEqual(fields["genre_subtype"], "action / adventure")
         self.assertEqual(fields["situational_genre"], "confrontation")
-        self.assertTrue(any(candidate["selector"].endswith("article_lead") for candidate in payload["candidates"]))
+        self.assertTrue(any(candidate["selector"].endswith("plot_synopsis") for candidate in payload["candidates"]))
+
+    def test_wikipedia_cast_section_parser_uses_exact_h2_not_toc_mentions(self):
+        retrieved_at = "2026-05-15T09:09:51.801376+00:00"
+        payload = parse_web_metadata_html(
+            """
+            <html>
+              <body>
+                <div id="toc"><a href="#Cast">Cast</a></div>
+                <h2 id="Plot">Plot</h2>
+                <p>An adolescent <a>Madeleine Swann</a> witnesses violence. In the present day, Bond lives in <a>Jamaica</a>.</p>
+                <h2 id="Cast">Cast</h2>
+                <ul>
+                  <li><a>Daniel Craig</a> as <a>James Bond</a>: Former MI6 agent 007, retired for five years.</li>
+                  <li><a>Rami Malek</a> as Lyutsifer Safin: Bioterrorist who becomes Bond's adversary.</li>
+                  <li><a>Example Actor</a> as Example Character: A suspect. Producer Someone described the character as "very mysterious".</li>
+                </ul>
+                <h2 id="Production">Production</h2>
+              </body>
+            </html>
+            """,
+            "https://en.wikipedia.org/wiki/No_Time_to_Die",
+            retrieved_at,
+        )
+
+        roles = payload["fields"]["character_roles"]
+        self.assertEqual(len(roles), 3)
+        self.assertEqual(roles[0]["character"], "James Bond")
+        self.assertIn("protagonist", roles[0]["role"])
+        self.assertEqual(roles[1]["character"], "Lyutsifer Safin")
+        self.assertIn("antagonist", roles[1]["role"])
+        self.assertNotIn("protagonist", roles[1]["role"])
+        self.assertEqual(roles[1]["description"], "Bioterrorist scientist; Bond adversary")
+        self.assertEqual(roles[2]["description"], "A suspect")
+
+    def test_wikipedia_synopsis_can_use_story_section_without_plot_heading(self):
+        payload = parse_web_metadata_html(
+            """
+            <html>
+              <body>
+                <p>Example Film is a 1974 feature directed by Example Director and released by Example Studio.</p>
+                <h2 id="Story">Story</h2>
+                <p>A retired courier discovers a hidden archive and travels to Lisbon to protect a witness from a criminal network.</p>
+                <h2 id="Production">Production</h2>
+                <p>The film was produced by Example Producer and released in cinemas in 1974.</p>
+              </body>
+            </html>
+            """,
+            "https://en.wikipedia.org/wiki/Example_Film",
+            "2026-05-15T13:00:00+00:00",
+        )
+
+        self.assertIn("retired courier discovers a hidden archive", payload["fields"]["description"])
+        self.assertNotIn("released by Example Studio", payload["fields"]["description"])
+        self.assertTrue(any(candidate["selector"].endswith("plot_synopsis") for candidate in payload["candidates"]))
 
     def test_web_metadata_sources_dedupe_by_canonical_url_and_sort_main_first(self):
         sources = [
@@ -368,6 +433,66 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
             maturity["description"]["traceback"]["consulted"],
         )
         self.assertGreaterEqual(harvest["evidence_counts"]["meaning_terms"], 2)
+
+    def test_web_character_roles_route_through_metadata_maturity(self):
+        status = {
+            "analysis_id": "analysis-roles",
+            "original_filename": "NO_TIME_TO_DIE_Trailer_UK_-_James_Bond_007_720p_h264.mp4",
+            "source_media_web_metadata_sources": [
+                {
+                    "id": "wiki-1",
+                    "url": "https://en.wikipedia.org/wiki/No_Time_to_Die",
+                    "preference": "main",
+                    "retrieved_at": "2026-05-15T08:30:00+00:00",
+                    "status": "ok",
+                    "fields": {
+                        "character_roles": [
+                            {
+                                "actor": "Daniel Craig",
+                                "character": "James Bond / 007",
+                                "role": "protagonist, secret agent",
+                                "description": "retired MI6 agent drawn back into conflict",
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+
+        payload = build_source_media_metadata_payload(status)
+        annotations = payload["user_annotations"]
+        maturity = payload["annotation_maturity"]["character_roles"]
+        master_schema = status.get("source_media_video_internal_harvest", {})
+
+        self.assertIn(
+            "James Bond / 007 (Daniel Craig): protagonist, secret agent; retired MI6 agent",
+            annotations["character_roles"][0],
+        )
+        self.assertEqual(
+            annotations["character_definitions"][0]["character_name"],
+            "James Bond / 007",
+        )
+        self.assertEqual(
+            annotations["character_definitions"][0]["actor_name"],
+            "Daniel Craig",
+        )
+        self.assertIn(
+            "protagonist",
+            annotations["character_definitions"][0]["role_labels"],
+        )
+        self.assertEqual(
+            annotations["character_definitions"][0]["constituent_evidence"]["actor_name"]["source_field"],
+            "fields.character_roles.actor",
+        )
+        self.assertIn("James Bond / 007", annotations["persons"])
+        self.assertIn("Daniel Craig", annotations["persons"])
+        self.assertEqual(maturity["maturity"], "derived_external_metadata")
+        self.assertEqual(
+            maturity["traceback"]["route"],
+            "master_schema.source_media_character_role_maturity",
+        )
+        self.assertEqual(master_schema["evidence_counts"]["character_roles"], 1)
+        self.assertEqual(master_schema["evidence_counts"]["character_definitions"], 1)
 
     def test_video_internal_maturity_harvest_reads_import_artifact_aliases(self):
         with tempfile.TemporaryDirectory() as tmpdir:

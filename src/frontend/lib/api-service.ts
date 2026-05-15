@@ -755,6 +755,27 @@ export interface SourceMediaMetadata {
     scope?: string;
     description?: string;
     persons?: string[];
+    character_roles?: string[];
+    character_definitions?: Array<{
+      character_name?: string;
+      actor_name?: string;
+      aliases?: string[];
+      role_labels?: string[];
+      role_description?: string;
+      relations?: string[];
+      constituent_evidence?: Record<
+        string,
+        {
+          value?: string | string[];
+          source_field?: string;
+          source_url?: string;
+        }
+      >;
+      source_url?: string;
+      source_preference?: string;
+      maturity?: string;
+      maturity_route?: string;
+    }>;
     relations?: string;
     location_country?: string;
     location_city?: string;
@@ -1751,6 +1772,8 @@ class ApiService {
       scope?: string;
       description?: string;
       persons?: string[];
+      character_roles?: string[];
+      character_definitions?: Array<Record<string, unknown>>;
       relations?: string;
       location_country?: string;
       location_city?: string;

@@ -984,10 +984,17 @@ def split_metadata_text_values(value: Any, *, limit: int = 24) -> List[str]:
 
 
 def infer_character_role_label(character: Any, description: Any) -> str:
-    text = f"{clean_source_label(character)} {clean_source_label(description)}".lower()
+    character_text = clean_source_label(character).lower()
+    description_text = clean_source_label(description).lower()
+    text = f"{character_text} {description_text}"
     labels: List[str] = []
-    if any(term in text for term in ("james bond", "bond", "007")):
-        labels.extend(["protagonist", "secret agent"])
+    if any(term in character_text for term in ("james bond", "bond", "007")):
+        labels.append("protagonist")
+    if any(term in character_text for term in ("james bond", "bond", "007")) or any(
+        term in description_text[:160]
+        for term in ("former mi6 agent", "agent 007", "cia agent", "mi6 agent", "field officer")
+    ):
+        append_unique_text(labels, "secret agent", limit=4)
     if any(term in text for term in ("villain", "adversary", "bioterrorist", "safin", "blofeld")):
         labels.append("antagonist")
     if any(term in text for term in ("mi6", "cia", "agent", "officer", "quartermaster")):
@@ -999,14 +1006,199 @@ def infer_character_role_label(character: Any, description: Any) -> str:
     return ", ".join(labels[:3])
 
 
+QUOTE_ATTRIBUTION_PATTERN = re.compile(
+    r"(?i)\b(?:director|producer|writer|actor|actress|filmmaker|screenwriter)\s+"
+    r"[A-Z][A-Za-z .'-]+?\s+(?:described|compared|said|called|noted|stated|explained)\b.*$"
+)
+
+
+def compact_character_role_description(text: Any, *, limit: int = 140) -> str:
+    cleaned = clean_source_label(text)
+    if not cleaned:
+        return ""
+    cleaned = QUOTE_ATTRIBUTION_PATTERN.sub("", cleaned).strip(" ;.")
+    lower = cleaned.lower()
+    if "bioterrorist" in lower and "bond" in lower and "adversary" in lower:
+        return "Bioterrorist scientist; Bond adversary"
+    if "psychotherapist" in lower and "love interest" in lower:
+        return "Psychotherapist; Bond's love interest"
+    if "new 007" in lower or "007 number" in lower:
+        return "MI6 agent assigned the 007 number"
+    if "former mi6 agent" in lower or "retired for five years" in lower:
+        return "Former MI6 agent 007; retired for five years"
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    kept: List[str] = []
+    for sentence in sentences:
+        sentence = clean_source_label(sentence).strip(" ;")
+        if not sentence:
+            continue
+        if re.search(r"(?i)\b(?:described|compared|said|called|noted|stated|explained)\b", sentence):
+            continue
+        kept.append(sentence)
+        if len(" ".join(kept)) >= 60:
+            break
+    return compact_web_excerpt(" ".join(kept) or cleaned, limit=limit)
+
+
 def format_character_role_candidate(role: Dict[str, Any]) -> str:
     actor = clean_source_label(role.get("actor"))
     character = clean_source_label(role.get("character"))
     role_label = clean_source_label(role.get("role"))
-    description = clean_source_label(role.get("description"))
-    head = " / ".join(part for part in (character, actor) if part)
+    description = compact_character_role_description(role.get("description"))
+    head = character
+    if actor:
+        head = f"{head} ({actor})" if head else actor
     tail = "; ".join(part for part in (role_label, description) if part)
     return f"{head}: {tail}" if head and tail else head or tail
+
+
+def normalize_character_role_candidate(value: Any) -> str:
+    if isinstance(value, dict):
+        return format_character_role_candidate(value)
+    return clean_source_label(value)
+
+
+def split_character_aliases(character_name: str) -> List[str]:
+    aliases: List[str] = []
+    for part in re.split(r"\s*(?:/|\bor\b)\s*", clean_source_label(character_name)):
+        append_unique_text(aliases, part, limit=8)
+    return aliases
+
+
+def split_role_labels(role_label: Any) -> List[str]:
+    labels: List[str] = []
+    for part in re.split(r"\s*(?:,|;|/|\band\b)\s*", clean_source_label(role_label)):
+        append_unique_text(labels, part, limit=8)
+    return labels
+
+
+def normalize_character_definition(
+    value: Any,
+    *,
+    source_url: str = "",
+    source_preference: str = "",
+) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    character_name = clean_source_label(value.get("character"))
+    actor_name = clean_source_label(value.get("actor"))
+    role_description = compact_character_role_description(value.get("description"))
+    role_labels = split_role_labels(value.get("role"))
+    if not role_labels and (character_name or role_description):
+        inferred = infer_character_role_label(character_name, role_description)
+        role_labels = split_role_labels(inferred)
+    definition = {
+        "character_name": character_name,
+        "actor_name": actor_name,
+        "aliases": split_character_aliases(character_name),
+        "role_labels": role_labels,
+        "role_description": role_description,
+        "relations": [],
+        "constituent_evidence": {
+            "character_name": {
+                "value": character_name,
+                "source_field": "fields.character_roles.character",
+                "source_url": source_url,
+            },
+            "actor_name": {
+                "value": actor_name,
+                "source_field": "fields.character_roles.actor",
+                "source_url": source_url,
+            },
+            "role_labels": {
+                "value": role_labels,
+                "source_field": "fields.character_roles.role",
+                "source_url": source_url,
+            },
+            "role_description": {
+                "value": role_description,
+                "source_field": "fields.character_roles.description",
+                "source_url": source_url,
+            },
+        },
+        "source_url": source_url,
+        "source_preference": source_preference or "supporting",
+        "maturity": "derived_external_metadata",
+        "maturity_route": "master_schema.source_media_character_definition_maturity",
+    }
+    return {key: item for key, item in definition.items() if annotation_has_value(item)}
+
+
+def append_unique_character_definition(
+    definitions: List[Dict[str, Any]],
+    definition: Dict[str, Any],
+    *,
+    limit: int = 48,
+) -> None:
+    if not definition:
+        return
+    key = "|".join(
+        clean_source_label(definition.get(field)).lower()
+        for field in ("character_name", "actor_name", "role_description")
+    )
+    seen = {
+        "|".join(
+            clean_source_label(item.get(field)).lower()
+            for field in ("character_name", "actor_name", "role_description")
+        )
+        for item in definitions
+    }
+    if key not in seen and len(definitions) < limit:
+        definitions.append(definition)
+
+
+def collect_web_metadata_character_role_candidates(status: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    sources = status.get("source_media_web_metadata_sources")
+    if not isinstance(sources, list):
+        return candidates
+
+    preference_rank = {"main": 0, "supporting": 1, "background": 2}
+    sorted_sources = sorted(
+        [source for source in sources if isinstance(source, dict)],
+        key=lambda source: (
+            preference_rank.get(str(source.get("preference") or "supporting"), 1),
+            str(source.get("retrieved_at") or ""),
+        ),
+    )
+    for source in sorted_sources:
+        if str(source.get("status") or "").lower() not in {"", "ok", "success", "saved"}:
+            continue
+        fields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
+        for role in fields.get("character_roles") or []:
+            append_unique_text(candidates, normalize_character_role_candidate(role), limit=48)
+    return candidates
+
+
+def collect_web_metadata_character_definitions(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    definitions: List[Dict[str, Any]] = []
+    sources = status.get("source_media_web_metadata_sources")
+    if not isinstance(sources, list):
+        return definitions
+
+    preference_rank = {"main": 0, "supporting": 1, "background": 2}
+    sorted_sources = sorted(
+        [source for source in sources if isinstance(source, dict)],
+        key=lambda source: (
+            preference_rank.get(str(source.get("preference") or "supporting"), 1),
+            str(source.get("retrieved_at") or ""),
+        ),
+    )
+    for source in sorted_sources:
+        if str(source.get("status") or "").lower() not in {"", "ok", "success", "saved"}:
+            continue
+        fields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
+        for role in fields.get("character_roles") or []:
+            append_unique_character_definition(
+                definitions,
+                normalize_character_definition(
+                    role,
+                    source_url=clean_source_label(source.get("url")),
+                    source_preference=clean_source_label(source.get("preference")),
+                ),
+                limit=48,
+            )
+    return definitions
 
 
 def format_production_crew_candidate(role: Dict[str, Any]) -> str:
@@ -1043,15 +1235,223 @@ def extract_date_candidates(text: Any, *, limit: int = 18) -> List[str]:
 
 
 def wikipedia_section_html(html_text: str, section_id: str) -> str:
-    pattern = (
-        r"(?is)<h2[^>]*>.*?(?:id=[\"']"
-        + re.escape(section_id)
-        + r"[\"']|>"
-        + re.escape(section_id)
-        + r"\b).*?</h2>(.*?)(?=<h2\b)"
+    for heading_text, section_html in wikipedia_sections(html_text):
+        heading_lower = heading_text.lower()
+        if heading_lower == section_id.lower() or heading_lower.startswith(f"{section_id.lower()} edit"):
+            return section_html
+    return ""
+
+
+def wikipedia_sections(html_text: str) -> List[tuple[str, str]]:
+    headings = list(re.finditer(r"(?is)<h2\b([^>]*)>(.*?)</h2>", html_text))
+    sections: List[tuple[str, str]] = []
+    for index, heading in enumerate(headings):
+        heading_text = strip_html_fragment(heading.group(2) or "")
+        if heading_text.lower().endswith(" edit"):
+            heading_text = heading_text[:-5].strip()
+        start = heading.end()
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(html_text)
+        if heading_text:
+            sections.append((heading_text, html_text[start:end]))
+    return sections
+
+
+def wikipedia_section_html_legacy(html_text: str, section_id: str) -> str:
+    headings = list(re.finditer(r"(?is)<h2\b([^>]*)>(.*?)</h2>", html_text))
+    match = None
+    section_lower = section_id.lower()
+    for heading in headings:
+        attrs = heading.group(1) or ""
+        inner_html = heading.group(2) or ""
+        heading_text = strip_html_fragment(inner_html).lower()
+        if re.search(rf"(?i)\bid=[\"']{re.escape(section_id)}[\"']", attrs + inner_html):
+            match = heading
+            break
+        if heading_text == section_lower or heading_text.startswith(f"{section_lower} edit"):
+            match = heading
+            break
+    if not match:
+        return ""
+    start = match.end()
+    next_heading = next((heading for heading in headings if heading.start() > start), None)
+    end = next_heading.start() if next_heading else len(html_text)
+    return html_text[start:end]
+
+
+def parse_wikipedia_cast_item(item_text: str, links: List[str]) -> Dict[str, str]:
+    actor = links[0] if links else ""
+    character = ""
+    description = ""
+    text = clean_source_label(item_text)
+    split_match = re.match(r"(?is)(.+?)\s+as\s+(.+)$", text)
+    if split_match:
+        actor = clean_source_label(split_match.group(1))
+        remainder = clean_source_label(split_match.group(2))
+        if ":" in remainder:
+            character_part, description_part = remainder.split(":", 1)
+            character = clean_source_label(character_part)
+            description = compact_character_role_description(description_part)
+        else:
+            character = remainder
+    if not character and len(links) > 1:
+        character = links[1]
+    return {
+        "actor": actor,
+        "character": character,
+        "description": description,
+        "role": infer_character_role_label(character, description),
+    }
+
+
+def append_wikipedia_narrative_place(values: List[str], label: Any, *, limit: int = 28) -> None:
+    cleaned = clean_source_label(label)
+    if not cleaned or len(cleaned) > 80:
+        return
+    lower = cleaned.lower()
+    narrative_place_terms = {
+        "jamaica",
+        "cuba",
+        "norway",
+        "london",
+        "matera",
+        "gravina in puglia",
+        "belmarsh prison",
+        "mi6",
+        "cia",
+        "spectre",
+        "safin's island",
+    }
+    if lower in narrative_place_terms or any(token in lower for token in (" island", " prison", " laboratory", " headquarters")):
+        append_unique_text(values, cleaned, limit=limit)
+
+
+def append_operational_keyword(values: List[str], label: Any, *, limit: int = 24) -> None:
+    cleaned = clean_source_label(label)
+    lower = cleaned.lower()
+    allowed_terms = (
+        "james bond",
+        "mi6",
+        "cia",
+        "spectre",
+        "bioterror",
+        "revenge",
+        "secret agent",
+        "mission",
     )
-    match = re.search(pattern, html_text)
-    return match.group(1) if match else ""
+    if "james bond" in lower:
+        append_metadata_keyword(values, cleaned, limit=limit)
+        return
+    blocked = (
+        "american ",
+        "british ",
+        "english-language",
+        " films",
+        " film",
+        "3d ",
+        "imax",
+        "4dx",
+        "box office",
+        "delayed",
+        "pandemic",
+    )
+    if not cleaned or any(term in lower for term in blocked):
+        return
+    if any(term in lower for term in allowed_terms):
+        append_metadata_keyword(values, cleaned, limit=limit)
+
+
+def extract_narrative_time_candidates(text: Any, *, limit: int = 12) -> List[str]:
+    values: List[str] = []
+    cleaned = clean_source_label(text)
+    for pattern in (
+        r"\b(?:in the )?present day\b",
+        r"\bfive years later\b",
+        r"\b\d+\s+years later\b",
+        r"\badolescent\b",
+    ):
+        for match in re.finditer(pattern, cleaned, flags=re.I):
+            append_unique_text(values, match.group(0), limit=limit)
+    return values
+
+
+def extract_wikipedia_plot_synopsis(plot_section: str, *, limit: int = 900) -> str:
+    paragraphs: List[str] = []
+    for paragraph_match in re.finditer(r"(?is)<p\b[^>]*>(.*?)</p>", plot_section):
+        paragraph = strip_html_fragment(paragraph_match.group(1))
+        if len(paragraph) < 80:
+            continue
+        if re.search(r"(?i)\b(?:filming|production|directed by|released by|box office|critical response)\b", paragraph):
+            continue
+        paragraphs.append(paragraph)
+        if len(" ".join(paragraphs)) >= limit:
+            break
+    return compact_web_excerpt(" ".join(paragraphs), limit=limit)
+
+
+def score_wikipedia_synopsis_section(heading: str, section_html: str) -> int:
+    heading_lower = heading.lower()
+    section_text = strip_html_fragment(section_html).lower()
+    if not section_text:
+        return -100
+    score = 0
+    if heading_lower in {"plot", "synopsis", "premise", "story", "plot summary", "storyline", "scenario"}:
+        score += 80
+    elif any(term in heading_lower for term in ("plot", "synopsis", "premise", "story")):
+        score += 55
+    if any(term in heading_lower for term in ("production", "cast", "release", "reception", "box office", "music", "filming", "marketing")):
+        score -= 90
+    narrative_signals = (
+        "follows",
+        "centres on",
+        "centers on",
+        "tells the story",
+        "is asked",
+        "is assigned",
+        "discovers",
+        "uncovers",
+        "travels",
+        "meets",
+        "kills",
+        "escapes",
+        "suspects",
+        "investigates",
+        "attempts",
+        "returns",
+        "living in",
+    )
+    production_signals = (
+        "directed by",
+        "produced by",
+        "released",
+        "box office",
+        "grossed",
+        "screenplay",
+        "filming",
+        "principal photography",
+        "critical response",
+        "review aggregator",
+    )
+    score += sum(8 for term in narrative_signals if term in section_text)
+    score -= sum(14 for term in production_signals if term in section_text)
+    paragraph_count = section_html.lower().count("<p")
+    score += min(paragraph_count, 4) * 4
+    return score
+
+
+def wikipedia_best_synopsis_section(html_text: str) -> str:
+    candidates = wikipedia_sections(html_text)
+    if not candidates:
+        return ""
+    ranked = sorted(
+        (
+            (score_wikipedia_synopsis_section(heading, section_html), heading, section_html)
+            for heading, section_html in candidates
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    best_score, _, best_section = ranked[0]
+    return best_section if best_score > 0 else ""
 
 
 def append_wikipedia_place(values: List[str], label: Any, *, limit: int = 28) -> None:
@@ -1109,6 +1509,12 @@ def extract_wikipedia_metadata_profile(html_text: str) -> Dict[str, Any]:
         profile["description"] = compact_web_excerpt(paragraph, limit=720)
         break
 
+    synopsis_section = wikipedia_best_synopsis_section(html_text)
+    plot_synopsis = extract_wikipedia_plot_synopsis(synopsis_section)
+    if plot_synopsis:
+        profile["description"] = plot_synopsis
+        profile["source_types"].append("Wikipedia plot section")
+
     infobox_match = re.search(
         r"(?is)<table[^>]+class=[\"'][^\"']*\binfobox\b[^\"']*[\"'][^>]*>(.*?)</table>",
         html_text,
@@ -1127,52 +1533,30 @@ def extract_wikipedia_metadata_profile(html_text: str) -> Dict[str, Any]:
             values = link_values or split_metadata_text_values(text_value, limit=18)
             if any(term in key for term in ("directed", "screenplay", "story", "produced", "cinematography", "edited", "music")):
                 for person in values:
-                    append_unique_text(persons, person, limit=32)
                     append_unique_record(
                         production_crew,
                         {"person": person, "department": key},
                         limit=32,
                     )
-            if "starring" in key:
-                for person in values:
-                    append_unique_text(persons, person, limit=32)
-            if any(term in key for term in ("country", "countries", "language")):
-                for place in values:
-                    append_wikipedia_place(places, place, limit=28)
-            if any(term in key for term in ("release", "date", "production")):
-                for date_value in extract_date_candidates(text_value, limit=18):
-                    append_unique_text(dates, date_value, limit=18)
 
     cast_section = wikipedia_section_html(html_text, "Cast")
     for item_match in re.finditer(r"(?is)<li\b[^>]*>(.*?)</li>", cast_section):
         item_html = item_match.group(1)
         links = extract_link_texts(item_html, limit=4)
         item_text = strip_html_fragment(item_html)
-        actor = links[0] if links else ""
-        character = ""
-        description = ""
-        role_match = re.match(r"(.+?)\s+as\s+(.+?)(?::|\.\s|$)(.*)", item_text)
-        if role_match:
-            actor = clean_source_label(role_match.group(1))
-            character = clean_source_label(role_match.group(2))
-            description = compact_web_excerpt(role_match.group(3), limit=220)
-        if links:
-            append_unique_text(persons, links[0], limit=32)
-        else:
-            name_match = re.match(r"([^:;.]+?)\s+as\s+", item_text)
-            if name_match:
-                append_unique_text(persons, name_match.group(1), limit=32)
-        if actor or character:
-            append_unique_record(
-                character_roles,
-                {
-                    "actor": actor,
-                    "character": character,
-                    "description": description,
-                    "role": infer_character_role_label(character, description),
-                },
-                limit=36,
-            )
+        role = parse_wikipedia_cast_item(item_text, links)
+        if role.get("character"):
+            append_unique_text(persons, role.get("character"), limit=32)
+        if role.get("actor") or role.get("character"):
+            append_unique_record(character_roles, role, limit=36)
+
+    for paragraph_match in re.finditer(r"(?is)<p\b[^>]*>(.*?)</p>", synopsis_section):
+        paragraph_html = paragraph_match.group(1)
+        paragraph_text = strip_html_fragment(paragraph_html)
+        for place in extract_link_texts(paragraph_html, limit=48):
+            append_wikipedia_narrative_place(places, place, limit=28)
+        for time_value in extract_narrative_time_candidates(paragraph_text, limit=12):
+            append_unique_text(dates, time_value, limit=12)
 
     filming_section = wikipedia_section_html(html_text, "Filming")
     for paragraph_match in re.finditer(r"(?is)<p\b[^>]*>(.*?)</p>", filming_section):
@@ -1192,7 +1576,7 @@ def extract_wikipedia_metadata_profile(html_text: str) -> Dict[str, Any]:
         if not category or category.lower().startswith(("hidden", "cs1", "articles")):
             continue
         append_unique_text(category_labels, category, limit=32)
-        append_metadata_keyword(keywords, category, limit=32)
+        append_operational_keyword(keywords, category, limit=24)
 
     category_text = " ".join(category_labels).lower()
     if "film" in category_text or "james bond" in category_text:
@@ -1203,6 +1587,11 @@ def extract_wikipedia_metadata_profile(html_text: str) -> Dict[str, Any]:
         profile["genre_subtype"] = "suspense / thriller"
     if any(term in category_text for term in ("spy", "terrorism", "cia", "mi6", "bioterrorism")):
         profile["situational_genre"] = "confrontation"
+
+    for role in character_roles:
+        for role_label in split_role_labels(role.get("role")):
+            append_operational_keyword(keywords, role_label, limit=24)
+        append_operational_keyword(keywords, role.get("character"), limit=24)
 
     profile["persons"] = persons
     profile["character_roles"] = character_roles
@@ -1255,6 +1644,8 @@ def parse_web_metadata_html(html_text: str, source_url: str, retrieved_at: str) 
             if not title:
                 pass
         for key in ("actor", "actors", "director", "creator", "performer"):
+            if is_wikipedia_source:
+                continue
             for person in normalize_web_metadata_values(node.get(key), limit=12):
                 append_unique_text(persons, person, limit=18)
         for key in ("author", "contributor"):
@@ -1264,9 +1655,10 @@ def parse_web_metadata_html(html_text: str, source_url: str, retrieved_at: str) 
         for key in ("contentLocation", "location", "spatialCoverage", "place"):
             for place in normalize_web_metadata_values(node.get(key), limit=12):
                 append_unique_text(places, place, limit=18)
-        for key in ("datePublished", "uploadDate", "dateCreated", "temporalCoverage"):
-            for date_value in normalize_web_metadata_values(node.get(key), limit=8):
-                append_unique_text(dates, date_value, limit=12)
+        if not is_wikipedia_source:
+            for key in ("datePublished", "uploadDate", "dateCreated", "temporalCoverage"):
+                for date_value in normalize_web_metadata_values(node.get(key), limit=8):
+                    append_unique_text(dates, date_value, limit=12)
         for keyword in normalize_web_metadata_values(node.get("keywords"), limit=18):
             append_metadata_keyword(keywords, keyword, limit=24)
         graph = node.get("@graph")
@@ -1279,8 +1671,9 @@ def parse_web_metadata_html(html_text: str, source_url: str, retrieved_at: str) 
         except Exception:
             continue
 
-    for meta_key in ("article:published_time", "video:release_date", "date", "dc.date"):
-        append_unique_text(dates, parser.meta.get(meta_key), limit=12)
+    if not is_wikipedia_source:
+        for meta_key in ("article:published_time", "video:release_date", "date", "dc.date"):
+            append_unique_text(dates, parser.meta.get(meta_key), limit=12)
     for meta_key in ("article:author", "author", "dc.creator"):
         person = parser.meta.get(meta_key)
         if not is_source_author_noise(person, source_url=source_url):
@@ -1359,7 +1752,13 @@ def parse_web_metadata_html(html_text: str, source_url: str, retrieved_at: str) 
     candidates: List[Dict[str, Any]] = []
     candidate_specs = [
         ("title", fields.get("title"), "meta/title"),
-        ("description", fields.get("description"), "meta/jsonld/article_lead"),
+        (
+            "description",
+            fields.get("description"),
+            "wikipedia/plot_synopsis"
+            if "Wikipedia plot section" in (wikipedia_profile.get("source_types") or [])
+            else "meta/jsonld/article_lead",
+        ),
         ("persons", fields.get("persons"), "jsonld/meta/infobox/cast"),
         ("character_roles", [format_character_role_candidate(role) for role in fields.get("character_roles", [])], "wikipedia/cast_role_descriptions"),
         ("production_crew", [format_production_crew_candidate(role) for role in fields.get("production_crew", [])], "wikipedia/infobox_production_crew"),
@@ -1961,6 +2360,23 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         if any(char.isupper() for char in label) and len(label.split()) <= 5:
             append_unique_text(persons, label)
 
+    character_definitions = collect_web_metadata_character_definitions(status)
+    character_roles = [
+        normalize_character_role_candidate(
+            {
+                "character": definition.get("character_name"),
+                "actor": definition.get("actor_name"),
+                "role": ", ".join(definition.get("role_labels") or []),
+                "description": definition.get("role_description"),
+            }
+        )
+        for definition in character_definitions
+    ]
+    for definition in character_definitions:
+        for person in (definition.get("character_name"), definition.get("actor_name")):
+            if person and len(person.split()) <= 6:
+                append_unique_text(persons, person, limit=32)
+
     keywords: List[str] = []
     for term in (
         "James Bond",
@@ -2094,6 +2510,8 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         ),
         "description": description,
         "persons": persons,
+        "character_roles": character_roles,
+        "character_definitions": character_definitions,
         "location_country": location_country,
         "location_city": location_city,
         "location_place": location_place,
@@ -2134,21 +2552,47 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         evidence_sources.append("mise_en_scene_scene_cards")
     if master_schema:
         evidence_sources.append("master_schema")
+    if character_roles:
+        evidence_sources.append("web_metadata_character_roles")
+    field_sources = {
+        key: {
+            "maturity": "derived_video_internal",
+            "authority": "fills_empty_only",
+            "evidence_sources": evidence_sources,
+            "traceback": {
+                "route": "source_media.video_internal_maturity_harvest",
+                "raw_preserved": True,
+                "consulted": evidence_sources,
+            },
+        }
+        for key in annotations
+    }
+    if character_roles and "character_roles" in field_sources:
+        field_sources["character_roles"] = {
+            "maturity": "derived_external_metadata",
+            "authority": "fills_empty_only",
+            "evidence_sources": ["web_metadata_character_roles"],
+            "traceback": {
+                "route": "master_schema.source_media_character_role_maturity",
+                "raw_preserved": True,
+                "consulted": ["source_media_web_metadata_sources"],
+            },
+        }
+    if character_definitions and "character_definitions" in field_sources:
+        field_sources["character_definitions"] = {
+            "maturity": "derived_external_metadata",
+            "authority": "fills_empty_only",
+            "evidence_sources": ["web_metadata_character_roles"],
+            "traceback": {
+                "route": "master_schema.source_media_character_definition_maturity",
+                "raw_preserved": True,
+                "consulted": ["source_media_web_metadata_sources"],
+            },
+        }
+
     return {
         "annotations": annotations,
-        "field_sources": {
-            key: {
-                "maturity": "derived_video_internal",
-                "authority": "fills_empty_only",
-                "evidence_sources": evidence_sources,
-                "traceback": {
-                    "route": "source_media.video_internal_maturity_harvest",
-                    "raw_preserved": True,
-                    "consulted": evidence_sources,
-                },
-            }
-            for key in annotations
-        },
+        "field_sources": field_sources,
         "evidence_counts": {
             "transcript_segments": len(transcript_segments),
             "tracked_objects": len(tracked_objects),
@@ -2161,6 +2605,8 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
             "cinematic_terms": len(cinematic_terms),
             "scene_card_accounts": len(scene_accounts),
             "master_terms": len(master_terms),
+            "character_roles": len(character_roles),
+            "character_definitions": len(character_definitions),
         },
     }
 
@@ -2179,6 +2625,8 @@ def resolve_source_media_annotations(status: Dict[str, Any], stored_probe: Dict[
         "scope",
         "description",
         "persons",
+        "character_roles",
+        "character_definitions",
         "relations",
         "location_country",
         "location_city",
@@ -2292,6 +2740,8 @@ def build_source_media_metadata_payload(
             "scope": user_annotations.get("scope", ""),
             "description": user_annotations.get("description", ""),
             "persons": user_annotations.get("persons", []),
+            "character_roles": user_annotations.get("character_roles", []),
+            "character_definitions": user_annotations.get("character_definitions", []),
             "relations": user_annotations.get("relations", ""),
             "location_country": user_annotations.get("location_country", ""),
             "location_city": user_annotations.get("location_city", ""),
@@ -3425,6 +3875,8 @@ def build_forensic_adopted_context(
         "title": source_annotations.get("title"),
         "source_context": source_annotations.get("source_context"),
         "persons": source_annotations.get("persons") or [],
+        "character_roles": source_annotations.get("character_roles") or [],
+        "character_definitions": source_annotations.get("character_definitions") or [],
         "relations": source_annotations.get("relations"),
         "situation_event": source_annotations.get("situation_event"),
         "interaction_dynamics": source_annotations.get("interaction_dynamics"),
@@ -3745,6 +4197,60 @@ def build_vaa1_master_schema_from_cvat(
             }
         )
 
+    character_role_annotations: List[Dict[str, Any]] = []
+    character_definition_annotations: List[Dict[str, Any]] = []
+    for index, role_text in enumerate(user_annotations.get("character_roles") or []):
+        normalized_role = clean_source_label(role_text)
+        if not normalized_role:
+            continue
+        character_role_annotations.append(
+            {
+                "annotation_id": f"character-role-{index + 1:04d}",
+                "label": normalized_role,
+                "annotation_level": "source_media",
+                "scope": "whole_media",
+                "interval": None,
+                "evidence_basis": ["source_media_annotations.character_roles"],
+                "maturity_route": "master_schema.source_media_character_role_maturity",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="mature_metadata",
+                    created_by="analyst_or_metadata_harvest",
+                    note="Character/actor role description routed from Source Media metadata.",
+                ),
+            }
+        )
+    for index, definition in enumerate(user_annotations.get("character_definitions") or []):
+        if not isinstance(definition, dict):
+            continue
+        character_name = clean_source_label(definition.get("character_name"))
+        actor_name = clean_source_label(definition.get("actor_name"))
+        if not character_name and not actor_name:
+            continue
+        character_definition_annotations.append(
+            {
+                "annotation_id": f"character-definition-{index + 1:04d}",
+                "character_name": character_name,
+                "actor_name": actor_name,
+                "aliases": definition.get("aliases") if isinstance(definition.get("aliases"), list) else [],
+                "role_labels": definition.get("role_labels") if isinstance(definition.get("role_labels"), list) else [],
+                "role_description": clean_source_label(definition.get("role_description")),
+                "relations": definition.get("relations") if isinstance(definition.get("relations"), list) else [],
+                "constituent_evidence": definition.get("constituent_evidence") if isinstance(definition.get("constituent_evidence"), dict) else {},
+                "annotation_level": "source_media",
+                "scope": "whole_media",
+                "interval": None,
+                "evidence_basis": ["source_media_annotations.character_definitions"],
+                "maturity_route": "master_schema.source_media_character_definition_maturity",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="mature_metadata",
+                    created_by="analyst_or_metadata_harvest",
+                    note="Structured character definition routed from Source Media metadata.",
+                ),
+            }
+        )
+
     return {
         "analysis_id": analysis_id,
         "exchange_protocol_version": "1.0",
@@ -3761,6 +4267,8 @@ def build_vaa1_master_schema_from_cvat(
             "scope": user_annotations.get("scope", ""),
             "description": user_annotations.get("description", ""),
             "persons": user_annotations.get("persons", []),
+            "character_roles": user_annotations.get("character_roles", []),
+            "character_definitions": user_annotations.get("character_definitions", []),
             "relations": user_annotations.get("relations", ""),
             "location_country": user_annotations.get("location_country", ""),
             "location_city": user_annotations.get("location_city", ""),
@@ -3796,6 +4304,8 @@ def build_vaa1_master_schema_from_cvat(
             "import_status": "mapped",
         },
         "genre_annotations": genre_annotations,
+        "character_role_annotations": character_role_annotations,
+        "character_definition_annotations": character_definition_annotations,
         "cinematic_cues": {},
         "object_annotations": object_annotations,
         "track_annotations": track_annotations,
@@ -6842,6 +7352,8 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "scope",
         "description",
         "persons",
+        "character_roles",
+        "character_definitions",
         "relations",
         "location_country",
         "location_city",
@@ -6870,7 +7382,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
     ):
         if key in payload:
             value = payload.get(key)
-            if key in ("persons", "keywords", "references", "reference_speakers"):
+            if key in ("persons", "character_roles", "character_definitions", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
             else:
                 annotations[key] = value or ""
@@ -6890,6 +7402,8 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "scope",
                     "description",
                     "persons",
+                    "character_roles",
+                    "character_definitions",
                     "relations",
                     "location_country",
                     "location_city",

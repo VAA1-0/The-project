@@ -131,9 +131,24 @@ type WebProductionCrewRole = {
   department?: string;
 };
 
-function formatCandidateValue(value: unknown): string {
+type CharacterDefinition = NonNullable<
+  NonNullable<SourceMediaMetadata["user_annotations"]>["character_definitions"]
+>[number];
+
+const displayedWebCandidateFields = new Set([
+  "title",
+  "description",
+  "character_roles",
+  "production_crew",
+  "persons",
+  "places",
+  "dates",
+  "keywords",
+]);
+
+function formatCandidateValue(value: unknown, separator = ", "): string {
   if (Array.isArray(value)) {
-    return value.map((item) => String(item).trim()).filter(Boolean).join(", ");
+    return value.map((item) => String(item).trim()).filter(Boolean).join(separator);
   }
   if (value === null || value === undefined) {
     return "";
@@ -145,18 +160,49 @@ function sameCandidateValue(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
-function formatWebCharacterRole(role: WebCharacterRole): string {
+function formatWebCharacterRoleForGovernedField(role: WebCharacterRole): string {
   const actor = String(role?.actor || "").trim();
   const character = String(role?.character || "").trim();
   const roleLabel = String(role?.role || "").trim();
   const description = String(role?.description || "").trim();
-  const head = [character, actor ? `(${actor})` : ""].filter(Boolean).join(" ");
+  const head = actor ? `${character || "Unspecified character"} (${actor})` : character;
   const tail = [roleLabel, description].filter(Boolean).join("; ");
   return [head, tail].filter(Boolean).join(": ");
 }
 
 function formatWebProductionCrew(role: WebProductionCrewRole): string {
   return [role?.person, role?.department].filter(Boolean).join(": ");
+}
+
+function visibleWebMetadataCandidates(source: WebMetadataSource) {
+  return (source.candidates || []).filter(
+    (candidate) => !displayedWebCandidateFields.has(candidate.field || ""),
+  );
+}
+
+function mergeCsvValues(current: string, incoming: string[]): string {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  [...current.split(","), ...incoming].forEach((value) => {
+    const cleaned = value.trim();
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    values.push(cleaned);
+  });
+  return values.join(", ");
+}
+
+function formatCharacterDefinition(definition: CharacterDefinition): string {
+  const character = String(definition.character_name || "").trim();
+  const actor = String(definition.actor_name || "").trim();
+  const roles = (definition.role_labels || []).filter(Boolean).join(", ");
+  const description = String(definition.role_description || "").trim();
+  const head = actor ? `${character || "Unspecified character"} (${actor})` : character;
+  const tail = [roles, description].filter(Boolean).join("; ");
+  return [head, tail].filter(Boolean).join(": ");
 }
 
 export default function SourceMediaMetadataPanel() {
@@ -170,6 +216,7 @@ export default function SourceMediaMetadataPanel() {
   const [scope, setScope] = useState("");
   const [description, setDescription] = useState("");
   const [persons, setPersons] = useState("");
+  const [characterRoles, setCharacterRoles] = useState("");
   const [relations, setRelations] = useState("");
   const [locationCountry, setLocationCountry] = useState("");
   const [locationCity, setLocationCity] = useState("");
@@ -196,6 +243,7 @@ export default function SourceMediaMetadataPanel() {
   const [webMetadataUrl, setWebMetadataUrl] = useState("");
   const [isHarvestingWebMetadata, setIsHarvestingWebMetadata] = useState(false);
   const [webMetadataActionId, setWebMetadataActionId] = useState<string | null>(null);
+  const [webRoleEdits, setWebRoleEdits] = useState<Record<string, WebCharacterRole[]>>({});
   const [referenceRelation, setReferenceRelation] = useState("");
   const [referenceSource, setReferenceSource] = useState("");
   const [confidence, setConfidence] = useState("");
@@ -243,6 +291,7 @@ export default function SourceMediaMetadataPanel() {
         setScope("");
         setDescription("");
         setPersons("");
+        setCharacterRoles("");
         setRelations("");
         setLocationCountry("");
         setLocationCity("");
@@ -267,6 +316,7 @@ export default function SourceMediaMetadataPanel() {
         setReferenceUploadFiles([]);
         setWebMetadataUrl("");
         setWebMetadataActionId(null);
+        setWebRoleEdits({});
         setReferenceRelation("");
         setReferenceSource("");
         setConfidence("");
@@ -292,6 +342,7 @@ export default function SourceMediaMetadataPanel() {
         setScope(nextMetadata.user_annotations?.scope || "");
         setDescription(nextMetadata.user_annotations?.description || "");
         setPersons((nextMetadata.user_annotations?.persons || []).join(", "));
+        setCharacterRoles((nextMetadata.user_annotations?.character_roles || []).join("\n"));
         setRelations(nextMetadata.user_annotations?.relations || "");
         setLocationCountry(nextMetadata.user_annotations?.location_country || "");
         setLocationCity(nextMetadata.user_annotations?.location_city || "");
@@ -381,6 +432,10 @@ export default function SourceMediaMetadataPanel() {
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean),
+        character_roles: characterRoles
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
         relations,
         location_country: locationCountry,
         location_city: locationCity,
@@ -438,6 +493,89 @@ export default function SourceMediaMetadataPanel() {
     }
   };
 
+  const saveMetadataPatch = async (
+    patch: Parameters<typeof apiService.updateSourceMediaMetadata>[1],
+    message: string,
+  ) => {
+    if (!videoId) {
+      return;
+    }
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      const saved = await apiService.updateSourceMediaMetadata(videoId, {
+        editor_notes: editorNotes,
+        source_context: sourceContext,
+        provenance_notes: provenanceNotes,
+        title: userTitle,
+        scope,
+        description,
+        persons: persons
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        character_roles: characterRoles
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        relations,
+        location_country: locationCountry,
+        location_city: locationCity,
+        location_place: locationPlace,
+        location_room: locationRoom,
+        time_era: timeEra,
+        time_year: timeYear,
+        time_moment: timeMoment,
+        situation_event: situationEvent,
+        keywords: keywords
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        interaction_dynamics: interactionDynamics,
+        narrative_development: narrativeDevelopment,
+        performance_expression: performanceExpression,
+        genre,
+        genre_subtype: genreSubtype,
+        situational_genre: situationalGenre,
+        situational_subtype: situationalSubtype,
+        privacy_axis: privacyAxis,
+        expertise_axis: expertiseAxis,
+        references: references
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        reference_speakers: referenceSpeakers
+          .map((speaker) => ({
+            speaker_label: speaker.speaker_label.trim(),
+            identity_label: speaker.identity_label.trim(),
+            relation: speaker.relation.trim(),
+            reference_file: speaker.reference_file.trim(),
+            notes: speaker.notes.trim(),
+          }))
+          .filter(
+            (speaker) =>
+              speaker.speaker_label ||
+              speaker.identity_label ||
+              speaker.reference_file ||
+              speaker.notes,
+          ),
+        reference_relation: referenceRelation,
+        reference_source: referenceSource,
+        confidence,
+        notes,
+        ...patch,
+      });
+      setMetadata(saved);
+      setSaveMessage(message);
+      window.setTimeout(() => setSaveMessage(null), 2200);
+    } catch (error) {
+      console.error("Failed to save source media metadata patch:", error);
+      setSaveMessage("Could not save metadata update.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const addReferenceSpeaker = () => {
     setReferenceSpeakers((current) => [
       ...current,
@@ -467,6 +605,44 @@ export default function SourceMediaMetadataPanel() {
     setReferenceSpeakers((current) =>
       current.filter((_, speakerIndex) => speakerIndex !== index),
     );
+  };
+
+  const sourceRoleKey = (source: WebMetadataSource, index: number) =>
+    source.id || source.url || `source-${index}`;
+
+  const getEditableWebRoles = (source: WebMetadataSource, sourceIndex: number) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    return webRoleEdits[key] || source.fields?.character_roles || [];
+  };
+
+  const updateEditableWebRole = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    roleIndex: number,
+    field: keyof WebCharacterRole,
+    value: string,
+  ) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    const baseRoles = webRoleEdits[key] || source.fields?.character_roles || [];
+    setWebRoleEdits((current) => ({
+      ...current,
+      [key]: baseRoles.map((role, index) =>
+        index === roleIndex ? { ...role, [field]: value } : role,
+      ),
+    }));
+  };
+
+  const dropEditableWebRole = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+    roleIndex: number,
+  ) => {
+    const key = sourceRoleKey(source, sourceIndex);
+    const baseRoles = webRoleEdits[key] || source.fields?.character_roles || [];
+    setWebRoleEdits((current) => ({
+      ...current,
+      [key]: baseRoles.filter((_, index) => index !== roleIndex),
+    }));
   };
 
   const uploadReferenceFiles = async () => {
@@ -711,6 +887,7 @@ export default function SourceMediaMetadataPanel() {
     ["Filesystem modified", metadata?.filesystem_modified_at],
   ] as const;
   const characterSupport = deriveCharacterDetectionSupport(metadata);
+  const characterDefinitions = metadata?.user_annotations?.character_definitions || [];
   const referenceFiles = metadata?.user_annotations?.reference_files || [];
   const webMetadataPreferenceRank: Record<WebMetadataPreference, number> = {
     main: 0,
@@ -751,6 +928,7 @@ export default function SourceMediaMetadataPanel() {
   ] as const;
   const maturityHighlights = [
     ["Situation / event", situationEvent],
+    ["Character roles", characterRoles],
     ["Keywords", keywords],
     ["Interaction", interactionDynamics],
     ["Narrative", narrativeDevelopment],
@@ -759,6 +937,7 @@ export default function SourceMediaMetadataPanel() {
   const candidateFieldConfig = [
     { key: "title", label: "Title", current: userTitle },
     { key: "persons", label: "People / roles", current: persons },
+    { key: "character_roles", label: "Character roles", current: characterRoles },
     { key: "location_place", label: "Place", current: locationPlace },
     { key: "location_city", label: "City", current: locationCity },
     { key: "location_country", label: "Country", current: locationCountry },
@@ -780,6 +959,7 @@ export default function SourceMediaMetadataPanel() {
     .map((field) => {
       const suggestion = formatCandidateValue(
         metadata?.video_internal_harvest?.annotations?.[field.key],
+        field.key === "character_roles" ? "\n" : ", ",
       );
       if (!suggestion || sameCandidateValue(field.current, suggestion)) {
         return null;
@@ -802,6 +982,7 @@ export default function SourceMediaMetadataPanel() {
   const applyMaturityCandidate = (key: string, suggestion: string) => {
     if (key === "title") setUserTitle(suggestion);
     else if (key === "persons") setPersons(suggestion);
+    else if (key === "character_roles") setCharacterRoles(suggestion);
     else if (key === "location_place") setLocationPlace(suggestion);
     else if (key === "location_city") setLocationCity(suggestion);
     else if (key === "location_country") setLocationCountry(suggestion);
@@ -825,6 +1006,50 @@ export default function SourceMediaMetadataPanel() {
         applyMaturityCandidate(row.key, row.suggestion);
       }
     });
+  };
+  const applyWebSourceNarrativeMetadata = (
+    source: WebMetadataSource,
+    sourceIndex: number,
+  ) => {
+    const fields = source.fields || {};
+    const roles = getEditableWebRoles(source, sourceIndex);
+    const roleLines = roles
+      .map(formatWebCharacterRoleForGovernedField)
+      .filter(Boolean);
+    const nextPersons = mergeCsvValues(persons, fields.persons || []);
+    const nextKeywords = mergeCsvValues(keywords, fields.keywords || []);
+    const worldTerms = [...(fields.places || []), ...(fields.dates || [])];
+    const nextSourceContext =
+      worldTerms.length > 0 && !sourceContext.trim()
+        ? `Web narrative-world cues: ${worldTerms.join(", ")}`
+        : sourceContext;
+    if (roleLines.length > 0) {
+      setCharacterRoles(roleLines.join("\n"));
+    }
+    if (fields.persons?.length) {
+      setPersons(nextPersons);
+    }
+    if (fields.keywords?.length) {
+      setKeywords(nextKeywords);
+    }
+    if (nextSourceContext !== sourceContext) {
+      setSourceContext(nextSourceContext);
+    }
+    void saveMetadataPatch(
+      {
+        persons: nextPersons
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        character_roles: roleLines,
+        keywords: nextKeywords
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        source_context: nextSourceContext,
+      },
+      "Web narrative metadata saved to governed fields.",
+    );
   };
   const refreshMetadata = () => {
     setRefreshNonce((value) => value + 1);
@@ -909,6 +1134,16 @@ export default function SourceMediaMetadataPanel() {
                   onChange={(e) => setPersons(e.target.value)}
                   placeholder="Comma separated"
                   className={compactInputClass}
+                />
+              </label>
+              <label className="block md:col-span-2">
+                <div className={fieldLabelClass}>Character roles</div>
+                <textarea
+                  value={characterRoles}
+                  onChange={(e) => setCharacterRoles(e.target.value)}
+                  placeholder="Character (actor): role; description"
+                  rows={2}
+                  className={compactTextareaClass}
                 />
               </label>
               <label className="block">
@@ -1017,6 +1252,38 @@ export default function SourceMediaMetadataPanel() {
             </div>
             {saveMessage ? (
               <div className="mt-2 text-xs text-slate-400">{saveMessage}</div>
+            ) : null}
+            {characterDefinitions.length > 0 ? (
+              <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                    Character Schema
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    {characterDefinitions.length} definitions
+                  </div>
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {characterDefinitions.slice(0, 6).map((definition, index) => (
+                    <div
+                      key={`${definition.character_name || "character"}-${definition.actor_name || index}`}
+                      className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
+                    >
+                      <div className="text-xs text-slate-100">
+                        {formatCharacterDefinition(definition) || "Unspecified character"}
+                      </div>
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        {definition.maturity_route || "master_schema.source_media_character_definition_maturity"}
+                      </div>
+                      {definition.source_url ? (
+                        <div className="mt-1 truncate text-[10px] text-slate-600">
+                          {definition.source_preference || "supporting"}: {definition.source_url}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : null}
             {maturityHighlights.length > 0 ? (
               <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
@@ -1239,7 +1506,7 @@ export default function SourceMediaMetadataPanel() {
                     </div>
                   </div>
                   <div className="mt-2 space-y-2">
-                    {webMetadataSources.map((source) => (
+                    {webMetadataSources.map((source, sourceIndex) => (
                       <details
                         key={source.id || source.url}
                         className="rounded border border-slate-800 bg-slate-900/35"
@@ -1328,11 +1595,88 @@ export default function SourceMediaMetadataPanel() {
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
                               <div className={fieldLabelClass}>Cast / character roles</div>
-                              <div className="max-h-32 overflow-y-auto whitespace-pre-wrap pr-1 text-xs leading-relaxed text-slate-300">
-                                {(source.fields?.character_roles || [])
-                                  .map(formatWebCharacterRole)
-                                  .filter(Boolean)
-                                  .join("\n") || "Not available"}
+                              <div className="max-h-56 space-y-1 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
+                                {getEditableWebRoles(source, sourceIndex).length > 0 ? (
+                                  getEditableWebRoles(source, sourceIndex).map((role, index) => (
+                                    <div
+                                      key={`${role.character || "character"}-${role.actor || index}`}
+                                      className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="grid flex-1 gap-1 sm:grid-cols-2">
+                                          <input
+                                            value={role.character || ""}
+                                            onChange={(event) =>
+                                              updateEditableWebRole(
+                                                source,
+                                                sourceIndex,
+                                                index,
+                                                "character",
+                                                event.target.value,
+                                              )
+                                            }
+                                            placeholder="Character"
+                                            className="min-w-0 rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] font-medium text-slate-100 outline-none focus:border-cyan-500/50"
+                                          />
+                                          <input
+                                            value={role.actor || ""}
+                                            onChange={(event) =>
+                                              updateEditableWebRole(
+                                                source,
+                                                sourceIndex,
+                                                index,
+                                                "actor",
+                                                event.target.value,
+                                              )
+                                            }
+                                            placeholder="Actor"
+                                            className="min-w-0 rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-cyan-500/50"
+                                          />
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            dropEditableWebRole(source, sourceIndex, index)
+                                          }
+                                          className="rounded border border-rose-500/25 px-1.5 py-1 text-[10px] text-rose-100 transition hover:bg-rose-950/25"
+                                        >
+                                          Drop
+                                        </button>
+                                      </div>
+                                      <input
+                                        value={role.role || ""}
+                                        onChange={(event) =>
+                                          updateEditableWebRole(
+                                            source,
+                                            sourceIndex,
+                                            index,
+                                            "role",
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="Role labels, comma separated"
+                                        className="mt-1 w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-cyan-100/80 outline-none focus:border-cyan-500/50"
+                                      />
+                                      <textarea
+                                        value={role.description || ""}
+                                        onChange={(event) =>
+                                          updateEditableWebRole(
+                                            source,
+                                            sourceIndex,
+                                            index,
+                                            "description",
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="Short role description"
+                                        rows={2}
+                                        className="mt-1 w-full rounded border border-slate-800 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-400 outline-none focus:border-cyan-500/50"
+                                      />
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div>Not available</div>
+                                )}
                               </div>
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
@@ -1345,7 +1689,7 @@ export default function SourceMediaMetadataPanel() {
                               </div>
                             </div>
                             <div className="rounded bg-slate-950/30 px-2 py-1.5">
-                              <div className={fieldLabelClass}>People / places / dates</div>
+                              <div className={fieldLabelClass}>Narrative agents / world</div>
                               <div className="max-h-28 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
                                 {[
                                   ...(source.fields?.persons || []),
@@ -1354,8 +1698,31 @@ export default function SourceMediaMetadataPanel() {
                                 ].join(", ") || "Not available"}
                               </div>
                             </div>
+                            <div className="rounded bg-slate-950/30 px-2 py-1.5 md:col-span-2">
+                              <div className={fieldLabelClass}>Operational cues</div>
+                              <div className="max-h-20 overflow-y-auto pr-1 text-xs leading-relaxed text-slate-300">
+                                {(source.fields?.keywords || []).join(", ") || "Not available"}
+                              </div>
+                            </div>
                           </div>
-                          {(source.candidates || []).length > 0 ? (
+                          {(source.fields?.character_roles || []).length > 0 ||
+                          (source.fields?.persons || []).length > 0 ||
+                          (source.fields?.keywords || []).length > 0 ? (
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/10 bg-slate-950/20 px-2 py-2">
+                              <div className="text-[11px] text-slate-500">
+                                Stage narrative agents, roles, and operational cues into governed metadata before saving.
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isSaving}
+                                onClick={() => applyWebSourceNarrativeMetadata(source, sourceIndex)}
+                                className="rounded border border-cyan-500/30 px-2 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isSaving ? "Saving..." : "Use narrative metadata"}
+                              </button>
+                            </div>
+                          ) : null}
+                          {visibleWebMetadataCandidates(source).length > 0 ? (
                             <div className="mt-2 overflow-x-auto">
                               <table className="w-full min-w-[620px] border-separate border-spacing-y-1 text-left text-xs">
                                 <thead className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -1367,7 +1734,7 @@ export default function SourceMediaMetadataPanel() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {(source.candidates || []).slice(0, 12).map((candidate, index) => (
+                                  {visibleWebMetadataCandidates(source).slice(0, 12).map((candidate, index) => (
                                     <tr
                                       key={`${candidate.field || "field"}-${candidate.value || index}`}
                                       className="bg-slate-900/40"
@@ -1584,6 +1951,18 @@ export default function SourceMediaMetadataPanel() {
                   value={persons}
                   onChange={(e) => setPersons(e.target.value)}
                   placeholder="Comma separated"
+                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                />
+              </label>
+              <label className="block">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  Character roles
+                </div>
+                <textarea
+                  value={characterRoles}
+                  onChange={(e) => setCharacterRoles(e.target.value)}
+                  placeholder="One role per line"
+                  rows={3}
                   className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
                 />
               </label>
