@@ -496,6 +496,31 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
             "performed, destabilized",
             annotations["character_definitions"][0]["profile_governance"]["shakespearean_modality_note"],
         )
+        profile = annotations["narrative_agent_profiles"][0]
+        self.assertEqual(profile["profile_type"], "Narrative Agent Profile")
+        self.assertEqual(profile["narrative_agent_name"], "James Bond / 007")
+        self.assertEqual(
+            profile["attached_performer_metadata"]["actor_name"],
+            "Daniel Craig",
+        )
+        self.assertIn("lines", profile["evidence_slots"])
+        self.assertIn("audio_samples", profile["evidence_slots"])
+        self.assertIn("visual_patterns", profile["evidence_slots"])
+        self.assertIn("identification_refs", profile["evidence_slots"])
+        self.assertIn("scene_links", profile["evidence_slots"])
+        self.assertIn("meaning_plot_refs", profile["evidence_slots"])
+        self.assertTrue(
+            any(
+                extension["extension_id"] == "vaa1.base_narrative_agent_profile"
+                for extension in profile["profile_extensions"]
+            )
+        )
+        self.assertIn("interpretive_readings", profile)
+        self.assertEqual(profile["interpretive_readings"][0]["branch"], "base")
+        self.assertEqual(
+            profile["maturity_route"],
+            "master_schema.source_media_narrative_agent_profile_maturity",
+        )
         self.assertIn("James Bond / 007", annotations["persons"])
         self.assertIn("Daniel Craig", annotations["persons"])
         self.assertEqual(maturity["maturity"], "derived_external_metadata")
@@ -505,6 +530,7 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
         )
         self.assertEqual(master_schema["evidence_counts"]["character_roles"], 1)
         self.assertEqual(master_schema["evidence_counts"]["character_definitions"], 1)
+        self.assertEqual(master_schema["evidence_counts"]["narrative_agent_profiles"], 1)
 
     def test_video_internal_maturity_harvest_reads_import_artifact_aliases(self):
         with tempfile.TemporaryDirectory() as tmpdir:

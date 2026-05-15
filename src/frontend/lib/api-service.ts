@@ -784,6 +784,66 @@ export interface SourceMediaMetadata {
       maturity?: string;
       maturity_route?: string;
     }>;
+    narrative_agent_profiles?: Array<{
+      profile_id?: string;
+      profile_type?: string;
+      narrative_agent_name?: string;
+      aliases?: string[];
+      attached_performer_metadata?: {
+        actor_name?: string;
+        boundary?: string;
+      };
+      source_metadata?: {
+        role_labels?: string[];
+        role_description?: string;
+        relations?: string[];
+        source_url?: string;
+        source_preference?: string;
+      };
+      evidence_slots?: {
+        lines?: unknown[];
+        audio_samples?: unknown[];
+        visual_patterns?: unknown[];
+        identification_refs?: unknown[];
+        scene_links?: unknown[];
+        meaning_plot_refs?: unknown[];
+      };
+      dramaturgical_tendencies?: Array<{
+        label?: string;
+        status?: string;
+        confidence?: string;
+        basis?: string;
+      }>;
+      interpretive_readings?: Array<{
+        reading_id?: string;
+        label?: string;
+        branch?: string;
+        status?: string;
+        confidence?: string;
+        summary?: string;
+        evidence_basis?: string[];
+      }>;
+      profile_extensions?: Array<{
+        extension_id?: string;
+        label?: string;
+        status?: string;
+        activation?: string;
+        applies_when?: string[];
+        compartments?: string[];
+      }>;
+      profile_governance?: {
+        profile_type?: string;
+        identity_boundary?: string;
+        actor_boundary?: string;
+        dramatic_archetype_note?: string;
+        shakespearean_modality_note?: string;
+        shakespearean_layers?: string[];
+      };
+      constituent_evidence?: Record<string, unknown>;
+      maturity?: string;
+      maturity_route?: string;
+      traceback?: Record<string, unknown>;
+    }>;
     relations?: string;
     location_country?: string;
     location_city?: string;

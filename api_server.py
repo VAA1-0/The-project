@@ -1095,6 +1095,162 @@ NARRATIVE_AGENT_PROFILE_GOVERNANCE = {
 }
 
 
+NARRATIVE_AGENT_PROFILE_EXTENSION_REGISTRY = [
+    {
+        "extension_id": "vaa1.base_narrative_agent_profile",
+        "label": "Base Narrative Agent Profile",
+        "status": "active",
+        "compartments": [
+            "source_metadata",
+            "lines",
+            "audio_samples",
+            "visual_patterns",
+            "identification_refs",
+            "scene_links",
+            "meaning_plot_refs",
+            "dramaturgical_tendencies",
+            "interpretive_readings",
+        ],
+    },
+    {
+        "extension_id": "vaa1.spy_action_agent_profile",
+        "label": "Spy / Action Narrative Agent Extension",
+        "status": "candidate",
+        "applies_when": ["spy action", "secret agent", "intelligence role", "mission", "MI6", "CIA"],
+        "compartments": [
+            "mission_function",
+            "cover_identity",
+            "agency_affiliation",
+            "threat_relation",
+            "operational_loyalty",
+        ],
+    },
+    {
+        "extension_id": "vaa1.shakespearean_modality_profile",
+        "label": "Shakespearean Modality Extension",
+        "status": "electable",
+        "applies_when": ["status shift", "deception", "wit combat", "soliloquy", "legitimacy struggle"],
+        "compartments": [
+            "character_modes",
+            "relational_dynamics",
+            "scene_modes",
+            "status_dynamics",
+            "linguistic_modes",
+            "polyphony",
+        ],
+    },
+]
+
+
+def slugify_profile_id(value: Any, fallback: str) -> str:
+    cleaned = clean_source_label(value).lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", cleaned).strip("-")
+    return slug or fallback
+
+
+def narrative_agent_profile_extensions(definition: Dict[str, Any]) -> List[Dict[str, Any]]:
+    text = " ".join(
+        [
+            clean_source_label(definition.get("character_name")),
+            clean_source_label(definition.get("actor_name")),
+            clean_source_label(definition.get("role_description")),
+            " ".join(definition.get("role_labels") or []),
+        ]
+    ).lower()
+    extensions: List[Dict[str, Any]] = []
+    for extension in NARRATIVE_AGENT_PROFILE_EXTENSION_REGISTRY:
+        extension_copy = dict(extension)
+        if extension["extension_id"] == "vaa1.base_narrative_agent_profile":
+            extension_copy["activation"] = "base"
+            extensions.append(extension_copy)
+            continue
+        applies_when = extension.get("applies_when") or []
+        if any(clean_source_label(term).lower() in text for term in applies_when):
+            extension_copy["activation"] = "electable_candidate"
+            extensions.append(extension_copy)
+    return extensions
+
+
+def build_narrative_agent_profile(definition: Dict[str, Any], index: int) -> Dict[str, Any]:
+    if not isinstance(definition, dict):
+        return {}
+    character_name = clean_source_label(definition.get("character_name"))
+    actor_name = clean_source_label(definition.get("actor_name"))
+    if not character_name and not actor_name:
+        return {}
+    profile_id = f"narrative-agent-{index + 1:04d}-{slugify_profile_id(character_name or actor_name, str(index + 1))}"
+    source_url = clean_source_label(definition.get("source_url"))
+    source_preference = clean_source_label(definition.get("source_preference")) or "supporting"
+    role_labels = definition.get("role_labels") if isinstance(definition.get("role_labels"), list) else []
+    profile = {
+        "profile_id": profile_id,
+        "profile_type": "Narrative Agent Profile",
+        "narrative_agent_name": character_name,
+        "aliases": definition.get("aliases") if isinstance(definition.get("aliases"), list) else [],
+        "attached_performer_metadata": {
+            "actor_name": actor_name,
+            "boundary": NARRATIVE_AGENT_PROFILE_GOVERNANCE["actor_boundary"],
+        },
+        "source_metadata": {
+            "role_labels": role_labels,
+            "role_description": clean_source_label(definition.get("role_description")),
+            "relations": definition.get("relations") if isinstance(definition.get("relations"), list) else [],
+            "source_url": source_url,
+            "source_preference": source_preference,
+        },
+        "evidence_slots": {
+            "lines": [],
+            "audio_samples": [],
+            "visual_patterns": [],
+            "identification_refs": [],
+            "scene_links": [],
+            "meaning_plot_refs": [],
+        },
+        "dramaturgical_tendencies": [
+            {
+                "label": role_label,
+                "status": "source_metadata_candidate",
+                "confidence": "medium",
+                "basis": "source_media.character_definitions.role_labels",
+            }
+            for role_label in role_labels
+        ],
+        "interpretive_readings": [
+            {
+                "reading_id": "base-source-role-reading",
+                "label": "Source role reading",
+                "branch": "base",
+                "status": "candidate",
+                "confidence": "medium",
+                "summary": "Initial reading seeded from governed external source metadata.",
+                "evidence_basis": ["source_media.character_definitions"],
+            }
+        ],
+        "profile_extensions": narrative_agent_profile_extensions(definition),
+        "profile_governance": definition.get("profile_governance")
+        if isinstance(definition.get("profile_governance"), dict)
+        else NARRATIVE_AGENT_PROFILE_GOVERNANCE,
+        "constituent_evidence": definition.get("constituent_evidence") if isinstance(definition.get("constituent_evidence"), dict) else {},
+        "maturity": "derived_external_metadata",
+        "maturity_route": "master_schema.source_media_narrative_agent_profile_maturity",
+        "traceback": {
+            "route": "master_schema.source_media_narrative_agent_profile_maturity",
+            "raw_preserved": True,
+            "consulted": ["source_media_annotations.character_definitions", "source_media_web_metadata_sources"],
+        },
+    }
+    return {key: item for key, item in profile.items() if annotation_has_value(item)}
+
+
+def build_narrative_agent_profiles(character_definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    profiles: List[Dict[str, Any]] = []
+    for index, definition in enumerate(character_definitions):
+        profile = build_narrative_agent_profile(definition, index)
+        if profile:
+            profiles.append(profile)
+    return profiles
+
+
 def normalize_character_definition(
     value: Any,
     *,
@@ -2385,6 +2541,7 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
             append_unique_text(persons, label)
 
     character_definitions = collect_web_metadata_character_definitions(status)
+    narrative_agent_profiles = build_narrative_agent_profiles(character_definitions)
     character_roles = [
         normalize_character_role_candidate(
             {
@@ -2536,6 +2693,7 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         "persons": persons,
         "character_roles": character_roles,
         "character_definitions": character_definitions,
+        "narrative_agent_profiles": narrative_agent_profiles,
         "location_country": location_country,
         "location_city": location_city,
         "location_place": location_place,
@@ -2578,6 +2736,8 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         evidence_sources.append("master_schema")
     if character_roles:
         evidence_sources.append("web_metadata_character_roles")
+    if narrative_agent_profiles:
+        evidence_sources.append("narrative_agent_profile_seed")
     field_sources = {
         key: {
             "maturity": "derived_video_internal",
@@ -2613,6 +2773,17 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
                 "consulted": ["source_media_web_metadata_sources"],
             },
         }
+    if narrative_agent_profiles and "narrative_agent_profiles" in field_sources:
+        field_sources["narrative_agent_profiles"] = {
+            "maturity": "derived_external_metadata",
+            "authority": "fills_empty_only",
+            "evidence_sources": ["web_metadata_character_roles", "narrative_agent_profile_seed"],
+            "traceback": {
+                "route": "master_schema.source_media_narrative_agent_profile_maturity",
+                "raw_preserved": True,
+                "consulted": ["source_media_annotations.character_definitions", "source_media_web_metadata_sources"],
+            },
+        }
 
     return {
         "annotations": annotations,
@@ -2631,6 +2802,7 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
             "master_terms": len(master_terms),
             "character_roles": len(character_roles),
             "character_definitions": len(character_definitions),
+            "narrative_agent_profiles": len(narrative_agent_profiles),
         },
     }
 
@@ -2651,6 +2823,7 @@ def resolve_source_media_annotations(status: Dict[str, Any], stored_probe: Dict[
         "persons",
         "character_roles",
         "character_definitions",
+        "narrative_agent_profiles",
         "relations",
         "location_country",
         "location_city",
@@ -2766,6 +2939,7 @@ def build_source_media_metadata_payload(
             "persons": user_annotations.get("persons", []),
             "character_roles": user_annotations.get("character_roles", []),
             "character_definitions": user_annotations.get("character_definitions", []),
+            "narrative_agent_profiles": user_annotations.get("narrative_agent_profiles", []),
             "relations": user_annotations.get("relations", ""),
             "location_country": user_annotations.get("location_country", ""),
             "location_city": user_annotations.get("location_city", ""),
@@ -3901,6 +4075,7 @@ def build_forensic_adopted_context(
         "persons": source_annotations.get("persons") or [],
         "character_roles": source_annotations.get("character_roles") or [],
         "character_definitions": source_annotations.get("character_definitions") or [],
+        "narrative_agent_profiles": source_annotations.get("narrative_agent_profiles") or [],
         "relations": source_annotations.get("relations"),
         "situation_event": source_annotations.get("situation_event"),
         "interaction_dynamics": source_annotations.get("interaction_dynamics"),
@@ -4223,6 +4398,7 @@ def build_vaa1_master_schema_from_cvat(
 
     character_role_annotations: List[Dict[str, Any]] = []
     character_definition_annotations: List[Dict[str, Any]] = []
+    narrative_agent_profile_annotations: List[Dict[str, Any]] = []
     narrative_agent_profile_governance = dict(NARRATIVE_AGENT_PROFILE_GOVERNANCE)
     for index, role_text in enumerate(user_annotations.get("character_roles") or []):
         normalized_role = clean_source_label(role_text)
@@ -4242,6 +4418,40 @@ def build_vaa1_master_schema_from_cvat(
                     source_type="mature_metadata",
                     created_by="analyst_or_metadata_harvest",
                     note="Character/actor role description routed from Source Media metadata.",
+                ),
+            }
+        )
+    for index, profile in enumerate(user_annotations.get("narrative_agent_profiles") or []):
+        if not isinstance(profile, dict):
+            continue
+        agent_name = clean_source_label(profile.get("narrative_agent_name"))
+        if not agent_name:
+            continue
+        narrative_agent_profile_annotations.append(
+            {
+                "annotation_id": f"narrative-agent-profile-{index + 1:04d}",
+                "profile_id": clean_source_label(profile.get("profile_id")) or f"narrative-agent-profile-{index + 1:04d}",
+                "profile_type": "Narrative Agent Profile",
+                "narrative_agent_name": agent_name,
+                "aliases": profile.get("aliases") if isinstance(profile.get("aliases"), list) else [],
+                "attached_performer_metadata": profile.get("attached_performer_metadata") if isinstance(profile.get("attached_performer_metadata"), dict) else {},
+                "source_metadata": profile.get("source_metadata") if isinstance(profile.get("source_metadata"), dict) else {},
+                "evidence_slots": profile.get("evidence_slots") if isinstance(profile.get("evidence_slots"), dict) else {},
+                "dramaturgical_tendencies": profile.get("dramaturgical_tendencies") if isinstance(profile.get("dramaturgical_tendencies"), list) else [],
+                "interpretive_readings": profile.get("interpretive_readings") if isinstance(profile.get("interpretive_readings"), list) else [],
+                "profile_extensions": profile.get("profile_extensions") if isinstance(profile.get("profile_extensions"), list) else [],
+                "profile_governance": profile.get("profile_governance") if isinstance(profile.get("profile_governance"), dict) else narrative_agent_profile_governance,
+                "constituent_evidence": profile.get("constituent_evidence") if isinstance(profile.get("constituent_evidence"), dict) else {},
+                "annotation_level": "source_media",
+                "scope": "whole_media",
+                "interval": None,
+                "evidence_basis": ["source_media_annotations.narrative_agent_profiles"],
+                "maturity_route": "master_schema.source_media_narrative_agent_profile_maturity",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="mature_metadata",
+                    created_by="analyst_or_metadata_harvest",
+                    note="Narrative Agent Profile container routed from Source Media metadata.",
                 ),
             }
         )
@@ -4295,6 +4505,7 @@ def build_vaa1_master_schema_from_cvat(
             "persons": user_annotations.get("persons", []),
             "character_roles": user_annotations.get("character_roles", []),
             "character_definitions": user_annotations.get("character_definitions", []),
+            "narrative_agent_profiles": user_annotations.get("narrative_agent_profiles", []),
             "relations": user_annotations.get("relations", ""),
             "location_country": user_annotations.get("location_country", ""),
             "location_city": user_annotations.get("location_city", ""),
@@ -4333,6 +4544,7 @@ def build_vaa1_master_schema_from_cvat(
         "genre_annotations": genre_annotations,
         "character_role_annotations": character_role_annotations,
         "character_definition_annotations": character_definition_annotations,
+        "narrative_agent_profile_annotations": narrative_agent_profile_annotations,
         "cinematic_cues": {},
         "object_annotations": object_annotations,
         "track_annotations": track_annotations,
@@ -7381,6 +7593,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "persons",
         "character_roles",
         "character_definitions",
+        "narrative_agent_profiles",
         "relations",
         "location_country",
         "location_city",
@@ -7409,7 +7622,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
     ):
         if key in payload:
             value = payload.get(key)
-            if key in ("persons", "character_roles", "character_definitions", "keywords", "references", "reference_speakers"):
+            if key in ("persons", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
             else:
                 annotations[key] = value or ""
@@ -7431,6 +7644,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "persons",
                     "character_roles",
                     "character_definitions",
+                    "narrative_agent_profiles",
                     "relations",
                     "location_country",
                     "location_city",

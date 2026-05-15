@@ -137,6 +137,15 @@ Implementation principle:
 
 VAA1 should not operationalize archetypes as identities. It should operationalize dramaturgical tendencies, interactional functions, and scene dynamics. Suggested modalities must always expose the underlying evidence: contradiction frequency, coalition shifts, indirect commands, emotional asymmetry, interruption asymmetry, status movement, turn rhythm, vocal certainty, gaze hierarchy, and other measurable traces.
 
+The base Narrative Agent Profile should remain eclectic. It should host multiple interpretive readings rather than collapse a narrative agent into one preferred interpretation. Dramatic archetypes, Shakespearean modality, genre-specific readings, and analyst-specific readings should remain electable branches until evidence or analyst action activates them.
+
+Genre-specific needs should be handled through profile extensions instead of bloating the base schema. Examples:
+
+- spy/action extension: mission function, cover identity, agency affiliation, threat relation, operational loyalty.
+- Shakespearean modality extension: character modes, relational dynamics, scene modes, status dynamics, linguistic modes, polyphony.
+- political/media extension: legitimacy frame, audience management, coalition movement, public/private persona shift.
+- documentary/interview extension: witness function, testimony relation, credibility cues, institutional position.
+
 Recommended representation:
 
 ```text

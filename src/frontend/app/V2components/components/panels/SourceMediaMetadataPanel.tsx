@@ -135,6 +135,10 @@ type CharacterDefinition = NonNullable<
   NonNullable<SourceMediaMetadata["user_annotations"]>["character_definitions"]
 >[number];
 
+type NarrativeAgentProfile = NonNullable<
+  NonNullable<SourceMediaMetadata["user_annotations"]>["narrative_agent_profiles"]
+>[number];
+
 const displayedWebCandidateFields = new Set([
   "title",
   "description",
@@ -213,6 +217,16 @@ function formatCharacterDefinition(definition: CharacterDefinition): string {
   const description = String(definition.role_description || "").trim();
   const head = actor ? `${character || "Unspecified character"} (${actor})` : character;
   const tail = [roles, description].filter(Boolean).join("; ");
+  return [head, tail].filter(Boolean).join(": ");
+}
+
+function formatNarrativeAgentProfile(profile: NarrativeAgentProfile): string {
+  const agent = String(profile.narrative_agent_name || "").trim();
+  const actor = String(profile.attached_performer_metadata?.actor_name || "").trim();
+  const labels = (profile.source_metadata?.role_labels || []).filter(Boolean).join(", ");
+  const description = String(profile.source_metadata?.role_description || "").trim();
+  const head = actor ? `${agent || "Unspecified agent"} (${actor})` : agent;
+  const tail = [labels, description].filter(Boolean).join("; ");
   return [head, tail].filter(Boolean).join(": ");
 }
 
@@ -899,6 +913,8 @@ export default function SourceMediaMetadataPanel() {
   ] as const;
   const characterSupport = deriveCharacterDetectionSupport(metadata);
   const characterDefinitions = metadata?.user_annotations?.character_definitions || [];
+  const narrativeAgentProfiles = metadata?.user_annotations?.narrative_agent_profiles || [];
+  const narrativeAgentProfileCount = narrativeAgentProfiles.length || characterDefinitions.length;
   const referenceFiles = metadata?.user_annotations?.reference_files || [];
   const webMetadataPreferenceRank: Record<WebMetadataPreference, number> = {
     main: 0,
@@ -1264,14 +1280,14 @@ export default function SourceMediaMetadataPanel() {
             {saveMessage ? (
               <div className="mt-2 text-xs text-slate-400">{saveMessage}</div>
             ) : null}
-            {characterDefinitions.length > 0 ? (
+            {narrativeAgentProfileCount > 0 ? (
               <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
                     Narrative Agent Profiles
                   </div>
                   <div className="text-[10px] text-slate-500">
-                    {characterDefinitions.length} definitions
+                    {narrativeAgentProfileCount} profiles
                   </div>
                 </div>
                 <div className="mt-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[11px] leading-relaxed text-slate-400">
@@ -1282,12 +1298,56 @@ export default function SourceMediaMetadataPanel() {
                   <div className="mt-1 text-cyan-100/70">
                     Shakespearean modality: {narrativeAgentProfileGovernance.shakespeareanModality}
                   </div>
+                  <div className="mt-1 text-cyan-100/70">
+                    Dramatic archetypes remain electable readings. They can branch from the base profile, but they are not imposed as identity labels.
+                  </div>
                   <div className="mt-1 text-slate-500">
                     Operational layers: {narrativeAgentProfileGovernance.layers}
                   </div>
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
-                  {characterDefinitions.slice(0, 6).map((definition, index) => (
+                  {narrativeAgentProfiles.length > 0 ? narrativeAgentProfiles.slice(0, 6).map((profile, index) => (
+                    <div
+                      key={profile.profile_id || `${profile.narrative_agent_name || "agent"}-${index}`}
+                      className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
+                    >
+                      <div className="text-xs text-slate-100">
+                        {formatNarrativeAgentProfile(profile) || "Unspecified narrative agent"}
+                      </div>
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        {profile.maturity_route || "master_schema.source_media_narrative_agent_profile_maturity"}
+                      </div>
+                      {(profile.profile_extensions || []).length > 0 ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {(profile.profile_extensions || []).slice(0, 3).map((extension) => (
+                            <span
+                              key={extension.extension_id || extension.label}
+                              className="rounded border border-cyan-500/15 px-1.5 py-0.5 text-[10px] text-cyan-100/70"
+                            >
+                              {extension.status === "electable" || extension.activation === "electable_candidate"
+                                ? "Electable: "
+                                : ""}
+                              {extension.label || extension.extension_id}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {(profile.interpretive_readings || []).length > 0 ? (
+                        <div className="mt-1 text-[10px] text-slate-500">
+                          Readings: {(profile.interpretive_readings || [])
+                            .map((reading) => [reading.branch, reading.label].filter(Boolean).join(" / "))
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .join("; ")}
+                        </div>
+                      ) : null}
+                      {profile.source_metadata?.source_url ? (
+                        <div className="mt-1 truncate text-[10px] text-slate-600">
+                          {profile.source_metadata?.source_preference || "supporting"}: {profile.source_metadata.source_url}
+                        </div>
+                      ) : null}
+                    </div>
+                  )) : characterDefinitions.slice(0, 6).map((definition, index) => (
                     <div
                       key={`${definition.character_name || "character"}-${definition.actor_name || index}`}
                       className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
@@ -1298,11 +1358,6 @@ export default function SourceMediaMetadataPanel() {
                       <div className="mt-1 text-[10px] text-slate-500">
                         {definition.maturity_route || "master_schema.source_media_character_definition_maturity"}
                       </div>
-                      {definition.source_url ? (
-                        <div className="mt-1 truncate text-[10px] text-slate-600">
-                          {definition.source_preference || "supporting"}: {definition.source_url}
-                        </div>
-                      ) : null}
                     </div>
                   ))}
                 </div>
