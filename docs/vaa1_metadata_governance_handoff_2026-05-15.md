@@ -84,6 +84,59 @@ VAA1 should aim to deliver practical synthesis of dramatic character archetypes 
 
 The key idea: VAA1 should not treat archetypes as rigid literary labels. They should be probabilistic narrative functions, situational roles, relational positions, rhetorical behaviors, and evolving dramaturgical trajectories.
 
+## Narrative Agent Profile Boundary
+
+VAA1 should deliver Narrative Agent Profiles only. It should not build Natural Person Identity Profiles.
+
+The analytic target is the media-internal narrative agent: how the agent appears, speaks, acts, relates, transforms, occupies status, carries plot function, and leaves multimodal evidence across the source artifact.
+
+Actor, performer, speaker, or production metadata may be attached as source metadata, but those records are not the identity object being analyzed.
+
+This boundary is especially important when dramatic archetypes surface in the profile. VAA1 should not say "this person is Hamlet" or "this person is Iago." It should say, for example:
+
+- high resemblance to a tragic hesitation pattern
+- operator-function signals in alliance and rhetoric shifts
+- fool-mediated truth dynamic
+- legitimacy collapse dynamic
+- public role/private self tension
+
+The system should preserve the route:
+
+```text
+evidence -> interaction pattern -> dramaturgical function -> optional interpretive modality
+```
+
+That makes the profile explainable, revisable, and academically defensible.
+
+## Shakespearean Modality For Narrative Agent Profiles
+
+The Shakespearean question is not merely:
+
+```text
+What archetype is this character?
+```
+
+The stronger VAA1 question is:
+
+```text
+How is identity performed, destabilized, revealed, concealed, inverted, or transformed through interaction?
+```
+
+This should become a high-level interpretive ontology for human interaction dynamics, not a decorative literary label.
+
+Operational layers:
+
+- Character modes: tragic hero, political operator, fool, shapeshifting role, Falstaffian vitality, melancholic intellectual, tyrant, sage.
+- Relational dynamics: loyalty/betrayal, appearance/reality, desire/duty, love/power, public role/private self, madness/insight, authority/legitimacy, order/chaos, wit/violence, intimacy/manipulation.
+- Speech modes: soliloquy/self-reflection, repartee/wit combat, public performance speech, irony, metaphor density.
+- Scene modes: court intrigue, comic misrecognition, confession, seduction, betrayal, madness, ritual/coronation, duel, tavern/social release, death/existential closure.
+- Status dynamics: ascent, humiliation, legitimacy, symbolic authority, loss of face, destabilization.
+- Polyphony: competing moral universes inside one interaction space, such as idealist, cynic, pragmatist, romantic, nihilist, loyalist.
+
+Implementation principle:
+
+VAA1 should not operationalize archetypes as identities. It should operationalize dramaturgical tendencies, interactional functions, and scene dynamics. Suggested modalities must always expose the underlying evidence: contradiction frequency, coalition shifts, indirect commands, emotional asymmetry, interruption asymmetry, status movement, turn rhythm, vocal certainty, gaze hierarchy, and other measurable traces.
+
 Recommended representation:
 
 ```text

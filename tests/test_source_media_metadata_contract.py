@@ -484,6 +484,18 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
             annotations["character_definitions"][0]["constituent_evidence"]["actor_name"]["source_field"],
             "fields.character_roles.actor",
         )
+        self.assertEqual(
+            annotations["character_definitions"][0]["profile_governance"]["profile_type"],
+            "Narrative Agent Profile",
+        )
+        self.assertIn(
+            "not natural person identity profiles",
+            annotations["character_definitions"][0]["profile_governance"]["identity_boundary"].lower(),
+        )
+        self.assertIn(
+            "performed, destabilized",
+            annotations["character_definitions"][0]["profile_governance"]["shakespearean_modality_note"],
+        )
         self.assertIn("James Bond / 007", annotations["persons"])
         self.assertIn("Daniel Craig", annotations["persons"])
         self.assertEqual(maturity["maturity"], "derived_external_metadata")

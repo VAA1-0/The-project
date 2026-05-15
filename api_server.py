@@ -1072,6 +1072,29 @@ def split_role_labels(role_label: Any) -> List[str]:
     return labels
 
 
+NARRATIVE_AGENT_PROFILE_GOVERNANCE = {
+    "profile_type": "Narrative Agent Profile",
+    "identity_boundary": "VAA1 profiles media-internal narrative agents, not natural person identity profiles.",
+    "actor_boundary": "Actor/performer data is attached source metadata; it is not the analytic identity target.",
+    "dramatic_archetype_note": (
+        "Dramatic archetypes are governed as probabilistic narrative functions, situational roles, "
+        "relational positions, rhetorical behaviors, and evolving dramaturgical trajectories."
+    ),
+    "shakespearean_modality_note": (
+        "Shakespearean modality asks how identity is performed, destabilized, revealed, concealed, "
+        "inverted, or transformed through interaction. VAA1 should report dramaturgical tendencies "
+        "and interactional functions, not fixed archetypal identities."
+    ),
+    "shakespearean_layers": [
+        "character_modes",
+        "relational_dynamics",
+        "scene_modes",
+        "status_dynamics",
+        "linguistic_modes",
+    ],
+}
+
+
 def normalize_character_definition(
     value: Any,
     *,
@@ -1094,6 +1117,7 @@ def normalize_character_definition(
         "role_labels": role_labels,
         "role_description": role_description,
         "relations": [],
+        "profile_governance": NARRATIVE_AGENT_PROFILE_GOVERNANCE,
         "constituent_evidence": {
             "character_name": {
                 "value": character_name,
@@ -4199,6 +4223,7 @@ def build_vaa1_master_schema_from_cvat(
 
     character_role_annotations: List[Dict[str, Any]] = []
     character_definition_annotations: List[Dict[str, Any]] = []
+    narrative_agent_profile_governance = dict(NARRATIVE_AGENT_PROFILE_GOVERNANCE)
     for index, role_text in enumerate(user_annotations.get("character_roles") or []):
         normalized_role = clean_source_label(role_text)
         if not normalized_role:
@@ -4236,6 +4261,7 @@ def build_vaa1_master_schema_from_cvat(
                 "role_labels": definition.get("role_labels") if isinstance(definition.get("role_labels"), list) else [],
                 "role_description": clean_source_label(definition.get("role_description")),
                 "relations": definition.get("relations") if isinstance(definition.get("relations"), list) else [],
+                "profile_governance": definition.get("profile_governance") if isinstance(definition.get("profile_governance"), dict) else narrative_agent_profile_governance,
                 "constituent_evidence": definition.get("constituent_evidence") if isinstance(definition.get("constituent_evidence"), dict) else {},
                 "annotation_level": "source_media",
                 "scope": "whole_media",
@@ -4303,6 +4329,7 @@ def build_vaa1_master_schema_from_cvat(
             "artifact_media_type": "application/json",
             "import_status": "mapped",
         },
+        "narrative_agent_profile_governance": narrative_agent_profile_governance,
         "genre_annotations": genre_annotations,
         "character_role_annotations": character_role_annotations,
         "character_definition_annotations": character_definition_annotations,

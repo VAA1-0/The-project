@@ -763,6 +763,14 @@ export interface SourceMediaMetadata {
       role_labels?: string[];
       role_description?: string;
       relations?: string[];
+      profile_governance?: {
+        profile_type?: string;
+        identity_boundary?: string;
+        actor_boundary?: string;
+        dramatic_archetype_note?: string;
+        shakespearean_modality_note?: string;
+        shakespearean_layers?: string[];
+      };
       constituent_evidence?: Record<
         string,
         {

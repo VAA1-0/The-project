@@ -146,6 +146,17 @@ const displayedWebCandidateFields = new Set([
   "keywords",
 ]);
 
+const narrativeAgentProfileGovernance = {
+  identityBoundary:
+    "VAA1 delivers Narrative Agent Profiles, not Natural Person Identity Profiles. Actor data remains attached performer metadata.",
+  dramaticArchetypeNote:
+    "Dramatic archetypes are used as probabilistic narrative functions, situational roles, relational positions, rhetorical behaviors, and evolving dramaturgical trajectories.",
+  shakespeareanModality:
+    "Shakespearean modality asks how identity is performed, destabilized, revealed, concealed, inverted, or transformed through interaction.",
+  layers:
+    "Character modes, relational dynamics, scene modes, status dynamics, and linguistic modes.",
+};
+
 function formatCandidateValue(value: unknown, separator = ", "): string {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean).join(separator);
@@ -1257,10 +1268,22 @@ export default function SourceMediaMetadataPanel() {
               <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
-                    Character Schema
+                    Narrative Agent Profiles
                   </div>
                   <div className="text-[10px] text-slate-500">
                     {characterDefinitions.length} definitions
+                  </div>
+                </div>
+                <div className="mt-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[11px] leading-relaxed text-slate-400">
+                  <div>{narrativeAgentProfileGovernance.identityBoundary}</div>
+                  <div className="mt-1">
+                    {narrativeAgentProfileGovernance.dramaticArchetypeNote}
+                  </div>
+                  <div className="mt-1 text-cyan-100/70">
+                    Shakespearean modality: {narrativeAgentProfileGovernance.shakespeareanModality}
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    Operational layers: {narrativeAgentProfileGovernance.layers}
                   </div>
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
