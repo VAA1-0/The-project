@@ -522,6 +522,38 @@ test("video bbox labels consume Master Schema maturity before raw detector label
   );
 });
 
+test("Master Schema surfaces the user-confirmed anchor confirmation program", () => {
+  assert.match(
+    videoService,
+    /export interface MasterSchemaMaturityAudit/,
+    "frontend analysis data must type the Master Schema maturity audit",
+  );
+
+  assert.match(
+    videoService,
+    /masterSchemaMaturityAudit:\s*masterSchemaMaturityAudit\(/,
+    "video service must expose the audit on panel-facing analysis metadata",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /function ConfirmationProgramStrip/,
+    "Master Schema panel must render the confirmation program strip",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /User Confirmed Anchor/,
+    "Master Schema panel must name user-confirmed evidence as the analysis anchor",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Concise Pattern Confirmations/,
+    "Master Schema panel must surface concise program-wide confirmation families",
+  );
+});
+
 test("timestamped overlay geometry stays scoped to one analysis and timestamp", () => {
   assert.match(
     videoPanel,

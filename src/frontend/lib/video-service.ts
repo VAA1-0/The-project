@@ -358,6 +358,29 @@ export interface MasterSchemaResolvedEvidenceView {
   rawArtifactsPreserved: boolean;
 }
 
+export interface MasterSchemaMaturityAudit {
+  audit_schema?: string;
+  updated_at?: string;
+  principle?: string;
+  user_confirmed_anchor?: {
+    principle?: string;
+    authority_priority?: string[];
+    anchor_surfaces?: Array<{
+      surface?: string;
+      status?: string;
+      route?: string;
+    }>;
+  };
+  confirmation_program?: {
+    purpose?: string;
+    confirmation_mode?: string;
+    confirmation_families?: string[];
+    consults_user_confirmed_anchor?: boolean;
+    proliferation_rule?: string;
+  };
+  next_required_hardening?: string[];
+}
+
 type LooseRecord = Record<string, unknown>;
 
 type NativeAnnotationRecord = {
@@ -896,6 +919,12 @@ function masterSchemaObjectRecords(masterSchema: unknown): MasterSchemaResolvedE
     if (record) records.push(record);
   });
   return records;
+}
+
+function masterSchemaMaturityAudit(masterSchema: unknown): MasterSchemaMaturityAudit | undefined {
+  const schema = asLooseRecord(masterSchema);
+  const audit = asLooseRecord(schema?.master_schema_maturity_audit);
+  return audit ? (audit as unknown as MasterSchemaMaturityAudit) : undefined;
 }
 
 function buildMasterSchemaResolvedEvidenceView({
@@ -1849,6 +1878,7 @@ export interface AnalysisData {
   metadata?: {
     sourceName?: string;
     sourceAnnotations?: SourceAnnotationContext;
+    masterSchemaMaturityAudit?: MasterSchemaMaturityAudit;
     yoloDetections: number;
     ocrDetections: number;
     transcriptQuality?: TranscriptDataBundle["quality"];
@@ -3235,6 +3265,9 @@ export class VideoService {
         downloadLinks: status.download_links,
         metadata: {
           sourceName: status.filename,
+          masterSchemaMaturityAudit: masterSchemaMaturityAudit(
+            status.vaa1_annotation_master_schema,
+          ),
           sourceAnnotations: {
             genre: status.source_media_metadata?.user_annotations?.genre,
             genre_subtype: status.source_media_metadata?.user_annotations?.genre_subtype,

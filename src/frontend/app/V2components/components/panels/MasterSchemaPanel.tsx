@@ -453,6 +453,75 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
   );
 }
 
+function formatAuditLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function ConfirmationProgramStrip({ analysisData }: { analysisData: AnalysisData | null }) {
+  const audit = analysisData?.metadata?.masterSchemaMaturityAudit;
+  const anchor = audit?.user_confirmed_anchor;
+  const program = audit?.confirmation_program;
+  if (!anchor && !program) return null;
+  const anchorSurfaces = anchor?.anchor_surfaces || [];
+  const families = program?.confirmation_families || [];
+  return (
+    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+            User Confirmed Anchor
+          </div>
+          <div className="mt-0.5 max-w-3xl text-[10px] text-[var(--ui-passive-text)]">
+            {anchor?.principle ||
+              "User confirmed corrections and annotations anchor mature sense-making."}
+          </div>
+        </div>
+        <div className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100">
+          {program?.consults_user_confirmed_anchor
+            ? "Confirmations consult anchors"
+            : "Anchor consultation pending"}
+        </div>
+      </div>
+      {anchorSurfaces.length > 0 && (
+        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+          {anchorSurfaces.map((surface) => (
+            <div
+              key={surface.surface || surface.route}
+              className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5"
+            >
+              <div className="text-[10px] font-medium text-slate-200">
+                {formatAuditLabel(surface.surface || "anchor surface")}
+              </div>
+              <div className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/80">
+                {surface.status || "pending"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {families.length > 0 && (
+        <div className="mt-2">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400">
+            Concise Pattern Confirmations
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {families.map((family) => (
+              <span
+                key={family}
+                className="rounded border border-slate-700 bg-[#111214] px-2 py-1 text-[10px] text-slate-200"
+              >
+                {formatAuditLabel(family)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function MasterSchemaPanel({
   videoId: initialVideoId = "",
   category,
@@ -830,6 +899,7 @@ export default function MasterSchemaPanel({
         ) : (
           <>
             <MatureEvidenceStrip analysisData={analysisData} />
+            <ConfirmationProgramStrip analysisData={analysisData} />
             <SecondOrderLabelReviewTray
               plan={analysisData?.secondOrderLabelProliferation}
             />
