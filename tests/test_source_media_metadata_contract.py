@@ -616,12 +616,29 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
         )
         self.assertEqual(audit["mature_surfaces"]["object_annotations"], 1)
         self.assertEqual(audit["mature_surfaces"]["narrative_agent_profile_annotations"], 1)
+        self.assertEqual(
+            audit["user_confirmed_anchor"]["authority_priority"][0],
+            "panel_corrections",
+        )
+        self.assertTrue(audit["confirmation_program"]["consults_user_confirmed_anchor"])
+        self.assertIn(
+            "character_audio_trail_recognition",
+            audit["confirmation_program"]["confirmation_families"],
+        )
+        self.assertIn(
+            "mise_en_scene_level_understanding",
+            audit["confirmation_program"]["confirmation_families"],
+        )
         self.assertTrue(
             any(
                 consumer["panel"] == "VideoPanel BBox / ROIBox"
                 and consumer["risk"] == "high"
                 for consumer in audit["panel_consumers"]
             )
+        )
+        self.assertIn(
+            "make every panel consult user-confirmed anchor evidence before raw or inferred claims",
+            audit["next_required_hardening"],
         )
         self.assertIn(
             "make BBox/ROIBox consume Master Schema mature labels first",

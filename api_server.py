@@ -4733,6 +4733,48 @@ def build_master_schema_maturity_audit(
             else []
         ),
     }
+    user_confirmed_anchor = {
+        "principle": "User confirmed corrections and annotations are the anchor evidence for sense-making.",
+        "authority_priority": ["panel_corrections", "bbox_roi_corrections", "metadata_corrections", "manual_annotations"],
+        "anchor_surfaces": [
+            {
+                "surface": "panel_corrections",
+                "status": "active" if mature_surfaces["review_layer_corrections"] else "pending",
+                "route": "master_schema.review_layer.annotation_corrections",
+            },
+            {
+                "surface": "bbox_roi_corrections",
+                "status": "active" if mature_surfaces["object_annotations"] else "pending",
+                "route": "master_schema.object_annotations / track_annotations",
+            },
+            {
+                "surface": "metadata_corrections",
+                "status": "active" if source_annotations else "pending",
+                "route": "master_schema.source_context_snapshot",
+            },
+            {
+                "surface": "narrative_agent_profiles",
+                "status": "active" if mature_surfaces["narrative_agent_profile_annotations"] else "pending",
+                "route": "master_schema.narrative_agent_profile_annotations",
+            },
+        ],
+    }
+    confirmation_program = {
+        "purpose": "Use confirmed anchors to propose concise, program-wide pattern confirmations for broader maturity proliferation.",
+        "confirmation_mode": "concise_analyst_confirmation",
+        "confirmation_families": [
+            "character_audio_trail_recognition",
+            "character_visual_pattern_recognition",
+            "language_name_place_text_confirmation",
+            "narrative_structure_meaning_plot_confirmation",
+            "mise_en_scene_level_understanding",
+        ],
+        "consults_user_confirmed_anchor": True,
+        "proliferation_rule": (
+            "Detected patterns should become wider mature claims only after consulting "
+            "existing user confirmations and preserving traceback to the originating evidence."
+        ),
+    }
     panel_consumers = [
         {"panel": "VideoPanel BBox / ROIBox", "status": "must_consume_master_schema_first", "risk": "high"},
         {"panel": "SourceMediaMetadataPanel", "status": "partially_consumes_maturity", "risk": "medium"},
@@ -4757,10 +4799,14 @@ def build_master_schema_maturity_audit(
         "authority_order": MASTER_SCHEMA_AUTHORITY_ORDER,
         "evidence_producers": producers,
         "mature_surfaces": mature_surfaces,
+        "user_confirmed_anchor": user_confirmed_anchor,
+        "confirmation_program": confirmation_program,
         "panel_consumers": panel_consumers,
         "bypass_risks": bypass_risks,
         "missing_active_surfaces": missing_active_surfaces,
         "next_required_hardening": [
+            "make every panel consult user-confirmed anchor evidence before raw or inferred claims",
+            "surface concise pattern confirmations for character audio trails, visual patterns, language/name/place/text, meaning/plot, and mise-en-scene",
             "make BBox/ROIBox consume Master Schema mature labels first",
             "add in-app traceback viewer for Master Schema evidence refs",
             "add tests proving mature Master Schema data supersedes raw panel data",
