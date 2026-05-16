@@ -346,6 +346,8 @@ export interface MasterSchemaResolvedEvidenceRecord {
   end?: number;
   rawLabel?: string;
   targetId?: string;
+  maturityRoute?: string;
+  mappingStatus?: string;
 }
 
 export interface MasterSchemaResolvedEvidenceView {
@@ -355,6 +357,19 @@ export interface MasterSchemaResolvedEvidenceView {
   updatedAt?: string;
   rawArtifactsPreserved: boolean;
 }
+
+type LooseRecord = Record<string, unknown>;
+
+type NativeAnnotationRecord = {
+  id?: string;
+  category?: string;
+  custom_label?: string;
+  label?: string;
+  open_note?: string;
+  start_seconds?: number;
+  end_seconds?: number;
+  timestamp_seconds?: number;
+};
 
 type IdentityResolvedCandidate = {
   candidate_id?: string;
@@ -771,6 +786,118 @@ function makeResolvedEvidenceCounts(
   );
 }
 
+function asLooseRecord(value: unknown): LooseRecord | null {
+  return value && typeof value === "object" ? (value as LooseRecord) : null;
+}
+
+function looseRecordArray(value: unknown): LooseRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is LooseRecord => Boolean(asLooseRecord(item)))
+    : [];
+}
+
+function looseString(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function masterSchemaIntervalSeconds(interval: unknown): { start?: number; end?: number } {
+  const record = asLooseRecord(interval);
+  if (!record) {
+    return {};
+  }
+  const startCandidates = [
+    record.start_seconds,
+    record.start,
+    record.start_time,
+    record.startTimestamp,
+  ];
+  const endCandidates = [
+    record.end_seconds,
+    record.end,
+    record.end_time,
+    record.endTimestamp,
+  ];
+  const start = startCandidates.map(Number).find((value) => Number.isFinite(value));
+  const end = endCandidates.map(Number).find((value) => Number.isFinite(value));
+  return {
+    start,
+    end: end ?? start,
+  };
+}
+
+function normalizeMasterSchemaTargetId(value: unknown): string | undefined {
+  const raw = String(value ?? "").trim();
+  if (!raw) return undefined;
+  const trackMatch = raw.match(/^track-(.+)$/i);
+  return trackMatch?.[1] || raw;
+}
+
+function resolveMasterSchemaObjectAuthority(item: LooseRecord): MatureEvidenceAuthority {
+  const mapping = asLooseRecord(item.label_mapping);
+  const provenance = asLooseRecord(item.provenance);
+  const mappingStatus = looseString(mapping?.mapping_status).toLowerCase();
+  const sourceType = looseString(provenance?.source_type).toLowerCase();
+  if (sourceType.includes("manual") || mappingStatus.includes("manual")) {
+    return "manual_correction";
+  }
+  if (
+    sourceType.includes("mature") ||
+    mappingStatus.includes("accepted") ||
+    mappingStatus.includes("confirmed") ||
+    mappingStatus.includes("promoted")
+  ) {
+    return "mature_triangulated";
+  }
+  return "interpreted_detection";
+}
+
+function masterSchemaObjectRecord(
+  item: LooseRecord,
+  index: number,
+  kind: "object" | "track",
+): MasterSchemaResolvedEvidenceRecord | null {
+  const mapping = asLooseRecord(item.label_mapping) || {};
+  const label = looseString(mapping.mapped_label || mapping.raw_label || item.label);
+  if (!label) return null;
+  const { start, end } = masterSchemaIntervalSeconds(item.interval);
+  const rawTargetId = kind === "track" ? item.track_id : item.track_id || item.annotation_id;
+  const targetId = normalizeMasterSchemaTargetId(rawTargetId);
+  const annotationId = looseString(item.annotation_id);
+  return {
+    id:
+      kind === "track"
+        ? `master-schema:track:${targetId || index}`
+        : `master-schema:object:${annotationId || index}`,
+    category: "object",
+    label,
+    authority: resolveMasterSchemaObjectAuthority(item),
+    sourcePanel: "MasterSchema",
+    start,
+    end,
+    rawLabel: looseString(mapping.raw_label) || undefined,
+    targetId,
+    maturityRoute: looseString(item.maturity_route) || "master_schema.cvat_annotation_ingest",
+    mappingStatus: looseString(mapping.mapping_status) || undefined,
+  };
+}
+
+function masterSchemaObjectRecords(masterSchema: unknown): MasterSchemaResolvedEvidenceRecord[] {
+  const schema = asLooseRecord(masterSchema);
+  if (!schema) {
+    return [];
+  }
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  looseRecordArray(schema.track_annotations).forEach((item, index) => {
+    const record = masterSchemaObjectRecord(item, index, "track");
+    if (record) records.push(record);
+  });
+  looseRecordArray(schema.object_annotations).forEach((item, index) => {
+    const record = masterSchemaObjectRecord(item, index, "object");
+    if (record) records.push(record);
+  });
+  return records;
+}
+
 function buildMasterSchemaResolvedEvidenceView({
   transcript,
   objects,
@@ -780,17 +907,21 @@ function buildMasterSchemaResolvedEvidenceView({
   corrections,
   identityRefinement,
   secondOrderLabelProliferation,
+  masterSchema,
 }: {
   transcript: TranscriptSegment[];
   objects: DetectedObject[];
   ocr: OCR[];
   expressions: ExpressionSample[];
-  nativeAnnotations: any[];
+  nativeAnnotations: NativeAnnotationRecord[];
   corrections?: AnnotationCorrections | null;
   identityRefinement?: IdentityRefinementStatus | null;
   secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
+  masterSchema?: unknown;
 }): MasterSchemaResolvedEvidenceView {
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
+
+  records.push(...masterSchemaObjectRecords(masterSchema));
 
   transcript.forEach((segment, index) => {
     records.push({
@@ -2700,6 +2831,7 @@ export interface AnalysisStatus {
   identity_refinement?: IdentityRefinementStatus | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
   audio_diarization?: AudioDiarizationScaffold | null;
+  vaa1_annotation_master_schema?: unknown;
   pipeline_type?: string; // This was missing
   analysis_tier?: string;
   modality_focus?: string;
@@ -3072,6 +3204,7 @@ export class VideoService {
         corrections,
         identityRefinement: status.identity_refinement || null,
         secondOrderLabelProliferation: status.second_order_label_proliferation || null,
+        masterSchema: status.vaa1_annotation_master_schema,
       });
 
       const analysisData = {

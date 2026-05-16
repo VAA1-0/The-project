@@ -31,6 +31,7 @@ import {
   openManualAnnotationInVideo,
   openObjectIndicationInVideo,
 } from "@/lib/video-navigation";
+import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
 
 const OBJECT_INDICATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "Action",
@@ -1059,6 +1060,23 @@ export default function OBJDetectionPanel() {
                           </button>
                         </div>
                       )}
+                    <SecondOrderLabelAffirmationChips
+                      plan={analysisData?.secondOrderLabelProliferation}
+                      surface="objects_panel"
+                      targetLabelFamilies={[
+                        "OBJ",
+                        "Identification",
+                        obj.class_name,
+                        obj.displayLabel,
+                        latestLabel,
+                      ]}
+                      timeSpan={{
+                        start: obj.startTimestamp ?? obj.timestamp,
+                        end: obj.endTimestamp ?? obj.timestamp,
+                      }}
+                      compact
+                      limit={2}
+                    />
                     <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
                       Seen {formatPreciseTime(obj.startTimestamp ?? obj.timestamp)}
                       {obj.endTimestamp !== undefined &&

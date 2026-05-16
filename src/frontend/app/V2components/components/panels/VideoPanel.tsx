@@ -8,6 +8,8 @@ import {
   type AnalysisData,
   type DetectedObject,
   type ExpressionSample,
+  type MasterSchemaResolvedEvidenceRecord,
+  type MatureEvidenceAuthority,
   type OCR,
   type VideoMetadata,
   groupDetectedObjectsForDisplay,
@@ -101,6 +103,15 @@ type OverlayBox = {
   w: number;
   h: number;
   sourceItem?: any;
+};
+
+type MatureObjectOverlayLabel = {
+  label: string;
+  rawLabel?: string;
+  authority: MatureEvidenceAuthority;
+  sourcePanel: string;
+  maturityRoute?: string;
+  mappingStatus?: string;
 };
 
 type SelectedIndicationEdit = {
@@ -506,6 +517,111 @@ function normalizeEvidenceLabel(value: unknown): string {
   return String(value || "")
     .trim()
     .toLowerCase();
+}
+
+const MASTER_SCHEMA_OVERLAY_AUTHORITY_RANK: Record<MatureEvidenceAuthority, number> = {
+  manual_correction: 50,
+  manual_annotation: 40,
+  mature_triangulated: 30,
+  interpreted_detection: 20,
+  raw_detection: 10,
+};
+
+function normalizeMasterSchemaObjectTargetId(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const trackMatch = raw.match(/^track-(.+)$/i);
+  return trackMatch?.[1] || raw;
+}
+
+function masterSchemaRecordActiveAtTime(
+  record: MasterSchemaResolvedEvidenceRecord,
+  currentTime: number,
+): boolean {
+  const start = Number(record.start);
+  const end = Number(record.end ?? record.start);
+  if (
+    Number.isFinite(start) &&
+    currentTime < Math.min(start, end) - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+  ) {
+    return false;
+  }
+  if (
+    Number.isFinite(end) &&
+    currentTime > Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function chooseMatureObjectRecord(
+  records: MasterSchemaResolvedEvidenceRecord[],
+): MasterSchemaResolvedEvidenceRecord | undefined {
+  return [...records].sort((left, right) => {
+    const authorityDelta =
+      (MASTER_SCHEMA_OVERLAY_AUTHORITY_RANK[right.authority] || 0) -
+      (MASTER_SCHEMA_OVERLAY_AUTHORITY_RANK[left.authority] || 0);
+    if (authorityDelta) return authorityDelta;
+    const rightIsMaster = right.sourcePanel === "MasterSchema" ? 1 : 0;
+    const leftIsMaster = left.sourcePanel === "MasterSchema" ? 1 : 0;
+    if (rightIsMaster !== leftIsMaster) return rightIsMaster - leftIsMaster;
+    return Number(right.start ?? 0) - Number(left.start ?? 0);
+  })[0];
+}
+
+function buildMatureObjectOverlayLookup(
+  records: MasterSchemaResolvedEvidenceRecord[] | undefined,
+  currentTime: number,
+): {
+  byTrack: Map<string, MatureObjectOverlayLabel>;
+  byRawLabel: Map<string, MatureObjectOverlayLabel>;
+} {
+  const activeObjectRecords = (records || []).filter(
+    (record) =>
+      record.category === "object" &&
+      record.label &&
+      record.authority !== "raw_detection" &&
+      masterSchemaRecordActiveAtTime(record, currentTime),
+  );
+  const groupedByTrack = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
+  const groupedByRawLabel = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
+  activeObjectRecords.forEach((record) => {
+    const trackId = normalizeMasterSchemaObjectTargetId(record.targetId);
+    if (trackId) {
+      groupedByTrack.set(trackId, [...(groupedByTrack.get(trackId) || []), record]);
+    }
+    const rawLabel = normalizeEvidenceLabel(record.rawLabel);
+    if (rawLabel) {
+      groupedByRawLabel.set(rawLabel, [...(groupedByRawLabel.get(rawLabel) || []), record]);
+    }
+  });
+
+  const toOverlayLabel = (
+    record: MasterSchemaResolvedEvidenceRecord,
+  ): MatureObjectOverlayLabel => ({
+    label: record.label,
+    rawLabel: record.rawLabel,
+    authority: record.authority,
+    sourcePanel: record.sourcePanel,
+    maturityRoute: record.maturityRoute,
+    mappingStatus: record.mappingStatus,
+  });
+
+  return {
+    byTrack: new Map(
+      [...groupedByTrack.entries()].flatMap(([trackId, grouped]) => {
+        const selected = chooseMatureObjectRecord(grouped);
+        return selected ? [[trackId, toOverlayLabel(selected)] as const] : [];
+      }),
+    ),
+    byRawLabel: new Map(
+      [...groupedByRawLabel.entries()].flatMap(([label, grouped]) => {
+        const selected = chooseMatureObjectRecord(grouped);
+        return selected ? [[label, toOverlayLabel(selected)] as const] : [];
+      }),
+    ),
+  };
 }
 
 function getManualAnnotationBounds(entry: ManualVisualAnnotation) {
@@ -3368,6 +3484,10 @@ export default function VideoPanel() {
         currentTime <= Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
       );
     });
+    const matureObjectOverlayLookup = buildMatureObjectOverlayLookup(
+      analysisData?.masterSchemaResolvedEvidence?.records,
+      currentTime,
+    );
     const activeManualSpatialOverrides = allManualVisualAnnotations
       .map((item) => {
         if (
@@ -3502,6 +3622,13 @@ export default function VideoPanel() {
           !!manualOverride &&
           (isManualAnnotationVisibleAtTime(manualOverride, currentTime) ||
             isManualAnnotationVisibleInSelectedWorkspace(manualOverride));
+        const sourceLabels = [
+          item.displayLabel,
+          item.class_name,
+          item.raw_class_name,
+          targetId ? `${item.class_name} track ${targetId}` : "",
+          targetId ? `person track ${targetId}` : "",
+        ].map(normalizeEvidenceLabel);
         const localOverride = (() => {
           const targetId = objectTrackTargetId(item);
           return activeLocalObjectLabelOverrides.find((override) => {
@@ -3509,19 +3636,30 @@ export default function VideoPanel() {
               targetId &&
               override.trackId !== undefined &&
               Number(override.trackId) === Number(targetId);
-            const sourceLabels = [
-              item.displayLabel,
-              item.class_name,
-              item.raw_class_name,
-              targetId ? `${item.class_name} track ${targetId}` : "",
-              targetId ? `person track ${targetId}` : "",
-            ].map(normalizeEvidenceLabel);
             const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
             return sameTrack || Boolean(overrideSource && sourceLabels.includes(overrideSource));
           });
         })();
-        const matureProliferatedOverride = (() => {
+        const masterSchemaMatureOverride = (() => {
           if (manualOverrideActive || localOverride) {
+            return undefined;
+          }
+          const trackOverride = targetId
+            ? matureObjectOverlayLookup.byTrack.get(targetId)
+            : undefined;
+          if (trackOverride) {
+            return trackOverride;
+          }
+          for (const sourceLabel of sourceLabels) {
+            const labelOverride = matureObjectOverlayLookup.byRawLabel.get(sourceLabel);
+            if (labelOverride) {
+              return labelOverride;
+            }
+          }
+          return undefined;
+        })();
+        const matureProliferatedOverride = (() => {
+          if (manualOverrideActive || localOverride || masterSchemaMatureOverride) {
             return undefined;
           }
           const trackCandidate = targetId
@@ -3576,6 +3714,7 @@ export default function VideoPanel() {
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
           label: localOverride?.label ||
+            masterSchemaMatureOverride?.label ||
             (matureProliferatedOverride
               ? resolveProliferatedDisplayLabel(matureProliferatedOverride)
               : undefined) ||
@@ -3584,6 +3723,8 @@ export default function VideoPanel() {
             : item.displayLabel || item.class_name),
           color: localOverride || manualOverrideActive
             ? "border-emerald-300/80 bg-emerald-300/10"
+            : masterSchemaMatureOverride
+            ? "border-violet-300/85 bg-violet-300/10"
             : matureProliferatedOverride
             ? "border-sky-300/85 bg-sky-300/10"
             : isFallbackPersonDetection(item)
@@ -3604,6 +3745,12 @@ export default function VideoPanel() {
                   ...item,
                   proliferated_annotation: matureProliferatedOverride,
                   displayLabel: resolveProliferatedDisplayLabel(matureProliferatedOverride),
+                }
+              : masterSchemaMatureOverride
+              ? {
+                  ...item,
+                  master_schema_mature_label: masterSchemaMatureOverride,
+                  displayLabel: masterSchemaMatureOverride.label,
                 }
               : item,
         });
@@ -3751,6 +3898,7 @@ export default function VideoPanel() {
     activeExpressions,
     activeOCR,
     activeRawObjects,
+    analysisData?.masterSchemaResolvedEvidence?.records,
     analysisData?.metadata?.sourceAnnotations,
     allManualVisualAnnotations,
     currentTime,

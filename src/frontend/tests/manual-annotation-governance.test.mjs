@@ -490,6 +490,38 @@ test("linked evidence authority is centralized before panel navigation", () => {
   );
 });
 
+test("video bbox labels consume Master Schema maturity before raw detector labels", () => {
+  assert.match(
+    videoService,
+    /vaa1_annotation_master_schema\?: unknown;/,
+    "analysis status must expose the Master Schema artifact to the frontend service",
+  );
+
+  assert.match(
+    videoService,
+    /records\.push\(\.\.\.masterSchemaObjectRecords\(masterSchema\)\)/,
+    "resolved evidence must include Master Schema object and track records",
+  );
+
+  assert.match(
+    videoPanel,
+    /function buildMatureObjectOverlayLookup/,
+    "VideoPanel must build a mature object lookup from resolved Master Schema evidence",
+  );
+
+  assert.match(
+    videoPanel,
+    /masterSchemaMatureOverride[\s\S]*matureProliferatedOverride/,
+    "BBox overlays must consult Master Schema mature labels before proliferation/raw fallbacks",
+  );
+
+  assert.match(
+    videoPanel,
+    /master_schema_mature_label/,
+    "BBox source items must carry the chosen Master Schema label for traceback",
+  );
+});
+
 test("timestamped overlay geometry stays scoped to one analysis and timestamp", () => {
   assert.match(
     videoPanel,

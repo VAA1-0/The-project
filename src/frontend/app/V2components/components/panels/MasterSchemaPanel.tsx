@@ -22,6 +22,7 @@ import {
   openManualAnnotationInVideo,
 } from "@/lib/video-navigation";
 import { useLayoutHost } from "../LayoutHost";
+import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
   "Action",
@@ -829,6 +830,9 @@ export default function MasterSchemaPanel({
         ) : (
           <>
             <MatureEvidenceStrip analysisData={analysisData} />
+            <SecondOrderLabelReviewTray
+              plan={analysisData?.secondOrderLabelProliferation}
+            />
             <AutomaticEvidenceSection
               category={category}
               analysisData={analysisData}
