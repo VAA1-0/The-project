@@ -69,6 +69,35 @@ raw artifacts
 
 Until that resolved-evidence view is fully centralized, every new panel or report must explicitly apply the same authority order and preserve links back to raw evidence.
 
+## Master Schema Acid Test
+
+The Master Schema is the core maturity coordination layer. VAA1 should not add a competing
+"core" layer beside it. Instead, the Master Schema must carry a visible maturity audit that
+answers:
+
+- which evidence producers currently feed the schema
+- which mature surfaces are populated
+- which panels still risk bypassing the schema
+- which traceback routes and maturity routes are available
+- what hardening work is required next
+
+The acid-test artifact is `master_schema_maturity_audit`.
+
+It should be present in every rebuilt Master Schema payload and should preserve the authority
+order:
+
+```text
+manual correction
+> manual annotation
+> mature triangulated/proliferated indication
+> interpreted automatic detection
+> raw detection
+```
+
+The first hardening target remains the video panel BBox/ROIBox surface, because it is the
+place where mature labels must visibly supersede raw detector labels while raw evidence remains
+available for traceback.
+
 ## Design Constraint
 
 The Master Schema must not become a destructive overwrite layer.

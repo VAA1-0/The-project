@@ -4540,7 +4540,7 @@ def build_vaa1_master_schema_from_cvat(
             }
         )
 
-    return {
+    master_schema_payload = {
         "analysis_id": analysis_id,
         "exchange_protocol_version": "1.0",
         "vaa1_schema_version": "1.0",
@@ -4620,6 +4620,151 @@ def build_vaa1_master_schema_from_cvat(
             ],
             "unresolved_labels": sorted(set(unresolved_labels)),
         },
+    }
+    master_schema_payload["master_schema_maturity_audit"] = build_master_schema_maturity_audit(
+        status=status,
+        master_schema_payload=master_schema_payload,
+    )
+    return master_schema_payload
+
+
+MASTER_SCHEMA_AUTHORITY_ORDER = [
+    "manual_correction",
+    "manual_annotation",
+    "mature_triangulated_or_proliferated",
+    "interpreted_automatic_detection",
+    "raw_detection",
+]
+
+
+def build_master_schema_maturity_audit(
+    *,
+    status: Dict[str, Any],
+    master_schema_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Summarize how mature-data producers and panel consumers relate to Master Schema.
+
+    This is an acid-test artifact, not a second core. The Master Schema remains
+    the mature coordination layer; this audit makes coverage and bypass risk
+    explicit so maturation work can be hardened systematically.
+    """
+
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    internal_artifacts = status.get("internal_artifacts") if isinstance(status.get("internal_artifacts"), dict) else {}
+    source_metadata = status.get("source_media_metadata") if isinstance(status.get("source_media_metadata"), dict) else {}
+    source_annotations = status.get("source_media_annotations") if isinstance(status.get("source_media_annotations"), dict) else {}
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+
+    producers = [
+        {
+            "producer": "source_media_metadata",
+            "status": "active" if source_metadata or source_annotations else "missing",
+            "master_schema_surface": "source_context_snapshot",
+            "maturity_route": "source_media.metadata_maturity",
+        },
+        {
+            "producer": "web_metadata_sources",
+            "status": "active" if status.get("source_media_web_metadata_sources") else "missing",
+            "master_schema_surface": "character_role_annotations / character_definition_annotations / narrative_agent_profile_annotations",
+            "maturity_route": "master_schema.source_media_web_metadata_maturity",
+        },
+        {
+            "producer": "narrative_agent_profiles",
+            "status": "active" if master_schema_payload.get("narrative_agent_profile_annotations") else "missing",
+            "master_schema_surface": "narrative_agent_profile_annotations",
+            "maturity_route": "master_schema.source_media_narrative_agent_profile_maturity",
+        },
+        {
+            "producer": "cvat_manual_annotations",
+            "status": "active" if master_schema_payload.get("object_annotations") or master_schema_payload.get("track_annotations") else "missing",
+            "master_schema_surface": "object_annotations / track_annotations / temporal_segments",
+            "maturity_route": "master_schema.cvat_annotation_ingest",
+        },
+        {
+            "producer": "linked_transcript",
+            "status": "active" if output_files.get("linked_transcript") or internal_artifacts.get("linked_transcript") else "missing",
+            "master_schema_surface": "pending_resolved_transcript_refs",
+            "maturity_route": "master_schema.linked_transcript_maturity",
+        },
+        {
+            "producer": "scene_cards",
+            "status": "active" if internal_artifacts.get("mise_en_scene_scene_cards") or output_files.get("scene_cards") else "missing",
+            "master_schema_surface": "pending_scene_card_refs",
+            "maturity_route": "master_schema.scene_card_maturity",
+        },
+        {
+            "producer": "identity_refinement",
+            "status": "active" if status.get("identity_refinement") or internal_artifacts.get("identity_refinement_candidates") else "missing",
+            "master_schema_surface": "review_layer.annotation_corrections / identity candidate ledgers",
+            "maturity_route": "master_schema.identity_refinement_maturity",
+        },
+        {
+            "producer": "proliferation_candidates",
+            "status": "active" if status.get("second_order_label_proliferation") or internal_artifacts.get("second_order_label_proliferation") else "missing",
+            "master_schema_surface": "pending_candidate_evidence_refs",
+            "maturity_route": "master_schema.proliferation_candidate_maturity",
+        },
+        {
+            "producer": "forensic_render_jobs",
+            "status": "active" if status.get("forensic_render_jobs") else "missing",
+            "master_schema_surface": "pending_forensic_artifact_refs",
+            "maturity_route": "master_schema.forensic_traceback_maturity",
+        },
+        {
+            "producer": "raw_analysis_results",
+            "status": "active" if results else "missing",
+            "master_schema_surface": "raw evidence preserved outside Master Schema until matured",
+            "maturity_route": "raw_evidence_preservation",
+        },
+    ]
+
+    mature_surfaces = {
+        "source_context_snapshot": annotation_has_value(master_schema_payload.get("source_context_snapshot")),
+        "genre_annotations": len(master_schema_payload.get("genre_annotations") or []),
+        "object_annotations": len(master_schema_payload.get("object_annotations") or []),
+        "track_annotations": len(master_schema_payload.get("track_annotations") or []),
+        "temporal_segments": len(master_schema_payload.get("temporal_segments") or []),
+        "character_role_annotations": len(master_schema_payload.get("character_role_annotations") or []),
+        "character_definition_annotations": len(master_schema_payload.get("character_definition_annotations") or []),
+        "narrative_agent_profile_annotations": len(master_schema_payload.get("narrative_agent_profile_annotations") or []),
+        "review_layer_corrections": len(
+            ((master_schema_payload.get("review_layer") or {}).get("annotation_corrections") or [])
+            if isinstance(master_schema_payload.get("review_layer"), dict)
+            else []
+        ),
+    }
+    panel_consumers = [
+        {"panel": "VideoPanel BBox / ROIBox", "status": "must_consume_master_schema_first", "risk": "high"},
+        {"panel": "SourceMediaMetadataPanel", "status": "partially_consumes_maturity", "risk": "medium"},
+        {"panel": "SceneCardPanel", "status": "partially_consumes_master_schema", "risk": "medium"},
+        {"panel": "Identification", "status": "partially_consumes_identity_ledgers", "risk": "medium"},
+        {"panel": "MeaningPlotPanel", "status": "traceback_ready_but_not_master_schema_first", "risk": "medium"},
+        {"panel": "TimeBankPanel", "status": "traceback_ready_but_not_master_schema_first", "risk": "medium"},
+        {"panel": "Tools / Forensic", "status": "traceback_records_exist", "risk": "medium"},
+        {"panel": "Reports / Export", "status": "must_consume_master_schema_first", "risk": "high"},
+    ]
+    missing_active_surfaces = [
+        item["producer"]
+        for item in producers
+        if item["status"] == "missing" and item["producer"] not in {"raw_analysis_results"}
+    ]
+    bypass_risks = [item for item in panel_consumers if item["risk"] in {"high", "medium"}]
+
+    return {
+        "audit_schema": "vaa1.master_schema_maturity_audit.v1",
+        "updated_at": utc_now_iso(),
+        "principle": "Master Schema is the mature-data core; raw evidence remains preserved and traceable.",
+        "authority_order": MASTER_SCHEMA_AUTHORITY_ORDER,
+        "evidence_producers": producers,
+        "mature_surfaces": mature_surfaces,
+        "panel_consumers": panel_consumers,
+        "bypass_risks": bypass_risks,
+        "missing_active_surfaces": missing_active_surfaces,
+        "next_required_hardening": [
+            "make BBox/ROIBox consume Master Schema mature labels first",
+            "add in-app traceback viewer for Master Schema evidence refs",
+            "add tests proving mature Master Schema data supersedes raw panel data",
+        ],
     }
 
 

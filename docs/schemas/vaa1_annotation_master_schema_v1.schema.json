@@ -57,6 +57,35 @@
         "$ref": "#/$defs/genreAnnotation"
       }
     },
+    "narrative_agent_profile_governance": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "character_role_annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "character_definition_annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "narrative_agent_profile_annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "master_schema_maturity_audit": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "cinematic_cues": {
       "$ref": "#/$defs/cinematicCues"
     },
@@ -317,6 +346,23 @@
         "persons": {
           "$ref": "#/$defs/stringArray"
         },
+        "character_roles": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "character_definitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "narrative_agent_profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
         "relations": {
           "type": "string"
         },
@@ -376,6 +422,13 @@
         },
         "references": {
           "$ref": "#/$defs/stringArray"
+        },
+        "reference_speakers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
         },
         "reference_relation": {
           "type": "string"

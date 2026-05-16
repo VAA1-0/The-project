@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from api_server import (
+    build_vaa1_master_schema_from_cvat,
     build_source_media_metadata_payload,
     dedupe_web_metadata_sources,
     extract_embedded_media_metadata,
@@ -542,6 +543,90 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
         self.assertEqual(master_schema["evidence_counts"]["character_roles"], 1)
         self.assertEqual(master_schema["evidence_counts"]["character_definitions"], 1)
         self.assertEqual(master_schema["evidence_counts"]["narrative_agent_profiles"], 1)
+
+    def test_master_schema_carries_maturity_audit_for_system_wide_hardening(self):
+        status = {
+            "analysis_id": "analysis-master-audit",
+            "source_media_annotations": {
+                "title": "No Time To Die",
+                "genre": "movie drama / fiction",
+                "character_roles": [
+                    "James Bond / 007 (Daniel Craig): protagonist, secret agent",
+                ],
+                "character_definitions": [
+                    {
+                        "character_name": "James Bond / 007",
+                        "actor_name": "Daniel Craig",
+                        "role_labels": ["protagonist", "secret agent"],
+                        "role_description": "Former MI6 agent 007",
+                        "profile_governance": {
+                            "profile_type": "Narrative Agent Profile",
+                        },
+                    },
+                ],
+                "narrative_agent_profiles": [
+                    {
+                        "profile_id": "narrative-agent-0001-james-bond",
+                        "narrative_agent_name": "James Bond / 007",
+                        "source_metadata": {
+                            "role_labels": ["protagonist", "secret agent"],
+                        },
+                        "profile_extensions": [
+                            {"extension_id": "vaa1.base_narrative_agent_profile"},
+                        ],
+                    },
+                ],
+            },
+            "source_media_metadata": {"fps": 25},
+            "source_media_web_metadata_sources": [{"id": "wiki-1"}],
+            "output_files": {"linked_transcript": "/tmp/linked_transcript.json"},
+            "internal_artifacts": {"mise_en_scene_scene_cards": "/tmp/scene_cards.json"},
+            "forensic_render_jobs": [{"render_job_id": "render-1"}],
+            "results": {"visual_analysis": {"tracked_objects": [{"label": "person"}]}},
+        }
+
+        master_schema = build_vaa1_master_schema_from_cvat(
+            analysis_id="analysis-master-audit",
+            status=status,
+            task_id=10,
+            job_id=20,
+            cvat_annotations={
+                "shapes": [
+                    {
+                        "label_id": 1,
+                        "frame": 0,
+                        "type": "rectangle",
+                        "points": [10, 20, 30, 40],
+                    }
+                ],
+                "tracks": [],
+            },
+            label_lookup={"1": "person"},
+        )
+
+        audit = master_schema["master_schema_maturity_audit"]
+        self.assertEqual(audit["audit_schema"], "vaa1.master_schema_maturity_audit.v1")
+        self.assertEqual(audit["authority_order"][0], "manual_correction")
+        self.assertTrue(
+            any(
+                producer["producer"] == "web_metadata_sources"
+                and producer["status"] == "active"
+                for producer in audit["evidence_producers"]
+            )
+        )
+        self.assertEqual(audit["mature_surfaces"]["object_annotations"], 1)
+        self.assertEqual(audit["mature_surfaces"]["narrative_agent_profile_annotations"], 1)
+        self.assertTrue(
+            any(
+                consumer["panel"] == "VideoPanel BBox / ROIBox"
+                and consumer["risk"] == "high"
+                for consumer in audit["panel_consumers"]
+            )
+        )
+        self.assertIn(
+            "make BBox/ROIBox consume Master Schema mature labels first",
+            audit["next_required_hardening"],
+        )
 
     def test_video_internal_maturity_harvest_reads_import_artifact_aliases(self):
         with tempfile.TemporaryDirectory() as tmpdir:
