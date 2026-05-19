@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+echo "Starting VAA1 (Lite mode — no CVAT) on macOS..."
+
+# --- Backend API ---
+docker run -d -p 8000:8000 video-analysis-app
+
+# --- Open Dashboard ---
+sleep 5
+open http://localhost:3000/dashboard
+
+# --- Frontend (Browser mode) ---
+echo "Starting VAA1 Frontend..."
+cd src/frontend || exit 1
+npm run dev

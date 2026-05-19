@@ -494,6 +494,24 @@ def _extract_scenes(
     transcript_override: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     transcript = transcript_override if transcript_override is not None else _extract_transcript(status)
+    master_schema = status.get("vaa1_annotation_master_schema")
+    if isinstance(master_schema, dict):
+        master_scenes: List[Dict[str, Any]] = []
+        for index, segment in enumerate(master_schema.get("temporal_segments") or []):
+            if not isinstance(segment, dict):
+                continue
+            family = _safe_text(segment.get("event_family") or segment.get("segment_family")).lower()
+            segment_type = _safe_text(segment.get("segment_type") or segment.get("type")).lower()
+            if "scene" not in family and segment_type != "scene" and not segment.get("scene_id"):
+                continue
+            normalized = dict(segment)
+            normalized.setdefault("scene_index", index + 1)
+            normalized.setdefault("scene_boundary_source", "master_schema_temporal_segments")
+            normalized.setdefault("scene_id", f"{analysis_id}:scene:{index + 1:03d}")
+            master_scenes.append(normalized)
+        if master_scenes:
+            return master_scenes
+
     scenes = _extract_status_list(
         status,
         (

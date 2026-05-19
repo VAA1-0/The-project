@@ -135,6 +135,10 @@ def _metadata_score(source_media_metadata: Optional[Dict[str, Any]], identity_la
     reference_people = annotations.get("reference_people") or []
     reference_speakers = annotations.get("reference_speakers") or []
     expected_names = annotations.get("expected_identities") or []
+    narrative_profiles = annotations.get("narrative_agent_profiles") or []
+    character_definitions = annotations.get("character_definitions") or []
+    character_roles = annotations.get("character_roles") or []
+    persons = annotations.get("persons") or []
 
     evidence_ids: List[str] = []
     score = 0.0
@@ -158,6 +162,39 @@ def _metadata_score(source_media_metadata: Optional[Dict[str, Any]], identity_la
             score = max(score, 0.7)
             evidence_ids.append(f"metadata:expected_identities:{index}")
 
+    for index, profile in enumerate(narrative_profiles):
+        if not isinstance(profile, dict):
+            continue
+        profile_label = _label(profile.get("narrative_agent_name") or profile.get("identity_label"))
+        if profile_label.lower() == identity_label.lower():
+            score = max(score, 0.88)
+            evidence_ids.append(f"metadata:narrative_agent_profiles:{index}")
+
+    for index, definition in enumerate(character_definitions):
+        if isinstance(definition, dict):
+            character_label = _label(definition.get("character_name") or definition.get("name"))
+        else:
+            character_label = _label(str(definition).split(":", 1)[0].split("(", 1)[0])
+        if character_label.lower() == identity_label.lower():
+            score = max(score, 0.82)
+            evidence_ids.append(f"metadata:character_definitions:{index}")
+
+    for index, role in enumerate(character_roles):
+        role_label = _label(str(role).split(":", 1)[0].split("(", 1)[0])
+        if role_label.lower() == identity_label.lower():
+            score = max(score, 0.82)
+            evidence_ids.append(f"metadata:character_roles:{index}")
+
+    for index, person in enumerate(persons):
+        person_label = (
+            _label(person.get("identity_label") or person.get("name"))
+            if isinstance(person, dict)
+            else _label(person)
+        )
+        if person_label.lower() == identity_label.lower():
+            score = max(score, 0.78)
+            evidence_ids.append(f"metadata:persons:{index}")
+
     return {"score": score, "evidence_ids": evidence_ids}
 
 
@@ -172,6 +209,22 @@ def _identity_labels_from_metadata(source_media_metadata: Optional[Dict[str, Any
             labels.append(_label(speaker.get("identity_label")))
     for name in annotations.get("expected_identities") or []:
         labels.append(_label(name))
+    for profile in annotations.get("narrative_agent_profiles") or []:
+        if isinstance(profile, dict):
+            labels.append(_label(profile.get("narrative_agent_name") or profile.get("identity_label")))
+    for definition in annotations.get("character_definitions") or []:
+        if isinstance(definition, dict):
+            labels.append(_label(definition.get("character_name") or definition.get("name")))
+        else:
+            labels.append(_label(str(definition).split(":", 1)[0].split("(", 1)[0]))
+    for role in annotations.get("character_roles") or []:
+        labels.append(_label(str(role).split(":", 1)[0].split("(", 1)[0]))
+    for person in annotations.get("persons") or []:
+        labels.append(
+            _label(person.get("identity_label") or person.get("name"))
+            if isinstance(person, dict)
+            else _label(person)
+        )
     return [label for label in labels if label]
 
 
@@ -286,12 +339,21 @@ def resolve_identity_triangulation(
         + manual_score * 0.30
     )
     triangulation_score = min(1.0, weighted_score + min(0.12, modality_count * 0.03))
+    metadata_audio_agent_candidate = (
+        metadata["score"] >= 0.78
+        and audio["score"] >= 0.68
+        and audio.get("sample_count", 0) > 0
+        and modality_count >= 2
+    )
 
     if manual_confirmed and triangulation_score >= PROLIFERATION_LEVELS["analyst_confirmed"]:
         level = "analyst_confirmed"
     elif triangulation_score >= PROLIFERATION_LEVELS["media_array_candidate"] and modality_count >= 3:
         level = "media_array_candidate"
-    elif triangulation_score >= PROLIFERATION_LEVELS["media_candidate"] and modality_count >= 2:
+    elif (
+        triangulation_score >= PROLIFERATION_LEVELS["media_candidate"]
+        and modality_count >= 2
+    ) or metadata_audio_agent_candidate:
         level = "media_candidate"
     elif triangulation_score >= PROLIFERATION_LEVELS["local_candidate"]:
         level = "local_candidate"

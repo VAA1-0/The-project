@@ -27,6 +27,7 @@ import type {
   AudioDiarizationScaffold,
   ForensicRenderJob,
   IdentityRefinementStatus,
+  AgentPersistenceLabel,
   SecondOrderLabelProliferationPlan,
   ManualVisualAnnotation,
   ManualTranscriptEntry,
@@ -338,6 +339,8 @@ export interface MasterSchemaResolvedEvidenceRecord {
     | "expression"
     | "manual_annotation"
     | "identity"
+    | "narrative_agent_profile"
+    | "character_role"
     | "second_order";
   label: string;
   authority: MatureEvidenceAuthority;
@@ -348,6 +351,7 @@ export interface MasterSchemaResolvedEvidenceRecord {
   targetId?: string;
   maturityRoute?: string;
   mappingStatus?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MasterSchemaResolvedEvidenceView {
@@ -388,6 +392,8 @@ type NativeAnnotationRecord = {
   category?: string;
   custom_label?: string;
   label?: string;
+  identity_affirmation?: string;
+  role_affirmation?: string;
   open_note?: string;
   start_seconds?: number;
   end_seconds?: number;
@@ -691,10 +697,8 @@ function applyAnnotationCorrectionsToObjects(
       trackId: item.trackId,
     });
     const originalDisplayLabel =
-      item.displayLabel ||
-      (item.trackId !== undefined
-        ? `${rawClassName} track ${item.trackId}`
-        : rawClassName);
+      governedObjectDisplayLabel(item.displayLabel) ||
+      (rawClassName !== "person" ? rawClassName : "");
     const baseDisplayLabel = originalDisplayLabel
       ? originalDisplayLabel.replace(
           new RegExp(
@@ -709,9 +713,30 @@ function applyAnnotationCorrectionsToObjects(
       ...item,
       raw_class_name: rawClassName,
       class_name: rawClassName,
-      displayLabel: textAdjustedLabel,
+      displayLabel: governedObjectDisplayLabel(textAdjustedLabel),
     };
     });
+}
+
+function isRawObjectDisplayLabel(value: unknown): boolean {
+  const normalized = looseString(value).toLowerCase();
+  return (
+    !normalized ||
+    normalized === "object" ||
+    normalized === "person" ||
+    normalized === "track" ||
+    normalized === "unknown" ||
+    normalized === "unknown_speaker" ||
+    normalized.startsWith("person track") ||
+    normalized.startsWith("track ") ||
+    /^person\s*\d+$/i.test(normalized) ||
+    /^person[_-]\d+$/i.test(normalized)
+  );
+}
+
+function governedObjectDisplayLabel(value: unknown): string | undefined {
+  const label = looseString(value);
+  return label && !isRawObjectDisplayLabel(label) ? label : undefined;
 }
 
 function buildManualVisualObjects(
@@ -921,6 +946,225 @@ function masterSchemaObjectRecords(masterSchema: unknown): MasterSchemaResolvedE
   return records;
 }
 
+function masterSchemaNarrativeAgentRecords(masterSchema: unknown): MasterSchemaResolvedEvidenceRecord[] {
+  const schema = asLooseRecord(masterSchema);
+  if (!schema) {
+    return [];
+  }
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  looseRecordArray(schema.narrative_agent_profile_annotations).forEach((item, index) => {
+    const label = looseString(item.narrative_agent_name || item.profile_id);
+    if (!label) return;
+    records.push({
+      id: looseString(item.annotation_id) || `master-schema:narrative-agent-profile:${index}`,
+      category: "narrative_agent_profile",
+      label,
+      authority: "mature_triangulated",
+      sourcePanel: "MasterSchema",
+      targetId: looseString(item.profile_id) || undefined,
+      maturityRoute:
+        looseString(item.maturity_route) ||
+        "master_schema.source_media_narrative_agent_profile_maturity",
+      metadata: item as Record<string, unknown>,
+    });
+  });
+  looseRecordArray(schema.character_definition_annotations).forEach((item, index) => {
+    const label = looseString(item.character_name || item.actor_name);
+    if (!label) return;
+    records.push({
+      id: looseString(item.annotation_id) || `master-schema:character-definition:${index}`,
+      category: "narrative_agent_profile",
+      label,
+      authority: "mature_triangulated",
+      sourcePanel: "MasterSchema",
+      maturityRoute:
+        looseString(item.maturity_route) ||
+        "master_schema.source_media_character_definition_maturity",
+      metadata: item as Record<string, unknown>,
+    });
+  });
+  looseRecordArray(schema.character_role_annotations).forEach((item, index) => {
+    const label = looseString(item.label);
+    if (!label) return;
+    records.push({
+      id: looseString(item.annotation_id) || `master-schema:character-role:${index}`,
+      category: "character_role",
+      label,
+      authority: "mature_triangulated",
+      sourcePanel: "MasterSchema",
+      maturityRoute:
+        looseString(item.maturity_route) ||
+        "master_schema.source_media_character_role_maturity",
+      metadata: item as Record<string, unknown>,
+    });
+  });
+  return records;
+}
+
+function isKnownSubjectLabel(value: unknown): boolean {
+  const key = looseString(value)
+    .toLowerCase()
+    .replace(/[()[\]{}:;,.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Boolean(
+    key &&
+      key !== "unknown" &&
+      key !== "unknown speaker" &&
+      key !== "unknown participant" &&
+      !/^unknown\b/.test(key) &&
+      !/^speaker\s*\d+$/.test(key),
+  );
+}
+
+function manualAnnotationNarrativeAgentRecords(
+  nativeAnnotations: NativeAnnotationRecord[],
+): MasterSchemaResolvedEvidenceRecord[] {
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  const seen = new Set<string>();
+  nativeAnnotations.forEach((item, index) => {
+    const identityLabel = looseString(item.identity_affirmation);
+    const roleLabel = looseString(item.role_affirmation);
+    const fallbackLabel = looseString(item.custom_label || item.label);
+    const label = identityLabel || roleLabel || fallbackLabel;
+    const category = looseString((item as any).category);
+    const hasManualSubjectAffirmation = isKnownSubjectLabel(identityLabel) || isKnownSubjectLabel(roleLabel);
+    if (
+      !hasManualSubjectAffirmation &&
+      !["Identification", "Role"].includes(category)
+    ) {
+      return;
+    }
+    if (!isKnownSubjectLabel(label)) {
+      return;
+    }
+    const manualTargetId = looseString((item as any).metadata_correlation?.target_id);
+    const key = [
+      label.toLowerCase(),
+      looseString(item.id),
+      manualTargetId,
+      looseString((item as any).timestamp_seconds),
+      looseString((item as any).start_seconds),
+    ].filter(Boolean).join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    records.push({
+      id: `manual-subject:${item.id || index}`,
+      category: "narrative_agent_profile",
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "MasterSchema",
+      start: (item as any).start_seconds ?? (item as any).timestamp_seconds,
+      end: (item as any).end_seconds ?? (item as any).timestamp_seconds,
+      targetId: manualTargetId || item.id,
+      maturityRoute: "master_schema.review_layer.manual_subject_annotation",
+      metadata: {
+        profile_id: `manual-subject:${item.id || index}`,
+        profile_type: "narrative_agent_profile",
+        narrative_agent_name: label,
+        aliases: [fallbackLabel, identityLabel, roleLabel].filter(isKnownSubjectLabel),
+        source_metadata: {
+          role_labels: roleLabel && roleLabel !== label ? [roleLabel] : [],
+          role_description: looseString((item as any).open_note),
+          source_preference: "manual_visual_annotation",
+        },
+        evidence_slots: {
+          scene_links: [],
+          visual_patterns: [item.id].filter(Boolean),
+        },
+        manual_annotation: item as unknown as Record<string, unknown>,
+      },
+    });
+  });
+  return records;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function agentPersistenceTrackRecords(
+  secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  const labels = secondOrderLabelProliferation?.agent_persistence_labels || [];
+
+  labels.forEach((label: AgentPersistenceLabel, index: number) => {
+    const candidateLabel = looseString(label.candidate_label);
+    if (!isKnownSubjectLabel(candidateLabel)) {
+      return;
+    }
+
+    const departedTrackId = looseString(label.evidence?.departed_track_id);
+    const arrivedTrackId = looseString(label.evidence?.arrived_track_id);
+    const departedInterval = label.temporal_grounding?.departed_track_interval || [];
+    const arrivedInterval = label.temporal_grounding?.arrived_track_interval || [];
+    const status = looseString(label.status);
+    const authority: MatureEvidenceAuthority =
+      status === "strong_candidate" ? "mature_triangulated" : "interpreted_detection";
+    const baseMetadata = {
+      profile_type: "agent_persistence_scene_cut",
+      narrative_agent_name: candidateLabel,
+      status,
+      source_feature_type: label.source_feature_type,
+      provenance: label.provenance,
+      similarity_score: label.evidence?.similarity_score,
+      scene_boundary_time: label.temporal_grounding?.scene_boundary_time,
+      traceback: label.traceback_relink,
+      evidence_refs: [
+        departedTrackId ? `track:${departedTrackId}` : "",
+        arrivedTrackId ? `track:${arrivedTrackId}` : "",
+      ].filter(Boolean),
+      source_frame_refs: [
+        finiteNumber(departedInterval[0]),
+        finiteNumber(departedInterval[1]),
+        finiteNumber(arrivedInterval[0]),
+        finiteNumber(arrivedInterval[1]),
+      ]
+        .filter((value): value is number => value !== undefined)
+        .map((time) => ({ time, source: "agent_persistence_scene_cut" })),
+    };
+
+    [
+      {
+        role: "departed",
+        trackId: departedTrackId,
+        interval: departedInterval,
+      },
+      {
+        role: "arrived",
+        trackId: arrivedTrackId,
+        interval: arrivedInterval,
+      },
+    ].forEach(({ role, trackId, interval }) => {
+      if (!trackId) {
+        return;
+      }
+      records.push({
+        id: `agent-persistence:${index}:${role}:${trackId}`,
+        category: "narrative_agent_profile",
+        label: candidateLabel,
+        authority,
+        sourcePanel: "MasterSchema",
+        start: finiteNumber(interval[0]),
+        end: finiteNumber(interval[1]),
+        rawLabel: `person track ${trackId}`,
+        targetId: trackId,
+        maturityRoute: "second_order.agent_persistence_scene_cut",
+        mappingStatus: status,
+        metadata: {
+          ...baseMetadata,
+          continuity_role: role,
+          linked_track_id: role === "departed" ? arrivedTrackId : departedTrackId,
+        },
+      });
+    });
+  });
+
+  return records;
+}
+
 function masterSchemaMaturityAudit(masterSchema: unknown): MasterSchemaMaturityAudit | undefined {
   const schema = asLooseRecord(masterSchema);
   const audit = asLooseRecord(schema?.master_schema_maturity_audit);
@@ -951,6 +1195,9 @@ function buildMasterSchemaResolvedEvidenceView({
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
 
   records.push(...masterSchemaObjectRecords(masterSchema));
+  records.push(...masterSchemaNarrativeAgentRecords(masterSchema));
+  records.push(...manualAnnotationNarrativeAgentRecords(nativeAnnotations));
+  records.push(...agentPersistenceTrackRecords(secondOrderLabelProliferation));
 
   transcript.forEach((segment, index) => {
     records.push({
@@ -972,17 +1219,17 @@ function buildMasterSchemaResolvedEvidenceView({
   });
 
   objects.forEach((item, index) => {
-    const label = item.displayLabel || item.class_name || "object";
+    const label = governedObjectDisplayLabel(item.displayLabel);
     records.push({
       id: item.trackId !== undefined ? `object:${item.trackId}` : `object:${index}`,
       category: "object",
-      label,
+      label: label || item.class_name || "object",
       authority:
         item.sourceType === "manual_visual"
           ? "manual_annotation"
-          : item.raw_class_name && item.raw_class_name !== label
+          : label && item.raw_class_name && item.raw_class_name !== label
             ? "manual_correction"
-            : item.screenPresenceProfile
+            : label && item.screenPresenceProfile
               ? "interpreted_detection"
               : "raw_detection",
       sourcePanel: item.sourceType === "manual_visual" ? "MasterSchema" : "OBJDetection",
@@ -1131,7 +1378,9 @@ function applyAnnotationCorrectionsToRawObjects(
       ...item,
       raw_class_name: rawClassName,
       class_name: rawClassName,
-      displayLabel: applyTextSubstitutions(correctedLabel, textRules),
+      displayLabel: governedObjectDisplayLabel(
+        applyTextSubstitutions(correctedLabel, textRules),
+      ),
     };
     });
 }
@@ -1877,6 +2126,7 @@ export interface AnalysisData {
   downloadLinks?: Record<string, string>;
   metadata?: {
     sourceName?: string;
+    sourceMediaMetadata?: SourceMediaMetadata;
     sourceAnnotations?: SourceAnnotationContext;
     masterSchemaMaturityAudit?: MasterSchemaMaturityAudit;
     yoloDetections: number;
@@ -2556,7 +2806,7 @@ export function groupDetectedObjectsForDisplay(
       endTimestamp: item.timestamp,
       occurrenceCount: 1,
       trackId: nextTrackId,
-      displayLabel: `${item.class_name} track ${nextTrackId}`,
+      displayLabel: governedObjectDisplayLabel(item.displayLabel),
     });
   }
 
@@ -3261,10 +3511,12 @@ export class VideoService {
         audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
+        rawJson: { vaa1_annotation_master_schema: status.vaa1_annotation_master_schema },
         status: "completed",
         downloadLinks: status.download_links,
         metadata: {
           sourceName: status.filename,
+          sourceMediaMetadata: status.source_media_metadata || undefined,
           masterSchemaMaturityAudit: masterSchemaMaturityAudit(
             status.vaa1_annotation_master_schema,
           ),

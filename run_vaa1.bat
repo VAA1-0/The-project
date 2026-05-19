@@ -22,15 +22,14 @@ call "%BASEDIR%scripts\start_services.bat" || goto :error
 echo VAA1 started successfully >> "%LOGFILE%"
 echo.
 echo VAA1 is running. You may now use the application.
+echo VAA1 is starting in the background.
+echo First launch may take 10-30 minutes depending on your system.
+echo You can check progress in Docker Desktop.
 exit /b 0
 
 :error
 echo.
-
-echo VAA1 is starting in the background.
-echo First launch may take 10–30 minutes depending on your system.
-echo You can check progress in Docker Desktop.
-
+echo ❌ VAA1 failed to start.
 echo Please see logs\vaa1-launch.log
 pause
 exit /b 1

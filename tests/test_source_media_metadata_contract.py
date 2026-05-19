@@ -645,6 +645,48 @@ class SourceMediaMetadataContractTest(unittest.TestCase):
             audit["next_required_hardening"],
         )
 
+    def test_master_schema_hosts_scene_segments_from_meaning_plot_windows(self):
+        status = {
+            "source_media_annotations": {},
+            "source_media_metadata": {"fps": 25},
+            "second_order_label_proliferation": {
+                "instructions": [
+                    {"time_span": {"start": 0, "end": 1}},
+                    {"time_span": {"start": 28, "end": 29}},
+                    {"time_span": {"start": 53, "end": 54}},
+                ]
+            },
+            "summary": {},
+        }
+
+        master_schema = build_vaa1_master_schema_from_cvat(
+            analysis_id="analysis-scene-maturity",
+            status=status,
+            task_id=10,
+            job_id=20,
+            cvat_annotations={"shapes": [], "tracks": []},
+            label_lookup={},
+        )
+
+        scene_segments = [
+            segment
+            for segment in master_schema["temporal_segments"]
+            if segment.get("segment_type") == "scene"
+        ]
+        self.assertGreaterEqual(len(scene_segments), 3)
+        self.assertEqual(scene_segments[0]["authority"], "Master Schema candidate synthesis")
+        self.assertEqual(scene_segments[0]["review_state"], "candidate_review_required")
+        self.assertEqual(
+            scene_segments[0]["maturity_route"],
+            "master_schema.meaning_plot_interpretive_window_maturity",
+        )
+        scene_layer = next(
+            layer
+            for layer in master_schema["scene_constellation_governance"]["layers"]
+            if layer["layer_id"] == "master_schema_temporal_segments"
+        )
+        self.assertEqual(scene_layer["count"], len(scene_segments))
+
     def test_video_internal_maturity_harvest_reads_import_artifact_aliases(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

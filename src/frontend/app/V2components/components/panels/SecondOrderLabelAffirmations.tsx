@@ -2,6 +2,7 @@
 
 import React from "react";
 import type {
+  AgentPersistenceLabel,
   SecondOrderLabelInstruction,
   SecondOrderLabelProliferationPlan,
 } from "@/lib/api-service";
@@ -24,6 +25,7 @@ type ChipProps = {
   surface: ChipSurface;
   targetLabelFamilies?: string[];
   timeSpan?: TimeSpanSeconds | null;
+  trackId?: string | number | null;
   compact?: boolean;
   limit?: number;
   emptyText?: string | null;
@@ -41,6 +43,11 @@ const STATUS_CLASSES: Record<string, string> = {
   probable: "border-sky-700/70 bg-sky-950/45 text-sky-100",
   strongly_supported: "border-emerald-700/70 bg-emerald-950/45 text-emerald-100",
   analyst_confirmed: "border-cyan-600/70 bg-cyan-950/55 text-cyan-100",
+};
+
+const PERSISTENCE_STATUS_CLASSES: Record<string, string> = {
+  review_candidate: "border-fuchsia-700/70 bg-fuchsia-950/45 text-fuchsia-100",
+  strong_candidate: "border-amber-600/70 bg-amber-950/55 text-amber-100",
 };
 
 const GOVERNANCE_NOTE = "analyst_confirmation_is_not_required_for_every_candidate";
@@ -72,6 +79,45 @@ function overlaps(instruction: SecondOrderLabelInstruction, span?: TimeSpanSecon
   return start <= span.end && end >= span.start;
 }
 
+function agentPersistenceOverlaps(label: AgentPersistenceLabel, span?: TimeSpanSeconds | null): boolean {
+  if (!span || typeof span.start !== "number" || typeof span.end !== "number") {
+    return true;
+  }
+  const start = label.temporal_grounding?.departed_track_interval?.[0];
+  const end = label.temporal_grounding?.arrived_track_interval?.[1];
+  if (typeof start !== "number" || typeof end !== "number") {
+    return true;
+  }
+  return start <= span.end && end >= span.start;
+}
+
+const PERSISTENCE_SURFACES = new Set(["bbox_roi_overlay", "identification_panel", "master_schema", "meaning_panel"]);
+
+export function getAgentPersistenceLabelsForSurface({
+  plan,
+  surface,
+  targetLabelFamilies,
+  timeSpan,
+  trackId,
+  limit,
+}: ChipProps): AgentPersistenceLabel[] {
+  if (!PERSISTENCE_SURFACES.has(surface)) return [];
+  const familySet = new Set(targetLabelFamilies || []);
+  if (familySet.size > 0 && !familySet.has("Identification")) return [];
+
+  const safeTrackId = trackId === undefined || trackId === null ? null : String(trackId);
+
+  const labels = (plan?.agent_persistence_labels || []).filter(
+    (label) =>
+      agentPersistenceOverlaps(label, timeSpan) &&
+      (!safeTrackId ||
+        String(label.evidence?.departed_track_id) === safeTrackId ||
+        String(label.evidence?.arrived_track_id) === safeTrackId)
+  );
+
+  return typeof limit === "number" ? labels.slice(0, limit) : labels;
+}
+
 function priority(instruction: SecondOrderLabelInstruction): number {
   return instruction.open_scores?.delivery_priority ?? instruction.open_scores?.weighted_support_score ?? 0;
 }
@@ -95,10 +141,20 @@ function titleFor(instruction: SecondOrderLabelInstruction): string {
   const confirmation = instruction.requires_immediate_confirmation
     ? "Review prompt"
     : "No immediate confirmation";
+  const support =
+    typeof score === "number"
+      ? score >= 0.75
+        ? "strong evidence support"
+        : score >= 0.62
+          ? "moderate evidence support"
+          : score >= 0.45
+            ? "tentative evidence support"
+            : "weak evidence support"
+      : null;
   return [
     labelFor(instruction),
-    typeof score === "number" ? `support ${Math.round(score * 100)}%` : null,
-    typeof priorityScore === "number" ? `priority ${Math.round(priorityScore * 100)}%` : null,
+    support,
+    typeof priorityScore === "number" ? `delivery priority ${Math.round(priorityScore * 100)}%` : null,
     confirmation,
     "Manual override remains available",
   ]
@@ -164,7 +220,15 @@ export function SecondOrderLabelAffirmationChips({
     limit,
   });
 
-  if (instructions.length === 0) {
+  const persistenceLabels = getAgentPersistenceLabelsForSurface({
+    plan,
+    surface,
+    targetLabelFamilies,
+    timeSpan,
+    limit,
+  });
+
+  if (instructions.length === 0 && persistenceLabels.length === 0) {
     return emptyText ? (
       <div className="text-[10px] text-slate-500">{emptyText}</div>
     ) : null;
@@ -172,6 +236,24 @@ export function SecondOrderLabelAffirmationChips({
 
   return (
     <div className={`flex flex-wrap gap-1 ${compact ? "text-[9px]" : "text-[10px]"}`}>
+      {persistenceLabels.map((pLabel, idx) => {
+        const cls = PERSISTENCE_STATUS_CLASSES[pLabel.status] || PERSISTENCE_STATUS_CLASSES.review_candidate;
+        const score = pLabel.evidence?.similarity_score ?? 0;
+        const title = `Scene Cut Match: ${pLabel.candidate_label} (Similarity: ${Math.round(score * 100)}%)`;
+        const prompt = pLabel.status === "review_candidate";
+        return (
+          <span
+            key={`persistence-${idx}`}
+            title={title}
+            className={`max-w-full truncate rounded border px-1.5 py-0.5 ${cls} ${
+              prompt ? "ring-1 ring-fuchsia-400/60" : ""
+            }`}
+          >
+            {prompt && !compact ? "Review link: " : ""}
+            {compact ? pLabel.candidate_label : `Link: ${pLabel.candidate_label}`}
+          </span>
+        );
+      })}
       {instructions.map((instruction) => {
         const cls = STATUS_CLASSES[instruction.status] || STATUS_CLASSES.candidate;
         const prompt = instruction.requires_immediate_confirmation;
@@ -197,7 +279,7 @@ export function SecondOrderLabelReviewTray({
 }: {
   plan?: SecondOrderLabelProliferationPlan | null;
 }) {
-  if (!plan?.instructions?.length) {
+  if (!plan?.instructions?.length && !plan?.agent_persistence_labels?.length) {
     return null;
   }
   const immediate = plan.summary?.immediate_confirmation_count || 0;
@@ -214,8 +296,9 @@ export function SecondOrderLabelReviewTray({
           <div className="sr-only">{GOVERNANCE_NOTE}</div>
         </div>
         <div className="shrink-0 text-right text-[10px] text-cyan-200/80">
-          {plan.summary?.instruction_count || plan.instructions.length} labels
+          {plan.summary?.instruction_count || plan.instructions?.length || 0} labels
           {immediate ? ` • ${immediate} review` : " • no confirmation tax"}
+          {plan.agent_persistence_labels?.length ? ` • ${plan.agent_persistence_labels.length} scene links` : ""}
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1 text-[10px]">

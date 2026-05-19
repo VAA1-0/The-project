@@ -10,17 +10,20 @@ echo =============================== >> "%LOGFILE%"
 echo VAA1 LITE START %DATE% %TIME% >> "%LOGFILE%"
 
 call "%BASEDIR%scripts\check_docker.bat" || goto :error
-call "%BASEDIR%scripts\check_ports.bat"
+call "%BASEDIR%scripts\check_ports.bat" || goto :error
 
 call "%BASEDIR%scripts\start_services_lite.bat" || goto :error
 
 echo VAA1 Lite started successfully >> "%LOGFILE%"
-exit /b 0
-
-:error
 echo.
 echo VAA1 Lite is starting in the background.
 echo Backend and frontend may take several minutes on first run.
 echo See logs\vaa1-lite.log for details.
-pause
 exit /b 0
+
+:error
+echo.
+echo ❌ VAA1 Lite failed to start.
+echo Please see logs\vaa1-lite.log
+pause
+exit /b 1

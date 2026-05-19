@@ -10,7 +10,7 @@ SCHEMA = "vaa1.second_order_label_proliferation_plan.v1"
 
 STATUS_THRESHOLDS = {
     "candidate": 0.0,
-    "probable": 0.45,
+    "probable": 0.6,
     "strongly_supported": 0.68,
     "analyst_confirmed": 0.9,
 }
@@ -156,6 +156,24 @@ def _target_label_fit(event: Dict[str, Any], target_label: str) -> float:
             "Role": 0.58,
             "ReportClaim": 0.62,
         },
+        "agent_persistence_scene_cut": {
+            "Identification": 0.9,
+            "Role": 0.62,
+            "Scene": 0.58,
+        },
+        "person_identity_prompt": {
+            "Identification": 0.92,
+            "Role": 0.62,
+        },
+        "expression_owner_prompt": {
+            "Expression": 0.9,
+            "Identification": 0.78,
+        },
+        "scene_participant_prompt": {
+            "Interaction": 0.82,
+            "Identification": 0.76,
+            "Scene": 0.7,
+        },
     }
     return direct_map.get(str(feature_type), {}).get(target_label, 0.35)
 
@@ -225,7 +243,7 @@ def _ui_surfaces(target_label: str) -> List[str]:
         "Scene": ["scene_panel", "meaning_panel", "printout"],
         "Episode": ["scene_panel", "meaning_panel", "printout"],
         "Situation": ["meaning_panel", "master_schema", "printout"],
-        "Expression": ["expressions_panel", "meaning_panel", "printout"],
+        "Expression": ["bbox_roi_overlay", "expressions_panel", "meaning_panel", "printout"],
         "Object": ["bbox_roi_overlay", "objects_panel", "meaning_panel"],
         "ReportClaim": ["report_builder", "printout"],
         "ForensicObservation": ["forensic_panel", "traceback_panel", "printout"],
@@ -319,7 +337,51 @@ def _candidate_label_for_event(event: Dict[str, Any], target_label: str) -> str:
         return _safe_text(payload.get("judgment_signal_type"), "judgment_denigration_candidate")
     if feature_type == "plot_function":
         return _safe_text(payload.get("plot_function"), "plot_function_candidate")
+    if feature_type == "agent_persistence_scene_cut":
+        return _safe_text(payload.get("agent_label"), "agent_persistence_candidate")
+    if feature_type == "person_identity_prompt":
+        return _safe_text(payload.get("prompt"), "Who is this person?")
+    if feature_type == "expression_owner_prompt":
+        return _safe_text(payload.get("prompt"), "Whose expression is this?")
+    if feature_type == "scene_participant_prompt":
+        return _safe_text(payload.get("prompt"), "Who are in this scene?")
     return f"{target_label.lower()}_candidate"
+
+
+def proliferate_agent_persistence(persistence_candidates: List[Dict[str, Any]], taxonomy_layer: str = "Identification") -> List[Dict[str, Any]]:
+    """
+    Reads the agent_persistence_scene_cut candidates and formats them into
+    second-order label proliferation artifacts that await human confirmation.
+    """
+    proliferated_labels = []
+    
+    for candidate in persistence_candidates:
+        # Abide by the VAA1 rule: below-threshold matches remain review candidates
+        # instead of silently mutating the agent/sample-profile label.
+        status = "review_candidate" 
+        if _safe_float(candidate.get("similarity_score", 0.0)) > _safe_float(candidate.get("threshold", 0.8)):
+            status = "strong_candidate"
+            
+        proliferated_labels.append({
+            "candidate_label": candidate.get("narrative_agent_profile_id") or candidate.get("agent_label") or "unknown_agent",
+            "source_feature_type": "agent_persistence_scene_cut",
+            "provenance": "pipeline_generated", # Methodological brief requirement
+            "status": status,
+            "temporal_grounding": {
+                "scene_boundary_time": candidate.get("scene_boundary_time"),
+                "departed_track_interval": candidate.get("departed_track_interval"),
+                "arrived_track_interval": candidate.get("arrived_track_interval")
+            },
+            "evidence": {
+                "similarity_score": candidate.get("similarity_score"),
+                "departed_track_id": candidate.get("departed_track_id"),
+                "arrived_track_id": candidate.get("arrived_track_id")
+            },
+            # Traceback tree records open and preserve source references
+            "traceback_relink": candidate.get("relink_route") 
+        })
+        
+    return proliferated_labels
 
 
 def build_second_order_label_proliferation_plan(
@@ -327,6 +389,7 @@ def build_second_order_label_proliferation_plan(
     meaning_artifact: Dict[str, Any],
     *,
     target_label_families: Optional[Iterable[str]] = None,
+    agent_persistence_path: Optional[str | Path] = None,
 ) -> Dict[str, Any]:
     requested_targets = {str(label) for label in target_label_families or [] if label}
     instructions: List[Dict[str, Any]] = []
@@ -339,9 +402,26 @@ def build_second_order_label_proliferation_plan(
         for target in targets:
             instructions.append(build_label_instruction(analysis_id, event, target))
 
+    persistence_candidates = []
+    if agent_persistence_path:
+        path_obj = Path(agent_persistence_path)
+        if path_obj.exists():
+            try:
+                persistence_artifact = json.loads(path_obj.read_text(encoding="utf-8"))
+                for check in persistence_artifact.get("checks", []):
+                    if isinstance(check, dict) and check.get("candidates"):
+                        persistence_candidates.extend(check["candidates"])
+            except Exception:
+                pass
+                
+    agent_persistence_labels = proliferate_agent_persistence(persistence_candidates, "Identification")
+
     status_counts: Dict[str, int] = {}
     for instruction in instructions:
         status_counts[instruction["status"]] = status_counts.get(instruction["status"], 0) + 1
+
+    for label in agent_persistence_labels:
+        status_counts[label["status"]] = status_counts.get(label["status"], 0) + 1
 
     return {
         "schema": SCHEMA,
@@ -353,8 +433,10 @@ def build_second_order_label_proliferation_plan(
         "priority_weights": PRIORITY_WEIGHTS,
         "graduated_status_thresholds": STATUS_THRESHOLDS,
         "instructions": instructions,
+        "agent_persistence_labels": agent_persistence_labels,
         "summary": {
             "instruction_count": len(instructions),
+            "agent_persistence_label_count": len(agent_persistence_labels),
             "status_counts": status_counts,
             "immediate_confirmation_count": sum(
                 1 for instruction in instructions if instruction["requires_immediate_confirmation"]
@@ -383,11 +465,13 @@ def write_second_order_label_proliferation_plan(
     output_path: str | Path,
     *,
     target_label_families: Optional[Iterable[str]] = None,
+    agent_persistence_path: Optional[str | Path] = None,
 ) -> Dict[str, Any]:
     plan = build_second_order_label_proliferation_plan(
         analysis_id,
         meaning_artifact,
         target_label_families=target_label_families,
+        agent_persistence_path=agent_persistence_path,
     )
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)

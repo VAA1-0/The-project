@@ -49,6 +49,10 @@ import type {
   ExpressionSample,
   VideoMetadata,
 } from "@/lib/video-service";
+import {
+  matureSceneSegmentsFromAnalysis,
+  matureSceneSegmentSourceLabel,
+} from "@/lib/scene-governance";
 import { apiService } from "@/lib/api-service";
 import type {
   AnalysisEvent,
@@ -834,9 +838,14 @@ export default function ToolsPanel() {
     [motionSceneBasis?.motionEvidence?.samples],
   );
   const sceneSegmentSummary = motionSceneBasis?.sceneSegments?.summary;
+  const matureSceneSegments = React.useMemo(
+    () => matureSceneSegmentsFromAnalysis(analysisData),
+    [analysisData],
+  );
+  const sceneSegmentSourceLabel = matureSceneSegmentSourceLabel(analysisData);
   const sceneSegments = React.useMemo(
-    () => motionSceneBasis?.sceneSegments?.segments ?? [],
-    [motionSceneBasis?.sceneSegments?.segments],
+    () => matureSceneSegments,
+    [matureSceneSegments],
   );
   const notableMotionMoments = React.useMemo(() => {
     if (!motionEvidenceSamples.length) return [];
@@ -2659,7 +2668,7 @@ export default function ToolsPanel() {
                           videoId={videoId}
                         />
                       </div>
-                      {motionSceneBasis && (
+                      {(motionSceneBasis || sceneSegments.length > 0) && (
                         <div className="mb-3 rounded-md border border-white/8 bg-[#151515] px-3 py-3">
                           <div className="mb-3 font-medium text-slate-200">
                             Motion and scene basis
@@ -2702,7 +2711,7 @@ export default function ToolsPanel() {
                                       <span>Mean occupancy shift</span>
                                       <span className="text-slate-200">{motionEvidenceSummary?.mean_occupancy_shift ?? 0}</span>
                                     </div>
-                                    {motionSceneBasis.motionEvidence?.method ? (
+                                    {motionSceneBasis?.motionEvidence?.method ? (
                                       <div className="px-3 py-2">
                                         <span className="text-slate-500">Method</span>
                                         <div className="mt-1 text-slate-300">{motionSceneBasis.motionEvidence.method}</div>
@@ -2747,7 +2756,7 @@ export default function ToolsPanel() {
                               </div>
                               <div className="space-y-3 px-3 py-3">
                                 <div className="text-sm text-slate-200">
-                                  {sceneSegmentSummary?.scene_count ?? 0} scene intervals
+                                  {sceneSegments.length || sceneSegmentSummary?.scene_count || 0} scene intervals
                                 </div>
                                 <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
                                   <div className="divide-y divide-white/8 text-[10px] text-slate-400">
@@ -2759,13 +2768,13 @@ export default function ToolsPanel() {
                                       <span>Mean scene duration</span>
                                       <span className="text-slate-200">{formatSeconds(sceneSegmentSummary?.mean_scene_duration)}</span>
                                     </div>
-                                    {motionSceneBasis.sceneSegments?.source ? (
+                                    {(motionSceneBasis?.sceneSegments?.source || sceneSegments.length > 0) ? (
                                       <div className="flex items-center justify-between gap-3 px-3 py-2">
                                         <span>Source</span>
-                                        <span className="text-slate-200">{motionSceneBasis.sceneSegments.source}</span>
+                                        <span className="text-slate-200">{sceneSegmentSourceLabel}</span>
                                       </div>
                                     ) : null}
-                                    {motionSceneBasis.sceneSegments?.method ? (
+                                    {motionSceneBasis?.sceneSegments?.method ? (
                                       <div className="px-3 py-2">
                                         <span className="text-slate-500">Method</span>
                                         <div className="mt-1 text-slate-300">{motionSceneBasis.sceneSegments.method}</div>

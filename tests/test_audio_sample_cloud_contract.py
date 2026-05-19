@@ -129,6 +129,59 @@ class AudioSampleCloudContractTest(unittest.TestCase):
         self.assertEqual(speaker_one["entity_type"], "speaker")
         self.assertEqual(speaker_one["cloud_summary"]["sample_count"], 2)
 
+    def test_narrative_agent_transcript_mentions_create_audio_pattern_clouds(self):
+        payload = audio_sample_cloud.build_audio_sample_clouds_for_narrative_agents(
+            "analysis-bond",
+            transcript={
+                "segments": [
+                    {"id": "utt-1", "start": 56.0, "end": 58.0, "text": "Bond."},
+                    {"id": "utt-2", "start": 58.0, "end": 60.0, "text": "James Bond."},
+                    {"id": "utt-3", "start": 60.0, "end": 62.0, "text": "So you're not dead?"},
+                ]
+            },
+            audio_prosody={
+                "cues": [
+                    {
+                        "start": 58.0,
+                        "end": 60.0,
+                        "emphasis": {"score": 0.74},
+                        "pace": {"words_per_second": 1.0},
+                        "rhythm_profile": {"label": "decelerating"},
+                        "tonality_profile": {"label": "signature delivery"},
+                        "pitch_energy_contour": {
+                            "energy_rms": 2954,
+                            "energy_dbfs": -20.9,
+                        },
+                    }
+                ]
+            },
+            source_media_context={
+                "user_annotations": {
+                    "narrative_agent_profiles": [
+                        {"narrative_agent_name": "James Bond"}
+                    ],
+                    "character_roles": [
+                        "James Bond (Daniel Craig): protagonist, secret agent"
+                    ],
+                }
+            },
+        )
+
+        self.assertEqual(payload["status"], "sample_clouds_ready")
+        self.assertEqual(payload["cloud_count"], 1)
+        self.assertEqual(payload["clouds"][0]["entity_label"], "James Bond")
+        self.assertEqual(
+            payload["clouds"][0]["entity_type"],
+            "narrative_agent_voice_pattern",
+        )
+        self.assertGreaterEqual(payload["sample_count"], 2)
+        sample_roles = {sample["sample_role"] for sample in payload["clouds"][0]["samples"]}
+        self.assertIn("narrative_agent_audio_pattern_candidate", sample_roles)
+        self.assertIn(
+            "identity_cue",
+            payload["clouds"][0]["samples"][0]["speech_role_hints"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

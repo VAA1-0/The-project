@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -32,6 +33,231 @@ def _safe_confidence(value: Any, fallback: float = 0.55) -> float:
 def _clean_label(value: Any, fallback: str) -> str:
     text = str(value or "").strip()
     return text or fallback
+
+
+def _normalize_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _unique_labels(labels: Iterable[Any]) -> List[str]:
+    unique: Dict[str, str] = {}
+    for label in labels:
+        cleaned = str(label or "").strip()
+        if not cleaned:
+            continue
+        unique.setdefault(_normalize_key(cleaned), cleaned)
+    return list(unique.values())
+
+
+def _character_name_from_role(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text.split(":", 1)[0].split("(", 1)[0].strip()
+
+
+def narrative_agent_labels_from_source_context(
+    source_media_context: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Return source-level Narrative Agent candidates that may seed audio patterns."""
+
+    annotations = (source_media_context or {}).get("user_annotations") or {}
+    labels: List[str] = []
+
+    for profile in annotations.get("narrative_agent_profiles") or []:
+        if isinstance(profile, dict):
+            labels.append(profile.get("narrative_agent_name") or profile.get("identity_label"))
+        else:
+            labels.append(profile)
+    for definition in annotations.get("character_definitions") or []:
+        if isinstance(definition, dict):
+            labels.append(definition.get("character_name") or definition.get("name"))
+        else:
+            labels.append(_character_name_from_role(definition))
+    for role in annotations.get("character_roles") or []:
+        labels.append(_character_name_from_role(role))
+    for person in annotations.get("persons") or []:
+        labels.append(person.get("identity_label") or person.get("name") if isinstance(person, dict) else person)
+    for person in annotations.get("reference_people") or []:
+        labels.append(person.get("identity_label") or person.get("name") if isinstance(person, dict) else person)
+    for speaker in annotations.get("reference_speakers") or []:
+        if isinstance(speaker, dict):
+            labels.append(speaker.get("identity_label") or speaker.get("speaker_label"))
+    for identity in annotations.get("expected_identities") or []:
+        labels.append(identity)
+
+    return _unique_labels(labels)
+
+
+def _aliases_for_label(label: str) -> List[str]:
+    aliases = [label]
+    normalized = _normalize_key(label)
+    parts = normalized.split()
+    if len(parts) > 1 and len(parts[-1]) >= 3:
+        aliases.append(parts[-1])
+    if "james bond" in normalized:
+        aliases.extend(["bond", "007", "commander bond"])
+    return [
+        _normalize_key(alias)
+        for alias in _unique_labels(aliases)
+        if len(_normalize_key(alias)) >= 3 or _normalize_key(alias).isdigit()
+    ]
+
+
+def _transcript_segments(transcript: Any) -> List[Dict[str, Any]]:
+    raw_segments: Any
+    if isinstance(transcript, dict):
+        raw_segments = (
+            transcript.get("segments")
+            or transcript.get("utterances")
+            or transcript.get("items")
+            or []
+        )
+    else:
+        raw_segments = transcript
+    segments: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw_segments or []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("transcript") or "").strip()
+        if not text:
+            continue
+        start = _safe_float(item.get("start", item.get("time_start", item.get("start_ms"))))
+        end = _safe_float(item.get("end", item.get("time_end", item.get("end_ms"))), start + 1.0)
+        if start > 1000 or end > 1000:
+            start /= 1000.0
+            end /= 1000.0
+        segments.append(
+            {
+                "turn_id": str(item.get("id") or item.get("segment_id") or f"transcript:{index:04d}"),
+                "speaker_label": str(item.get("speaker") or item.get("speaker_label") or "SPEAKER_UNKNOWN"),
+                "start": start,
+                "end": max(end, start + 0.001),
+                "text": text,
+                "supporting_evidence_ids": item.get("source_evidence_ids") or [f"transcript:{index:04d}"],
+                "source_type": "transcript_segment",
+                "sample_role": "narrative_agent_audio_pattern_candidate",
+                "review_state": "candidate",
+                "epistemic_status": "candidate",
+            }
+        )
+    return segments
+
+
+def _prosody_cues_by_window(audio_prosody: Any) -> List[Dict[str, Any]]:
+    cues = (audio_prosody or {}).get("cues") if isinstance(audio_prosody, dict) else []
+    return [cue for cue in cues or [] if isinstance(cue, dict)]
+
+
+def _merge_prosody(turn: Dict[str, Any], cues: List[Dict[str, Any]]) -> Dict[str, Any]:
+    matching = [
+        cue
+        for cue in cues
+        if _safe_float(cue.get("start")) <= _safe_float(turn.get("end"))
+        and _safe_float(cue.get("end")) >= _safe_float(turn.get("start"))
+    ]
+    if not matching:
+        turn.setdefault("confidence", 0.68)
+        return turn
+    cue = matching[0]
+    pitch = cue.get("pitch_energy_contour") or {}
+    turn.update(
+        {
+            "confidence": max(0.72, _safe_confidence((cue.get("emphasis") or {}).get("score"), 0.68)),
+            "pitch_hz_mean": pitch.get("pitch_hz"),
+            "energy_rms_mean": pitch.get("energy_rms"),
+            "energy_dbfs_mean": pitch.get("energy_dbfs"),
+            "pace_wps": (cue.get("pace") or {}).get("words_per_second"),
+            "rhythm_profile_label": (cue.get("rhythm_profile") or {}).get("label"),
+            "tonality_profile_label": (cue.get("tonality_profile") or {}).get("label"),
+            "emphasis_score": (cue.get("emphasis") or {}).get("score"),
+            "turn_transition_label": (cue.get("turn_structure") or {}).get("transition"),
+            "sound_environment_label": (cue.get("sound_environment") or {}).get("label"),
+        }
+    )
+    return turn
+
+
+def build_audio_sample_clouds_for_narrative_agents(
+    analysis_id: str,
+    *,
+    transcript: Any = None,
+    audio_prosody: Any = None,
+    source_media_context: Optional[Dict[str, Any]] = None,
+    source_audio_path: str | Path | None = None,
+    created_by: str = "narrative_agent_audio_sample_builder",
+) -> Dict[str, Any]:
+    """Build audio pattern clouds for Narrative Agent candidates from transcript/prosody.
+
+    This is not speaker re-identification. It creates traceable voice-pattern
+    candidates when source-known agents are mentioned in transcript windows, so
+    identity triangulation has actual audio evidence to evaluate.
+    """
+
+    transcript_turns = _transcript_segments(transcript)
+    prosody_cues = _prosody_cues_by_window(audio_prosody)
+    clouds: List[Dict[str, Any]] = []
+
+    for label in narrative_agent_labels_from_source_context(source_media_context):
+        aliases = _aliases_for_label(label)
+        turns: List[Dict[str, Any]] = []
+        for turn in transcript_turns:
+            text_key = _normalize_key(turn.get("text"))
+            if not any(alias and alias in text_key for alias in aliases):
+                continue
+            candidate = dict(turn)
+            candidate["turn_id"] = f"{candidate['turn_id']}:narrative_agent:{_normalize_key(label).replace(' ', '_')}"
+            candidate["speech_role_hints"] = ["narrative_agent_name_mention", "identity_cue"]
+            turns.append(_merge_prosody(candidate, prosody_cues))
+
+        if not turns:
+            continue
+        clouds.append(
+            build_character_audio_sample_cloud(
+                analysis_id,
+                entity_label=label,
+                speaker_turns=turns,
+                source_media_context=source_media_context,
+                entity_type="narrative_agent_voice_pattern",
+                entity_status="candidate",
+                created_by=created_by,
+                source_audio_path=source_audio_path,
+            )
+        )
+
+    return {
+        "analysis_id": analysis_id,
+        "status": "sample_clouds_ready",
+        "cloud_count": len(clouds),
+        "sample_count": sum(cloud.get("cloud_summary", {}).get("sample_count", 0) for cloud in clouds),
+        "authority_order": AUDIO_SAMPLE_AUTHORITY_ORDER,
+        "clouds": clouds,
+    }
+
+
+def merge_audio_sample_cloud_payloads(
+    analysis_id: str,
+    *payloads: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    clouds: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        for cloud in (payload or {}).get("clouds") or []:
+            if not isinstance(cloud, dict):
+                continue
+            key = str(cloud.get("cloud_id") or f"{cloud.get('entity_label')}:{len(clouds)}")
+            if key in seen:
+                continue
+            seen.add(key)
+            clouds.append(cloud)
+    return {
+        "analysis_id": analysis_id,
+        "status": "sample_clouds_ready",
+        "cloud_count": len(clouds),
+        "sample_count": sum(cloud.get("cloud_summary", {}).get("sample_count", 0) for cloud in clouds),
+        "authority_order": AUDIO_SAMPLE_AUTHORITY_ORDER,
+        "clouds": clouds,
+    }
 
 
 def _build_sample_id(analysis_id: str, entity_label: str, index: int) -> str:

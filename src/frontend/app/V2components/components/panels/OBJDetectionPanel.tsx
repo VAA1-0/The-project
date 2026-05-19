@@ -280,6 +280,15 @@ export default function OBJDetectionPanel() {
   const [objectTimeInputDrafts, setObjectTimeInputDrafts] = useState<Record<string, string>>({});
   const [objectActionMessage, setObjectActionMessage] = useState<string | null>(null);
 
+  const knownCharacters = React.useMemo(() => {
+    const records = analysisData?.masterSchemaResolvedEvidence?.records || [];
+    const agents = records
+      .filter((r: any) => ["narrative_agent_profile", "character_role", "identity"].includes(r.category))
+      .map((r: any) => r.label)
+      .filter(Boolean);
+    return Array.from(new Set(agents)).sort() as string[];
+  }, [analysisData?.masterSchemaResolvedEvidence?.records]);
+
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
@@ -889,16 +898,57 @@ export default function OBJDetectionPanel() {
                         </div>
                         <label className="mb-1 block text-[9px] uppercase tracking-[0.12em] text-slate-500">
                           Latest label
-                          <input
-                            type="text"
-                            value={draft.label}
-                            onChange={(event) =>
-                              updateObjectDraft(rowKey, { label: event.target.value })
-                            }
-                            className="mt-0.5 w-full rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
-                            placeholder="Analyst label or identity"
-                            aria-label="Object indication label"
-                          />
+                          <div className="mt-0.5 flex flex-col gap-1">
+                            <select
+                              value={
+                                ["bystander", "friend", "foe"].includes(draft.label.toLowerCase())
+                                  ? draft.label.toLowerCase()
+                                  : knownCharacters.includes(draft.label)
+                                  ? draft.label
+                                  : "open tag"
+                              }
+                              onChange={(event) => {
+                                const val = event.target.value;
+                                if (val !== "open tag") {
+                                  const isKnownCharacter = knownCharacters.includes(val);
+                                  updateObjectDraft(rowKey, {
+                                    label: val,
+                                    ...(isKnownCharacter ? { category: "Identification" } : {}),
+                                  });
+                                }
+                              }}
+                              className="w-full rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
+                              aria-label="Quick label select"
+                            >
+                              <option value="open tag">Open tag</option>
+                              {knownCharacters.length > 0 && (
+                                <optgroup label="A) Narrative Agent">
+                                  {knownCharacters.map((char: string) => (
+                                    <option key={char} value={char}>
+                                      {char}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="B) By-stander">
+                                <option value="bystander">bystander</option>
+                              </optgroup>
+                              <optgroup label="C) Friend/Foe">
+                                <option value="friend">friend</option>
+                                <option value="foe">foe</option>
+                              </optgroup>
+                            </select>
+                            <input
+                              type="text"
+                              value={draft.label}
+                              onChange={(event) =>
+                                updateObjectDraft(rowKey, { label: event.target.value })
+                              }
+                              className="w-full rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
+                              placeholder="Analyst label or identity"
+                              aria-label="Object indication label"
+                            />
+                          </div>
                         </label>
                         <div className="mb-1 grid grid-cols-[1fr_1fr_auto_auto] gap-1">
                           <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">

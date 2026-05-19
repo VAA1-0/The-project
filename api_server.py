@@ -37,6 +37,8 @@ from src.backend.analysis.audio_prosody import analyze_audio_prosody
 from src.backend.analysis.audio_diarization import write_audio_diarization_scaffold
 from src.backend.analysis.audio_sample_cloud import (
     build_audio_sample_clouds_from_diarization,
+    build_audio_sample_clouds_for_narrative_agents,
+    merge_audio_sample_cloud_payloads,
 )
 from src.backend.analysis.language_modeller import MMSASRTranscriber, DEFAULT_MMS_MODEL_ID
 from src.backend.analysis.expression_detector import ExpressionDetectorDeepFace
@@ -84,6 +86,10 @@ from src.backend.analysis.multimodal_meaning_stage1 import (
 from src.backend.analysis.second_order_label_proliferation import (
     write_second_order_label_proliferation_plan,
 )
+from src.backend.analysis.agent_persistence import (
+    build_agent_persistence_feature_event,
+)
+from src.backend.analysis.agent_persistence_manager import AgentPersistenceManager
 from src.backend.analysis.evidence_proliferation_matcher import (
     write_evidence_proliferation_match,
 )
@@ -2066,12 +2072,20 @@ def artifact_payload_from_status(status: Dict[str, Any], key: str) -> Any:
             parsed_payload = read_json_any_artifact(direct_payload)
             if parsed_payload is not None:
                 return parsed_payload
+        if isinstance(direct_payload, dict) and direct_payload.get("output_json_path"):
+            parsed_payload = read_json_any_artifact(direct_payload.get("output_json_path"))
+            if parsed_payload is not None:
+                return parsed_payload
         return direct_payload
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     if key in results and results.get(key) not in (None, ""):
         direct_payload = results.get(key)
         if isinstance(direct_payload, str):
             parsed_payload = read_json_any_artifact(direct_payload)
+            if parsed_payload is not None:
+                return parsed_payload
+        if isinstance(direct_payload, dict) and direct_payload.get("output_json_path"):
+            parsed_payload = read_json_any_artifact(direct_payload.get("output_json_path"))
             if parsed_payload is not None:
                 return parsed_payload
         return direct_payload
@@ -3069,6 +3083,12 @@ def write_source_media_metadata_files(status: Dict[str, Any]) -> None:
     output_files = status.setdefault("output_files", {})
     output_files["source_media_metadata_json"] = str(json_path)
     output_files["source_media_metadata_csv"] = str(csv_path)
+    refresher = globals().get("refresh_master_schema_metadata_surfaces")
+    if callable(refresher):
+        try:
+            refresher(status)
+        except Exception as exc:
+            status.setdefault("summary", {})["master_schema_metadata_refresh_error"] = str(exc)
 
 
 def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, Any]:
@@ -3100,6 +3120,12 @@ def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     )
     output_files = status.setdefault("output_files", {})
     output_files["annotation_corrections"] = str(json_path)
+    refresher = globals().get("refresh_master_schema_metadata_surfaces")
+    if callable(refresher):
+        try:
+            refresher(status)
+        except Exception as exc:
+            status.setdefault("summary", {})["master_schema_annotation_refresh_error"] = str(exc)
 
 
 def collect_manual_identity_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3229,6 +3255,7 @@ def normalize_imported_output_files_for_status(status: Dict[str, Any]) -> bool:
         ("tracked_objects_json", "tracked_objects.json"),
         ("dependency_sfl_stage1", "dependency_sfl_stage1.json"),
         ("multimodal_meaning_stage1", "multimodal_meaning_stage1.json"),
+        ("agent_persistence_scene_cut", "agent_persistence_scene_cut.json"),
         ("second_order_label_proliferation", "second_order_label_proliferation.json"),
     ):
         if output_file_exists(status, file_type):
@@ -3374,13 +3401,46 @@ def write_iterative_audio_identity_artifacts_for_status(
             audio_analysis["audio_diarization"] = audio_diarization
 
     audio_sample_clouds = audio_analysis.get("audio_sample_clouds")
-    if not output_file_exists(status, "audio_sample_clouds") and audio_diarization:
+    existing_audio_sample_clouds = audio_sample_clouds or read_json_artifact_if_available(
+        output_files.get("audio_sample_clouds")
+    )
+    existing_sample_count = int(
+        (existing_audio_sample_clouds or {}).get("sample_count")
+        or sum(
+            int((cloud.get("cloud_summary") or {}).get("sample_count") or 0)
+            for cloud in (existing_audio_sample_clouds or {}).get("clouds") or []
+            if isinstance(cloud, dict)
+        )
+        or 0
+    )
+    should_rebuild_audio_samples = (
+        not output_file_exists(status, "audio_sample_clouds")
+        or existing_sample_count == 0
+    )
+    if should_rebuild_audio_samples and (audio_diarization or transcript):
         sample_cloud_path = TRANSCRIPTS_DIR / f"{analysis_id}_audio_sample_clouds.json"
-        audio_sample_clouds = build_audio_sample_clouds_from_diarization(
+        source_media_context = build_source_media_metadata_payload(status)
+        diarization_clouds = (
+            build_audio_sample_clouds_from_diarization(
+                analysis_id,
+                audio_diarization=audio_diarization,
+                source_media_context=source_media_context,
+                source_audio_path=audio_path,
+            )
+            if audio_diarization
+            else None
+        )
+        narrative_agent_clouds = build_audio_sample_clouds_for_narrative_agents(
             analysis_id,
-            audio_diarization=audio_diarization,
-            source_media_context=build_source_media_metadata_payload(status),
+            transcript=transcript,
+            audio_prosody=audio_prosody,
+            source_media_context=source_media_context,
             source_audio_path=audio_path,
+        )
+        audio_sample_clouds = merge_audio_sample_cloud_payloads(
+            analysis_id,
+            diarization_clouds,
+            narrative_agent_clouds,
         )
         sample_cloud_path.parent.mkdir(parents=True, exist_ok=True)
         sample_cloud_path.write_text(
@@ -3392,13 +3452,17 @@ def write_iterative_audio_identity_artifacts_for_status(
         output_files["audio_sample_clouds"] = str(sample_cloud_path)
         created.append("audio_sample_clouds")
     elif not audio_sample_clouds:
-        audio_sample_clouds = read_json_artifact_if_available(
-            output_files.get("audio_sample_clouds")
-        )
+        audio_sample_clouds = existing_audio_sample_clouds
         if audio_sample_clouds:
             audio_analysis["audio_sample_clouds"] = audio_sample_clouds
 
-    if not output_file_exists(status, "identity_triangulation"):
+    identity_triage_existing = read_json_artifact_if_available(output_files.get("identity_triangulation"))
+    identity_triage_needs_rebuild = bool(created and "audio_sample_clouds" in created)
+    if (
+        not output_file_exists(status, "identity_triangulation")
+        or identity_triage_needs_rebuild
+        or not identity_triage_existing
+    ):
         triangulation_bundle = write_identity_triangulation_artifact_for_status(status)
         if triangulation_bundle:
             created.append("identity_triangulation")
@@ -3543,7 +3607,13 @@ def build_visual_cues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, Any]
         )
 
     for index, item in enumerate(iter_detection_items(visual.get("tracked_objects"))[:120]):
-        label = str(item.get("class") or item.get("label") or item.get("object_class") or "").strip()
+        label = str(
+            item.get("class")
+            or item.get("class_name")
+            or item.get("label")
+            or item.get("object_class")
+            or ""
+        ).strip()
         if not label:
             continue
         confidence = safe_float(item.get("confidence"), 0.0) or 0.0
@@ -3560,6 +3630,81 @@ def build_visual_cues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, Any]
                 "score": confidence or 0.5,
                 "start_ms": start_ms,
                 "end_ms": max(end_ms, start_ms),
+            }
+        )
+        if label.lower() in {"person", "human"}:
+            track_id = item.get("track_id") or item.get("trackId") or item.get("id") or f"person:{index}"
+            cues.append(
+                {
+                    "evidence_id": item.get("evidence_id") or f"person_identity:{track_id}",
+                    "cue_type": "person_identity_prompt",
+                    "object_id": str(track_id),
+                    "prompt": "Who is this person?",
+                    "score": confidence or 0.5,
+                    "start_ms": start_ms,
+                    "end_ms": max(end_ms, start_ms),
+                }
+            )
+
+    expression_items = [
+        item
+        for item in iter_detection_items(visual.get("expression_results"))[:120]
+        if (
+            item.get("dominant_emotion")
+            or item.get("dominant_expression")
+            or item.get("expression")
+            or (isinstance(item.get("interpreted_expression"), dict) and item["interpreted_expression"].get("label"))
+        )
+    ]
+    for index, item in enumerate(expression_items):
+        start_ms = value_to_ms(item.get("timestamp", item.get("time", item.get("start", item.get("start_ms")))))
+        end_ms = value_to_ms(item.get("end", item.get("end_ms")), default=start_ms + 1000)
+        interpreted_expression = item.get("interpreted_expression")
+        interpreted_label = (
+            interpreted_expression.get("label")
+            if isinstance(interpreted_expression, dict)
+            else None
+        )
+        expression_label = (
+            item.get("dominant_emotion")
+            or item.get("dominant_expression")
+            or item.get("expression")
+            or interpreted_label
+            or "expression"
+        )
+        cues.append(
+            {
+                "evidence_id": item.get("evidence_id") or f"expression_owner:{index}",
+                "cue_type": "expression_owner_prompt",
+                "object_id": item.get("face_id") or item.get("track_id") or f"expression:{index}",
+                "expression_label": expression_label,
+                "prompt": "Whose expression is this?",
+                "score": item.get("top_emotion_score") or item.get("confidence") or 0.45,
+                "start_ms": start_ms,
+                "end_ms": max(end_ms, start_ms),
+            }
+        )
+
+    scene_groups: Dict[int, List[str]] = {}
+    for cue in cues:
+        if cue.get("cue_type") != "person_identity_prompt":
+            continue
+        bucket = int((safe_float(cue.get("start_ms"), 0.0) or 0.0) // 5000)
+        scene_groups.setdefault(bucket, []).append(str(cue.get("object_id")))
+    for bucket, object_ids in scene_groups.items():
+        unique_ids = sorted(set(object_ids))
+        if len(unique_ids) < 2:
+            continue
+        cues.append(
+            {
+                "evidence_id": f"scene_participants:{bucket}",
+                "cue_type": "scene_participant_prompt",
+                "object_id": f"scene:{bucket}",
+                "participant_ids": unique_ids,
+                "prompt": "Who are in this scene?",
+                "score": 0.5,
+                "start_ms": bucket * 5000,
+                "end_ms": bucket * 5000 + 5000,
             }
         )
     return cues
@@ -3615,6 +3760,373 @@ def build_cinematic_clues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, 
                 }
             )
     return clues
+
+
+def scene_cuts_from_scene_segments(scene_segments_payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(scene_segments_payload, dict):
+        segments = (
+            scene_segments_payload.get("segments")
+            or scene_segments_payload.get("sceneSegments")
+            or scene_segments_payload.get("scene_cards")
+            or scene_segments_payload.get("cards")
+            or scene_segments_payload.get("scenes")
+            or []
+        )
+    else:
+        segments = scene_segments_payload if isinstance(scene_segments_payload, list) else []
+    normalized_segments: List[Dict[str, Any]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        interval = segment.get("time_interval") if isinstance(segment.get("time_interval"), dict) else {}
+        start = safe_float(segment.get("start"))
+        end = safe_float(segment.get("end"))
+        if start is None:
+            start_ms = safe_float(interval.get("start_ms"))
+            start = start_ms / 1000.0 if start_ms is not None else None
+        if end is None:
+            end_ms = safe_float(interval.get("end_ms"))
+            end = end_ms / 1000.0 if end_ms is not None else None
+        if start is None:
+            continue
+        normalized_segments.append({**segment, "start": start, "end": end if end is not None else start})
+    normalized_segments.sort(key=lambda segment: safe_float(segment.get("start"), 0.0) or 0.0)
+    cuts: List[Dict[str, Any]] = []
+    for index in range(len(normalized_segments) - 1):
+        left = normalized_segments[index]
+        right = normalized_segments[index + 1]
+        cut_time = safe_float(left.get("end"))
+        if cut_time is None:
+            cut_time = safe_float(right.get("start"))
+        if cut_time is None:
+            continue
+        cuts.append(
+            {
+                "cut_id": f"scene_cut:{index + 1}",
+                "time": cut_time,
+                "pre_segment_id": left.get("scene_id") or left.get("id") or left.get("scene_index"),
+                "post_segment_id": right.get("scene_id") or right.get("id") or right.get("scene_index"),
+            }
+        )
+    return cuts
+
+
+def is_scene_temporal_segment(segment: Any) -> bool:
+    if not isinstance(segment, dict):
+        return False
+    family = str(segment.get("event_family") or segment.get("segment_family") or "").lower()
+    segment_type = str(segment.get("segment_type") or segment.get("type") or "").lower()
+    return (
+        "scene" in family
+        or segment_type == "scene"
+        or str(segment.get("scene_id") or "").strip() != ""
+    )
+
+
+def build_master_schema_scene_temporal_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Create Master Schema scene segments from the most mature available scene layer."""
+
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    scene_segments_payload = summary.get("scene_segments") if isinstance(summary.get("scene_segments"), dict) else {}
+    raw_segments = scene_segments_payload.get("segments") if isinstance(scene_segments_payload, dict) else []
+    source = "summary.scene_segments"
+    authority = "motion_scene_basis"
+    review_state = "available"
+    maturity_route = "master_schema.formal_media_scene_segments"
+
+    if not raw_segments:
+      second_order = status.get("second_order_label_proliferation") if isinstance(status.get("second_order_label_proliferation"), dict) else {}
+      instructions = second_order.get("instructions") if isinstance(second_order.get("instructions"), list) else []
+      ranges: List[Dict[str, float]] = []
+      for instruction in instructions:
+          if not isinstance(instruction, dict):
+              continue
+          time_span = instruction.get("time_span") if isinstance(instruction.get("time_span"), dict) else {}
+          start_raw = time_span.get("start_ms", time_span.get("start", 0))
+          end_raw = time_span.get("end_ms", time_span.get("end", start_raw))
+          start = safe_float(start_raw, 0.0) or 0.0
+          end = safe_float(end_raw, start) or start
+          if "start_ms" in time_span or start > 1000:
+              start = start / 1000.0
+          if "end_ms" in time_span or end > 1000:
+              end = end / 1000.0
+          if start >= 0 and end >= start:
+              ranges.append({"start": start, "end": max(end, start + 0.5)})
+      if ranges:
+          ranges.sort(key=lambda item: item["start"])
+          window_seconds = 24.0
+          first_start = max(0.0, int(ranges[0]["start"] // window_seconds) * window_seconds)
+          last_end = max(max(item["end"] for item in ranges), first_start + window_seconds)
+          raw_segments = []
+          cursor = first_start
+          while cursor <= last_end:
+              end = min(cursor + window_seconds, max(last_end, cursor + 1.0))
+              raw_segments.append({
+                  "start": round(cursor, 3),
+                  "end": round(end, 3),
+                  "duration": round(end - cursor, 3),
+              })
+              cursor += window_seconds
+          source = "second_order_label_proliferation.instructions"
+          authority = "Master Schema candidate synthesis"
+          review_state = "candidate_review_required"
+          maturity_route = "master_schema.meaning_plot_interpretive_window_maturity"
+
+    normalized: List[Dict[str, Any]] = []
+    for index, segment in enumerate(raw_segments or []):
+        if not isinstance(segment, dict):
+            continue
+        interval = segment.get("interval") if isinstance(segment.get("interval"), dict) else {}
+        start = (
+            safe_float(segment.get("start"))
+            if safe_float(segment.get("start")) is not None
+            else safe_float(segment.get("start_seconds"))
+        )
+        if start is None:
+            start = safe_float(segment.get("start_ms"))
+            if start is not None:
+                start = start / 1000.0
+        if start is None:
+            start = safe_float(interval.get("start_seconds"))
+        end = (
+            safe_float(segment.get("end"))
+            if safe_float(segment.get("end")) is not None
+            else safe_float(segment.get("end_seconds"))
+        )
+        if end is None:
+            end = safe_float(segment.get("end_ms"))
+            if end is not None:
+                end = end / 1000.0
+        if end is None:
+            end = safe_float(interval.get("end_seconds"))
+        if start is None or end is None:
+            continue
+        scene_index = safe_int(segment.get("scene_index")) or index + 1
+        start = max(0.0, min(start, end))
+        end = max(start, end)
+        normalized.append({
+            "segment_id": segment.get("segment_id") or f"scene-understanding-{scene_index:04d}",
+            "scene_id": segment.get("scene_id") or f"scene:{scene_index:03d}",
+            "scene_index": scene_index,
+            "segment_type": "scene",
+            "event_family": "scene_understanding",
+            "event_label": segment.get("event_label") or f"Scene {scene_index}",
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "interval": {
+                "start_seconds": round(start, 3),
+                "end_seconds": round(end, 3),
+                "start_ms": int(round(start * 1000)),
+                "end_ms": int(round(end * 1000)),
+            },
+            "authority": authority,
+            "source": source,
+            "review_state": segment.get("review_state") or review_state,
+            "maturity_route": segment.get("maturity_route") or maturity_route,
+            "provenance": build_provenance(
+                source_system="vaa1",
+                source_type="scene_governance",
+                created_by="master-schema-scene-governance",
+                note=f"Scene segment routed into Master Schema from {source}.",
+            ),
+        })
+    return normalized
+
+
+def track_feature_vector_from_row(item: Dict[str, Any], *keys: str) -> Optional[List[float]]:
+    for key in keys:
+        value = item.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, list):
+            try:
+                return [float(part) for part in value]
+            except (TypeError, ValueError):
+                continue
+        if isinstance(value, dict):
+            nested = value.get("vector") or value.get("values") or value.get("embedding")
+            if isinstance(nested, list):
+                try:
+                    return [float(part) for part in nested]
+                except (TypeError, ValueError):
+                    continue
+        if isinstance(value, str):
+            parts = [part.strip() for part in re.split(r"[,\s;]+", value) if part.strip()]
+            if not parts:
+                continue
+            try:
+                return [float(part) for part in parts]
+            except ValueError:
+                continue
+    return None
+
+
+def normalize_track_for_agent_persistence(item: Dict[str, Any], index: int) -> Dict[str, Any]:
+    track_id = item.get("track_id") or item.get("trackId") or item.get("id") or f"track:{index}"
+    class_name = str(item.get("class_name") or item.get("label") or item.get("object_class") or "").lower()
+    features: Dict[str, Any] = {}
+    face_embedding = track_feature_vector_from_row(
+        item,
+        "face_embedding",
+        "face_embedding_vector",
+        "sample_embedding",
+        "visual_embedding",
+    )
+    torso_histogram = track_feature_vector_from_row(
+        item,
+        "torso_histogram",
+        "torso_color_histogram",
+        "clothing_histogram",
+    )
+    if face_embedding:
+        features["face_embedding"] = face_embedding
+    if torso_histogram:
+        features["torso_histogram"] = torso_histogram
+
+    return {
+        "track_id": str(track_id),
+        "agent_label": item.get("agent_label")
+        or item.get("narrative_agent_label")
+        or item.get("identity_affirmation")
+        or item.get("display_label")
+        or item.get("label")
+        or item.get("class_name")
+        or str(track_id),
+        "class_name": class_name,
+        "start": safe_float(item.get("start_timestamp") or item.get("start") or item.get("timestamp"), 0.0),
+        "end": safe_float(
+            item.get("end_timestamp")
+            or item.get("end")
+            or item.get("timestamp")
+            or item.get("start_timestamp"),
+            0.0,
+        ),
+        "features": features,
+        "feature_cloud_ref": item.get("feature_cloud_ref")
+        or item.get("visual_sample_cloud_ref")
+        or item.get("face_sample_cloud_ref"),
+        "evidence_id": item.get("evidence_id") or f"object:{track_id}",
+        "frame_ref": item.get("frame_ref"),
+        "bbox_ref": item.get("bbox_ref") or f"bbox:{track_id}",
+    }
+
+
+def write_agent_persistence_artifact_for_status(
+    status: Dict[str, Any],
+    output_path: Path,
+) -> Dict[str, Any]:
+    analysis_id = status.get("analysis_id") or "unknown_analysis"
+    visual = (status.get("results") or {}).get("visual_analysis") or {}
+    tracked_payload = visual.get("tracked_objects") or artifact_payload_from_status_any(
+        status,
+        "tracked_objects",
+        "tracked_objects_json",
+        "time_bank_objects",
+    )
+    tracked_objects = [
+        item
+        for item in iter_detection_items(tracked_payload)
+        if str(item.get("class_name") or item.get("label") or "").lower() in {"person", "human", "animate"}
+        or item.get("agent_label")
+        or item.get("narrative_agent_label")
+    ]
+    tracks = [
+        normalize_track_for_agent_persistence(item, index)
+        for index, item in enumerate(tracked_objects)
+    ]
+    scene_cuts = scene_cuts_from_scene_segments(
+        visual.get("scene_segments")
+        or artifact_payload_from_status_any(
+            status,
+            "scene_segments",
+            "motion_scene_basis",
+            "mise_en_scene_scene_cards",
+        )
+    )
+    manager = AgentPersistenceManager()
+    checks: List[Dict[str, Any]] = []
+    feature_events: List[Dict[str, Any]] = []
+    for scene_cut in scene_cuts:
+        grouped = manager.tracks_near_scene_cut(tracks, scene_cut)
+        check = manager.cross_scene_persistence_check(
+            grouped["departed"],
+            grouped["arrived"],
+            scene_cut=scene_cut,
+        )
+        checks.append(check)
+        for candidate in check.get("candidates") or []:
+            feature_events.append(build_agent_persistence_feature_event(analysis_id, candidate))
+
+    payload = {
+        "schema": "vaa1.agent_persistence_bundle.v1",
+        "analysis_id": analysis_id,
+        "status": "ready",
+        "scene_cut_count": len(scene_cuts),
+        "track_count": len(tracks),
+        "tracks_with_comparable_features": sum(1 for track in tracks if track.get("features")),
+        "checks": checks,
+        "feature_events": feature_events,
+        "summary": {
+            "candidate_count": sum((check.get("summary") or {}).get("candidate_count", 0) for check in checks),
+            "accepted_count": sum((check.get("summary") or {}).get("accepted_count", 0) for check in checks),
+            "review_candidate_count": sum(
+                (check.get("summary") or {}).get("review_candidate_count", 0) for check in checks
+            ),
+        },
+        "manual_testing_notes": {
+            "requires_scene_segments": True,
+            "requires_comparable_agent_sample_features": True,
+            "empty_candidates_are_valid_when_feature_clouds_are_absent": True,
+        },
+        "governance": {
+            "does_not_assert_natural_person_identity": True,
+            "semantic_agent_sample_profile_only": True,
+            "anti_drift_rule_preserved_for_continuous_tracking": True,
+        },
+        "provenance": {
+            "created_at": utc_now_iso(),
+            "created_by": "api_server.write_agent_persistence_artifact_for_status",
+        },
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return payload
+
+
+def should_run_agent_persistence_for_status(status: Dict[str, Any]) -> bool:
+    """Agent persistence writes a traceable scene-cut artifact when tracks and cuts exist."""
+
+    visual = (status.get("results") or {}).get("visual_analysis") or {}
+    tracked_payload = visual.get("tracked_objects") or artifact_payload_from_status_any(
+        status,
+        "tracked_objects",
+        "tracked_objects_json",
+        "time_bank_objects",
+    )
+    tracked_objects = [
+        item
+        for item in iter_detection_items(tracked_payload)
+        if str(item.get("class_name") or item.get("label") or "").lower() in {"person", "human", "animate"}
+        or item.get("agent_label")
+        or item.get("narrative_agent_label")
+    ]
+    if not tracked_objects:
+        return False
+
+    scene_cuts = scene_cuts_from_scene_segments(
+        visual.get("scene_segments")
+        or artifact_payload_from_status_any(
+            status,
+            "scene_segments",
+            "motion_scene_basis",
+            "mise_en_scene_scene_cards",
+        )
+    )
+    if not scene_cuts:
+        return False
+
+    return True
 
 
 def load_json_artifact_for_meaning(path_value: Any) -> Optional[Dict[str, Any]]:
@@ -3684,6 +4196,23 @@ def write_second_order_meaning_artifacts_for_status(
     audio_prosody = resolve_audio_prosody_for_meaning(status, audio)
 
     visual = results.get("visual_analysis") or {}
+    visual = dict(visual) if isinstance(visual, dict) else {}
+    if not visual.get("tracked_objects"):
+        tracked_payload = artifact_payload_from_status_any(status, "tracked_objects", "tracked_objects_json", "time_bank_objects")
+        if tracked_payload is not None:
+            visual["tracked_objects"] = tracked_payload
+    if not visual.get("ocr_results"):
+        ocr_payload = artifact_payload_from_status_any(status, "ocr_results", "ocr_json", "time_bank_ocr")
+        if ocr_payload is not None:
+            visual["ocr_results"] = ocr_payload
+    if not visual.get("expression_results"):
+        expression_payload = artifact_payload_from_status_any(status, "expression_results", "expression_json", "time_bank_expressions")
+        if expression_payload is not None:
+            visual["expression_results"] = expression_payload
+    if not visual.get("scene_segments"):
+        scene_payload = artifact_payload_from_status_any(status, "scene_segments", "motion_scene_basis", "mise_en_scene_scene_cards")
+        if scene_payload is not None:
+            visual["scene_segments"] = scene_payload
     analysis_dir = RESULTS_DIR / analysis_id
     analysis_dir.mkdir(parents=True, exist_ok=True)
     source_metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
@@ -3693,6 +4222,7 @@ def write_second_order_meaning_artifacts_for_status(
     dependency_path = analysis_dir / "dependency_sfl_stage1.json"
     meaning_path = analysis_dir / "multimodal_meaning_stage1.json"
     proliferation_path = analysis_dir / "second_order_label_proliferation.json"
+    agent_persistence_path = analysis_dir / "agent_persistence_scene_cut.json"
 
     sfl_artifact = write_dependency_sfl_stage1_artifact(
         analysis_id,
@@ -3723,10 +4253,22 @@ def write_second_order_meaning_artifacts_for_status(
         genre_profile=genre_profile,
         culture_context=culture_context,
     )
+
+    agent_persistence = status.get("agent_persistence_scene_cut", {})
+    agent_persistence_events = agent_persistence.get("feature_events") or []
+    if agent_persistence_events:
+        meaning_artifact.setdefault("feature_events", []).extend(agent_persistence_events)
+        meaning_path.write_text(
+            json.dumps(meaning_artifact, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    agent_persistence_path = (status.get("output_files") or {}).get("agent_persistence_scene_cut")
     plan = write_second_order_label_proliferation_plan(
         analysis_id,
         meaning_artifact,
         proliferation_path,
+        agent_persistence_path=agent_persistence_path,
     )
 
     internal_artifacts = status.setdefault("internal_artifacts", {})
@@ -3757,6 +4299,7 @@ def write_mise_en_scene_artifacts_for_status(
     scene_cards_path = analysis_dir / "mise_en_scene_scene_cards.json"
     metadata_summary_path = analysis_dir / "source_extraction_metadata_summary.json"
 
+    refresh_master_schema_metadata_surfaces(status)
     scene_card_bundle = write_mise_en_scene_scene_cards(
         analysis_id,
         status,
@@ -4406,6 +4949,9 @@ def build_vaa1_master_schema_from_cvat(
                 }
             )
 
+    if not any(is_scene_temporal_segment(segment) for segment in temporal_segments):
+        temporal_segments.extend(build_master_schema_scene_temporal_segments(status))
+
     genre_annotations: List[Dict[str, Any]] = []
     if normalize_taxonomy_label(user_annotations.get("genre")):
         genre_annotations.append(
@@ -4594,6 +5140,7 @@ def build_vaa1_master_schema_from_cvat(
             "import_status": "mapped",
         },
         "narrative_agent_profile_governance": narrative_agent_profile_governance,
+        "scene_constellation_governance": {},
         "genre_annotations": genre_annotations,
         "character_role_annotations": character_role_annotations,
         "character_definition_annotations": character_definition_annotations,
@@ -4621,11 +5168,176 @@ def build_vaa1_master_schema_from_cvat(
             "unresolved_labels": sorted(set(unresolved_labels)),
         },
     }
+    master_schema_payload["scene_constellation_governance"] = build_scene_constellation_governance(
+        status=status,
+        master_schema_payload=master_schema_payload,
+    )
     master_schema_payload["master_schema_maturity_audit"] = build_master_schema_maturity_audit(
         status=status,
         master_schema_payload=master_schema_payload,
     )
     return master_schema_payload
+
+
+def build_scene_constellation_governance(
+    *,
+    status: Dict[str, Any],
+    master_schema_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Name the different scene layers so panels do not present rival counts as one truth."""
+
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    formal_segments = (
+        ((summary.get("scene_segments") or {}).get("segments") or [])
+        if isinstance(summary.get("scene_segments"), dict)
+        else []
+    )
+    scene_card_status = status.get("mise_en_scene_scene_cards") if isinstance(status.get("mise_en_scene_scene_cards"), dict) else {}
+    second_order = status.get("second_order_label_proliferation") if isinstance(status.get("second_order_label_proliferation"), dict) else {}
+    instructions = second_order.get("instructions") if isinstance(second_order.get("instructions"), list) else []
+    temporal_segments = [
+        segment
+        for segment in (master_schema_payload.get("temporal_segments") or [])
+        if is_scene_temporal_segment(segment)
+    ]
+    return {
+        "schema": "vaa1.scene_constellation_governance.v1",
+        "authority": "Master Schema",
+        "principle": (
+            "Scene counts are layer-specific. Formal media segmentation, Master Schema temporal "
+            "segments, mise-en-scene Scene Cards, and meaning/plot interpretive windows remain "
+            "linked but must not be collapsed into one counter."
+        ),
+        "attendee_boundary_rule": {
+            "status": "active",
+            "principle": (
+                "Scene boundaries may be distinguished by who attends, enters, exits, disappears, "
+                "reappears, speaks, or becomes narratively salient. Narrative Agent Profiles, track "
+                "presence, transcript speakers, expression samples, and agent sample-profile "
+                "persistence are valid evidence for interpreting and correcting scene boundaries."
+            ),
+            "consulted_surfaces": [
+                "narrative_agent_profile_annotations",
+                "character_definition_annotations",
+                "track_annotations",
+                "temporal_segments",
+                "second_order_label_proliferation.agent_persistence_scene_cut",
+                "transcript speakers",
+                "expression annotations",
+            ],
+            "analyst_control": (
+                "Attendee-based scene boundary candidates remain reviewable and correctable before "
+                "they mature into Master Schema temporal segments."
+            ),
+        },
+        "layers": [
+            {
+                "layer_id": "formal_media_scene_segments",
+                "label": "Formal media scene segments",
+                "count": len(formal_segments),
+                "authority": "motion_scene_basis",
+                "source": "summary.scene_segments",
+                "status": "available" if formal_segments else "pending",
+            },
+            {
+                "layer_id": "master_schema_temporal_segments",
+                "label": "Master Schema temporal segments",
+                "count": len(temporal_segments),
+                "authority": "Master Schema",
+                "source": "vaa1_annotation_master_schema.temporal_segments",
+                "status": "available" if temporal_segments else "pending",
+            },
+            {
+                "layer_id": "mise_en_scene_scene_cards",
+                "label": "Mise-en-scene Scene Cards",
+                "count": safe_int(scene_card_status.get("scene_card_count")) or 0,
+                "authority": "Scene Cards",
+                "source": "mise_en_scene_scene_cards",
+                "status": "available" if safe_int(scene_card_status.get("scene_card_count")) else "pending",
+            },
+            {
+                "layer_id": "meaning_plot_interpretive_windows",
+                "label": "Meaning / Plot interpretive windows",
+                "count": len(instructions),
+                "authority": "second_order_label_proliferation",
+                "source": "second_order_label_proliferation.instructions",
+                "status": "available" if instructions else "pending",
+            },
+        ],
+        "routing_rule": (
+            "Panels must name which layer they are showing. Interpretive lenses may regroup "
+            "evidence, but the formal media scene count remains governed by Master Schema."
+        ),
+        "updated_at": utc_now_iso(),
+    }
+
+
+def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
+    """Refresh Master Schema metadata surfaces after Source Media metadata changes."""
+
+    analysis_id = str(status.get("analysis_id") or status.get("id") or "").strip()
+    if not analysis_id:
+        return
+    analysis_dir = RESULTS_DIR / analysis_id
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+    master_path = Path(
+        str(internal_artifacts.get("vaa1_annotation_master_schema") or analysis_dir / "vaa1_annotation_master_schema.json")
+    )
+    existing = status.get("vaa1_annotation_master_schema") if isinstance(status.get("vaa1_annotation_master_schema"), dict) else {}
+    if not existing and master_path.exists():
+        try:
+            existing = json.loads(master_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    linkage = existing.get("linkage") if isinstance(existing.get("linkage"), dict) else {}
+    scaffold = build_vaa1_master_schema_from_cvat(
+        analysis_id=analysis_id,
+        status=status,
+        task_id=safe_int(linkage.get("cvat_task_id")) or safe_int(status.get("cvatID")) or 0,
+        job_id=safe_int(linkage.get("cvat_job_id")) or safe_int((status.get("cvat_ingest") or {}).get("job_id")) or 0,
+        cvat_annotations={"shapes": [], "tracks": []},
+        label_lookup={},
+    )
+
+    existing_temporal_segments = existing.get("temporal_segments") if isinstance(existing.get("temporal_segments"), list) else []
+    scaffold_temporal_segments = scaffold.get("temporal_segments") if isinstance(scaffold.get("temporal_segments"), list) else []
+    if any(is_scene_temporal_segment(segment) for segment in existing_temporal_segments):
+        temporal_segments = existing_temporal_segments
+    else:
+        temporal_segments = [
+            *existing_temporal_segments,
+            *[
+                segment
+                for segment in scaffold_temporal_segments
+                if is_scene_temporal_segment(segment)
+            ],
+        ]
+
+    merged = {
+        **scaffold,
+        **existing,
+        "updated_at": utc_now_iso(),
+        "source_context_snapshot": scaffold.get("source_context_snapshot", {}),
+        "narrative_agent_profile_governance": scaffold.get("narrative_agent_profile_governance", {}),
+        "genre_annotations": scaffold.get("genre_annotations", []),
+        "character_role_annotations": scaffold.get("character_role_annotations", []),
+        "character_definition_annotations": scaffold.get("character_definition_annotations", []),
+        "narrative_agent_profile_annotations": scaffold.get("narrative_agent_profile_annotations", []),
+        "temporal_segments": temporal_segments,
+    }
+    merged["scene_constellation_governance"] = build_scene_constellation_governance(
+        status=status,
+        master_schema_payload=merged,
+    )
+    merged["master_schema_maturity_audit"] = build_master_schema_maturity_audit(
+        status=status,
+        master_schema_payload=merged,
+    )
+    master_path.parent.mkdir(parents=True, exist_ok=True)
+    master_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    internal_artifacts["vaa1_annotation_master_schema"] = str(master_path)
+    status["vaa1_annotation_master_schema"] = merged
 
 
 MASTER_SCHEMA_AUTHORITY_ORDER = [
@@ -6151,11 +6863,24 @@ def run_complete_analysis(
                     audio_diarization = None
 
                 try:
-                    audio_sample_clouds = build_audio_sample_clouds_from_diarization(
+                    source_media_context = build_source_media_metadata_payload(status)
+                    diarization_clouds = build_audio_sample_clouds_from_diarization(
                         analysis_id,
                         audio_diarization=audio_diarization,
-                        source_media_context=build_source_media_metadata_payload(status),
+                        source_media_context=source_media_context,
                         source_audio_path=organized_audio_path,
+                    )
+                    narrative_agent_clouds = build_audio_sample_clouds_for_narrative_agents(
+                        analysis_id,
+                        transcript=transcript,
+                        audio_prosody=audio_prosody,
+                        source_media_context=source_media_context,
+                        source_audio_path=organized_audio_path,
+                    )
+                    audio_sample_clouds = merge_audio_sample_cloud_payloads(
+                        analysis_id,
+                        diarization_clouds,
+                        narrative_agent_clouds,
                     )
                     with open(organized_audio_sample_clouds_path, "w", encoding="utf-8") as f:
                         json.dump(audio_sample_clouds, f, indent=2, ensure_ascii=False)
@@ -6273,7 +6998,6 @@ def run_complete_analysis(
                     logger.error(traceback.format_exc())
                     results["quan_error"] = str(quan_error)
 
-
                 # Step 8: Store results
                 results["audio_analysis"] = {
                     "audio_path": str(organized_audio_path),
@@ -6313,6 +7037,54 @@ def run_complete_analysis(
                 logger.error(traceback.format_exc())
                 results["audio_error"] = str(audio_error)
 
+        status["results"] = results
+        status["output_files"] = output_files
+
+        # AGENT PERSISTENCE
+        if pipeline_type in ["full", "visual_only"]:
+            if should_run_agent_persistence_for_status(status):
+                try:
+                    update_analysis_progress(
+                        status,
+                        92,
+                        "agent_persistence",
+                        "Running agent persistence analysis across scene cuts.",
+                    )
+                    agent_persistence_path = analysis_output_dir / "agent_persistence_scene_cut.json"
+                    agent_persistence_payload = write_agent_persistence_artifact_for_status(
+                        status,
+                        agent_persistence_path,
+                    )
+                    status["agent_persistence_scene_cut"] = {
+                        **agent_persistence_payload,
+                        "output_json_path": str(agent_persistence_path),
+                        "updated_at": utc_now_iso(),
+                    }
+                    output_files["agent_persistence_scene_cut"] = str(agent_persistence_path)
+                    status.setdefault("internal_artifacts", {})["agent_persistence_scene_cut"] = str(
+                        agent_persistence_path
+                    )
+                    append_analysis_event(
+                        status,
+                        "agent_persistence_created",
+                        details={
+                            "candidate_count": (agent_persistence_payload.get("summary") or {}).get(
+                                "candidate_count", 0
+                            ),
+                            "accepted_count": (agent_persistence_payload.get("summary") or {}).get("accepted_count", 0),
+                        },
+                    )
+                except Exception as agent_error:
+                    logger.warning("Agent persistence analysis failed: %s", agent_error)
+                    results["agent_persistence_error"] = str(agent_error)
+            else:
+                append_analysis_event(
+                    status,
+                    "agent_persistence_skipped",
+                    details={
+                        "reason": "requires visual scene cuts and comparable tracked-agent feature samples",
+                    },
+                )
         
         # MARK AS COMPLETED
         source_video_path = status.get("source_video_path") or status.get("file_path")
@@ -6351,6 +7123,10 @@ def run_complete_analysis(
             status.setdefault("results", {})[
                 "second_order_label_proliferation_error"
             ] = str(proliferation_error)
+        if results.get("agent_persistence_error"):
+            status.setdefault("results", {})["agent_persistence_error"] = results[
+                "agent_persistence_error"
+            ]
         try:
             triangulation_bundle = write_identity_triangulation_artifact_for_status(status)
             if triangulation_bundle:
@@ -6663,9 +7439,11 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_samples": status.get("source_samples", []),
         "identity_refinement": status.get("identity_refinement"),
         "identity_triangulation": status.get("identity_triangulation"),
+        "agent_persistence_scene_cut": status.get("agent_persistence_scene_cut"),
         "second_order_label_proliferation": status.get("second_order_label_proliferation"),
         "mise_en_scene_scene_cards": status.get("mise_en_scene_scene_cards"),
         "source_extraction_metadata_summary": status.get("source_extraction_metadata_summary"),
+        "vaa1_annotation_master_schema": status.get("vaa1_annotation_master_schema"),
         "evidence_proliferation_matches": status.get("evidence_proliferation_matches", []),
     }
 
@@ -7144,7 +7922,7 @@ async def download_file(analysis_id: str, file_type: str):
     Download analysis results
     Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript,
     linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json,
-    quan_analysis, dependency_sfl_stage1, multimodal_meaning_stage1, second_order_label_proliferation,
+    quan_analysis, dependency_sfl_stage1, multimodal_meaning_stage1, agent_persistence_scene_cut, second_order_label_proliferation,
     mise_en_scene_scene_cards, source_extraction_metadata_summary, mise_en_scene_scene_card_report_draft_md,
     face_anonymization_manifest
     """
@@ -7175,6 +7953,7 @@ async def download_file(analysis_id: str, file_type: str):
         "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
         "dependency_sfl_stage1": ("dependency_sfl_stage1.json", "application/json"),
         "multimodal_meaning_stage1": ("multimodal_meaning_stage1.json", "application/json"),
+        "agent_persistence_scene_cut": ("agent_persistence_scene_cut.json", "application/json"),
         "second_order_label_proliferation": (
             "second_order_label_proliferation.json",
             "application/json",
@@ -7262,6 +8041,7 @@ async def download_bundle(analysis_id: str):
         "identity_triangulation": "identity_triangulation_bundle.json",
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
+        "agent_persistence_scene_cut": "agent_persistence_scene_cut.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
         "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
         "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",
@@ -7336,6 +8116,7 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "identity_triangulation": "identity_triangulation_bundle.json",
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
+        "agent_persistence_scene_cut": "agent_persistence_scene_cut.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
         "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
         "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",

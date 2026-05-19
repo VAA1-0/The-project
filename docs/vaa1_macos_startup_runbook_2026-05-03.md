@@ -88,6 +88,78 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 
 ## Manual Fallback
 
+Use this sequence when starting the components by hand for manual testing. These are the
+known VAA1 runtime components; do not substitute `.venv` for backend service startup.
+
+### Known Running Sequence, 2026-05-18
+
+Backend/API environment source:
+
+- `environment-MacOS-core.yml` -> Conda env `vaa1_core`
+
+Face/deepface environment source:
+
+- `environment-MacOS-face.yml` -> Conda env `vaa1_face`
+
+Frontend environment:
+
+- `src/frontend` Node/Next workspace
+
+Recommended manual backend command from the repository root:
+
+```bash
+source ~/opt/anaconda3/etc/profile.d/conda.sh
+conda activate vaa1_core
+python3 -u api_server.py
+```
+
+Expected backend:
+
+```text
+http://localhost:8000
+```
+
+Manual frontend command in a second terminal:
+
+```bash
+cd "/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project/src/frontend"
+npm run dev
+```
+
+Expected frontend:
+
+```text
+http://localhost:3000
+```
+
+Manual verification:
+
+```bash
+curl -fsS http://localhost:8000/api/health
+curl -fsS 'http://localhost:8000/api/analyses?limit=20'
+```
+
+Known good analysis recovery expectation:
+
+- persisted analyses are read from `outputs/api_results/*/analysis_record.json`
+- `/api/analyses?limit=20` should return saved completed analyses before the frontend
+  project list is considered healthy
+
+Do not start the backend with:
+
+```bash
+python3 api_server.py
+./.venv/bin/python api_server.py
+```
+
+Reason:
+
+- the system `python3` may not have FastAPI
+- `.venv` may have FastAPI but not full pipeline dependencies such as `whisper`
+- `vaa1_core` is the known backend/API runtime described by `environment-MacOS-core.yml`
+
+Use `vaa1_face` only for face-specific/deepface operations, not for the main API server.
+
 Backend:
 
 ```bash

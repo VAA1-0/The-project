@@ -141,6 +141,57 @@ class IdentityTriangulationContractTest(unittest.TestCase):
             "candidate_identity",
         )
 
+    def test_narrative_agent_profile_plus_audio_pattern_triangulates_candidate_detection(self):
+        result = identity_triangulation.resolve_identity_triangulation(
+            "analysis-1",
+            identity_label="James Bond",
+            source_media_metadata={
+                "user_annotations": {
+                    "narrative_agent_profiles": [
+                        {
+                            "profile_type": "Narrative Agent Profile",
+                            "narrative_agent_name": "James Bond",
+                        }
+                    ],
+                    "character_roles": [
+                        "James Bond (Daniel Craig): protagonist, secret agent"
+                    ],
+                }
+            },
+            audio_sample_clouds={
+                "clouds": [
+                    {
+                        "cloud_id": "analysis-1:audio_cloud:James Bond",
+                        "entity_label": "James Bond",
+                        "entity_type": "narrative_agent_voice_pattern",
+                        "cloud_summary": {
+                            "sample_count": 2,
+                            "average_confidence": 0.74,
+                        },
+                        "samples": [
+                            {
+                                "sample_id": "analysis-1:audio_sample:james_bond:0001",
+                                "sample_role": "narrative_agent_audio_pattern_candidate",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(result["status"], "ready_for_proliferation")
+        self.assertEqual(result["proliferation_level"], "media_candidate")
+        self.assertTrue(result["should_proliferate"])
+        self.assertEqual(result["modality_count"], 2)
+        self.assertIn(
+            "metadata:narrative_agent_profiles:0",
+            result["evidence_vector"]["metadata"]["evidence_ids"],
+        )
+        self.assertIn(
+            "analysis-1:audio_cloud:James Bond",
+            result["evidence_vector"]["audio"]["evidence_ids"],
+        )
+
     def test_identity_dependent_plan_enriches_labels_without_mutating_geometry_or_time(self):
         triangulation = identity_triangulation.resolve_identity_triangulation(
             "analysis-1",

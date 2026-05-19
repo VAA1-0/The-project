@@ -30,6 +30,7 @@ const quantMatrixPanel = read("app/V2components/components/panels/QuantMatrixPan
 const speechPanel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
 const timeBankPanel = read("app/V2components/components/panels/TimeBankPanel.tsx");
 const meaningPlotPanel = read("app/V2components/components/panels/MeaningPlotPanel.tsx");
+const sourceMediaPanel = read("app/V2components/components/panels/SourceMediaMetadataPanel.tsx");
 const globalsCss = read("styles/globals.css");
 const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx");
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
@@ -39,6 +40,7 @@ const secondOrderAffirmations = read(
 );
 const videoService = read("lib/video-service.ts");
 const evidenceAuthority = read("lib/evidence-authority.ts");
+const sceneGovernance = read("lib/scene-governance.ts");
 
 function manualCategoryUnion() {
   const block = apiService.match(
@@ -522,6 +524,38 @@ test("video bbox labels consume Master Schema maturity before raw detector label
   );
 });
 
+test("video bbox labels keep mature narrative-agent identity above plot cues", () => {
+  assert.match(
+    videoPanel,
+    /function buildMatureSubjectOverlayLookup/,
+    "VideoPanel must build a target-bound subject lookup from resolved Master Schema evidence",
+  );
+
+  assert.match(
+    videoPanel,
+    /narrativeAgentOverride[\s\S]*localOverride[\s\S]*masterSchemaMatureOverride[\s\S]*matureProliferatedOverride/,
+    "BBox overlays must prioritize Narrative Agent Recognition before object labels, plot proliferation, or raw labels",
+  );
+
+  assert.match(
+    videoPanel,
+    /roleLabelForNarrativeAgent/,
+    "BBox subject labels must be able to append mature character-role metadata such as The Protagonist",
+  );
+
+  assert.match(
+    videoPanel,
+    /hasNarrativeAgentRecognition[\s\S]*\?\s*""[\s\S]*identityLabel/,
+    "second-order Identification/Role cues must not replace a confirmed narrative-agent bbox label",
+  );
+
+  assert.match(
+    videoPanel,
+    /narrative_agent_recognition/,
+    "BBox source items must carry narrative-agent provenance for traceback",
+  );
+});
+
 test("Master Schema surfaces the user-confirmed anchor confirmation program", () => {
   assert.match(
     videoService,
@@ -551,6 +585,322 @@ test("Master Schema surfaces the user-confirmed anchor confirmation program", ()
     masterSchemaPanel,
     /Concise Pattern Confirmations/,
     "Master Schema panel must surface concise program-wide confirmation families",
+  );
+});
+
+test("Master Schema is the mature subject source for narrative agents", () => {
+  assert.match(
+    videoService,
+    /masterSchemaNarrativeAgentRecords/,
+    "frontend service must resolve Master Schema narrative-agent and character-role records",
+  );
+
+  assert.match(
+    videoService,
+    /narrative_agent_profile_annotations/,
+    "Master Schema narrative-agent profiles must be promoted into resolved evidence",
+  );
+
+  assert.match(
+    videoService,
+    /character_role_annotations/,
+    "Master Schema character-role metadata must be promoted into resolved evidence",
+  );
+
+  assert.match(
+    videoService,
+    /manualAnnotationNarrativeAgentRecords/,
+    "manual Identification/Role annotations must be promoted into the resolved subject authority stream",
+  );
+
+  assert.match(
+    videoService,
+    /hasManualSubjectAffirmation/,
+    "manual identity or role affirmations must surface as subjects even when stored under another annotation category",
+  );
+
+  assert.match(
+    videoService,
+    /master_schema\.review_layer\.manual_subject_annotation/,
+    "manual subject indications must keep Master Schema review-layer provenance",
+  );
+
+  assert.match(
+    videoService,
+    /manualTargetId[\s\S]*timestamp_seconds[\s\S]*targetId:\s*manualTargetId \|\| item\.id/,
+    "manual subject promotion must preserve target/time-bound James Bond indications instead of deduping only by character name",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Master Schema Subject Authority/,
+    "Master Schema panel must visibly surface governed subject authority",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /masterSchemaNarrativeAgentProfiles/,
+    "Meaning / Plot must read Narrative Agent Profiles from Master Schema first",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrativeAgentProfiles\.length\s*\?\s*\[\]/,
+    "Meaning / Plot must suppress unknown participant fallback when governed profiles exist",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /isUnknownAgentLabel/,
+    "Meaning / Plot must reject unknown participant labels before building character governance rows",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /sceneCardProfiles/,
+    "Meaning / Plot must include Scene Card subjects after Master Schema and Source Media metadata",
+  );
+});
+
+test("Meaning Plot keeps confirmation families anchor-aware", () => {
+  assert.match(
+    meaningPlotPanel,
+    /function MeaningPlotConfirmationStrip/,
+    "Meaning / Plot must expose a confirmation strip for mature meaning proliferation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Anchor-Aware Meaning Confirmation/,
+    "Meaning / Plot must name anchor-aware confirmation in the UI",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrative_structure_meaning_plot_confirmation/,
+    "Meaning / Plot must surface the narrative structure confirmation family",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /mise_en_scene_level_understanding/,
+    "Meaning / Plot must surface the mise-en-scene understanding confirmation family",
+  );
+});
+
+test("Meaning Plot character paths keep dramatic archetypes electable", () => {
+  assert.match(
+    meaningPlotPanel,
+    /const DRAMATIC_ARCHETYPE_LENSES/,
+    "Meaning / Plot must define dramatic archetype lenses for Character Paths",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Dramatic Archetype Readings/,
+    "Character Paths must visibly surface dramatic archetype readings",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Cross-tradition interpretive lenses; not identity labels/,
+    "archetypes must remain electable readings rather than imposed identities",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /tradition:\s*"Proppian"/,
+    "dramatic archetypes must include non-Shakespearean traditions",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /tradition:\s*"Jungian \/ Mythic"/,
+    "dramatic archetypes must include symbolic/mythic readings",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /sortParticipantGroupsByArchetype/,
+    "selecting an archetype lens must change participant ranking in the analyzed context",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /strongest:/,
+    "selected archetype lenses must surface contextual insight, not only buttons",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /participantTopArchetypes/,
+    "participant rows should show archetype signal companions",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /buildParticipantGroupsWithMetadataProfiles/,
+    "Character Paths must seed the character list from media metadata Narrative Agent Profiles",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Metadata-seeded Narrative Agent Profile/,
+    "metadata-seeded agents must remain visible before detected cues surface",
+  );
+});
+
+test("Meaning Plot character paths expose scene-based narrative agent browsing", () => {
+  assert.match(
+    sceneGovernance,
+    /masterSchemaTemporalSegmentsFromAnalysis/,
+    "frontend panels must share a Master Schema-first scene segment reader",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /matureSceneSegmentsFromAnalysis\(analysisData\)/,
+    "Meaning / Plot must consume mature scene segments before deriving scene windows",
+  );
+
+  assert.match(
+    toolsPanel,
+    /matureSceneSegmentsFromAnalysis\(analysisData\)/,
+    "Scene leaf tooling must consume mature scene segments from the shared scene governance helper",
+  );
+
+  assert.match(
+    read("app/V2components/components/panels/SceneCardPanel.tsx"),
+    /governed scene/,
+    "Scene Cards must disclose governed scene count when card materialization lags Master Schema scene understanding",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Scene Agent Browser/,
+    "Meaning / Plot must expose a scene browser for Narrative Agent Profiles",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Add to scene/,
+    "scene browser must let analysts stage Narrative Agent Profiles into scenes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /lineMatchesProfile/,
+    "scene browser must surface agent-linked transcript lines",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /expressionSamplesForSceneAgent/,
+    "scene browser must surface agent-linked expression samples",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /agent_persistence_scene_cut/,
+    "scene browser must expose agent persistence signals",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Characters By Scene/,
+    "Meaning / Plot must expose a collapsed governance list of characters by scene",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /fallbackSceneSegmentsFromInstructions/,
+    "scene governance must derive browsable evidence windows when formal scene segments are absent",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /sceneSegmentsAreDerived/,
+    "the UI must disclose derived evidence windows instead of silently hiding scene browsing",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /participantRows/,
+    "character-by-scene governance must fall back to surfaced participants when metadata profiles are absent",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /openCharacterSceneProfiles/,
+    "character scene rows must be independently expandable",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /toggleProfileSceneActivation/,
+    "Characters By Scene must provide in-place multi-scene activation switches per character",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /\$\{profileKey\}:scene-switch/,
+    "scene activation switches must render under each character row rather than navigating away",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /sceneSegments\.map/,
+    "scene browsing must expose the whole scene array instead of a sliced subset",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /min-h-0 flex-1 overflow-hidden p-3/,
+    "Meaning / Plot body must constrain height so child panels can scroll through full data arrays",
+  );
+});
+
+test("Narrative Agent Profiles expose agent narrative analytic layers", () => {
+  assert.match(
+    sourceMediaPanel,
+    /Agent Narrative Profiles track an agent path through narrative time/,
+    "Narrative Agent Profiles must explain agent path and narrative context maturation",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /const AGENT_NARRATIVE_PROFILE_LAYERS/,
+    "Narrative Agent Profiles must define path, context, network, and evidence layers",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /Agent Narrative Profile/,
+    "Source Media metadata must visibly surface Agent Narrative Profile layers",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /Cross-tradition readings/,
+    "Narrative Agent Profiles must make dramatic readings available in-profile",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /tradition:\s*"Greimasian"/,
+    "Narrative Agent Profile readings must support actant-network interpretation",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /tradition:\s*"Burkean \/ Dramatistic"/,
+    "Narrative Agent Profile readings must support motive-scene interpretation",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /not imposed as identity labels/,
+    "Narrative Agent Profile readings must remain electable rather than fixed identities",
   );
 });
 
@@ -809,5 +1159,131 @@ test("GoldenLayout leaf tabs stay on one compact row", () => {
     globalsCss,
     /\.lm_header \.lm_tab \.lm_title[\s\S]*text-overflow:\s*ellipsis/,
     "long leaf panel labels must truncate instead of bleeding beyond the tab layout",
+  );
+});
+
+test("BBox/ROI object pipeline never promotes raw track labels as display truth", () => {
+  assert.match(
+    videoService,
+    /function governedObjectDisplayLabel/,
+    "VideoService must centralize object display-label governance before panel rendering",
+  );
+
+  assert.doesNotMatch(
+    videoService,
+    /displayLabel:\s*`\$\{item\.class_name\} track \$\{nextTrackId\}`/,
+    "grouped object tracks must not mint raw '<class> track N' display labels",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /displayLabel:\s*`Person track x/,
+    "VideoPanel duplicate grouping must not mint Person track display labels",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /displayLabel:\s*item\.displayLabel \|\| "Person track/,
+    "VideoPanel fallback objects must not preserve Person track display labels",
+  );
+
+  assert.match(
+    videoPanel,
+    /function isRawDetectionLikeLabel[\s\S]*startsWith\("person track"\)/,
+    "VideoPanel must recognize raw track labels as unsafe user-facing labels",
+  );
+
+  assert.match(
+    videoPanel,
+    /record\.category === "object"[\s\S]*!isRawDetectionLikeLabel\(record\.label\)[\s\S]*record\.authority !== "raw_detection"/,
+    "Master Schema object lookup must reject raw-like labels even if they arrive with interpreted authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /unresolvedObjectConfirmationLabel\(item\)/,
+    "unresolved detections must render as Narrative Agent/object confirmation prompts with probability",
+  );
+
+  assert.match(
+    videoPanel,
+    /if \(rawLabel && !trackId\)/,
+    "mature raw-label lookup must not index track-scoped object labels that can bleed across scenes",
+  );
+
+  assert.match(
+    videoPanel,
+    /if \(override\.trackId !== undefined\)[\s\S]*return sameTrack/,
+    "local object label overrides with a track id must only apply to that track",
+  );
+
+  assert.match(
+    videoPanel,
+    /if \(targetIds\.length === 0\)[\s\S]*matureObjectOverlayLookup\.byRawLabel/,
+    "raw-label mature object fallback must only apply when no object track target exists",
+  );
+});
+
+test("expression identity saves anchor to nearby person geometry", () => {
+  assert.match(
+    videoPanel,
+    /const findExpressionPersonAnchor = React\.useCallback/,
+    "VideoPanel must find a nearby person/object anchor before saving expression-derived identities",
+  );
+
+  assert.match(
+    videoPanel,
+    /target_type:\s*expressionPersonAnchor \? "object" : overlay\.modality/,
+    "expression-derived Identification saves must correlate to the person/object target, not the raw expression event",
+  );
+
+  assert.match(
+    videoPanel,
+    /expressionPersonAnchor\?\.box \|\| getOverlayNormalizedBox\(overlay\)/,
+    "expression-derived Identification saves must persist the anchored person geometry when available",
+  );
+
+  assert.match(
+    videoPanel,
+    /EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS/,
+    "expression-derived identities must save a durable confirmation window instead of a one-frame expression point",
+  );
+
+  assert.match(
+    videoPanel,
+    /source_expression_key/,
+    "anchored expression saves must retain provenance back to the source expression box",
+  );
+
+  assert.match(
+    apiService,
+    /source_expression_key\?: string/,
+    "ManualVisualAnnotation metadata must type expression provenance so it survives save/load",
+  );
+});
+
+test("Video panel swaps loaded media atomically without duplicate preload frames", () => {
+  assert.match(
+    videoPanel,
+    /const \[mediaSource, nextAnalysis\] = await Promise\.all/,
+    "VideoPanel must wait for media and analysis before swapping visible selected-analysis state",
+  );
+
+  assert.match(
+    videoPanel,
+    /setIsLoading\(true\);\s*setBlobMissing\(false\);\s*try/,
+    "VideoPanel must not blank the current stable media surface while a replacement analysis is loading",
+  );
+
+  assert.match(
+    videoPanel,
+    /\{videoUrl && \(!showCompareInPanel \|\| !compareSource\) \? \(/,
+    "VideoPanel must keep an existing playable video surface ahead of transient loading copy",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /Loading video\.\.\./,
+    "VideoPanel should not show the old raw loading-video text frame",
   );
 });

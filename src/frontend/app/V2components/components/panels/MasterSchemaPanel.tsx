@@ -4,6 +4,7 @@ import {
   VideoService,
   type AnalysisData,
   type MatureEvidenceAuthority,
+  type MasterSchemaResolvedEvidenceRecord,
 } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import type {
@@ -522,6 +523,53 @@ function ConfirmationProgramStrip({ analysisData }: { analysisData: AnalysisData
   );
 }
 
+function masterSubjectRecords(
+  analysisData: AnalysisData | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  return (analysisData?.masterSchemaResolvedEvidence?.records || []).filter((record) =>
+    ["narrative_agent_profile", "character_role"].includes(record.category),
+  );
+}
+
+function MasterSchemaSubjectStrip({ analysisData }: { analysisData: AnalysisData | null }) {
+  const subjects = masterSubjectRecords(analysisData);
+  if (subjects.length === 0) {
+    return null;
+  }
+  return (
+    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+            Master Schema Subject Authority
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
+            Governed Narrative Agent Profiles and character-role metadata are the mature subject source for downstream panels.
+          </div>
+        </div>
+        <span className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100">
+          {subjects.length} governed subject{subjects.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+        {subjects.slice(0, 18).map((subject) => (
+          <div
+            key={subject.id}
+            className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5"
+          >
+            <div className="truncate text-[10px] font-medium text-slate-100">
+              {subject.label}
+            </div>
+            <div className="mt-0.5 truncate text-[9px] text-[var(--ui-passive-text)]">
+              {subject.category.replaceAll("_", " ")} / {subject.maturityRoute || "master schema"}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function MasterSchemaPanel({
   videoId: initialVideoId = "",
   category,
@@ -548,6 +596,15 @@ export default function MasterSchemaPanel({
   const [timeInputDrafts, setTimeInputDrafts] = useState<Record<string, string>>({});
   const [leafActionMessage, setLeafActionMessage] = useState("");
   const suppressNextLocalCorrectionRefreshRef = useRef(false);
+
+  const knownCharacters = React.useMemo(() => {
+    const records = analysisData?.masterSchemaResolvedEvidence?.records || [];
+    const agents = records
+      .filter((r: any) => ["narrative_agent_profile", "character_role", "identity"].includes(r.category))
+      .map((r: any) => r.label)
+      .filter(Boolean);
+    return Array.from(new Set(agents)).sort() as string[];
+  }, [analysisData?.masterSchemaResolvedEvidence?.records]);
 
   useEffect(() => {
     if (initialVideoId) {
@@ -900,6 +957,7 @@ export default function MasterSchemaPanel({
           <>
             <MatureEvidenceStrip analysisData={analysisData} />
             <ConfirmationProgramStrip analysisData={analysisData} />
+            <MasterSchemaSubjectStrip analysisData={analysisData} />
             <SecondOrderLabelReviewTray
               plan={analysisData?.secondOrderLabelProliferation}
             />
@@ -1009,20 +1067,65 @@ export default function MasterSchemaPanel({
                               </select>
                             </div>
                             <div className="mt-1 grid gap-1 md:grid-cols-[1fr_0.6fr_0.6fr]">
-                              <input
-                                value={draft.label}
-                                onChange={(event) =>
-                                  updateLeafDraft(item.id, {
-                                    label: event.target.value,
-                                    identityAffirmation:
-                                      draft.category === "Identification"
-                                        ? event.target.value
-                                        : draft.identityAffirmation,
-                                  })
-                                }
-                                className="min-w-0 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
-                                placeholder="Label, identity, or indication"
-                              />
+                              <div className="flex flex-col gap-1 min-w-0">
+                                <select
+                                  value={
+                                    ["bystander", "friend", "foe"].includes(draft.label.toLowerCase())
+                                      ? draft.label.toLowerCase()
+                                      : knownCharacters.includes(draft.label)
+                                      ? draft.label
+                                      : "open tag"
+                                  }
+                                  onChange={(event) => {
+                                    const val = event.target.value;
+                                    if (val !== "open tag") {
+                                      const isKnownCharacter = knownCharacters.includes(val);
+                                      updateLeafDraft(item.id, {
+                                        label: val,
+                                        ...(isKnownCharacter ? { category: "Identification" } : {}),
+                                        identityAffirmation:
+                                          isKnownCharacter || draft.category === "Identification"
+                                            ? val
+                                            : draft.identityAffirmation,
+                                      });
+                                    }
+                                  }}
+                                  className="w-full rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                                  aria-label="Quick label select"
+                                >
+                                  <option value="open tag">Open tag</option>
+                                  {knownCharacters.length > 0 && (
+                                    <optgroup label="A) Narrative Agent">
+                                      {knownCharacters.map((char: string) => (
+                                        <option key={char} value={char}>
+                                          {char}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  )}
+                                  <optgroup label="B) By-stander">
+                                    <option value="bystander">bystander</option>
+                                  </optgroup>
+                                  <optgroup label="C) Friend/Foe">
+                                    <option value="friend">friend</option>
+                                    <option value="foe">foe</option>
+                                  </optgroup>
+                                </select>
+                                <input
+                                  value={draft.label}
+                                  onChange={(event) =>
+                                    updateLeafDraft(item.id, {
+                                      label: event.target.value,
+                                      identityAffirmation:
+                                        draft.category === "Identification"
+                                          ? event.target.value
+                                          : draft.identityAffirmation,
+                                    })
+                                  }
+                                  className="w-full rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+                                  placeholder="Label, identity, or indication"
+                                />
+                              </div>
                               <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
                                 In {formatSeconds(draft.start)}
                                 <input

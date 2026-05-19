@@ -160,6 +160,8 @@ const displayedWebCandidateFields = new Set([
 const narrativeAgentProfileGovernance = {
   identityBoundary:
     "VAA1 delivers Narrative Agent Profiles, not Natural Person Identity Profiles. Actor data remains attached performer metadata.",
+  agentNarrativeProfile:
+    "Agent Narrative Profiles track an agent path through narrative time, context, relation networks, and linked evidence as the analysis matures.",
   dramaticArchetypeNote:
     "Dramatic archetypes are used as probabilistic narrative functions, situational roles, relational positions, rhetorical behaviors, and evolving dramaturgical trajectories.",
   shakespeareanModality:
@@ -167,6 +169,66 @@ const narrativeAgentProfileGovernance = {
   layers:
     "Character modes, relational dynamics, scene modes, status dynamics, and linguistic modes.",
 };
+
+const AGENT_NARRATIVE_PROFILE_LAYERS = [
+  {
+    label: "Narrative path",
+    description: "scene-to-scene agency, reversals, thresholds, and transformations",
+  },
+  {
+    label: "Context position",
+    description: "where the agent sits in situation, plot, place, time, and social order",
+  },
+  {
+    label: "Relation network",
+    description: "alliances, conflicts, dependencies, duties, betrayals, and attachments",
+  },
+  {
+    label: "Evidence trail",
+    description: "lines, audio samples, visual patterns, identification refs, and scene links",
+  },
+  {
+    label: "Meaning / plot links",
+    description: "how the agent contributes to structure, meaning, plot, and mise-en-scene",
+  },
+  {
+    label: "ABM hooks",
+    description: "agent-state cues for systems and agent-based narrative models",
+  },
+];
+
+const AGENT_NARRATIVE_PROFILE_READINGS = [
+  {
+    tradition: "Shakespearean",
+    label: "Performed identity",
+    cues: ["status", "masking", "role shift", "public role", "private self"],
+  },
+  {
+    tradition: "Proppian",
+    label: "Narrative function",
+    cues: ["hero", "villain", "helper", "donor", "dispatcher", "quest"],
+  },
+  {
+    tradition: "Jungian / Mythic",
+    label: "Symbolic relation",
+    cues: ["shadow", "mentor", "threshold", "anima", "trickster", "self"],
+  },
+  {
+    tradition: "Campbellian",
+    label: "Threshold journey",
+    cues: ["call", "refusal", "ordeal", "return", "transformation"],
+  },
+  {
+    tradition: "Greimasian",
+    label: "Actant relation",
+    cues: ["subject", "object", "sender", "receiver", "helper", "opponent"],
+  },
+  {
+    tradition: "Burkean / Dramatistic",
+    label: "Motive scene",
+    cues: ["act", "agent", "agency", "scene", "purpose", "motive"],
+  },
+];
 
 function formatCandidateValue(value: unknown, separator = ", "): string {
   if (Array.isArray(value)) {
@@ -241,6 +303,60 @@ function formatNarrativeAgentProfile(profile: NarrativeAgentProfile): string {
   const head = actor ? `${agent || "Unspecified agent"} (${actor})` : agent;
   const tail = [labels, description].filter(Boolean).join("; ");
   return [head, tail].filter(Boolean).join(": ");
+}
+
+function narrativeAgentProfileSignalText(profile: NarrativeAgentProfile): string {
+  return [
+    profile.narrative_agent_name,
+    ...(profile.aliases || []),
+    profile.attached_performer_metadata?.actor_name,
+    ...(profile.source_metadata?.role_labels || []),
+    profile.source_metadata?.role_description,
+    ...(profile.source_metadata?.relations || []),
+    ...(profile.dramaturgical_tendencies || []).flatMap((tendency) => [
+      tendency.label,
+      tendency.basis,
+    ]),
+    ...(profile.interpretive_readings || []).flatMap((reading) => [
+      reading.branch,
+      reading.label,
+      reading.summary,
+      ...(reading.evidence_basis || []),
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function narrativeAgentReadingStatus(profile: NarrativeAgentProfile, reading: (typeof AGENT_NARRATIVE_PROFILE_READINGS)[number]): string {
+  const signalText = narrativeAgentProfileSignalText(profile);
+  const explicitReading = (profile.interpretive_readings || []).find((candidate) => {
+    const branch = String(candidate.branch || "").toLowerCase();
+    const label = String(candidate.label || "").toLowerCase();
+    return (
+      branch.includes(reading.tradition.toLowerCase().split(" / ")[0]) ||
+      label.includes(reading.label.toLowerCase())
+    );
+  });
+  if (explicitReading?.status) {
+    return explicitReading.status;
+  }
+  return reading.cues.some((cue) => signalText.includes(cue)) ? "candidate" : "electable";
+}
+
+function narrativeAgentEvidenceLabels(profile: NarrativeAgentProfile): string[] {
+  const slots = profile.evidence_slots || {};
+  return [
+    [slots.lines, "lines"],
+    [slots.audio_samples, "audio"],
+    [slots.visual_patterns, "visual"],
+    [slots.identification_refs, "ID"],
+    [slots.scene_links, "scene"],
+    [slots.meaning_plot_refs, "meaning/plot"],
+  ]
+    .filter(([items]) => Array.isArray(items) && items.length > 0)
+    .map(([items, label]) => `${label} ${Array.isArray(items) ? items.length : ""}`.trim());
 }
 
 export default function SourceMediaMetadataPanel() {
@@ -1456,6 +1572,9 @@ export default function SourceMediaMetadataPanel() {
                 </div>
                 <div className="mt-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[11px] leading-relaxed text-slate-400">
                   <div>{narrativeAgentProfileGovernance.identityBoundary}</div>
+                  <div className="mt-1 text-cyan-100/70">
+                    {narrativeAgentProfileGovernance.agentNarrativeProfile}
+                  </div>
                   <div className="mt-1">
                     {narrativeAgentProfileGovernance.dramaticArchetypeNote}
                   </div>
@@ -1480,6 +1599,53 @@ export default function SourceMediaMetadataPanel() {
                       </div>
                       <div className="mt-1 text-[10px] text-slate-500">
                         {profile.maturity_route || "master_schema.source_media_narrative_agent_profile_maturity"}
+                      </div>
+                      <div className="mt-2 rounded border border-slate-800 bg-slate-950/40 px-2 py-1.5">
+                        <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                          Agent Narrative Profile
+                        </div>
+                        <div className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                          Path, context, relation network, and evidence trail as they emerge.
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {AGENT_NARRATIVE_PROFILE_LAYERS.map((layer) => (
+                            <span
+                              key={layer.label}
+                              title={layer.description}
+                              className="rounded border border-slate-700/80 px-1.5 py-0.5 text-[10px] text-slate-300"
+                            >
+                              {layer.label}
+                            </span>
+                          ))}
+                        </div>
+                        {narrativeAgentEvidenceLabels(profile).length > 0 ? (
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            Evidence: {narrativeAgentEvidenceLabels(profile).join(", ")}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-2">
+                        <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
+                          Cross-tradition readings
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {AGENT_NARRATIVE_PROFILE_READINGS.map((reading) => {
+                            const status = narrativeAgentReadingStatus(profile, reading);
+                            return (
+                              <span
+                                key={`${reading.tradition}-${reading.label}`}
+                                title={reading.cues.join(", ")}
+                                className={
+                                  status === "candidate" || status === "accepted" || status === "confirmed"
+                                    ? "rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-100"
+                                    : "rounded border border-slate-700/80 px-1.5 py-0.5 text-[10px] text-slate-400"
+                                }
+                              >
+                                {reading.tradition}: {reading.label}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                       {(profile.profile_extensions || []).length > 0 ? (
                         <div className="mt-1 flex flex-wrap gap-1">

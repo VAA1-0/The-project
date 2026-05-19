@@ -30,6 +30,10 @@ second_order_label_proliferation = load_module(
     "src/backend/analysis/second_order_label_proliferation.py",
     "second_order_label_proliferation",
 )
+agent_persistence = load_module(
+    "src/backend/analysis/agent_persistence.py",
+    "agent_persistence",
+)
 
 
 class SecondOrderLabelProliferationContractTest(unittest.TestCase):
@@ -80,6 +84,31 @@ class SecondOrderLabelProliferationContractTest(unittest.TestCase):
                     "target_id": "object:device",
                     "start_ms": 1200,
                     "end_ms": 1800,
+                },
+                {
+                    "evidence_id": "object:track-7",
+                    "cue_type": "person_identity_prompt",
+                    "object_id": "track-7",
+                    "prompt": "Who is this person?",
+                    "start_ms": 1200,
+                    "end_ms": 1800,
+                },
+                {
+                    "evidence_id": "expression:track-7",
+                    "cue_type": "expression_owner_prompt",
+                    "object_id": "track-7",
+                    "expression_label": "concern",
+                    "prompt": "Whose expression is this?",
+                    "start_ms": 1200,
+                    "end_ms": 1800,
+                },
+                {
+                    "evidence_id": "scene:participants:1",
+                    "cue_type": "scene_participant_prompt",
+                    "participant_ids": ["track-7", "track-12"],
+                    "prompt": "Who are in this scene?",
+                    "start_ms": 1000,
+                    "end_ms": 6000,
                 }
             ],
         )
@@ -106,6 +135,36 @@ class SecondOrderLabelProliferationContractTest(unittest.TestCase):
                     "analyst_confirmation_is_not_required_for_every_candidate"
                 ]
             )
+
+    def test_default_single_source_indications_remain_candidates(self):
+        plan = second_order_label_proliferation.build_second_order_label_proliferation_plan(
+            "analysis-prolif",
+            self.build_meaning_artifact(),
+        )
+
+        statuses = {instruction["status"] for instruction in plan["instructions"]}
+        self.assertIn("candidate", statuses)
+        self.assertNotEqual(statuses, {"probable"})
+
+    def test_detection_prompts_surface_identity_expression_and_scene_questions(self):
+        plan = second_order_label_proliferation.build_second_order_label_proliferation_plan(
+            "analysis-prolif",
+            self.build_meaning_artifact(),
+        )
+        prompts = {}
+        for instruction in plan["instructions"]:
+            if not instruction["candidate_label"].endswith("?"):
+                continue
+            prompts.setdefault(instruction["candidate_label"], {})[
+                instruction["target_label_family"]
+            ] = instruction
+
+        self.assertIn("Who is this person?", prompts)
+        self.assertIn("Whose expression is this?", prompts)
+        self.assertIn("Who are in this scene?", prompts)
+        self.assertIn("bbox_roi_overlay", prompts["Who is this person?"]["Identification"]["ui_surfaces"])
+        self.assertIn("expressions_panel", prompts["Whose expression is this?"]["Expression"]["ui_surfaces"])
+        self.assertIn("meaning_panel", prompts["Who are in this scene?"]["Interaction"]["ui_surfaces"])
 
     def test_open_scores_drive_probable_or_strong_support_statuses(self):
         meaning = self.build_meaning_artifact()
@@ -175,6 +234,45 @@ class SecondOrderLabelProliferationContractTest(unittest.TestCase):
         self.assertTrue(identity_instruction["requires_immediate_confirmation"])
         self.assertFalse(identity_instruction["may_auto_confirm"])
         self.assertEqual(identity_instruction["confirmation_policy"]["surface_as"], "review_prompt")
+
+    def test_agent_persistence_scene_cut_surfaces_as_governed_identification_candidate(self):
+        persistence = agent_persistence.cross_scene_persistence_check(
+            [
+                {
+                    "track_id": "track-7",
+                    "agent_label": "Bond",
+                    "features": {
+                        "face_embedding": [0.9, 0.1],
+                        "torso_histogram": [0.8, 0.2],
+                    },
+                }
+            ],
+            [
+                {
+                    "track_id": "track-12",
+                    "features": {
+                        "face_embedding": [0.88, 0.12],
+                        "torso_histogram": [0.79, 0.21],
+                    },
+                }
+            ],
+            scene_cut={"cut_id": "cut-1", "time": 10.0},
+        )
+        event = agent_persistence.build_agent_persistence_feature_event(
+            "analysis-prolif",
+            persistence["matches"][0],
+        )
+        plan = second_order_label_proliferation.build_second_order_label_proliferation_plan(
+            "analysis-prolif",
+            {"schema": "test.meaning", "feature_events": [event]},
+            target_label_families=["Identification"],
+        )
+
+        instruction = plan["instructions"][0]
+        self.assertEqual(instruction["source_feature_type"], "agent_persistence_scene_cut")
+        self.assertEqual(instruction["candidate_label"], "Bond")
+        self.assertIn("bbox_roi_overlay", instruction["ui_surfaces"])
+        self.assertIn("traceback", instruction)
 
     def test_write_plan_persists_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

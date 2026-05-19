@@ -201,6 +201,20 @@ export interface AnalysisStatus {
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
   identity_triangulation?: IdentityTriangulationStatus | null;
+  agent_persistence_scene_cut?: {
+    schema?: string;
+    status?: string;
+    scene_cut_count?: number;
+    track_count?: number;
+    tracks_with_comparable_features?: number;
+    summary?: {
+      candidate_count?: number;
+      accepted_count?: number;
+      review_candidate_count?: number;
+    };
+    output_json_path?: string;
+    updated_at?: string;
+  } | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
   mise_en_scene_scene_cards?: {
     schema?: string;
@@ -353,6 +367,24 @@ export interface SecondOrderLabelInstruction {
   forbidden_updates?: string[];
 }
 
+export interface AgentPersistenceLabel {
+  candidate_label: string;
+  source_feature_type: string;
+  provenance: string;
+  status: "review_candidate" | "strong_candidate" | string;
+  temporal_grounding?: {
+    scene_boundary_time?: number;
+    departed_track_interval?: [number, number];
+    arrived_track_interval?: [number, number];
+  };
+  evidence?: {
+    similarity_score?: number;
+    departed_track_id?: string;
+    arrived_track_id?: string;
+  };
+  traceback_relink?: any;
+}
+
 export interface SecondOrderLabelProliferationPlan {
   schema: "vaa1.second_order_label_proliferation_plan.v1" | string;
   analysis_id?: string;
@@ -362,8 +394,10 @@ export interface SecondOrderLabelProliferationPlan {
   priority_weights?: Record<string, unknown>;
   graduated_status_thresholds?: Record<string, number>;
   instructions?: SecondOrderLabelInstruction[];
+  agent_persistence_labels?: AgentPersistenceLabel[];
   summary?: {
     instruction_count?: number;
+    agent_persistence_label_count?: number;
     status_counts?: Record<string, number>;
     immediate_confirmation_count?: number;
     ui_surface_count?: number;
@@ -1040,6 +1074,9 @@ export interface ManualVisualAnnotation {
     target_type?: string;
     target_id?: string;
     target_label?: string;
+    source_expression_key?: string;
+    source_expression_label?: string;
+    source_expression_timestamp?: number;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
     note?: string;
   } | null;
@@ -1607,6 +1644,11 @@ class ApiService {
     }
 
     return response.blob();
+  }
+
+  getDownloadUrl(analysisId: string, fileType: string): string {
+    const noCacheToken = Date.now().toString(36);
+    return `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`;
   }
 
   async downloadBundle(analysisId: string): Promise<Blob> {

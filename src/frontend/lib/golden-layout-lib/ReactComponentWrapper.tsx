@@ -5,6 +5,7 @@ import React from "react";
 export class ReactComponentWrapper {
   private root: Root;
   private el: HTMLElement;
+  private destroyed = false;
 
   constructor(
     container: ComponentContainer,
@@ -32,7 +33,13 @@ export class ReactComponentWrapper {
 
     // Clean up when the container is destroyed
     container.on("destroy", () => {
-      this.root.unmount();
+      if (this.destroyed) {
+        return;
+      }
+      this.destroyed = true;
+      window.setTimeout(() => {
+        this.root.unmount();
+      }, 0);
     });
   }
 }

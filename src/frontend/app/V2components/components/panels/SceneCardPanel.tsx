@@ -28,6 +28,10 @@ import {
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type MatureEvidenceAuthority } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import {
+  matureSceneSegmentsFromAnalysis,
+  matureSceneSegmentSourceLabel,
+} from "@/lib/scene-governance";
 import { useLayoutHost } from "../LayoutHost";
 
 type SceneCardBundle = {
@@ -434,6 +438,14 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   }, [selectedVideoId, refreshNonce]);
 
   const cards = useMemo(() => bundle?.scene_cards || [], [bundle?.scene_cards]);
+  const matureSceneSegments = useMemo(
+    () => matureSceneSegmentsFromAnalysis(analysisData),
+    [analysisData],
+  );
+  const sceneSegmentSourceLabel = matureSceneSegmentSourceLabel(analysisData);
+  const governedSceneCount = matureSceneSegments.length || cards.length;
+  const sceneCardCoverageMismatch =
+    matureSceneSegments.length > 0 && matureSceneSegments.length !== cards.length;
   const selectedCard = useMemo(() => {
     return cards.find((card) => card.scene_id === selectedSceneId) || cards[0] || null;
   }, [cards, selectedSceneId]);
@@ -922,7 +934,9 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
               {compactReportTitle(bundle?.title)}
             </h2>
             <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
-              {selectedVideoId ? `${cards.length} scene card${cards.length === 1 ? "" : "s"}` : "No analysis selected"}
+              {selectedVideoId
+                ? `${cards.length} scene card${cards.length === 1 ? "" : "s"} / ${governedSceneCount} governed scene${governedSceneCount === 1 ? "" : "s"}`
+                : "No analysis selected"}
             </div>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
@@ -963,6 +977,11 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
               Scenes
             </div>
             <div className="space-y-1.5">
+              {sceneCardCoverageMismatch && (
+                <div className="rounded border border-amber-700/50 bg-amber-950/15 px-2 py-2 text-[10px] text-amber-100">
+                  Master Schema scene understanding has {matureSceneSegments.length} scenes from {sceneSegmentSourceLabel}; this Scene Card artifact has {cards.length}. Missing scene cards are pending refresh.
+                </div>
+              )}
               {cards.map((card, index) => {
                 const start = secondsFromMs(card.time_interval?.start_ms);
                 const active = card.scene_id === selectedCard?.scene_id;
@@ -986,6 +1005,22 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   </button>
                 );
               })}
+              {sceneCardCoverageMismatch && matureSceneSegments.slice(cards.length).map((segment) => (
+                <button
+                  key={`mature-scene-pending-card:${segment.scene_index}:${segment.start}`}
+                  type="button"
+                  onClick={() => openVideoAtTime(selectedVideoId, segment.start)}
+                  className="w-full rounded border border-cyan-900/60 bg-[#101010] px-2 py-2 text-left text-[11px] text-cyan-100 hover:border-cyan-700/80"
+                  title="Governed scene slot awaiting Scene Card materialization"
+                >
+                  <div className="truncate font-medium">
+                    Scene {segment.scene_index} / card pending
+                  </div>
+                  <div className="mt-1 text-[10px] text-slate-500">
+                    {formatTime(segment.start)} • {sceneSegmentSourceLabel}
+                  </div>
+                </button>
+              ))}
             </div>
           </aside>
 
@@ -1347,7 +1382,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   <div className="grid gap-2 md:grid-cols-2">
                     {visibleItems.slice(0, 80).map((item, index) => (
                       <button
-                        key={item.item_id || `${item.category}-${item.label}-${index}`}
+                        key={item.item_id ? `${item.item_id}-${index}` : `${item.category}-${item.label}-${index}`}
                         type="button"
                         onContextMenu={(event) =>
                           openEvidenceContextMenu(event, {

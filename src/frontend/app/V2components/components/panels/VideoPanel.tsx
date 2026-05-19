@@ -61,6 +61,7 @@ const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
 const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
 const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
 const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 0.5;
+const EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS = 1.5;
 const SELECTED_OVERLAY_STACK_RANK = 50000;
 const VIDEO_CONTROL_CLEARANCE_PX = 52;
 
@@ -112,6 +113,24 @@ type MatureObjectOverlayLabel = {
   sourcePanel: string;
   maturityRoute?: string;
   mappingStatus?: string;
+  roleLabel?: string;
+  sourceCategory?: MasterSchemaResolvedEvidenceRecord["category"];
+  traceback?: unknown;
+  evidence_refs?: unknown;
+  source_bbox_refs?: unknown;
+  source_frame_refs?: unknown;
+};
+
+type BBoxMatureAuthority = {
+  label: string;
+  authority: MatureEvidenceAuthority;
+  source: "manual_visual_annotation" | "master_schema" | "narrative_agent" | "proliferated_candidate";
+  sourceItem?: unknown;
+  roleLabel?: string;
+  traceback?: unknown;
+  evidence_refs?: unknown;
+  source_bbox_refs?: unknown;
+  source_frame_refs?: unknown;
 };
 
 type SelectedIndicationEdit = {
@@ -415,6 +434,8 @@ const NATIVE_ANNOTATION_LABELS: Record<string, string[]> = {
   "Transcription::Transcript note": ["Ambiguous phrase", "Manual clarification", "Timestamp note"],
 };
 
+const NARRATIVE_AGENT_QUICK_CHOICES = ["by-stander", "friend", "foe", "crowd"];
+
 type AudioTimelineMarker = {
   key: string;
   time: number;
@@ -504,6 +525,23 @@ function objectTrackTargetId(item: DetectedObject): string | null {
   return trackId === undefined || trackId === null ? null : String(trackId);
 }
 
+function objectTrackTargetIds(item: DetectedObject): string[] {
+  const ids = new Set<string>();
+  const primary = objectTrackTargetId(item);
+  if (primary) {
+    ids.add(primary);
+  }
+  const duplicateIds = (item as any).duplicateTrackIds;
+  if (Array.isArray(duplicateIds)) {
+    duplicateIds.forEach((trackId) => {
+      if (trackId !== undefined && trackId !== null) {
+        ids.add(String(trackId));
+      }
+    });
+  }
+  return Array.from(ids);
+}
+
 function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
   const targetType = String(item.metadata_correlation?.target_type || "").toLowerCase();
   if (targetType !== "object") {
@@ -517,6 +555,95 @@ function normalizeEvidenceLabel(value: unknown): string {
   return String(value || "")
     .trim()
     .toLowerCase();
+}
+
+function appendKnownNarrativeAgentLabel(
+  labels: Set<string>,
+  value: unknown,
+): void {
+  const label = String(value || "").trim();
+  if (!label) return;
+  const normalized = normalizeEvidenceLabel(label);
+  if (
+    !normalized ||
+    normalized === "unknown" ||
+    normalized === "unknown_speaker" ||
+    normalized === "person" ||
+    normalized.startsWith("person track") ||
+    normalized.startsWith("track ")
+  ) {
+    return;
+  }
+  labels.add(label);
+}
+
+function isRawDetectionLikeLabel(value: unknown): boolean {
+  const normalized = normalizeEvidenceLabel(value);
+  return (
+    !normalized ||
+    normalized === "unknown" ||
+    normalized === "unknown speaker" ||
+    normalized === "unknown_speaker" ||
+    normalized === "object" ||
+    normalized === "person" ||
+    normalized === "track" ||
+    normalized.startsWith("person track") ||
+    normalized.startsWith("track ") ||
+    /^person\s*\d+$/i.test(normalized) ||
+    /^person[_-]\d+$/i.test(normalized)
+  );
+}
+
+function governedOverlayLabel(value: unknown): string | undefined {
+  const label = String(value || "").trim();
+  return label && !isRawDetectionLikeLabel(label) ? label : undefined;
+}
+
+function joinGovernedOverlayLabel(...values: unknown[]): string | undefined {
+  const parts = values
+    .map((value) => governedOverlayLabel(value))
+    .filter(Boolean) as string[];
+  return parts.length ? parts.join(" / ") : undefined;
+}
+
+function appendKnownNarrativeAgentValues(
+  labels: Set<string>,
+  value: unknown,
+): void {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => appendKnownNarrativeAgentValues(labels, item));
+    return;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    appendKnownNarrativeAgentLabel(
+      labels,
+      record.narrative_agent_name ||
+        record.character_name ||
+        record.character ||
+        record.name ||
+        record.label,
+    );
+    appendKnownNarrativeAgentValues(labels, record.aliases);
+    return;
+  }
+  appendKnownNarrativeAgentLabel(labels, value);
+}
+
+function unresolvedObjectConfirmationLabel(item: DetectedObject): string {
+  const confidence = Number(item.confidence);
+  const probability = Number.isFinite(confidence)
+    ? ` ${Math.round(clamp(confidence, 0, 1) * 100)}%`
+    : "";
+  const objectKind = String(item.class_name || item.raw_class_name || "")
+    .trim()
+    .toLowerCase();
+  const target =
+    objectKind === "person" || objectKind.includes("face")
+      ? "Narrative Agent"
+      : "object / agent";
+  return `Confirm ${target}${probability}`;
 }
 
 const MASTER_SCHEMA_OVERLAY_AUTHORITY_RANK: Record<MatureEvidenceAuthority, number> = {
@@ -581,6 +708,7 @@ function buildMatureObjectOverlayLookup(
     (record) =>
       record.category === "object" &&
       record.label &&
+      !isRawDetectionLikeLabel(record.label) &&
       record.authority !== "raw_detection" &&
       masterSchemaRecordActiveAtTime(record, currentTime),
   );
@@ -592,7 +720,7 @@ function buildMatureObjectOverlayLookup(
       groupedByTrack.set(trackId, [...(groupedByTrack.get(trackId) || []), record]);
     }
     const rawLabel = normalizeEvidenceLabel(record.rawLabel);
-    if (rawLabel) {
+    if (rawLabel && !trackId) {
       groupedByRawLabel.set(rawLabel, [...(groupedByRawLabel.get(rawLabel) || []), record]);
     }
   });
@@ -606,6 +734,88 @@ function buildMatureObjectOverlayLookup(
     sourcePanel: record.sourcePanel,
     maturityRoute: record.maturityRoute,
     mappingStatus: record.mappingStatus,
+    traceback: record.metadata?.traceback,
+    evidence_refs: record.metadata?.evidence_refs,
+    source_bbox_refs: record.metadata?.source_bbox_refs,
+    source_frame_refs: record.metadata?.source_frame_refs,
+  });
+
+  return {
+    byTrack: new Map(
+      [...groupedByTrack.entries()].flatMap(([trackId, grouped]) => {
+        const selected = chooseMatureObjectRecord(grouped);
+        return selected ? [[trackId, toOverlayLabel(selected)] as const] : [];
+      }),
+    ),
+    byRawLabel: new Map(
+      [...groupedByRawLabel.entries()].flatMap(([label, grouped]) => {
+        const selected = chooseMatureObjectRecord(grouped);
+        return selected ? [[label, toOverlayLabel(selected)] as const] : [];
+      }),
+    ),
+  };
+}
+
+function roleLabelForNarrativeAgent(record: MasterSchemaResolvedEvidenceRecord): string {
+  const metadata = record.metadata || {};
+  const role =
+    metadata.role_label ||
+    metadata.role_description ||
+    metadata.character_role ||
+    metadata.narrative_role;
+  return role ? String(role) : "";
+}
+
+function identityLabelForOverlay(
+  identityLabel: string,
+  hasNarrativeAgentRecognition: boolean,
+): string {
+  return hasNarrativeAgentRecognition ? "" : identityLabel;
+}
+
+function buildMatureSubjectOverlayLookup(
+  records: MasterSchemaResolvedEvidenceRecord[] | undefined,
+  currentTime: number,
+): {
+  byTrack: Map<string, MatureObjectOverlayLabel>;
+  byRawLabel: Map<string, MatureObjectOverlayLabel>;
+} {
+  const activeSubjectRecords = (records || []).filter(
+    (record) =>
+      ["narrative_agent_profile", "character_role", "identity"].includes(record.category) &&
+      record.label &&
+      !isRawDetectionLikeLabel(record.label) &&
+      record.authority !== "raw_detection" &&
+      masterSchemaRecordActiveAtTime(record, currentTime),
+  );
+  const groupedByTrack = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
+  const groupedByRawLabel = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
+  activeSubjectRecords.forEach((record) => {
+    const trackId = normalizeMasterSchemaObjectTargetId(record.targetId);
+    if (trackId) {
+      groupedByTrack.set(trackId, [...(groupedByTrack.get(trackId) || []), record]);
+    }
+    const rawLabel = normalizeEvidenceLabel(record.rawLabel || record.label);
+    if (rawLabel && !trackId) {
+      groupedByRawLabel.set(rawLabel, [...(groupedByRawLabel.get(rawLabel) || []), record]);
+    }
+  });
+
+  const toOverlayLabel = (
+    record: MasterSchemaResolvedEvidenceRecord,
+  ): MatureObjectOverlayLabel => ({
+    label: record.label,
+    rawLabel: record.rawLabel,
+    authority: record.authority,
+    sourcePanel: record.sourcePanel,
+    maturityRoute: record.maturityRoute,
+    mappingStatus: record.mappingStatus,
+    roleLabel: roleLabelForNarrativeAgent(record),
+    sourceCategory: record.category,
+    traceback: record.metadata?.traceback,
+    evidence_refs: record.metadata?.evidence_refs,
+    source_bbox_refs: record.metadata?.source_bbox_refs,
+    source_frame_refs: record.metadata?.source_frame_refs,
   });
 
   return {
@@ -681,6 +891,62 @@ function getAttachedManualAnnotation(source: any): ManualVisualAnnotation | null
   return candidate && typeof candidate === "object"
     ? (candidate as ManualVisualAnnotation)
     : null;
+}
+
+function manualVisualAnnotationMatureLabel(
+  item: ManualVisualAnnotation,
+): string {
+  return (
+    item.identity_affirmation ||
+    item.role_affirmation ||
+    item.custom_label ||
+    item.label ||
+    ""
+  ).trim();
+}
+
+function buildManualTrackMatureAuthority(
+  annotations: ManualVisualAnnotation[],
+): Map<string, BBoxMatureAuthority> {
+  const byTrack = new Map<string, BBoxMatureAuthority>();
+  annotations.forEach((item) => {
+    const targetId = manualObjectTargetId(item);
+    const label = manualVisualAnnotationMatureLabel(item);
+    if (!targetId || !label) {
+      return;
+    }
+    const existing = byTrack.get(targetId);
+    const existingStart =
+      typeof (existing?.sourceItem as any)?.start_seconds === "number"
+        ? Number((existing?.sourceItem as any).start_seconds)
+        : Number.NEGATIVE_INFINITY;
+    const itemStart =
+      typeof item.start_seconds === "number"
+        ? Number(item.start_seconds)
+        : Number(item.timestamp_seconds ?? Number.NEGATIVE_INFINITY);
+    if (existing && existing.authority === "manual_annotation" && existingStart > itemStart) {
+      return;
+    }
+    byTrack.set(targetId, {
+      label,
+      authority: "manual_annotation",
+      source: "manual_visual_annotation",
+      sourceItem: item,
+      roleLabel: item.role_affirmation || undefined,
+      traceback: item.id,
+      evidence_refs: [item.id],
+      source_bbox_refs: item.geometry_keyframes?.map((keyframe) => ({
+        time: keyframe.time,
+        source: keyframe.source,
+      })),
+      source_frame_refs: [
+        item.timestamp_seconds,
+        item.start_seconds,
+        item.end_seconds,
+      ].filter((value) => typeof value === "number"),
+    });
+  });
+  return byTrack;
 }
 
 function formatTime(value: number): string {
@@ -799,7 +1065,11 @@ function resolveProliferatedDisplayLabel(
   ) {
     return sourceLabel;
   }
-  return targetLabel || sourceLabel || "proliferated candidate";
+  return (
+    governedOverlayLabel(targetLabel) ||
+    governedOverlayLabel(sourceLabel) ||
+    `Review Narrative Agent ${Math.round(candidateProbability(candidate) * 100)}%`
+  );
 }
 
 function isInteractiveElement(target: EventTarget | null): boolean {
@@ -1511,8 +1781,8 @@ function buildLocalObjectOverlays(
         occurrenceCount: existingCount + itemCount,
         displayLabel:
           item.class_name === "person"
-            ? `Person track x${existingCount + itemCount}`
-            : stronger.displayLabel || stronger.class_name,
+            ? undefined
+            : governedOverlayLabel(stronger.displayLabel) || stronger.class_name,
         ...(duplicateTrackIds.size > 0
           ? { duplicateTrackIds: Array.from(duplicateTrackIds) }
           : {}),
@@ -1524,17 +1794,12 @@ function buildLocalObjectOverlays(
       isFallbackPersonDetection(item)
         ? {
             ...item,
-            displayLabel: item.displayLabel || "Person track • fallback",
+            displayLabel: governedOverlayLabel(item.displayLabel),
           }
         : item.class_name === "person"
         ? {
             ...item,
-            displayLabel:
-              item.displayLabel &&
-              normalizeEvidenceLabel(item.displayLabel) !== "person" &&
-              !normalizeEvidenceLabel(item.displayLabel).startsWith("person track")
-                ? item.displayLabel
-                : "Person track",
+            displayLabel: governedOverlayLabel(item.displayLabel),
           }
         : item,
     );
@@ -1675,7 +1940,7 @@ function refinePersonOverlaysWithFaces(
     return {
       ...item,
       bbox: { x1, y1, x2, y2 },
-      displayLabel: item.displayLabel || "person • face-aligned",
+      displayLabel: governedOverlayLabel(item.displayLabel),
     };
   });
 
@@ -1694,7 +1959,7 @@ function refinePersonOverlaysWithFaces(
       x2: face.x + face.w * 1.6,
       y2: face.y + face.h * 3.4,
     },
-    displayLabel: `person • face-led ${index + 1}`,
+    displayLabel: undefined,
   })) as DetectedObject[];
 
   return [...refined, ...synthesizedPeople];
@@ -1742,7 +2007,7 @@ function alignActiveObjectLabelsWithGroupedTracks(
 
     return {
       ...item,
-      displayLabel: best.displayLabel,
+      displayLabel: governedOverlayLabel(best.displayLabel),
       trackId: item.trackId ?? best.trackId,
       startTimestamp: item.startTimestamp ?? best.startTimestamp,
       endTimestamp: item.endTimestamp ?? best.endTimestamp,
@@ -2020,6 +2285,14 @@ export default function VideoPanel() {
 
   const loadVideoSource = React.useCallback(async (analysisId: string) => {
     const nextMetadata = await VideoService.get(analysisId);
+    if (nextMetadata.status === "completed" && nextMetadata.sourceVideoExists) {
+      return {
+        metadata: nextMetadata,
+        videoUrl: apiService.getDownloadUrl(analysisId, "source_video"),
+        blobMissing: false,
+      };
+    }
+
     let blob = await VideoService.getBlob(analysisId);
     if (blob) {
       await saveVideoBlob(analysisId, blob);
@@ -2803,21 +3076,15 @@ export default function VideoPanel() {
       }
 
       setIsLoading(true);
-      setMetadata(null);
-      setAnalysisData(null);
-      setVideoUrl(null);
       setBlobMissing(false);
-      setCurrentTime(0);
-      setVideoTimeLine(0);
-      setDuration(0);
-      setFrameReadyTime(null);
-      lastBroadcastTimeRef.current = -1;
-      overlayArmedRef.current = false;
 
       try {
         const mediaSourcePromise = loadVideoSource(videoId);
         const analysisPromise = VideoService.getAnalysis(videoId);
-        const mediaSource = await mediaSourcePromise;
+        const [mediaSource, nextAnalysis] = await Promise.all([
+          mediaSourcePromise,
+          analysisPromise,
+        ]);
         if (cancelled || activeLoadTokenRef.current !== loadToken) {
           if (mediaSource.videoUrl) {
             URL.revokeObjectURL(mediaSource.videoUrl);
@@ -2825,6 +3092,13 @@ export default function VideoPanel() {
           return;
         }
         setMetadata(mediaSource.metadata);
+        setAnalysisData(nextAnalysis);
+        setCurrentTime(0);
+        setVideoTimeLine(0);
+        setDuration(0);
+        setFrameReadyTime(null);
+        lastBroadcastTimeRef.current = -1;
+        overlayArmedRef.current = false;
         if (mediaSource.videoUrl) {
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
@@ -2841,12 +3115,6 @@ export default function VideoPanel() {
           setBlobMissing(true);
           setVideoUrl(null);
         }
-
-        const nextAnalysis = await analysisPromise;
-        if (cancelled || activeLoadTokenRef.current !== loadToken) {
-          return;
-        }
-        setAnalysisData(nextAnalysis);
       } catch (err) {
         if (cancelled || activeLoadTokenRef.current !== loadToken) {
           return;
@@ -2865,10 +3133,6 @@ export default function VideoPanel() {
 
     return () => {
       cancelled = true;
-      if (lastObjectUrl.current) {
-        URL.revokeObjectURL(lastObjectUrl.current);
-        lastObjectUrl.current = null;
-      }
       if (lastCompareObjectUrl.current) {
         URL.revokeObjectURL(lastCompareObjectUrl.current);
         lastCompareObjectUrl.current = null;
@@ -3079,6 +3343,56 @@ export default function VideoPanel() {
   const faceResults = analysisData?.faceResults ?? null;
   const videoWidth = videoRef.current?.videoWidth || 1920;
   const videoHeight = videoRef.current?.videoHeight || 1080;
+  const knownCharacters = useMemo(() => {
+    const labels = new Set<string>();
+    const records = analysisData?.masterSchemaResolvedEvidence?.records || [];
+    records.forEach((record: MasterSchemaResolvedEvidenceRecord) => {
+      if (
+        ["narrative_agent_profile", "character_role", "identity"].includes(
+          record.category,
+        ) &&
+        record.authority !== "raw_detection"
+      ) {
+        appendKnownNarrativeAgentLabel(labels, record.label);
+      }
+    });
+
+    const sourceMediaMetadata = analysisData?.metadata?.sourceMediaMetadata;
+    appendKnownNarrativeAgentValues(
+      labels,
+      sourceMediaMetadata?.user_annotations?.narrative_agent_profiles,
+    );
+    appendKnownNarrativeAgentValues(
+      labels,
+      sourceMediaMetadata?.user_annotations?.character_definitions,
+    );
+    appendKnownNarrativeAgentValues(
+      labels,
+      sourceMediaMetadata?.user_annotations?.character_roles,
+    );
+    (sourceMediaMetadata?.user_annotations?.web_metadata_sources || []).forEach(
+      (source) => {
+        appendKnownNarrativeAgentValues(labels, source.fields?.character_roles);
+        appendKnownNarrativeAgentValues(labels, source.fields?.persons);
+      },
+    );
+
+    (analysisData?.annotationCorrections?.manual_visual_annotations || []).forEach(
+      (entry: ManualVisualAnnotation) => {
+        appendKnownNarrativeAgentLabel(labels, entry.identity_affirmation);
+        if (entry.category === "Identification") {
+          appendKnownNarrativeAgentLabel(labels, entry.label);
+          appendKnownNarrativeAgentLabel(labels, entry.custom_label);
+        }
+      },
+    );
+
+    return Array.from(labels).sort((left, right) => left.localeCompare(right));
+  }, [
+    analysisData?.annotationCorrections?.manual_visual_annotations,
+    analysisData?.masterSchemaResolvedEvidence?.records,
+    analysisData?.metadata?.sourceMediaMetadata,
+  ]);
   const fallbackShotSizeSummary = useMemo(() => {
     const personItems = rawDetectedObjects.filter(
       (item) => (item.class_name || item.raw_class_name || "").toLowerCase() === "person",
@@ -3443,8 +3757,10 @@ export default function VideoPanel() {
     nativeAnnotationDraft.category,
     nativeAnnotationDraft.mediaGenreParent,
     nativeAnnotationDraft.situationalGenreParent,
-    nativeAnnotationDraft.subcategory,
-  ]);
+	    nativeAnnotationDraft.subcategory,
+	  ]);
+  const showNativeNarrativeAgentPicker =
+    nativeAnnotationDraft.category === "Identification";
 
   const overlayBoxes = useMemo(() => {
     const overlays: OverlayBox[] = [];
@@ -3466,6 +3782,7 @@ export default function VideoPanel() {
         manualOverridesBySourceLabel.set(targetLabel, item);
       }
     });
+    const manualTrackMatureAuthority = buildManualTrackMatureAuthority(allManualVisualAnnotations);
     const activeManualObjectTrackIds = new Set<string>();
     manualVisualAnnotations.forEach((item) => {
       const targetId = manualObjectTargetId(item);
@@ -3485,6 +3802,10 @@ export default function VideoPanel() {
       );
     });
     const matureObjectOverlayLookup = buildMatureObjectOverlayLookup(
+      analysisData?.masterSchemaResolvedEvidence?.records,
+      currentTime,
+    );
+    const matureSubjectOverlayLookup = buildMatureSubjectOverlayLookup(
       analysisData?.masterSchemaResolvedEvidence?.records,
       currentTime,
     );
@@ -3565,12 +3886,12 @@ export default function VideoPanel() {
     if (overlayToggles.objects) {
       activeRawObjects.forEach((item: DetectedObject, index: number) => {
         const targetId = objectTrackTargetId(item);
+        const targetIds = objectTrackTargetIds(item);
         const objectNormalizedBox = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
         const manualOverride = (() => {
-          const trackMatches =
-            targetId && manualOverridesByObjectTrack.has(targetId)
-              ? manualOverridesByObjectTrack.get(targetId) || []
-              : [];
+          const trackMatches = targetIds.flatMap(
+            (trackId) => manualOverridesByObjectTrack.get(trackId) || [],
+          );
           const selectedTrackManual =
             selectedWorkspaceAnnotationId && trackMatches.length > 0
               ? trackMatches.find((entry) => entry.id === selectedWorkspaceAnnotationId)
@@ -3592,10 +3913,16 @@ export default function VideoPanel() {
             item.raw_class_name,
             targetId ? `${item.class_name} track ${targetId}` : "",
             targetId ? `person track ${targetId}` : "",
+            ...targetIds.flatMap((trackId) => [
+              `${item.class_name} track ${trackId}`,
+              `person track ${trackId}`,
+            ]),
           ].map(normalizeEvidenceLabel);
-          for (const label of labels) {
-            if (label && manualOverridesBySourceLabel.has(label)) {
-              return manualOverridesBySourceLabel.get(label);
+          if (targetIds.length === 0) {
+            for (const label of labels) {
+              if (label && manualOverridesBySourceLabel.has(label)) {
+                return manualOverridesBySourceLabel.get(label);
+              }
             }
           }
           if (objectNormalizedBox) {
@@ -3628,45 +3955,77 @@ export default function VideoPanel() {
           item.raw_class_name,
           targetId ? `${item.class_name} track ${targetId}` : "",
           targetId ? `person track ${targetId}` : "",
+          ...targetIds.flatMap((trackId) => [
+            `${item.class_name} track ${trackId}`,
+            `person track ${trackId}`,
+          ]),
         ].map(normalizeEvidenceLabel);
+        const narrativeAgentOverride = (() => {
+          for (const trackId of targetIds) {
+            const trackOverride = matureSubjectOverlayLookup.byTrack.get(trackId);
+            if (trackOverride) {
+              return trackOverride;
+            }
+          }
+          if (targetIds.length === 0) {
+            for (const sourceLabel of sourceLabels) {
+              const labelOverride = matureSubjectOverlayLookup.byRawLabel.get(sourceLabel);
+              if (labelOverride) {
+                return labelOverride;
+              }
+            }
+          }
+          return undefined;
+        })();
         const localOverride = (() => {
-          const targetId = objectTrackTargetId(item);
           return activeLocalObjectLabelOverrides.find((override) => {
             const sameTrack =
-              targetId &&
               override.trackId !== undefined &&
-              Number(override.trackId) === Number(targetId);
+              targetIds.some((trackId) => Number(override.trackId) === Number(trackId));
+            if (override.trackId !== undefined) {
+              return sameTrack;
+            }
             const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
-            return sameTrack || Boolean(overrideSource && sourceLabels.includes(overrideSource));
+            return targetIds.length === 0 && Boolean(overrideSource && sourceLabels.includes(overrideSource));
           });
         })();
         const masterSchemaMatureOverride = (() => {
           if (manualOverrideActive || localOverride) {
             return undefined;
           }
-          const trackOverride = targetId
-            ? matureObjectOverlayLookup.byTrack.get(targetId)
-            : undefined;
-          if (trackOverride) {
-            return trackOverride;
+          for (const trackId of targetIds) {
+            const trackOverride = matureObjectOverlayLookup.byTrack.get(trackId);
+            if (trackOverride) {
+              return trackOverride;
+            }
           }
-          for (const sourceLabel of sourceLabels) {
-            const labelOverride = matureObjectOverlayLookup.byRawLabel.get(sourceLabel);
-            if (labelOverride) {
-              return labelOverride;
+          if (targetIds.length === 0) {
+            for (const sourceLabel of sourceLabels) {
+              const labelOverride = matureObjectOverlayLookup.byRawLabel.get(sourceLabel);
+              if (labelOverride) {
+                return labelOverride;
+              }
             }
           }
           return undefined;
         })();
+        const hasNarrativeAgentRecognition = Boolean(narrativeAgentOverride);
+        const identityLabel = identityLabelForOverlay(
+          narrativeAgentOverride?.label || "",
+          hasNarrativeAgentRecognition,
+        );
+        const manualTrackAuthority = targetIds
+          .map((trackId) => manualTrackMatureAuthority.get(trackId))
+          .find(Boolean);
         const matureProliferatedOverride = (() => {
           if (manualOverrideActive || localOverride || masterSchemaMatureOverride) {
             return undefined;
           }
-          const trackCandidate = targetId
-            ? matureProliferationByObjectTrack.get(targetId)?.candidate
-            : undefined;
-          if (trackCandidate) {
-            return trackCandidate;
+          for (const trackId of targetIds) {
+            const trackCandidate = matureProliferationByObjectTrack.get(trackId)?.candidate;
+            if (trackCandidate) {
+              return trackCandidate;
+            }
           }
           if (!objectNormalizedBox) {
             return undefined;
@@ -3702,34 +4061,59 @@ export default function VideoPanel() {
           return;
         }
         if (
-          targetId &&
+          targetIds.length > 0 &&
           manualOverrideActive &&
-          activeManualObjectTrackIds.has(targetId) &&
+          targetIds.some((trackId) => activeManualObjectTrackIds.has(trackId)) &&
           overlayToggles.manual
         ) {
           return;
         }
 
+        const localOverlayLabel = governedOverlayLabel(localOverride?.label);
+        const manualTrackOverlayLabel = manualTrackAuthority
+          ? joinGovernedOverlayLabel(
+              manualTrackAuthority.label,
+              manualTrackAuthority.roleLabel,
+            )
+          : undefined;
+        const narrativeAgentOverlayLabel = narrativeAgentOverride
+          ? joinGovernedOverlayLabel(
+              narrativeAgentOverride.label || identityLabel,
+              narrativeAgentOverride.roleLabel,
+            )
+          : undefined;
+        const masterSchemaOverlayLabel = governedOverlayLabel(
+          masterSchemaMatureOverride?.label,
+        );
+        const proliferatedOverlayLabel = matureProliferatedOverride
+          ? governedOverlayLabel(resolveProliferatedDisplayLabel(matureProliferatedOverride))
+          : undefined;
+        const manualOverrideOverlayLabel = manualOverrideActive
+          ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
+          : undefined;
+        const unresolvedOverlayLabel = unresolvedObjectConfirmationLabel(item);
+        const objectOverlayLabel =
+          localOverlayLabel ||
+          manualTrackOverlayLabel ||
+          narrativeAgentOverlayLabel ||
+          masterSchemaOverlayLabel ||
+          proliferatedOverlayLabel ||
+          manualOverrideOverlayLabel ||
+          unresolvedOverlayLabel;
+
         overlays.push({
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
-          label: localOverride?.label ||
-            masterSchemaMatureOverride?.label ||
-            (matureProliferatedOverride
-              ? resolveProliferatedDisplayLabel(matureProliferatedOverride)
-              : undefined) ||
-            (manualOverrideActive
-            ? resolveManualVisualDisplayLabel(manualOverride)
-            : item.displayLabel || item.class_name),
-          color: localOverride || manualOverrideActive
+          label: objectOverlayLabel,
+          color: localOverride || manualOverrideActive || manualTrackAuthority
             ? "border-emerald-300/80 bg-emerald-300/10"
             : masterSchemaMatureOverride
             ? "border-violet-300/85 bg-violet-300/10"
+            : narrativeAgentOverride
+            ? "border-violet-300/85 bg-violet-300/10"
             : matureProliferatedOverride
             ? "border-sky-300/85 bg-sky-300/10"
-            : isFallbackPersonDetection(item)
-            ? "border-amber-300/80 bg-amber-300/10"
-            : "border-cyan-300/70 bg-transparent",
+            : "border-amber-300/80 bg-amber-300/10",
           x: resolvedBox.x,
           y: resolvedBox.y,
           w: resolvedBox.w,
@@ -3740,19 +4124,55 @@ export default function VideoPanel() {
                   ...item,
                   manual_annotation: manualOverride,
                 }
+              : manualTrackAuthority
+              ? {
+                  ...item,
+                  manual_annotation: manualTrackAuthority.sourceItem,
+                  master_schema_mature_label: manualTrackAuthority,
+                  narrative_agent_recognition: manualTrackAuthority,
+                  bbox_mature_authority: manualTrackAuthority,
+                  displayLabel: manualTrackOverlayLabel || unresolvedOverlayLabel,
+                  traceback: manualTrackAuthority.traceback,
+                  evidence_refs: manualTrackAuthority.evidence_refs,
+                  source_bbox_refs: manualTrackAuthority.source_bbox_refs,
+                  source_frame_refs: manualTrackAuthority.source_frame_refs,
+                }
               : matureProliferatedOverride
               ? {
                   ...item,
                   proliferated_annotation: matureProliferatedOverride,
-                  displayLabel: resolveProliferatedDisplayLabel(matureProliferatedOverride),
+                  displayLabel: proliferatedOverlayLabel || unresolvedOverlayLabel,
+                  agent_persistence_labels: ["Constellational Match"],
+                }
+              : narrativeAgentOverride
+              ? {
+                  ...item,
+                  master_schema_mature_label: narrativeAgentOverride,
+                  narrative_agent_recognition: narrativeAgentOverride,
+                  traceback: narrativeAgentOverride.traceback,
+                  evidence_refs: narrativeAgentOverride.evidence_refs,
+                  source_bbox_refs: narrativeAgentOverride.source_bbox_refs,
+                  source_frame_refs: narrativeAgentOverride.source_frame_refs,
+                  displayLabel: [
+                    narrativeAgentOverlayLabel || unresolvedOverlayLabel,
+                  ].filter(Boolean).join(" / "),
                 }
               : masterSchemaMatureOverride
               ? {
                   ...item,
                   master_schema_mature_label: masterSchemaMatureOverride,
-                  displayLabel: masterSchemaMatureOverride.label,
+                  traceback: masterSchemaMatureOverride.traceback,
+                  evidence_refs: masterSchemaMatureOverride.evidence_refs,
+                  source_bbox_refs: masterSchemaMatureOverride.source_bbox_refs,
+                  source_frame_refs: masterSchemaMatureOverride.source_frame_refs,
+                  displayLabel: masterSchemaOverlayLabel || unresolvedOverlayLabel,
                 }
-              : item,
+              : {
+                  ...item,
+                  displayLabel: unresolvedObjectConfirmationLabel(item),
+                  raw_detection_hidden: true,
+                  narrative_agent_confirmation_required: true,
+                },
         });
       });
     }
@@ -3947,6 +4367,61 @@ export default function VideoPanel() {
       return fallback;
     },
     [currentTime, overlayGeometryDrafts],
+  );
+
+  const findExpressionPersonAnchor = React.useCallback(
+    (overlay: OverlayBox): { item: DetectedObject; box: DraftBox; trackId: string | null } | null => {
+      if (overlay.modality !== "expression") {
+        return null;
+      }
+      const expressionBox = getOverlayNormalizedBox(overlay);
+      const expressionCenter = {
+        x: expressionBox.x + expressionBox.w / 2,
+        y: expressionBox.y + expressionBox.h / 2,
+      };
+      const candidates = activeRawObjects
+        .map((item) => {
+          const box = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
+          if (!box) {
+            return null;
+          }
+          const className = normalizeEvidenceLabel(
+            item.raw_class_name || item.class_name || item.displayLabel,
+          );
+          const containsCenter =
+            expressionCenter.x >= box.x &&
+            expressionCenter.x <= box.x + box.w &&
+            expressionCenter.y >= box.y &&
+            expressionCenter.y <= box.y + box.h;
+          const iou = calculateDraftBoxIoU(expressionBox, box);
+          const distance = calculateDraftBoxCenterDistance(expressionBox, box);
+          const isPerson =
+            className === "person" ||
+            className.startsWith("person ") ||
+            className.startsWith("person track");
+          if (!isPerson && !containsCenter && iou <= 0) {
+            return null;
+          }
+          return {
+            item,
+            box,
+            trackId: objectTrackTargetId(item),
+            score:
+              (isPerson ? 100 : 0) +
+              (containsCenter ? 10 : 0) +
+              iou * 20 -
+              distance,
+          };
+        })
+        .filter(Boolean) as Array<{
+          item: DetectedObject;
+          box: DraftBox;
+          trackId: string | null;
+          score: number;
+        }>;
+      return candidates.sort((left, right) => right.score - left.score)[0] || null;
+    },
+    [activeRawObjects, getOverlayNormalizedBox, videoHeight, videoWidth],
   );
 
   const getRenderedVideoPoint = React.useCallback(
@@ -4168,15 +4643,24 @@ export default function VideoPanel() {
         overlay.modality === "manual"
           ? (source as ManualVisualAnnotation)
           : getAttachedManualAnnotation(source);
-      const label =
-        (manual ? resolveManualVisualDisplayLabel(manual) : "") ||
-        overlay.label ||
-        "";
+      const needsNarrativeAgentConfirmation = Boolean(
+        source.narrative_agent_confirmation_required,
+      );
+      const label = needsNarrativeAgentConfirmation
+        ? ""
+        : (manual ? resolveManualVisualDisplayLabel(manual) : "") ||
+          overlay.label ||
+          "";
       return {
-        category: manual?.category || category,
+        category:
+          manual?.category ||
+          (needsNarrativeAgentConfirmation ? "Identification" : category),
         subcategory:
           manual?.subcategory ||
-          getFirstSubcategoryForCategory(manual?.category || category),
+          getFirstSubcategoryForCategory(
+            manual?.category ||
+              (needsNarrativeAgentConfirmation ? "Identification" : category),
+          ),
         label,
         identityAffirmation: manual?.identity_affirmation || "",
         start: bounds.start,
@@ -4669,7 +5153,12 @@ export default function VideoPanel() {
 
   const saveNativeVisualAnnotation = React.useCallback(async () => {
     const resolvedLabel =
-      nativeAnnotationDraft.readyLabel &&
+      nativeAnnotationDraft.category === "Identification" &&
+      (nativeAnnotationDraft.identityAffirmation.trim() ||
+        nativeAnnotationDraft.label.trim())
+        ? nativeAnnotationDraft.identityAffirmation.trim() ||
+          nativeAnnotationDraft.label.trim()
+        : nativeAnnotationDraft.readyLabel &&
       nativeAnnotationDraft.readyLabel !== CUSTOM_LABEL_VALUE
         ? nativeAnnotationDraft.readyLabel
         : nativeAnnotationDraft.label.trim();
@@ -4777,16 +5266,56 @@ export default function VideoPanel() {
       if (!videoId || !videoRef.current) {
         return;
       }
-      const start = clamp(edit.start, 0, duration || Number.MAX_SAFE_INTEGER);
-      const end = clamp(
-        Math.max(edit.end, start + 0.001),
+      const label = resolveIndicationLabel(edit.category, edit.label);
+      const source = overlay.sourceItem || {};
+      const expressionPersonAnchor =
+        edit.category === "Identification" ? findExpressionPersonAnchor(overlay) : null;
+      const expressionTimestamp = getOverlayTimestamp(overlay);
+      const rawStart =
+        overlay.modality === "expression" && edit.category === "Identification"
+          ? Math.min(edit.start, expressionTimestamp - EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS)
+          : edit.start;
+      const rawEnd =
+        overlay.modality === "expression" && edit.category === "Identification"
+          ? Math.max(edit.end, expressionTimestamp + EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS)
+          : edit.end;
+      const anchorStart =
+        expressionPersonAnchor && typeof expressionPersonAnchor.item.startTimestamp === "number"
+          ? expressionPersonAnchor.item.startTimestamp
+          : expressionPersonAnchor && typeof expressionPersonAnchor.item.timestamp === "number"
+            ? expressionPersonAnchor.item.timestamp
+            : null;
+      const anchorEnd =
+        expressionPersonAnchor && typeof expressionPersonAnchor.item.endTimestamp === "number"
+          ? expressionPersonAnchor.item.endTimestamp
+          : expressionPersonAnchor && typeof expressionPersonAnchor.item.timestamp === "number"
+            ? expressionPersonAnchor.item.timestamp
+            : null;
+      const anchorHasInterval =
+        Number.isFinite(anchorStart) &&
+        Number.isFinite(anchorEnd) &&
+        Math.abs(Number(anchorEnd) - Number(anchorStart)) > 0.1;
+      const boundedStart =
+        expressionPersonAnchor && anchorHasInterval
+          ? Math.max(rawStart, Number(anchorStart))
+          : rawStart;
+      const boundedEnd =
+        expressionPersonAnchor && anchorHasInterval
+          ? Math.min(rawEnd, Number(anchorEnd))
+          : rawEnd;
+      const start = clamp(
+        Math.min(boundedStart, boundedEnd),
         0,
         duration || Number.MAX_SAFE_INTEGER,
       );
-      const label = resolveIndicationLabel(edit.category, edit.label);
-      const source = overlay.sourceItem || {};
+      const end = clamp(
+        Math.max(boundedEnd, start + 0.001),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
       const targetTrackId = String(
-        source.trackId ??
+        expressionPersonAnchor?.trackId ??
+          source.trackId ??
           source.track_id ??
           (overlay.modality === "manual"
             ? manualObjectTargetId(overlay.sourceItem as ManualVisualAnnotation)
@@ -4797,13 +5326,15 @@ export default function VideoPanel() {
         overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)?.id ||
             `${videoId}:indication:${overlay.modality}:${overlay.key}`
-          : `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
+          : expressionPersonAnchor
+            ? `${videoId}:indication:expression-agent:${targetTrackId || "untracked"}:${overlay.key}`
+            : `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
-      const normalizedBox = getOverlayNormalizedBox(overlay);
+      const normalizedBox = expressionPersonAnchor?.box || getOverlayNormalizedBox(overlay);
       const keyframeTime = clamp(
         getOverlayInteractionTime(overlay),
         start,
@@ -4847,9 +5378,29 @@ export default function VideoPanel() {
         audio_foley_note: existingManual?.audio_foley_note,
         open_note: edit.note.trim() || existingManual?.open_note,
         metadata_correlation: existingManual?.metadata_correlation || {
-          target_type: overlay.modality,
-          target_id: String(source.trackId ?? source.track_id ?? overlay.key),
-          target_label: overlay.label,
+          target_type: expressionPersonAnchor ? "object" : overlay.modality,
+          target_id: String(
+            expressionPersonAnchor?.trackId ??
+              source.trackId ??
+              source.track_id ??
+              overlay.key,
+          ),
+          target_label: expressionPersonAnchor
+            ? String(
+                expressionPersonAnchor.item.displayLabel ||
+                  expressionPersonAnchor.item.class_name ||
+                  expressionPersonAnchor.item.raw_class_name ||
+                  "person",
+              )
+            : overlay.label,
+          source_expression_key:
+            overlay.modality === "expression" ? overlay.key : undefined,
+          source_expression_label:
+            overlay.modality === "expression" ? overlay.label : undefined,
+          source_expression_timestamp:
+            overlay.modality === "expression"
+              ? Number(expressionTimestamp.toFixed(3))
+              : undefined,
           relation: "extends",
           note: "Adopted from video overlay indication editor.",
         },
@@ -4893,8 +5444,10 @@ export default function VideoPanel() {
       clearOverlayEditingWorkspace,
       closeSelectedOverlayEditor,
       duration,
+      findExpressionPersonAnchor,
       getOverlayInteractionTime,
       getOverlayNormalizedBox,
+      getOverlayTimestamp,
       videoId,
     ],
   );
@@ -6178,9 +6731,7 @@ export default function VideoPanel() {
               showCompareInPanel && compareSource ? "grid grid-cols-2 gap-2 bg-transparent" : "flex items-center justify-center"
             }`}
           >
-            {isLoading ? (
-              <div className="text-slate-400">Loading video...</div>
-            ) : videoUrl && (!showCompareInPanel || !compareSource) ? (
+            {videoUrl && (!showCompareInPanel || !compareSource) ? (
               <>
                 <video
                   key={videoUrl}
@@ -6246,6 +6797,8 @@ export default function VideoPanel() {
                     {overlayBoxes.map((overlay) => {
                       const selected = selectedOverlayKey === overlay.key;
                       const edit = getSelectedIndicationEdit(overlay);
+                      const trackId = overlay.sourceItem?.trackId ?? (overlay.sourceItem as any)?.track_id;
+
                       const startInputKey = `${overlay.key}:start`;
                       const endInputKey = `${overlay.key}:end`;
                       const normalizedBox = getOverlayNormalizedBox(overlay);
@@ -6366,6 +6919,9 @@ export default function VideoPanel() {
                             ).trim()
                           : (() => {
                               const source = overlay.sourceItem || {};
+                              if (source.raw_detection_hidden) {
+                                return "";
+                              }
                               const trackId = source.trackId ?? source.track_id;
                               const rawLabel = String(
                                 source.raw_class_name ||
@@ -6374,13 +6930,13 @@ export default function VideoPanel() {
                                   "",
                               ).trim();
                               if (trackId !== undefined && trackId !== null) {
-                                return rawLabel.toLowerCase().startsWith("person")
+                                return governedOverlayLabel(rawLabel.toLowerCase().startsWith("person")
                                   ? `person track ${trackId}`
                                   : rawLabel
                                     ? `${rawLabel} track ${trackId}`
-                                    : `track ${trackId}`;
+                                    : `track ${trackId}`) || "";
                               }
-                              return rawLabel;
+                              return governedOverlayLabel(rawLabel) || "";
                             })();
                       const compactOverlayLabel =
                         overlaySourceLabel &&
@@ -6464,6 +7020,24 @@ export default function VideoPanel() {
                           >
                             {visibleOverlayLabel}
                           </div>
+                          <div className="pointer-events-auto">
+                            <SecondOrderLabelAffirmationChips
+                              plan={analysisData?.secondOrderLabelProliferation}
+                              surface="bbox_roi_overlay"
+                              targetLabelFamilies={[
+                                edit.category,
+                                "Identification",
+                                "Expression",
+                                "Interaction",
+                                "Action",
+                                "Role",
+                              ]}
+                              timeSpan={{ start: edit.start, end: edit.end }}
+                              trackId={trackId}
+                              compact
+                              limit={2}
+                            />
+                          </div>
                           {editableOverlay && (
                             <button
                               type="button"
@@ -6480,19 +7054,7 @@ export default function VideoPanel() {
                           )}
                           {selected && (
                             <>
-                              <button
-                                type="button"
-                                title="Move indication box"
-                                aria-label="Move indication box"
-                                onPointerDown={(event) =>
-                                  beginOverlayGeometryDrag(event, overlay, "move")
-                                }
-                                onClick={(event) => event.stopPropagation()}
-                                className="absolute right-1 top-1 z-30 h-4 w-4 rounded border border-cyan-300/60 bg-black/80 text-[10px] leading-3 text-cyan-100 hover:bg-cyan-950"
-                              >
-                                +
-                              </button>
-                              <div
+                      <div
                                 className="absolute z-50 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-2 py-1.5 shadow-lg"
                                 style={selectedEditorStyle}
                                 onClick={(event) => event.stopPropagation()}
@@ -6802,7 +7364,60 @@ export default function VideoPanel() {
                                     ))}
                                   </select>
                                 </div>
-                                <div className="mb-1 grid grid-cols-[1fr_auto_auto] gap-1">
+                                <div className="mb-1 flex flex-col gap-1">
+                                <div className="flex flex-col gap-1">
+                                  <select
+                                    value={
+                                      edit.label.toLowerCase() === "bystander"
+                                        ? "by-stander"
+                                        : NARRATIVE_AGENT_QUICK_CHOICES.includes(edit.label.toLowerCase())
+                                        ? edit.label.toLowerCase()
+                                        : knownCharacters.includes(edit.label)
+                                        ? edit.label
+                                        : "open tag"
+                                    }
+                                    onChange={(event) => {
+                                      const val = event.target.value;
+                                      if (val !== "open tag") {
+                                        const isKnownCharacter = knownCharacters.includes(val);
+                                        const isQuickAgentChoice =
+                                          NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
+                                        updateSelectedIndicationEdit(overlay.key, {
+                                          label: val,
+                                          ...(isKnownCharacter || isQuickAgentChoice
+                                            ? { category: "Identification" }
+                                            : {}),
+                                          identityAffirmation:
+                                            isKnownCharacter ||
+                                            isQuickAgentChoice ||
+                                            edit.category === "Identification"
+                                              ? val
+                                              : edit.identityAffirmation,
+                                        });
+                                      }
+                                    }}
+                                    className="h-7 w-full rounded border border-cyan-700/70 bg-black/85 px-2 py-1 text-[11px] text-cyan-50"
+                                    aria-label="Narrative Agent choice"
+                                  >
+                                    <option value="open tag">open tag</option>
+                                    {knownCharacters.length > 0 && (
+                                      <optgroup label="Known Narrative Agents">
+                                        {knownCharacters.map((char: string) => (
+                                          <option key={char} value={char}>
+                                            {char}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                    <optgroup label="Additional choices">
+                                      {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
+                                        <option key={choice} value={choice}>
+                                          {choice}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  </select>
+                                  <div className="grid grid-cols-[1fr_auto_auto] gap-1">
                                   <input
                                     type="text"
                                     value={edit.label}
@@ -6831,9 +7446,9 @@ export default function VideoPanel() {
                                         });
                                       }
                                     }}
-                                    className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
-                                    placeholder="Full label or identity"
-                                    aria-label="Indication label"
+                                    className="h-7 min-w-0 rounded border border-slate-700 bg-black/85 px-2 py-1 text-[11px] text-slate-100"
+                                    placeholder="Write new Narrative Agent / open tag"
+                                    aria-label="New Narrative Agent or open tag"
                                   />
                                   <button
                                     type="button"
@@ -6857,6 +7472,7 @@ export default function VideoPanel() {
                                   >
                                     Out
                                   </button>
+                                  </div>
                                 </div>
                                 <SecondOrderLabelAffirmationChips
                                   plan={analysisData?.secondOrderLabelProliferation}
@@ -6864,6 +7480,7 @@ export default function VideoPanel() {
                                   targetLabelFamilies={[
                                     edit.category,
                                     "Identification",
+                                    "Expression",
                                     "Interaction",
                                     "Action",
                                     "Role",
@@ -6969,6 +7586,7 @@ export default function VideoPanel() {
                                   >
                                     Cancel
                                   </button>
+                                </div>
                                 </div>
                                 {proliferationLauncher.open ? (
                                   <div className="mt-1 rounded border border-cyan-900/60 bg-cyan-950/20 p-1.5">
@@ -7414,6 +8032,10 @@ export default function VideoPanel() {
                   </div>
                 </div>
               </>
+            ) : isLoading ? (
+              <div className="p-4 text-center text-slate-400">
+                <div className="text-sm">Preparing video panel...</div>
+              </div>
             ) : blobMissing ? (
               <div className="p-4 text-center text-slate-400">
                 <div className="mb-2 text-lg">Video Not Available</div>
@@ -7680,10 +8302,83 @@ export default function VideoPanel() {
                             </SelectItem>
                           ))}
                         </SelectContent>
-                      </Select>
-                    )}
-                  <Input
-                    value={nativeAnnotationDraft.identityAffirmation}
+	                      </Select>
+	                    )}
+	                  {showNativeNarrativeAgentPicker && (
+	                    <div className="flex flex-col gap-1 md:col-span-2">
+	                      <select
+	                        value={
+	                          nativeAnnotationDraft.label.toLowerCase() === "bystander"
+	                            ? "by-stander"
+	                            : NARRATIVE_AGENT_QUICK_CHOICES.includes(
+	                                nativeAnnotationDraft.label.toLowerCase(),
+	                              )
+	                            ? nativeAnnotationDraft.label.toLowerCase()
+	                            : knownCharacters.includes(nativeAnnotationDraft.label)
+	                            ? nativeAnnotationDraft.label
+	                            : "open tag"
+	                        }
+	                        onChange={(event) => {
+	                          const val = event.target.value;
+	                          if (val !== "open tag") {
+	                            const isKnownCharacter = knownCharacters.includes(val);
+	                            const isQuickAgentChoice =
+	                              NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
+	                            setNativeAnnotationDraft((current) => ({
+	                              ...current,
+	                              label: val,
+	                              readyLabel: CUSTOM_LABEL_VALUE,
+	                              ...(isKnownCharacter || isQuickAgentChoice
+	                                ? { category: "Identification", subcategory: "Character" }
+	                                : {}),
+	                              identityAffirmation:
+	                                isKnownCharacter ||
+	                                isQuickAgentChoice ||
+	                                current.category === "Identification"
+	                                  ? val
+	                                  : current.identityAffirmation,
+	                            }));
+	                          }
+	                        }}
+	                        className="w-full rounded border border-amber-400/50 bg-[#111214] px-3 py-2 text-sm text-amber-50"
+	                        aria-label="Narrative Agent choice"
+	                      >
+	                        <option value="open tag">open tag</option>
+	                        {knownCharacters.length > 0 && (
+	                          <optgroup label="Known Narrative Agents">
+	                            {knownCharacters.map((char: string) => (
+	                              <option key={char} value={char}>
+	                                {char}
+	                              </option>
+	                            ))}
+	                          </optgroup>
+	                        )}
+	                        <optgroup label="Additional choices">
+	                          {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
+	                            <option key={choice} value={choice}>
+	                              {choice}
+	                            </option>
+	                          ))}
+	                        </optgroup>
+	                      </select>
+	                      <Input
+	                        value={nativeAnnotationDraft.label}
+	                        onChange={(event) =>
+	                          setNativeAnnotationDraft((current) => ({
+	                            ...current,
+	                            label: event.target.value,
+	                            readyLabel: CUSTOM_LABEL_VALUE,
+	                            identityAffirmation: event.target.value,
+	                          }))
+	                        }
+	                        placeholder="Write new Narrative Agent / open tag"
+	                        className="border-amber-400/35 bg-[#111214] text-slate-100"
+	                        aria-label="New Narrative Agent or open tag"
+	                      />
+	                    </div>
+	                  )}
+	                  <Input
+	                    value={nativeAnnotationDraft.identityAffirmation}
                     onChange={(event) =>
                       setNativeAnnotationDraft((current) => ({
                         ...current,
@@ -7693,18 +8388,73 @@ export default function VideoPanel() {
                     placeholder="Identity affirmation"
                     className="border-amber-400/20 bg-[#111214] text-slate-100"
                   />
-                  {nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE && (
-                    <Input
-                      value={nativeAnnotationDraft.label}
-                      onChange={(event) =>
-                        setNativeAnnotationDraft((current) => ({
-                          ...current,
-                          label: event.target.value,
-                        }))
-                      }
-                      placeholder="Add custom label"
-                      className="border-amber-400/20 bg-[#111214] text-slate-100 md:col-span-2"
-                    />
+	                  {nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE &&
+	                    !showNativeNarrativeAgentPicker && (
+                    <div className="flex flex-col gap-1 md:col-span-2">
+	                      <select
+	                        value={
+	                          nativeAnnotationDraft.label.toLowerCase() === "bystander"
+	                            ? "by-stander"
+	                            : NARRATIVE_AGENT_QUICK_CHOICES.includes(nativeAnnotationDraft.label.toLowerCase())
+	                            ? nativeAnnotationDraft.label.toLowerCase()
+	                            : knownCharacters.includes(nativeAnnotationDraft.label)
+	                            ? nativeAnnotationDraft.label
+	                            : "open tag"
+                        }
+                        onChange={(event) => {
+	                          const val = event.target.value;
+	                          if (val !== "open tag") {
+	                            const isKnownCharacter = knownCharacters.includes(val);
+	                            const isQuickAgentChoice =
+	                              NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
+	                            setNativeAnnotationDraft((current) => ({
+	                              ...current,
+	                              label: val,
+	                              ...(isKnownCharacter || isQuickAgentChoice
+	                                ? { category: "Identification", subcategory: "Character" }
+	                                : {}),
+	                              identityAffirmation:
+	                                isKnownCharacter ||
+	                                isQuickAgentChoice ||
+	                                current.category === "Identification"
+	                                  ? val
+	                                  : current.identityAffirmation,
+	                            }));
+                          }
+                        }}
+	                        className="w-full rounded border border-amber-400/20 bg-[#111214] px-3 py-2 text-sm text-slate-100"
+	                        aria-label="Narrative Agent choice"
+	                      >
+	                        <option value="open tag">open tag</option>
+	                        {knownCharacters.length > 0 && (
+	                          <optgroup label="Known Narrative Agents">
+	                            {knownCharacters.map((char: string) => (
+	                              <option key={char} value={char}>
+	                                {char}
+                              </option>
+	                            ))}
+	                          </optgroup>
+	                        )}
+	                        <optgroup label="Additional choices">
+	                          {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
+	                            <option key={choice} value={choice}>
+	                              {choice}
+	                            </option>
+	                          ))}
+	                        </optgroup>
+	                      </select>
+                      <Input
+                        value={nativeAnnotationDraft.label}
+                        onChange={(event) =>
+                          setNativeAnnotationDraft((current) => ({
+                            ...current,
+                            label: event.target.value,
+                          }))
+                        }
+	                        placeholder="Write new Narrative Agent / open tag"
+                        className="border-amber-400/20 bg-[#111214] text-slate-100"
+                      />
+                    </div>
                   )}
                   <Input
                     value={nativeAnnotationDraft.roleAffirmation}

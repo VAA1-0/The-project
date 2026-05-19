@@ -275,6 +275,9 @@ def _candidate_target_labels(feature_type: str) -> List[str]:
         "intimacy_commitment": ["Interaction", "Role", "Relationship", "Situation"],
         "judgment_denigration": ["Interaction", "Role", "Situation", "Affect", "Intensity", "ReportClaim"],
         "plot_function": ["Scene", "Episode", "Situation", "Action", "Interaction", "Role", "ReportClaim"],
+        "person_identity_prompt": ["Identification", "Role"],
+        "expression_owner_prompt": ["Expression", "Identification"],
+        "scene_participant_prompt": ["Interaction", "Identification", "Scene"],
     }
     return mapping.get(feature_type, [])
 
@@ -751,6 +754,95 @@ def _build_visual_events(
                     ],
                     interpretive_tags=["symbolic_object"],
                     confidence_score=0.45,
+                )
+            )
+            index += 1
+        elif cue_type == "person_identity_prompt":
+            object_id = _safe_text(cue.get("object_id"), "unknown_person")
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "person_identity_prompt",
+                    index,
+                    span,
+                    {
+                        "prompt": _safe_text(cue.get("prompt"), "Who is this person?"),
+                        "object_id": object_id,
+                    },
+                    objects=[object_id],
+                    evidence_refs=[evidence_ref],
+                    traceback_refs=[
+                        {
+                            "source_type": "object_track",
+                            "source_id": evidence_ref["evidence_id"],
+                            "time_span": span,
+                            "panel_hint": "bbox_panel",
+                        }
+                    ],
+                    interpretive_tags=["identity_question"],
+                    confidence_score=0.5,
+                    confidence_notes="Person detection requires analyst-identifiable subject ownership.",
+                )
+            )
+            index += 1
+        elif cue_type == "expression_owner_prompt":
+            object_id = _safe_text(cue.get("object_id"), "unknown_expression_subject")
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "expression_owner_prompt",
+                    index,
+                    span,
+                    {
+                        "prompt": _safe_text(cue.get("prompt"), "Whose expression is this?"),
+                        "object_id": object_id,
+                        "expression_label": _safe_text(cue.get("expression_label"), "expression"),
+                    },
+                    objects=[object_id],
+                    evidence_refs=[evidence_ref],
+                    traceback_refs=[
+                        {
+                            "source_type": "expression_detection",
+                            "source_id": evidence_ref["evidence_id"],
+                            "time_span": span,
+                            "panel_hint": "expressions_panel",
+                        }
+                    ],
+                    interpretive_tags=["expression_ownership_question"],
+                    confidence_score=0.48,
+                    confidence_notes="Expression evidence requires subject ownership before mature interpretation.",
+                )
+            )
+            index += 1
+        elif cue_type == "scene_participant_prompt":
+            participant_ids = [
+                _safe_text(value)
+                for value in cue.get("participant_ids", [])
+                if _safe_text(value)
+            ]
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "scene_participant_prompt",
+                    index,
+                    span,
+                    {
+                        "prompt": _safe_text(cue.get("prompt"), "Who are in this scene?"),
+                        "participant_ids": participant_ids,
+                    },
+                    participants=participant_ids,
+                    evidence_refs=[evidence_ref],
+                    traceback_refs=[
+                        {
+                            "source_type": "scene_participant_group",
+                            "source_id": evidence_ref["evidence_id"],
+                            "time_span": span,
+                            "panel_hint": "scene_panel",
+                        }
+                    ],
+                    interpretive_tags=["scene_participant_question"],
+                    confidence_score=0.5,
+                    confidence_notes="Multiple person detections require scene participant identification.",
                 )
             )
             index += 1
