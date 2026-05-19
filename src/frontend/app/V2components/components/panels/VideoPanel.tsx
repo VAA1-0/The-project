@@ -521,6 +521,10 @@ function resolveManualVisualDisplayLabel(item: ManualVisualAnnotation): string {
 }
 
 function objectTrackTargetId(item: DetectedObject): string | null {
+  const correlatedTargetId = (item as any).metadataCorrelation?.target_id;
+  if (correlatedTargetId !== undefined && correlatedTargetId !== null) {
+    return String(correlatedTargetId);
+  }
   const trackId = item.trackId ?? (item as any).track_id;
   return trackId === undefined || trackId === null ? null : String(trackId);
 }
@@ -538,6 +542,10 @@ function objectTrackTargetIds(item: DetectedObject): string[] {
         ids.add(String(trackId));
       }
     });
+  }
+  const correlatedTargetId = (item as any).metadataCorrelation?.target_id;
+  if (correlatedTargetId !== undefined && correlatedTargetId !== null) {
+    ids.add(String(correlatedTargetId));
   }
   return Array.from(ids);
 }
@@ -1263,6 +1271,15 @@ function calculateDraftBoxCenterDistance(left: DraftBox | null, right: DraftBox 
     left.x + left.w / 2 - (right.x + right.w / 2),
     left.y + left.h / 2 - (right.y + right.h / 2),
   );
+}
+
+function synthesizePersonBoxFromExpression(expressionBox: DraftBox): DraftBox {
+  const centerX = expressionBox.x + expressionBox.w / 2;
+  const width = clamp(Math.max(expressionBox.w * 2.35, 0.12), 0.002, 0.72);
+  const height = clamp(Math.max(expressionBox.h * 4.6, 0.28), 0.002, 0.9);
+  const x = clamp(centerX - width / 2, 0, Math.max(0, 1 - width));
+  const y = clamp(expressionBox.y - expressionBox.h * 0.65, 0, Math.max(0, 1 - height));
+  return normalizeDraftBox({ x, y, w: width, h: height });
 }
 
 function detectedObjectToNormalizedBox(
@@ -4399,7 +4416,7 @@ export default function VideoPanel() {
             className === "person" ||
             className.startsWith("person ") ||
             className.startsWith("person track");
-          if (!isPerson && !containsCenter && iou <= 0) {
+          if (!isPerson || (!containsCenter && iou <= 0)) {
             return null;
           }
           return {
@@ -5271,6 +5288,16 @@ export default function VideoPanel() {
       const expressionPersonAnchor =
         edit.category === "Identification" ? findExpressionPersonAnchor(overlay) : null;
       const expressionTimestamp = getOverlayTimestamp(overlay);
+      const expressionBox = getOverlayNormalizedBox(overlay);
+      const synthesizedExpressionOwnerBox =
+        overlay.modality === "expression" &&
+        edit.category === "Identification" &&
+        !expressionPersonAnchor
+          ? synthesizePersonBoxFromExpression(expressionBox)
+          : null;
+      const expressionOwnerTargetId = synthesizedExpressionOwnerBox
+        ? `expression-owner:${overlay.key}`
+        : null;
       const rawStart =
         overlay.modality === "expression" && edit.category === "Identification"
           ? Math.min(edit.start, expressionTimestamp - EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS)
@@ -5315,6 +5342,7 @@ export default function VideoPanel() {
       );
       const targetTrackId = String(
         expressionPersonAnchor?.trackId ??
+          expressionOwnerTargetId ??
           source.trackId ??
           source.track_id ??
           (overlay.modality === "manual"
@@ -5328,13 +5356,15 @@ export default function VideoPanel() {
             `${videoId}:indication:${overlay.modality}:${overlay.key}`
           : expressionPersonAnchor
             ? `${videoId}:indication:expression-agent:${targetTrackId || "untracked"}:${overlay.key}`
+            : expressionOwnerTargetId
+              ? `${videoId}:indication:${expressionOwnerTargetId}`
             : `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
-      const normalizedBox = expressionPersonAnchor?.box || getOverlayNormalizedBox(overlay);
+      const normalizedBox = expressionPersonAnchor?.box || synthesizedExpressionOwnerBox || expressionBox;
       const keyframeTime = clamp(
         getOverlayInteractionTime(overlay),
         start,
@@ -5378,18 +5408,20 @@ export default function VideoPanel() {
         audio_foley_note: existingManual?.audio_foley_note,
         open_note: edit.note.trim() || existingManual?.open_note,
         metadata_correlation: existingManual?.metadata_correlation || {
-          target_type: expressionPersonAnchor ? "object" : overlay.modality,
+          target_type:
+            expressionPersonAnchor || synthesizedExpressionOwnerBox ? "object" : overlay.modality,
           target_id: String(
             expressionPersonAnchor?.trackId ??
+              expressionOwnerTargetId ??
               source.trackId ??
               source.track_id ??
               overlay.key,
           ),
-          target_label: expressionPersonAnchor
+          target_label: expressionPersonAnchor || synthesizedExpressionOwnerBox
             ? String(
-                expressionPersonAnchor.item.displayLabel ||
-                  expressionPersonAnchor.item.class_name ||
-                  expressionPersonAnchor.item.raw_class_name ||
+                expressionPersonAnchor?.item.displayLabel ||
+                  expressionPersonAnchor?.item.class_name ||
+                  expressionPersonAnchor?.item.raw_class_name ||
                   "person",
               )
             : overlay.label,
@@ -5401,8 +5433,16 @@ export default function VideoPanel() {
             overlay.modality === "expression"
               ? Number(expressionTimestamp.toFixed(3))
               : undefined,
+          source_expression_owner_request: Boolean(synthesizedExpressionOwnerBox),
+          synthesized_person_detection: Boolean(synthesizedExpressionOwnerBox),
+          maturity_policy:
+            overlay.modality === "expression"
+              ? "narrative_agent_maturity.expression_owner_person_request"
+              : undefined,
           relation: "extends",
-          note: "Adopted from video overlay indication editor.",
+          note: synthesizedExpressionOwnerBox
+            ? "Expression had no mature person bbox; initiated an expression-owner person detection request."
+            : "Adopted from video overlay indication editor.",
         },
         teaches_regime: true,
         created_at: existingManual?.created_at || new Date().toISOString(),
@@ -5426,6 +5466,18 @@ export default function VideoPanel() {
         [`manual-${annotation.id}`]: edit,
       }));
       setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
+      if (synthesizedExpressionOwnerBox) {
+        eventBus.emit("expressionOwnerPersonDetectionRequested", {
+          videoId,
+          overlayKey: overlay.key,
+          annotationId: annotation.id,
+          targetId: expressionOwnerTargetId,
+          label,
+          bbox: synthesizedExpressionOwnerBox,
+          timestamp: Number(expressionTimestamp.toFixed(3)),
+          maturityPolicy: "narrative_agent_maturity.expression_owner_person_request",
+        });
+      }
       eventBus.emit("videoEvidenceSelected", {
         videoId,
         panelType: MANUAL_CATEGORY_PANEL_MAP[annotation.category] || "MasterSchema",

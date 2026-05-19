@@ -739,13 +739,27 @@ function governedObjectDisplayLabel(value: unknown): string | undefined {
   return label && !isRawObjectDisplayLabel(label) ? label : undefined;
 }
 
+function isExpressionOwnerPersonRequest(entry: ManualVisualAnnotation): boolean {
+  const correlation = entry.metadata_correlation || {};
+  return (
+    entry.category === "Identification" &&
+    correlation.target_type === "object" &&
+    correlation.target_label === "person" &&
+    Boolean(correlation.source_expression_owner_request)
+  );
+}
+
 function buildManualVisualObjects(
   corrections?: AnnotationCorrections | null,
 ): DetectedObject[] {
   return (corrections?.manual_visual_annotations || [])
-    .filter((entry: ManualVisualAnnotation) => entry.category === "OBJ")
+    .filter(
+      (entry: ManualVisualAnnotation) =>
+        entry.category === "OBJ" || isExpressionOwnerPersonRequest(entry),
+    )
     .map(
     (entry: ManualVisualAnnotation, index: number): DetectedObject => {
+      const expressionOwnerPerson = isExpressionOwnerPersonRequest(entry);
       const x = Number(entry.coordinates?.x || 0);
       const y = Number(entry.coordinates?.y || 0);
       const w = Number(entry.coordinates?.w || 0);
@@ -754,6 +768,7 @@ function buildManualVisualObjects(
       const startTimestamp = Number(entry.start_seconds ?? entry.timestamp_seconds ?? 0);
       const endTimestamp = Number(entry.end_seconds ?? entry.timestamp_seconds ?? 0);
       const label = String(entry.label || "manual annotation").trim() || "manual annotation";
+      const objectClassName = expressionOwnerPerson ? "person" : label;
       const analystDetail = (
         entry.identity_affirmation ||
         entry.role_affirmation ||
@@ -761,15 +776,17 @@ function buildManualVisualObjects(
         ""
       )
         .trim();
-      const displayLabel = analystDetail
-        ? `${label} [manual] • ${analystDetail}`
-        : `${label} [manual]`;
+      const displayLabel = expressionOwnerPerson
+        ? analystDetail || label
+        : analystDetail
+          ? `${label} [manual] • ${analystDetail}`
+          : `${label} [manual]`;
 
       return {
         timestamp,
         class_id: -1,
-        class_name: label,
-        raw_class_name: label,
+        class_name: objectClassName,
+        raw_class_name: objectClassName,
         confidence: 1,
         bbox: {
           x1: x,

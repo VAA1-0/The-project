@@ -1097,7 +1097,7 @@ export default function OBJDetectionPanel() {
                         .toLowerCase()
                         .startsWith(String(obj.raw_class_name).toLowerCase()) && (
                         <div className="mt-1 text-[10px] text-amber-300/90">
-                          Raw label: {obj.raw_class_name}
+                          Detector substrate: {obj.raw_class_name}
                           <button
                             type="button"
                             onClick={(event) => {

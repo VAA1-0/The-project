@@ -272,7 +272,7 @@ function AutomaticEvidenceSection({
                     disabled={
                       isIdentityActionBusy || candidate.review_state === "promoted"
                     }
-                    placeholder="Confirmed identity label"
+                    placeholder="Confirmed Narrative Agent label"
                     className="min-w-0 flex-1 rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100 outline-none focus:border-emerald-500/50 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <button

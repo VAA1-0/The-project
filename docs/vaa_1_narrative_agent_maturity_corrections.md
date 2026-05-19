@@ -177,6 +177,21 @@ Authority order:
 }
 ```
 
+### 4.1 Expression-owner person request rule
+
+An expression bbox is not itself a person bbox.
+
+If an analyst confirms a Narrative Agent from an expression cue and no mature person/object bbox is available for that expression owner, VAA1 must initiate an expression-owner person detection request. The resulting surface should be a synthesized `OBJ/person` bbox that covers the likely agent body/face region, carries provenance back to the source expression bbox, and displays the most mature available Narrative Agent definition.
+
+Required UI behavior:
+
+1. Keep the expression bbox as expression evidence.
+2. Create or surface a distinct person/agent bbox for the expression owner.
+3. Label that person/agent bbox with the mature Narrative Agent label, not the raw detector label.
+4. Store `source_expression_key`, `source_expression_owner_request`, and `synthesized_person_detection` provenance.
+5. Treat the synthesized person bbox as a candidate until analyst confirmation matures it.
+6. Never relabel an expression bbox as the person object itself.
+
 ## 5. Audio sampling evidence must be actionable
 
 Audio samples must not be passive evidence blobs.
@@ -874,4 +889,3 @@ The Master Schema is the authority hub that makes this practical.
 All audio, visual, linguistic, quantitative, scene, and manual evidence must enter the Master Schema; the Master Schema then controls maturity, propagation, synchronization, and panel-wide consistency.
 
 That is the correct VAA1 direction.
-

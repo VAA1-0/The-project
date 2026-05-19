@@ -188,8 +188,8 @@ test("forensic ROI intent options stay aligned across Tools and Video panels", (
 test("Objects panel remains a leaf, not the master schema sink", () => {
   assert.match(
     videoService,
-    /\.filter\(\(entry:\s*ManualVisualAnnotation\)\s*=>\s*entry\.category\s*===\s*"OBJ"\)/,
-    "only manual OBJ annotations should be converted into DetectedObject rows",
+    /entry\.category === "OBJ" \|\| isExpressionOwnerPersonRequest\(entry\)/,
+    "manual OBJ annotations and explicit expression-owner person requests should be converted into DetectedObject rows",
   );
 
   assert.match(
@@ -1233,14 +1233,14 @@ test("expression identity saves anchor to nearby person geometry", () => {
 
   assert.match(
     videoPanel,
-    /target_type:\s*expressionPersonAnchor \? "object" : overlay\.modality/,
+    /expressionPersonAnchor \|\| synthesizedExpressionOwnerBox \? "object" : overlay\.modality/,
     "expression-derived Identification saves must correlate to the person/object target, not the raw expression event",
   );
 
   assert.match(
     videoPanel,
-    /expressionPersonAnchor\?\.box \|\| getOverlayNormalizedBox\(overlay\)/,
-    "expression-derived Identification saves must persist the anchored person geometry when available",
+    /expressionPersonAnchor\?\.box \|\| synthesizedExpressionOwnerBox \|\| expressionBox/,
+    "expression-derived Identification saves must persist anchored or synthesized person geometry, not the raw expression box when orphaned",
   );
 
   assert.match(
@@ -1259,6 +1259,70 @@ test("expression identity saves anchor to nearby person geometry", () => {
     apiService,
     /source_expression_key\?: string/,
     "ManualVisualAnnotation metadata must type expression provenance so it survives save/load",
+  );
+
+  assert.match(
+    videoPanel,
+    /function synthesizePersonBoxFromExpression/,
+    "orphan expression boxes must synthesize a person-sized owner bbox instead of becoming the person bbox themselves",
+  );
+
+  assert.match(
+    videoPanel,
+    /source_expression_owner_request:\s*Boolean\(synthesizedExpressionOwnerBox\)/,
+    "orphan expression-owner saves must initiate and persist a person detection request marker",
+  );
+
+  assert.match(
+    videoPanel,
+    /expressionOwnerPersonDetectionRequested/,
+    "orphan expression-owner saves must broadcast the new person detection request for other UI surfaces",
+  );
+
+  assert.match(
+    videoService,
+    /function isExpressionOwnerPersonRequest/,
+    "VideoService must surface expression-owner requests as person objects in the object pipeline",
+  );
+
+  assert.match(
+    videoService,
+    /entry\.category === "OBJ" \|\| isExpressionOwnerPersonRequest\(entry\)/,
+    "manual expression-owner requests must participate in OBJ/person overlays without changing the source expression evidence",
+  );
+
+  assert.match(
+    apiService,
+    /source_expression_owner_request\?: boolean/,
+    "ManualVisualAnnotation metadata must type expression-owner person request provenance",
+  );
+});
+
+test("Narrative Agent maturity policy language is reflected in UI surfaces", () => {
+  const narrativePolicy = read("../../docs/vaa_1_narrative_agent_maturity_corrections.md");
+
+  assert.match(
+    narrativePolicy,
+    /An expression bbox is not itself a person bbox/,
+    "semantic policy must define the expression-owner person request rule",
+  );
+
+  assert.match(
+    objPanel,
+    /Detector substrate:/,
+    "Objects UI should present raw detector values as substrate, not semantic truth",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Confirmed Narrative Agent label/,
+    "Master Schema identity promotion UI should use Narrative Agent language",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /Narrative Agent label/,
+    "Source metadata speaker/agent UI should use Narrative Agent language",
   );
 });
 

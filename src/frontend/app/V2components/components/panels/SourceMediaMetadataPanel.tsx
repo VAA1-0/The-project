@@ -2976,7 +2976,7 @@ export default function SourceMediaMetadataPanel() {
                                 event.target.value,
                               )
                             }
-                            placeholder="Person identity"
+                            placeholder="Narrative Agent label"
                             className="rounded border border-slate-700 bg-[#171717] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500/50"
                           />
                           <input

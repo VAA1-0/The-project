@@ -1077,6 +1077,9 @@ export interface ManualVisualAnnotation {
     source_expression_key?: string;
     source_expression_label?: string;
     source_expression_timestamp?: number;
+    source_expression_owner_request?: boolean;
+    synthesized_person_detection?: boolean;
+    maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
     note?: string;
   } | null;
