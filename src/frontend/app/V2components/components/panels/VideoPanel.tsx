@@ -5083,6 +5083,72 @@ export default function VideoPanel() {
     [getOverlayInteractionTime, openPanel, videoId],
   );
 
+  const openTracebackForOverlay = React.useCallback(
+    (overlay: OverlayBox, edit?: SelectedIndicationEdit) => {
+      if (!videoId) {
+        return;
+      }
+      const source = overlay.sourceItem || {};
+      const timestamp = getOverlayInteractionTime(overlay);
+      const sourceTrackId = source.trackId ?? source.track_id;
+      const matureAuthority =
+        source.bbox_mature_authority ||
+        source.narrative_agent_recognition ||
+        source.master_schema_mature_label ||
+        source.manual_annotation;
+      const manualAuthority = overlay.modality === "manual" || Boolean(source.manual_annotation);
+      const payload = {
+        videoId,
+        sourcePanel: "VideoPanel",
+        claim_id: `${videoId}:${overlay.key}`,
+        claim_label: source.displayLabel || overlay.label,
+        claim_type: overlay.modality,
+        claim_status: manualAuthority
+          ? "manual authority"
+          : source.raw_detection_hidden ? "candidate" : "reviewable",
+        maturity_level:
+          manualAuthority ? "manual_annotation" :
+          matureAuthority?.authority ||
+          source.annotationCategory ||
+          (source.raw_detection_hidden ? "narrative_agent_candidate" : "candidate"),
+        confidence:
+          manualAuthority ? 1 :
+          typeof source.confidence === "number" ? Number(source.confidence) : null,
+        authority_level:
+          manualAuthority ? "manual_annotation" :
+          matureAuthority?.authority ||
+          (source.manual_annotation ? "manual_annotation" : "candidate"),
+        authority_source:
+          matureAuthority?.sourcePanel ||
+          matureAuthority?.source ||
+          source.sourceType ||
+          "VideoPanel",
+        review_status: source.raw_detection_hidden ? "requires analyst confirmation" : "reviewable",
+        source_refs: {
+          media_id: videoId,
+          video_time: timestamp,
+          time_range: edit ? { start: edit.start, end: edit.end } : undefined,
+          bbox_id: sourceTrackId !== undefined && sourceTrackId !== null
+            ? String(sourceTrackId)
+            : overlay.key,
+          roi_id: overlay.modality === "manual" ? overlay.key : undefined,
+          annotation_id: source.manual_annotation?.id || source.id,
+        },
+        sourceItem: {
+          ...source,
+          label: overlay.label,
+          evidence_refs: source.evidence_refs || matureAuthority?.evidence_refs,
+          source_bbox_refs: source.source_bbox_refs || matureAuthority?.source_bbox_refs,
+          source_frame_refs: source.source_frame_refs || matureAuthority?.source_frame_refs,
+          traceback: source.traceback || matureAuthority?.traceback,
+        },
+      };
+      openPanel("TracebackDrawer", { payload });
+      eventBus.emit("tracebackOpenRequested", payload);
+    },
+    [getOverlayInteractionTime, openPanel, videoId],
+  );
+
   const seedForensicRoiFromOverlay = React.useCallback(
     (overlay: OverlayBox, edit?: SelectedIndicationEdit) => {
       if (!videoId || !videoRef.current) {
@@ -7031,6 +7097,12 @@ export default function VideoPanel() {
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
                           }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectOverlayForEditing(overlay);
+                            openTracebackForOverlay(overlay, edit);
+                          }}
                           className={`${
                             overlapsVideoControls ? "pointer-events-none" : "pointer-events-auto"
                           } absolute rounded border ${overlay.color} ${
@@ -7072,6 +7144,25 @@ export default function VideoPanel() {
                           >
                             {visibleOverlayLabel}
                           </div>
+                          {(overlay.sourceItem?.traceback ||
+                            overlay.sourceItem?.evidence_refs ||
+                            overlay.sourceItem?.source_bbox_refs ||
+                            overlay.sourceItem?.source_frame_refs ||
+                            selected) && (
+                            <button
+                              type="button"
+                              data-vaa1-traceback-button="true"
+                              title="Open traceback source chain"
+                              aria-label="Open traceback source chain"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openTracebackForOverlay(overlay, edit);
+                              }}
+                              className="pointer-events-auto absolute right-1 top-5 z-40 rounded border border-cyan-700/70 bg-black/80 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-100 shadow hover:bg-cyan-950"
+                            >
+                              Trace
+                            </button>
+                          )}
                           <div className="pointer-events-auto">
                             <SecondOrderLabelAffirmationChips
                               plan={analysisData?.secondOrderLabelProliferation}
@@ -7605,6 +7696,18 @@ export default function VideoPanel() {
                                       Delete
                                     </button>
                                   ) : null}
+                                  <button
+                                    type="button"
+                                    data-vaa1-traceback-button="true"
+                                    title="Open calm traceback source-chain drawer"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openTracebackForOverlay(overlay, edit);
+                                    }}
+                                    className="rounded border border-cyan-800/70 bg-black/40 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-950"
+                                  >
+                                    Traceback
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={(event) => {

@@ -29,6 +29,26 @@ Authority order:
 Therefore, downstream UI must not let `unknown` or `unknown_speaker` override known
 Master Schema / metadata character subjects.
 
+Second invariant now promoted from `docs/vaa_1_narrative_agent_maturity_corrections.md`:
+
+The **Narrative Agent is the user-facing semantic subject**.
+
+`identity`, `Identification`, `identity_affirmation`, `identity_triangulation`, and
+`Identity leaf` remain tolerated as internal legacy schema/API fields while the migration
+is in progress, but they must not be the analyst-facing concept. In UI copy, panel names,
+task wording, and sprint language, identity-related work should be governed under
+**Narrative Agent** language.
+
+Compatibility rule:
+
+- Do not break saved `ManualVisualAnnotation` records or backend artifacts by renaming
+  storage keys in one large cut.
+- Add UI aliases and adapter functions first.
+- Keep legacy field names at API/storage boundaries until a versioned schema migration is
+  available.
+- Test that the UI no longer exposes identity-first language while existing payloads still
+  load and save.
+
 ## Current Pain Point To Resume From
 
 The urgent visible bug is in **Meaning / Plot -> Characters By Scene**.
@@ -138,6 +158,170 @@ Current defect:
   or "needs scene confirmation", but the character list itself should come from known
   mature subjects.
 
+## Current Sprint Priority Order
+
+### P0 - Traceback visualization alive
+
+The first priority is now to make the traceback tool visibly alive in the UI.
+
+Minimum viable traceback visualization:
+
+1. Add a dedicated traceback affordance on BBox/ROI, object rows, Narrative Agent rows,
+   Scene Browser rows, and report/meaning candidates when source refs exist.
+2. Open a navigable Traceback panel or drawer that shows:
+   - current mature claim / Narrative Agent label
+   - authority level
+   - source evidence chain
+   - timestamps and source jumps
+   - bbox/frame refs when present
+   - raw detector substrate preserved as provenance, not as semantic truth
+3. Support one-click navigation from traceback nodes back to video time / panel source.
+4. Use stable selectors so the planned DOM/Playwright fixture can prove traceback is
+   visible, clickable, and source-linked.
+5. Acceptance: a visible mature BBox / ROI label can be traced back to raw detector,
+   manual annotation, metadata, expression, transcript, or second-order source evidence.
+
+Traceback visualization must take precedence over further semantic feature expansion.
+
+### P1 - Identity-language migration under Narrative Agent governance
+
+Implement a compatibility-safe semantic migration:
+
+1. Create UI vocabulary adapters:
+   - `Identification` -> `Narrative Agent`
+   - `Identity leaf` -> `Narrative Agent`
+   - `identity candidate` -> `Narrative Agent candidate`
+   - `identity triangulation` -> `Narrative Agent triangulation`
+   - `identity_affirmation` -> analyst-facing `Narrative Agent label`
+2. Do not rename persisted fields yet. Map legacy field names to user-facing labels at
+   panel and service boundaries.
+3. Add tests that grep rendered/source copy for forbidden user-facing identity phrases,
+   while allowing internal API/storage names.
+4. Rename panel tab titles and dropdown category labels before changing backend schemas.
+5. Update Master Schema resolved evidence categories so legacy `identity` records surface
+   as Narrative Agent evidence in UI.
+6. Keep import/export compatibility with old analyses by reading both legacy and future
+   Narrative Agent field names.
+7. Only after UI and service adapters are stable, introduce a versioned backend schema:
+   `narrative_agent_candidate`, `narrative_agent_label`, `speaker_agent_link`,
+   `narrative_agent_triangulation`.
+
+### P2 - BBox / ROI Narrative Agent behavior
+
+Recently completed and still under manual test:
+
+- Raw detections no longer surface as mature BBox/ROI labels.
+- Known Narrative Agent dropdowns are present in BBox and native ROI flows.
+- Expression-derived Narrative Agent saves persist.
+- Orphan expression boxes now initiate expression-owner person bbox requests rather than
+  turning expression bboxes into person objects.
+
+Remaining work:
+
+- Prove this in a rendered DOM/Playwright fixture.
+- Ensure the traceback affordance is visible on every mature/synthesized person bbox.
+- Confirm object-label corrections do not bleed by raw label across scenes.
+
+### P3 - Characters By Scene and agent persistence
+
+Status:
+
+- Master Schema / metadata / Scene Card subject sources have been wired into Meaning / Plot.
+- Unknown fallback suppression has been improved.
+- Agent persistence exists as a governed candidate family, but needs richer UI confirmation
+  and traceback explanation.
+
+Remaining:
+
+- Finish scene membership confirmation controls.
+- Make persistence candidate score explanations visible in traceback.
+- Confirmed persistence must mutate Master Schema with provenance, not raw tracker ids.
+
+### P4 - User-chosen model/runtime use
+
+Goal:
+
+- Let the user choose the detection/rendering runtime where VAA1 has viable alternatives,
+  instead of hard-coding one operational path.
+
+Required scope:
+
+- YOLOv8 model choice and configuration.
+- FFmpeg path/configuration.
+- Alternative detector/runtime options where available.
+- Clear UI/settings disclosure of which runtime produced which artifact.
+- Traceback must record model/runtime choice, version, path, parameters, and fallback reason.
+
+Compatibility rule:
+
+- Existing YOLOv8 and FFmpeg defaults must continue to work.
+- Alternative paths must be opt-in or explicitly selected.
+- A failed alternative must fall back cleanly or report an actionable error without corrupting
+  the analysis ledger.
+
+### P5 - User agreement and consent layer
+
+Goal:
+
+- Add a visible user agreement / operating consent layer for local analysis, external APIs,
+  model choices, data retention, source media handling, and generated derivative artifacts.
+
+Required scope:
+
+- First-run agreement.
+- Per-feature consent where a feature sends data outside the local environment.
+- Clear distinction between local processing and external processing.
+- Agreement state stored locally and inspectable.
+- Export/report disclosure of analysis conditions where relevant.
+
+Acceptance:
+
+- VAA1 must not silently use external services, upload source media, or run paid/remote
+  analysis without a user-visible agreement path.
+
+### P6 - LLM API integration governance
+
+Goal:
+
+- Integrate LLM API use as a governed, optional analysis layer rather than an invisible
+  dependency.
+
+Required scope:
+
+- API key configuration and validation.
+- Model selection.
+- Cost/rate-limit awareness.
+- Prompt/version provenance in traceback.
+- Clear marking of LLM-generated interpretation as candidate/inferred until supported by
+  source evidence or analyst confirmation.
+- Failure modes that do not block local/non-LLM analysis.
+
+Compatibility rule:
+
+- The core VAA1 pipeline must remain usable without an LLM API key.
+- LLM outputs must feed Master Schema / traceback through governed candidate routes, not
+  directly overwrite mature data.
+
+### P7 - Executable packaging
+
+Goal:
+
+- Package VAA1 into an `.exe`/desktop-distributable workflow suitable for non-developer use.
+
+Required scope:
+
+- Startup orchestration for backend, frontend, local services, and required binaries.
+- Bundled or discoverable FFmpeg/runtime dependencies.
+- Configuration UI for paths, ports, models, and API keys.
+- Update/repair path for common startup failures.
+- Logs and diagnostics suitable for support.
+- Preserve the current development run scripts as the engineering path.
+
+Acceptance:
+
+- A user can launch VAA1 without manually starting backend/frontend terminals.
+- Packaging must not hide traceback, consent, model/runtime, or data-location governance.
+
 ### Frontend Master Schema
 
 Updated:
@@ -209,26 +393,38 @@ Start the next thread with:
 
 ## Immediate Implementation Checklist
 
-1. Inspect current `MeaningPlotPanel.tsx` around:
+0. Build the first visible Traceback panel/drawer:
+   - source refs from BBox/ROI, object rows, Narrative Agent rows, scene rows, and
+     meaning candidates
+   - source-jump actions
+   - authority and maturity badges
+   - stable DOM selectors for tests
+
+1. Add the compatibility-safe Narrative Agent vocabulary layer:
+   - UI labels and tab titles use Narrative Agent language
+   - legacy field names remain internal
+   - tests block user-facing `identity` / `Identification` regression copy
+
+2. Inspect current `MeaningPlotPanel.tsx` around:
    - `masterSchemaNarrativeAgentProfiles`
    - `sourceMetadataNarrativeAgentProfiles`
    - `sceneCardNarrativeAgentProfiles`
    - `characterSceneGovernanceRows`
    - `participantRows`
 
-2. Ensure known characters populate even with zero detected scene links:
+3. Ensure known characters populate even with zero detected scene links:
    - rows should show known character names
    - scene entries can say `not surfaced`, `staged`, or `needs scene confirmation`
    - unknown fallback should be suppressed if known source rows exist
 
-3. Ensure `MasterSchemaPanel.tsx` visibly exposes governed subject data:
+4. Ensure `MasterSchemaPanel.tsx` visibly exposes governed subject data:
    - Narrative Agent Profiles
    - character definitions
    - character roles
 
-4. Ensure Source Media metadata update path regenerates Master Schema subject surfaces.
+5. Ensure Source Media metadata update path regenerates Master Schema subject surfaces.
 
-5. Run:
+6. Run:
    - `npx tsc --noEmit` from `src/frontend`
    - `npm test` from `src/frontend`
    - `python3 -m unittest tests.test_agent_persistence_contract tests.test_second_order_label_proliferation_contract tests.test_second_order_pipeline_wiring_contract`
@@ -238,4 +434,3 @@ Start the next thread with:
 
 There are many uncommitted modified and untracked files in this sprint. Do not reset or
 revert user/worktree changes. Work with the existing modifications.
-

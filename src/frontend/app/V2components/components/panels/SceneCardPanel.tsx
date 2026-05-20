@@ -846,19 +846,28 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   };
 
   const viewEvidenceTraceback = (payload: EvidenceContextPayload) => {
-    window.alert(
-      [
-        `Evidence: ${payload.label}`,
-        `Kind: ${payload.kind}`,
-        payload.category ? `Category: ${payload.category}` : "",
-        payload.evidenceId ? `Evidence ID: ${payload.evidenceId}` : "",
-        `Time: ${formatTime(payload.timeSeconds ?? sceneStart)}`,
-        payload.sourcePanel ? `Source panel: ${payload.sourcePanel}` : "",
-        payload.sceneId ? `Scene: ${payload.sceneId}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
+    const tracebackPayload = {
+      videoId: selectedVideoId,
+      sourcePanel: "SceneCards",
+      claim_id: payload.evidenceId || `${selectedVideoId}:scene:${payload.sceneId || "evidence"}`,
+      claim_label: payload.label,
+      claim_type: payload.kind || payload.category || "scene_evidence",
+      claim_status: "candidate",
+      maturity_level: payload.category || "scene_evidence",
+      authority_level: "candidate",
+      authority_source: payload.sourcePanel || "SceneCards",
+      review_status: "reviewable",
+      source_refs: {
+        media_id: selectedVideoId,
+        video_time: payload.timeSeconds ?? sceneStart,
+        time_range: { start: sceneStart, end: sceneEnd },
+        annotation_id: payload.evidenceId,
+        metadata_id: payload.sourcePanel,
+      },
+      sourceItem: payload as unknown as Record<string, unknown>,
+    };
+    openPanel("TracebackDrawer", { payload: tracebackPayload });
+    eventBus.emit("tracebackOpenRequested", tracebackPayload);
   };
 
   const saveSceneNote = async () => {

@@ -35,6 +35,8 @@ const globalsCss = read("styles/globals.css");
 const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx");
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
+const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
+const tracebackDrawerPanel = read("app/V2components/components/panels/TracebackDrawerPanel.tsx");
 const secondOrderAffirmations = read(
   "app/V2components/components/panels/SecondOrderLabelAffirmations.tsx",
 );
@@ -1323,6 +1325,86 @@ test("Narrative Agent maturity policy language is reflected in UI surfaces", () 
     sourceMediaPanel,
     /Narrative Agent label/,
     "Source metadata speaker/agent UI should use Narrative Agent language",
+  );
+});
+
+test("Traceback drawer is a calm navigable source-chain surface", () => {
+  assert.match(
+    layoutHost,
+    /TracebackDrawerPanel/,
+    "LayoutHost must register the Traceback drawer panel",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-panel="traceback-drawer"/,
+    "Traceback drawer must expose the stable panel selector",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-traceback-section="claim-header"/,
+    "Traceback drawer must render the mature-claim header section",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-traceback-section="source-chain"/,
+    "Traceback drawer must render the source chain section",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-traceback-section="evidence-tree"/,
+    "Traceback drawer must render the calm evidence tree visualization",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-traceback-section="entity-timeline"/,
+    "Traceback drawer must render the same-entity timeline visualization",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /manualAuthority[\s\S]*\? 1/,
+    "Manual Narrative Agent authority must display as 100% analyst confidence",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-action="jump-to-video-time"/,
+    "Traceback drawer must expose one-click source navigation",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-traceback-button="true"/,
+    "BBox/ROI overlays must expose a traceback affordance",
+  );
+
+  assert.match(
+    videoPanel,
+    /tracebackOpenRequested/,
+    "VideoPanel must open the drawer with inline traceback payloads",
+  );
+
+  assert.match(
+    videoPanel,
+    /onContextMenu=\{\(event\) => \{[\s\S]*openTracebackForOverlay\(overlay, edit\)/,
+    "BBox/ROI overlays must preserve the right-click traceback principle",
+  );
+
+  assert.match(
+    sceneCardPanel,
+    /openPanel\("TracebackDrawer"/,
+    "Scene evidence traceback must open the shared drawer instead of an alert",
+  );
+
+  assert.doesNotMatch(
+    sceneCardPanel,
+    /window\.alert\([\s\S]*Evidence:/,
+    "Scene evidence traceback must not use the old alert visualization",
   );
 });
 

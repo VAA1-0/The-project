@@ -35,6 +35,35 @@ It should answer:
 - Which pipeline or analyst produced it?
 - Is the evidence raw, inferred, manual, reviewed, uncertain, or contested?
 
+### Current Sprint Activation Requirement
+
+The traceback tool is now the first implementation priority for the active sprint.
+
+Minimum alive visualization:
+
+- A visible traceback affordance on every mature or candidate BBox/ROI label, Narrative
+  Agent row, Scene Browser row, and Meaning / Plot candidate that has source refs.
+- A Traceback panel/drawer that renders a node list or compact tree:
+  - mature claim / Narrative Agent label
+  - authority level
+  - source type
+  - timestamps and source-jump buttons
+  - bbox/frame refs where available
+  - raw detector substrate as provenance
+  - manual correction / annotation nodes as highest authority
+- One-click navigation from any traceback node back to video time and relevant panel.
+- Stable selectors for a DOM/Playwright fixture.
+
+Acceptance criterion:
+
+```text
+The analyst can click a mature Narrative Agent BBox/ROI label and see why it exists,
+what evidence supports it, what raw detector substrate it came from, and where to jump
+in the source media.
+```
+
+This must be delivered before expanding the Narrative Agent registry further.
+
 ### Candidate Evidence Identity Fields
 
 Every important evidence-bearing item should eventually have:

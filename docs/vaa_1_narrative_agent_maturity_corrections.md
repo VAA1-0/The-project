@@ -416,6 +416,43 @@ speaker_agent_link
 
 Identity remains a field, not the master object.
 
+Compatibility-safe UI migration rule:
+
+```text
+Do not remove or rename persisted identity fields in one hard cut.
+Hide identity-first language from the analyst-facing UI first.
+Keep legacy names as internal adapters until a versioned schema migration exists.
+```
+
+Required translation layer:
+
+| Legacy/internal term | Analyst-facing term |
+|---|---|
+| Identification | Narrative Agent |
+| Identity leaf | Narrative Agent leaf |
+| identity candidate | Narrative Agent candidate |
+| identity refinement | Narrative Agent refinement |
+| identity triangulation | Narrative Agent triangulation |
+| identity affirmation | Narrative Agent label |
+| speaker identity | speaker-agent link |
+
+Implementation sequence:
+
+1. UI copy and tab aliases.
+2. Service-level adapter functions.
+3. Tests that block user-facing identity-first regressions.
+4. Master Schema category mapping from legacy `identity` records to Narrative Agent UI.
+5. Versioned backend schema migration only after old analyses remain readable.
+
+Forbidden first move:
+
+```text
+Renaming backend fields before adapters and compatibility tests exist.
+```
+
+This would break saved analyses, manual annotations, triangulation artifacts, and traceback
+links. The migration must be semantic-first, storage-safe.
+
 ### B. Make maturity real everywhere
 
 Do not merely store maturity as a string.
