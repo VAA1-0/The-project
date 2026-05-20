@@ -1150,6 +1150,74 @@ test("evidence proliferation launch remains governed and analyst initiated", () 
   );
 });
 
+test("BBox/ROI editor behaves as an evidence navigation hub", () => {
+  assert.match(
+    videoPanel,
+    /data-vaa1-bbox-roi-evidence-hub="true"/,
+    "BBox/ROI editor must expose the evidence navigation hub surface",
+  );
+
+  assert.match(
+    videoPanel,
+    /BBOX_ROI_EVIDENCE_HUB_SECTIONS[\s\S]*Evidence[\s\S]*Narrative Agent[\s\S]*Relations[\s\S]*Traceback & Authority[\s\S]*Operations/,
+    "BBox/ROI hub must group actions by evidence dimensions instead of one flat category menu",
+  );
+
+  assert.match(
+    videoPanel,
+    /BBOX_ROI_RELATION_QUICK_ACTIONS[\s\S]*speaking to[\s\S]*flirting with[\s\S]*making out with[\s\S]*leading[\s\S]*cooperating with/,
+    "BBox/ROI hub must expose relational quick actions across positive, intimate, and analytic social phenomena",
+  );
+
+  assert.match(
+    videoPanel,
+    /BBOX_ROI_ACTION_QUICK_ACTIONS[\s\S]*sitting[\s\S]*walking[\s\S]*driving\/riding[\s\S]*running[\s\S]*swimming[\s\S]*jumping[\s\S]*climbing[\s\S]*pulling[\s\S]*taking[\s\S]*handing/,
+    "BBox/ROI hub must expose basic action and movement quick annotations",
+  );
+
+  assert.match(
+    videoPanel,
+    /quickAnnotations:[\s\S]*\[\]/,
+    "BBox/ROI quick annotations must default to an additive empty set",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-quick-annotation-active=\{active \? "true" : "false"\}/,
+    "BBox/ROI quick annotations must show their active multi-select state",
+  );
+
+  assert.match(
+    videoPanel,
+    /quick_annotations:\s*edit\.quickAnnotations/,
+    "Saved BBox/ROI manual confirmation must persist additive quick annotations",
+  );
+
+  assert.match(
+    videoPanel,
+    /applyScope:[\s\S]*"this_interval_only"/,
+    "BBox/ROI manual correction scope must default to this interval only",
+  );
+
+  assert.match(
+    videoPanel,
+    /apply_scope:\s*applyScope/,
+    "Saved BBox/ROI manual confirmation must persist the selected apply scope",
+  );
+
+  assert.match(
+    videoPanel,
+    /scopeRequiresConfirmation[\s\S]*window\.confirm/,
+    "Dangerous BBox/ROI propagation scopes must require explicit confirmation",
+  );
+
+  assert.match(
+    videoPanel,
+    /manual_confirmation_event[\s\S]*manual_bbox_roi_confirmation[\s\S]*old_states_retained_as:\s*"traceback_provenance"/,
+    "BBox/ROI saves must record manual confirmation events and retain old history as traceback provenance",
+  );
+});
+
 test("GoldenLayout leaf tabs stay on one compact row", () => {
   assert.match(
     globalsCss,

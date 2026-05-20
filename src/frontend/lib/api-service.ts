@@ -1079,6 +1079,22 @@ export interface ManualVisualAnnotation {
     source_expression_timestamp?: number;
     source_expression_owner_request?: boolean;
     synthesized_person_detection?: boolean;
+    apply_scope?:
+      | "this_interval_only"
+      | "this_bbox_roi_only"
+      | "current_scene"
+      | "current_continuity_segment"
+      | "linked_candidates"
+      | "track_family"
+      | "narrative_agent_family";
+    manual_confirmation_event?: {
+      event_type?: "manual_bbox_roi_confirmation" | string;
+      authority_level?: string;
+      active_state_after_save?: Record<string, unknown>;
+      old_states_retained_as?: string;
+      propagation_required?: boolean;
+    };
+    quick_annotations?: string[];
     maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
     note?: string;

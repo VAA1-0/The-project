@@ -215,9 +215,26 @@ Recently completed and still under manual test:
 - Expression-derived Narrative Agent saves persist.
 - Orphan expression boxes now initiate expression-owner person bbox requests rather than
   turning expression bboxes into person objects.
+- The BBox/ROI editor has started moving from a flat action/category menu toward an
+  evidence navigation hub:
+  - Evidence
+  - Narrative Agent
+  - Relations
+  - Genre & Dramaturgy
+  - Time & Continuity
+  - Grouping
+  - Traceback & Authority
+  - Operations
+- The BBox/ROI editor now exposes relation quick actions and an explicit apply-scope
+  selector defaulting to `this_interval_only`.
 
 Remaining work:
 
+- Introduce the canonical `vaa1.bbox_roi_evidence.v1` adapter object so overlays become
+  projections from authoritative evidence, not local truth stores.
+- Route all BBox/ROI saves through manual confirmation events that supersede raw/grouped/
+  proliferated history while preserving it in Traceback.
+- Expand relation quick actions into real relation objects with target selection.
 - Prove this in a rendered DOM/Playwright fixture.
 - Ensure the traceback affordance is visible on every mature/synthesized person bbox.
 - Confirm object-label corrections do not bleed by raw label across scenes.

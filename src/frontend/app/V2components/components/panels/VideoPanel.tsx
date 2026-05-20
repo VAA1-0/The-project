@@ -138,6 +138,8 @@ type SelectedIndicationEdit = {
   subcategory: string;
   label: string;
   identityAffirmation: string;
+  applyScope: BBoxRoiApplyScope;
+  quickAnnotations: string[];
   start: number;
   end: number;
   note: string;
@@ -184,6 +186,15 @@ type OverlayGeometryDrag = {
   startPoint: { x: number; y: number };
   startBox: DraftBox;
 };
+
+type BBoxRoiApplyScope =
+  | "this_interval_only"
+  | "this_bbox_roi_only"
+  | "current_scene"
+  | "current_continuity_segment"
+  | "linked_candidates"
+  | "track_family"
+  | "narrative_agent_family";
 
 type ProliferationScope =
   | "same_video"
@@ -352,6 +363,113 @@ const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "Role",
   "Scene",
   "Transcription",
+];
+
+const BBOX_ROI_APPLY_SCOPE_OPTIONS: Array<{
+  value: BBoxRoiApplyScope;
+  label: string;
+  dangerous?: boolean;
+}> = [
+  { value: "this_interval_only", label: "This interval only" },
+  { value: "this_bbox_roi_only", label: "This BBox/ROI only" },
+  { value: "current_scene", label: "Current scene" },
+  { value: "current_continuity_segment", label: "Current continuity segment" },
+  { value: "linked_candidates", label: "Linked candidates" },
+  { value: "track_family", label: "Track family", dangerous: true },
+  { value: "narrative_agent_family", label: "Narrative Agent family", dangerous: true },
+];
+
+const BBOX_ROI_EVIDENCE_HUB_SECTIONS: Array<{
+  id:
+    | "evidence"
+    | "narrative_agent"
+    | "relations"
+    | "genre_dramaturgy"
+    | "time_continuity"
+    | "grouping"
+    | "traceback_authority"
+    | "operations";
+  label: string;
+  items: string[];
+}> = [
+  {
+    id: "evidence",
+    label: "Evidence",
+    items: ["Object", "Expression", "OCR", "Audio", "Transcript", "Metadata", "Source Sample"],
+  },
+  {
+    id: "narrative_agent",
+    label: "Narrative Agent",
+    items: ["Assign Agent", "Create Agent", "Agent Continuity", "Role Candidate"],
+  },
+  {
+    id: "relations",
+    label: "Relations",
+    items: ["Agent to Agent", "Agent to Object", "Attention", "Conflict", "Cooperation", "Dominance"],
+  },
+  {
+    id: "genre_dramaturgy",
+    label: "Genre & Dramaturgy",
+    items: ["Genre", "Dramatic Function", "Role Archetype", "Scene Function", "Tone"],
+  },
+  {
+    id: "time_continuity",
+    label: "Time & Continuity",
+    items: ["Interval", "Keyframes", "Track Continuity", "Time Bank", "Compare Anchors"],
+  },
+  {
+    id: "grouping",
+    label: "Grouping",
+    items: ["Group Evidence", "Track Family", "Interaction Cluster", "Scene Group"],
+  },
+  {
+    id: "traceback_authority",
+    label: "Traceback & Authority",
+    items: ["Source Chain", "Manual Correction", "Geometry History", "Maturity History"],
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    items: ["Accept", "Correct", "Reject", "Save", "Render", "Open in Panel"],
+  },
+];
+
+const BBOX_ROI_RELATION_QUICK_ACTIONS = [
+  "speaking to",
+  "listening to",
+  "flirting with",
+  "making out with",
+  "leading",
+  "encouraging",
+  "comforting",
+  "celebrating with",
+  "supporting",
+  "trusting",
+  "threatening",
+  "looking at",
+  "following",
+  "dominating",
+  "protecting",
+  "cooperating with",
+  "interrogating",
+];
+
+const BBOX_ROI_ACTION_QUICK_ACTIONS = [
+  "sitting",
+  "walking",
+  "driving/riding",
+  "running",
+  "swimming",
+  "jumping",
+  "climbing",
+  "pulling",
+  "taking",
+  "handing",
+];
+
+const BBOX_ROI_QUICK_ANNOTATIONS = [
+  ...BBOX_ROI_RELATION_QUICK_ACTIONS,
+  ...BBOX_ROI_ACTION_QUICK_ACTIONS,
 ];
 
 const MANUAL_CATEGORY_PANEL_MAP: Record<
@@ -2711,6 +2829,12 @@ export default function VideoPanel() {
               getFirstSubcategoryForCategory(payload.annotation.category),
             label: resolveManualVisualDisplayLabel(payload.annotation),
             identityAffirmation: payload.annotation.identity_affirmation || "",
+            applyScope:
+              ((payload.annotation.metadata_correlation as any)?.apply_scope as BBoxRoiApplyScope) ||
+              "this_interval_only",
+            quickAnnotations:
+              ((payload.annotation.metadata_correlation as any)?.quick_annotations as string[]) ||
+              [],
             start: Number((resolvedEvidence?.time.start ?? targetTime).toFixed(3)),
             end: Number(
               (resolvedEvidence?.time.end ?? targetTime + 0.001).toFixed(3),
@@ -4677,9 +4801,15 @@ export default function VideoPanel() {
           getFirstSubcategoryForCategory(
             manual?.category ||
               (needsNarrativeAgentConfirmation ? "Identification" : category),
-          ),
+        ),
         label,
         identityAffirmation: manual?.identity_affirmation || "",
+        applyScope:
+          ((manual?.metadata_correlation as any)?.apply_scope as BBoxRoiApplyScope) ||
+          "this_interval_only",
+        quickAnnotations:
+          ((manual?.metadata_correlation as any)?.quick_annotations as string[]) ||
+          [],
         start: bounds.start,
         end: bounds.end,
         note: manual?.open_note || "",
@@ -5349,6 +5479,18 @@ export default function VideoPanel() {
       if (!videoId || !videoRef.current) {
         return;
       }
+      const applyScope = edit.applyScope || "this_interval_only";
+      const scopeRequiresConfirmation = BBOX_ROI_APPLY_SCOPE_OPTIONS.some(
+        (option) => option.value === applyScope && option.dangerous,
+      );
+      if (
+        scopeRequiresConfirmation &&
+        !window.confirm(
+          "Apply this BBox/ROI correction beyond the current interval? This can affect a wider track or Narrative Agent family.",
+        )
+      ) {
+        return;
+      }
       const label = resolveIndicationLabel(edit.category, edit.label);
       const source = overlay.sourceItem || {};
       const expressionPersonAnchor =
@@ -5473,7 +5615,8 @@ export default function VideoPanel() {
           edit.category === "Role" ? edit.label.trim() || undefined : undefined,
         audio_foley_note: existingManual?.audio_foley_note,
         open_note: edit.note.trim() || existingManual?.open_note,
-        metadata_correlation: existingManual?.metadata_correlation || {
+        metadata_correlation: {
+          ...(existingManual?.metadata_correlation || {}),
           target_type:
             expressionPersonAnchor || synthesizedExpressionOwnerBox ? "object" : overlay.modality,
           target_id: String(
@@ -5501,6 +5644,21 @@ export default function VideoPanel() {
               : undefined,
           source_expression_owner_request: Boolean(synthesizedExpressionOwnerBox),
           synthesized_person_detection: Boolean(synthesizedExpressionOwnerBox),
+          apply_scope: applyScope,
+          quick_annotations: edit.quickAnnotations || [],
+          manual_confirmation_event: {
+            event_type: "manual_bbox_roi_confirmation",
+            authority_level: "manual_correction",
+            active_state_after_save: {
+              start_seconds: Number(start.toFixed(3)),
+              end_seconds: Number(end.toFixed(3)),
+              label,
+              category: edit.category,
+              quick_annotations: edit.quickAnnotations || [],
+            },
+            old_states_retained_as: "traceback_provenance",
+            propagation_required: true,
+          },
           maturity_policy:
             overlay.modality === "expression"
               ? "narrative_agent_maturity.expression_owner_person_request"
@@ -7396,6 +7554,144 @@ export default function VideoPanel() {
                                     />
                                     Overdraft
                                   </label>
+                                </div>
+                                <div
+                                  data-vaa1-bbox-roi-evidence-hub="true"
+                                  className="mb-1 rounded border border-cyan-950/70 bg-black/25 p-1.5"
+                                >
+                                  <div className="mb-1 flex items-center justify-between gap-2">
+                                    <div className="text-[9px] uppercase tracking-[0.16em] text-cyan-200">
+                                      BBox/ROI Evidence Hub
+                                    </div>
+                                    <div className="text-[9px] text-slate-500">
+                                      anchor, not detector truth
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-1">
+                                    {BBOX_ROI_EVIDENCE_HUB_SECTIONS.map((section) => (
+                                      <button
+                                        key={section.id}
+                                        type="button"
+                                        data-vaa1-bbox-roi-hub-section={section.id}
+                                        title={section.items.join(", ")}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (section.id === "traceback_authority") {
+                                            openTracebackForOverlay(overlay, edit);
+                                            return;
+                                          }
+                                          if (section.id === "narrative_agent") {
+                                            updateSelectedIndicationEdit(overlay.key, {
+                                              category: "Identification",
+                                              identityAffirmation: edit.identityAffirmation || edit.label,
+                                            });
+                                          } else if (section.id === "relations") {
+                                            updateSelectedIndicationEdit(overlay.key, {
+                                              category: "Interaction",
+                                              label:
+                                                edit.category === "Interaction"
+                                                  ? edit.label
+                                                  : "Interaction",
+                                            });
+                                          } else if (section.id === "genre_dramaturgy") {
+                                            updateSelectedIndicationEdit(overlay.key, {
+                                              category: "Genre",
+                                            });
+                                          } else if (section.id === "time_continuity") {
+                                            updateSelectedIndicationEdit(overlay.key, {
+                                              category: "Movement",
+                                            });
+                                          } else if (section.id === "evidence") {
+                                            updateSelectedIndicationEdit(overlay.key, {
+                                              category: getDefaultCategoryForOverlay(overlay),
+                                            });
+                                          }
+                                        }}
+                                        className={`rounded border px-1.5 py-1 text-left hover:bg-cyan-950/30 ${
+                                          (section.id === "narrative_agent" &&
+                                            edit.category === "Identification") ||
+                                          (section.id === "relations" &&
+                                            edit.category === "Interaction") ||
+                                          (section.id === "genre_dramaturgy" &&
+                                            edit.category === "Genre") ||
+                                          (section.id === "time_continuity" &&
+                                            edit.category === "Movement")
+                                            ? "border-cyan-600 bg-cyan-950/35 text-cyan-50"
+                                            : "border-slate-800 bg-black/20 text-slate-300"
+                                        }`}
+                                      >
+                                        <div className="truncate text-[10px] font-medium">
+                                          {section.label}
+                                        </div>
+                                        <div className="mt-0.5 truncate text-[8px] text-slate-500">
+                                          {section.items.slice(0, 3).join(" / ")}
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-[auto_1fr] items-center gap-1">
+                                    <label
+                                      htmlFor={`bbox-roi-scope-${overlay.key}`}
+                                      className="text-[9px] uppercase tracking-[0.12em] text-slate-500"
+                                    >
+                                      Apply to
+                                    </label>
+                                    <select
+                                      id={`bbox-roi-scope-${overlay.key}`}
+                                      value={edit.applyScope}
+                                      onChange={(event) =>
+                                        updateSelectedIndicationEdit(overlay.key, {
+                                          applyScope: event.target.value as BBoxRoiApplyScope,
+                                        })
+                                      }
+                                      className="min-w-0 rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] text-slate-200"
+                                      aria-label="BBox/ROI annotation scope"
+                                    >
+                                      {BBOX_ROI_APPLY_SCOPE_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                          {option.label}
+                                          {option.dangerous ? " - confirm before propagation" : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {BBOX_ROI_QUICK_ANNOTATIONS.map((annotation) => {
+                                      const active = edit.quickAnnotations.includes(annotation);
+                                      const actionAnnotation =
+                                        BBOX_ROI_ACTION_QUICK_ACTIONS.includes(annotation);
+                                      return (
+                                      <button
+                                        key={annotation}
+                                        type="button"
+                                        data-vaa1-relation-quick-action="true"
+                                        data-vaa1-quick-annotation-active={active ? "true" : "false"}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          const nextQuickAnnotations = active
+                                            ? edit.quickAnnotations.filter((item) => item !== annotation)
+                                            : [...edit.quickAnnotations, annotation];
+                                          updateSelectedIndicationEdit(overlay.key, {
+                                            quickAnnotations: nextQuickAnnotations,
+                                            note: nextQuickAnnotations.length
+                                              ? `Quick annotations: ${nextQuickAnnotations.join(", ")}`
+                                              : edit.note,
+                                          });
+                                        }}
+                                        className={`rounded border px-1 py-0.5 text-[9px] hover:border-cyan-700 hover:text-cyan-100 ${
+                                          active
+                                            ? actionAnnotation
+                                              ? "border-amber-500/70 bg-amber-950/45 text-amber-100"
+                                              : "border-emerald-500/70 bg-emerald-950/45 text-emerald-100"
+                                            : "border-slate-800 bg-slate-950/50 text-slate-300"
+                                        }`}
+                                      >
+                                        {active ? "- " : "+ "}
+                                        {annotation}
+                                      </button>
+                                      );
+                                    })}
+                                  </div>
                                 </div>
                                 <div className="mb-1 grid grid-cols-[1fr_1fr_1.35fr] gap-1">
                                   <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">
