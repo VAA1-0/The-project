@@ -21,6 +21,7 @@ import {
 import {
   closeManualAnnotationInVideo,
   openManualAnnotationInVideo,
+  openVideoAtTime,
 } from "@/lib/video-navigation";
 import { useLayoutHost } from "../LayoutHost";
 import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
@@ -78,8 +79,166 @@ type LeafAnnotationDraft = {
   note: string;
 };
 
+type EvidenceTracebackSourceRefs = {
+  media_id?: string;
+  video_time?: number;
+  time_range?: { start?: number; end?: number };
+  bbox_id?: string | null;
+  roi_id?: string | null;
+  annotation_id?: string | null;
+  metadata_id?: string | null;
+  detector_run_id?: string | null;
+};
+
+type EvidenceNavigationTarget = {
+  id: string;
+  label: string;
+  evidenceType: string;
+  sourcePanel: string;
+  start?: number;
+  end?: number;
+  sourceRefs?: EvidenceTracebackSourceRefs;
+  sourceItem?: Record<string, unknown>;
+  openPanelType?: string;
+  focusSurface?: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function numberFrom(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function stringFrom(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function sourceRefId(
+  metadata: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function buildRecordSourceRefs(
+  videoId: string,
+  record: MasterSchemaResolvedEvidenceRecord,
+): EvidenceTracebackSourceRefs {
+  const metadata = asRecord(record.metadata);
+  const start = numberFrom(record.start ?? metadata.time_start ?? metadata.start_seconds);
+  const end = numberFrom(record.end ?? metadata.time_end ?? metadata.end_seconds);
+  return {
+    media_id: videoId,
+    video_time: start,
+    time_range: start !== undefined || end !== undefined ? { start, end } : undefined,
+    bbox_id: sourceRefId(metadata, ["bbox_id", "source_bbox_id", "track_id"]),
+    roi_id: sourceRefId(metadata, ["roi_id", "source_roi_id"]),
+    annotation_id: record.targetId || sourceRefId(metadata, ["annotation_id"]),
+    metadata_id: sourceRefId(metadata, ["metadata_id", "profile_id", "character_id"]),
+    detector_run_id: sourceRefId(metadata, ["detector_run_id", "run_id"]),
+  };
+}
+
+function emitEvidenceTraceback(videoId: string, target: EvidenceNavigationTarget) {
+  const sourceRefs = target.sourceRefs || {
+    media_id: videoId,
+    video_time: target.start,
+    time_range:
+      target.start !== undefined || target.end !== undefined
+        ? { start: target.start, end: target.end }
+        : undefined,
+    metadata_id: target.id,
+  };
+  const payload = {
+    videoId,
+    sourcePanel: target.sourcePanel,
+    claim_id: target.id,
+    claim_label: target.label,
+    claim_type: target.evidenceType,
+    claim_status: "mature",
+    maturity_level: target.evidenceType,
+    authority_level: "master_schema",
+    authority_source: target.sourcePanel,
+    review_status: "reviewable",
+    source_refs: sourceRefs,
+    sourceItem: target.sourceItem || {},
+  };
+  eventBus.emit("openPanelRequest", {
+    panelType: "TracebackDrawer",
+    panelProps: { payload },
+  });
+  eventBus.emit("tracebackOpenRequested", payload);
+}
+
+function openEvidenceNavigation(videoId: string, target: EvidenceNavigationTarget) {
+  eventBus.emit("masterSchemaEvidenceNavigationRequested", {
+    videoId,
+    evidenceType: target.evidenceType,
+    evidenceId: target.id,
+    label: target.label,
+    sourceRefs: target.sourceRefs,
+    focusSurface: target.focusSurface,
+  });
+  if (target.openPanelType) {
+    eventBus.emit("openPanelRequest", {
+      panelType: target.openPanelType,
+      panelProps: videoId ? { videoId } : {},
+    });
+  }
+  if (videoId && target.start !== undefined) {
+    openVideoAtTime(videoId, target.start);
+  }
+  if (target.sourceRefs?.bbox_id || target.sourceRefs?.roi_id) {
+    eventBus.emit("videoEvidenceSelected", {
+      videoId,
+      panelType: "MasterSchema",
+      overlayKey: target.sourceRefs.bbox_id || target.sourceRefs.roi_id,
+      modality: target.sourceRefs.bbox_id ? "bbox" : "roi",
+      timestamp: target.start,
+      label: target.label,
+      sourceItem: target.sourceItem,
+      navigationState: {
+        activeTime: target.start,
+        timeRange: target.sourceRefs.time_range,
+        geometry: target.sourceRefs.bbox_id ? "bbox" : "roi",
+      },
+    });
+  } else if (target.openPanelType === "SourceMediaMetadata") {
+    eventBus.emit("sourceMediaMetadataFocusRequested", {
+      videoId,
+      evidenceId: target.id,
+      label: target.label,
+    });
+  }
+}
+
 function firstSubcategory(category: ManualVisualAnnotation["category"]): string {
   return MANUAL_SUBCATEGORIES[category]?.[0] || "";
+}
+
+function manualCategoryDisplayLabel(category: ManualVisualAnnotation["category"]): string {
+  return category === "Identification" ? "Narrative Agent" : category;
+}
+
+function manualSubcategoryDisplayLabel(
+  category: ManualVisualAnnotation["category"],
+  subcategory: string,
+): string {
+  if (category !== "Identification") return subcategory;
+  if (subcategory === "Identity") return "Agent label";
+  if (subcategory === "Character") return "Character / Agent";
+  return subcategory;
 }
 
 function buildLeafDraft(item: ManualVisualAnnotation): LeafAnnotationDraft {
@@ -152,7 +311,7 @@ function getManualAnnotationTitle(item: ManualVisualAnnotation): string {
       item.identity_affirmation ||
       item.custom_label ||
       item.label ||
-      "Identification annotation"
+      "Narrative Agent annotation"
     );
   }
   if (item.category === "Role") {
@@ -180,7 +339,7 @@ function getManualAnnotationDetail(item: ManualVisualAnnotation): string {
     item.subcategory || "Unspecified subcategory",
     item.label && item.label !== getManualAnnotationTitle(item) ? item.label : "",
     item.identity_affirmation && item.category !== "Identification"
-      ? `identity: ${item.identity_affirmation}`
+      ? `Narrative Agent: ${item.identity_affirmation}`
       : "",
     item.role_affirmation && item.category !== "Role"
       ? `role: ${item.role_affirmation}`
@@ -194,6 +353,7 @@ function getManualAnnotationDetail(item: ManualVisualAnnotation): string {
 function AutomaticEvidenceSection({
   category,
   analysisData,
+  videoId,
   identityLedger,
   identityActionMessage,
   isIdentityActionBusy,
@@ -204,6 +364,7 @@ function AutomaticEvidenceSection({
 }: {
   category?: ManualVisualAnnotation["category"];
   analysisData: any;
+  videoId?: string;
   identityLedger?: IdentityCandidateLedger | null;
   identityActionMessage?: string;
   isIdentityActionBusy?: boolean;
@@ -214,11 +375,47 @@ function AutomaticEvidenceSection({
 }) {
   if (category === "Identification") {
     const candidates = identityLedger?.candidates || [];
+    const openCandidateEvidence = (candidate: IdentityCandidate) => {
+      if (!videoId) return;
+      const evidence = candidate.evidence || {};
+      const start = numberFrom(evidence.time_start);
+      const end = numberFrom(evidence.time_end);
+      const label =
+        candidate.promoted_identity ||
+        candidate.candidate_label ||
+        candidate.candidate_id;
+      const target: EvidenceNavigationTarget = {
+        id: candidate.candidate_id,
+        label,
+        evidenceType: "narrative_agent_refinement_candidate",
+        sourcePanel: "ManualIdentification",
+        start,
+        end,
+        openPanelType: "ManualIdentification",
+        focusSurface: "narrative_agent_refinement_candidates",
+        sourceRefs: {
+          media_id: videoId,
+          video_time: start,
+          time_range: start !== undefined || end !== undefined ? { start, end } : undefined,
+          bbox_id:
+            evidence.track_id !== undefined && evidence.track_id !== null
+              ? String(evidence.track_id)
+              : null,
+          annotation_id:
+            evidence.annotation_id !== undefined && evidence.annotation_id !== null
+              ? String(evidence.annotation_id)
+              : candidate.candidate_id,
+        },
+        sourceItem: candidate as unknown as Record<string, unknown>,
+      };
+      openEvidenceNavigation(videoId, target);
+      emitEvidenceTraceback(videoId, target);
+    };
     return (
       <section className="mb-2 rounded border border-slate-800 bg-slate-950/20">
         <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
           <h3 className="text-[11px] font-semibold text-slate-200">
-            Identity refinement candidates
+            Narrative Agent refinement candidates
           </h3>
           <span className="text-[10px] text-[var(--ui-passive-text)]">
             {candidates.length}
@@ -227,13 +424,22 @@ function AutomaticEvidenceSection({
         <div className="space-y-2 p-2">
           {candidates.length === 0 ? (
             <div className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
-              No identity candidates prepared for this analysis.
+              No Narrative Agent candidates prepared for this analysis.
             </div>
           ) : (
             candidates.map((candidate) => (
               <div
                 key={candidate.candidate_id}
+                role="button"
+                tabIndex={0}
                 className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-slate-200"
+                onClick={() => openCandidateEvidence(candidate)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openCandidateEvidence(candidate);
+                  }
+                }}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -258,6 +464,7 @@ function AutomaticEvidenceSection({
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <input
+                    onClick={(event) => event.stopPropagation()}
                     value={
                       identityDrafts?.[candidate.candidate_id] ??
                       candidate.promoted_identity ??
@@ -277,6 +484,15 @@ function AutomaticEvidenceSection({
                   />
                   <button
                     type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onPromoteIdentityCandidate?.(
+                        candidate,
+                        identityDrafts?.[candidate.candidate_id] ||
+                          candidate.promoted_identity ||
+                          "",
+                      );
+                    }}
                     disabled={
                       isIdentityActionBusy ||
                       candidate.review_state === "promoted" ||
@@ -287,14 +503,6 @@ function AutomaticEvidenceSection({
                       ).trim()
                     }
                     className="shrink-0 rounded border border-emerald-500/30 bg-emerald-950/20 px-2 py-1 text-[10px] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() =>
-                      onPromoteIdentityCandidate?.(
-                        candidate,
-                        identityDrafts?.[candidate.candidate_id] ||
-                          candidate.promoted_identity ||
-                          "",
-                      )
-                    }
                   >
                     Promote
                   </button>
@@ -460,13 +668,92 @@ function formatAuditLabel(value: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function ConfirmationProgramStrip({ analysisData }: { analysisData: AnalysisData | null }) {
+const ANCHOR_SURFACE_NAVIGATION: Record<
+  string,
+  { panelType: string; evidenceType: string; focusSurface: string; label: string }
+> = {
+  panel_corrections: {
+    panelType: "MasterSchema",
+    evidenceType: "manual_panel_corrections",
+    focusSurface: "panel_corrections",
+    label: "Panel Corrections",
+  },
+  bbox_roi_corrections: {
+    panelType: "VideoPanel",
+    evidenceType: "bbox_roi_corrections",
+    focusSurface: "bbox_roi_corrections",
+    label: "Bbox Roi Corrections",
+  },
+  metadata_corrections: {
+    panelType: "SourceMediaMetadata",
+    evidenceType: "metadata_corrections",
+    focusSurface: "metadata_corrections",
+    label: "Metadata Corrections",
+  },
+  narrative_agent_profiles: {
+    panelType: "ManualIdentification",
+    evidenceType: "narrative_agent_profiles",
+    focusSurface: "narrative_agent_profiles",
+    label: "Narrative Agent Profiles",
+  },
+};
+
+function surfaceNavigation(surface: { surface?: string; route?: string }) {
+  const key = (surface.surface || surface.route || "").toLowerCase();
+  return ANCHOR_SURFACE_NAVIGATION[key] || {
+    panelType: "TracebackDrawer",
+    evidenceType: key || "user_confirmed_anchor",
+    focusSurface: key || "user_confirmed_anchor",
+    label: formatAuditLabel(surface.surface || surface.route || "Anchor surface"),
+  };
+}
+
+function ConfirmationProgramStrip({
+  analysisData,
+  videoId,
+}: {
+  analysisData: AnalysisData | null;
+  videoId: string;
+}) {
   const audit = analysisData?.metadata?.masterSchemaMaturityAudit;
   const anchor = audit?.user_confirmed_anchor;
   const program = audit?.confirmation_program;
   if (!anchor && !program) return null;
   const anchorSurfaces = anchor?.anchor_surfaces || [];
   const families = program?.confirmation_families || [];
+  const openAnchorSurface = (surface: { surface?: string; status?: string; route?: string }) => {
+    const navigation = surfaceNavigation(surface);
+    const target: EvidenceNavigationTarget = {
+      id: surface.surface || surface.route || navigation.focusSurface,
+      label: navigation.label,
+      evidenceType: navigation.evidenceType,
+      sourcePanel: "MasterSchema",
+      openPanelType: navigation.panelType === "TracebackDrawer" ? undefined : navigation.panelType,
+      focusSurface: navigation.focusSurface,
+      sourceRefs: { media_id: videoId, metadata_id: surface.route || surface.surface || null },
+      sourceItem: surface as Record<string, unknown>,
+    };
+    openEvidenceNavigation(videoId, target);
+    if (navigation.panelType === "TracebackDrawer") {
+      emitEvidenceTraceback(videoId, target);
+    }
+  };
+  const openConfirmationFamily = (family: string) => {
+    const target: EvidenceNavigationTarget = {
+      id: `confirmation_family:${family}`,
+      label: formatAuditLabel(family),
+      evidenceType: "concise_pattern_confirmation",
+      sourcePanel: "MasterSchema",
+      openPanelType: "TracebackDrawer",
+      focusSurface: family,
+      sourceRefs: { media_id: videoId, metadata_id: family },
+      sourceItem: {
+        confirmation_family: family,
+        consults_user_confirmed_anchor: program?.consults_user_confirmed_anchor,
+      },
+    };
+    emitEvidenceTraceback(videoId, target);
+  };
   return (
     <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -479,27 +766,46 @@ function ConfirmationProgramStrip({ analysisData }: { analysisData: AnalysisData
               "User confirmed corrections and annotations anchor mature sense-making."}
           </div>
         </div>
-        <div className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100">
+        <button
+          type="button"
+          className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:border-cyan-400/80 hover:bg-cyan-950/30"
+          onClick={() =>
+            emitEvidenceTraceback(videoId, {
+              id: "user_confirmed_anchor",
+              label: program?.consults_user_confirmed_anchor
+                ? "Confirmations consult anchors"
+                : "Anchor consultation pending",
+              evidenceType: "user_confirmed_anchor",
+              sourcePanel: "MasterSchema",
+              sourceRefs: { media_id: videoId, metadata_id: "user_confirmed_anchor" },
+              sourceItem: asRecord(audit),
+            })
+          }
+        >
           {program?.consults_user_confirmed_anchor
             ? "Confirmations consult anchors"
             : "Anchor consultation pending"}
-        </div>
+        </button>
       </div>
       {anchorSurfaces.length > 0 && (
         <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
-          {anchorSurfaces.map((surface) => (
-            <div
+          {anchorSurfaces.map((surface) => {
+            const navigation = surfaceNavigation(surface);
+            return (
+            <button
               key={surface.surface || surface.route}
+              type="button"
+              onClick={() => openAnchorSurface(surface)}
               className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5"
             >
               <div className="text-[10px] font-medium text-slate-200">
-                {formatAuditLabel(surface.surface || "anchor surface")}
+                {navigation.label}
               </div>
               <div className="mt-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/80">
                 {surface.status || "pending"}
               </div>
-            </div>
-          ))}
+            </button>
+          )})}
         </div>
       )}
       {families.length > 0 && (
@@ -509,12 +815,14 @@ function ConfirmationProgramStrip({ analysisData }: { analysisData: AnalysisData
           </div>
           <div className="flex flex-wrap gap-1.5">
             {families.map((family) => (
-              <span
+              <button
                 key={family}
-                className="rounded border border-slate-700 bg-[#111214] px-2 py-1 text-[10px] text-slate-200"
+                type="button"
+                onClick={() => openConfirmationFamily(family)}
+                className="rounded border border-slate-700 bg-[#111214] px-2 py-1 text-[10px] text-slate-200 hover:border-cyan-400/70 hover:bg-cyan-950/30"
               >
                 {formatAuditLabel(family)}
-              </span>
+              </button>
             ))}
           </div>
         </div>
@@ -531,11 +839,52 @@ function masterSubjectRecords(
   );
 }
 
-function MasterSchemaSubjectStrip({ analysisData }: { analysisData: AnalysisData | null }) {
+function MasterSchemaSubjectStrip({
+  analysisData,
+  videoId,
+}: {
+  analysisData: AnalysisData | null;
+  videoId: string;
+}) {
   const subjects = masterSubjectRecords(analysisData);
   if (subjects.length === 0) {
     return null;
   }
+  const openSubject = (subject: MasterSchemaResolvedEvidenceRecord) => {
+    const sourceRefs = buildRecordSourceRefs(videoId, subject);
+    const hasTime = subject.start !== undefined || sourceRefs.video_time !== undefined;
+    const hasGeometry = Boolean(sourceRefs.bbox_id || sourceRefs.roi_id);
+    const target: EvidenceNavigationTarget = {
+      id: subject.id,
+      label: subject.label,
+      evidenceType: "narrative_agent",
+      sourcePanel: subject.sourcePanel || "MasterSchema",
+      start: numberFrom(subject.start ?? sourceRefs.video_time),
+      end: numberFrom(subject.end ?? sourceRefs.time_range?.end),
+      openPanelType:
+        hasTime || hasGeometry ? "ManualIdentification" : "SourceMediaMetadata",
+      focusSurface: "master_schema_subject_authority",
+      sourceRefs,
+      sourceItem: subject as unknown as Record<string, unknown>,
+    };
+    openEvidenceNavigation(videoId, target);
+  };
+  const openSubjectTraceback = (
+    event: React.MouseEvent,
+    subject: MasterSchemaResolvedEvidenceRecord,
+  ) => {
+    event.preventDefault();
+    emitEvidenceTraceback(videoId, {
+      id: subject.id,
+      label: subject.label,
+      evidenceType: "narrative_agent",
+      sourcePanel: subject.sourcePanel || "MasterSchema",
+      start: numberFrom(subject.start),
+      end: numberFrom(subject.end),
+      sourceRefs: buildRecordSourceRefs(videoId, subject),
+      sourceItem: subject as unknown as Record<string, unknown>,
+    });
+  };
   return (
     <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -553,9 +902,13 @@ function MasterSchemaSubjectStrip({ analysisData }: { analysisData: AnalysisData
       </div>
       <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
         {subjects.slice(0, 18).map((subject) => (
-          <div
+          <button
             key={subject.id}
-            className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5"
+            type="button"
+            data-vaa1-master-schema-subject-navigation="true"
+            onClick={() => openSubject(subject)}
+            onContextMenu={(event) => openSubjectTraceback(event, subject)}
+            className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-left hover:border-cyan-400/70 hover:bg-cyan-950/25"
           >
             <div className="truncate text-[10px] font-medium text-slate-100">
               {subject.label}
@@ -563,7 +916,7 @@ function MasterSchemaSubjectStrip({ analysisData }: { analysisData: AnalysisData
             <div className="mt-0.5 truncate text-[9px] text-[var(--ui-passive-text)]">
               {subject.category.replaceAll("_", " ")} / {subject.maturityRoute || "master schema"}
             </div>
-          </div>
+          </button>
         ))}
       </div>
     </section>
@@ -675,7 +1028,7 @@ export default function MasterSchemaPanel({
           return next;
         });
       } catch (error) {
-        console.warn("Failed to load identity candidates:", error);
+        console.warn("Failed to load Narrative Agent candidates:", error);
         setIdentityLedger(null);
       }
     }
@@ -686,15 +1039,15 @@ export default function MasterSchemaPanel({
   async function createIdentityCandidates() {
     if (!videoId) return;
     setIsIdentityActionBusy(true);
-    setIdentityActionMessage("Refreshing identity candidates...");
+    setIdentityActionMessage("Refreshing Narrative Agent candidates...");
     try {
       await apiService.runIdentityRefinement(videoId);
       setIdentityLedger(await apiService.getIdentityCandidates(videoId));
-      setIdentityActionMessage("Identity candidates refreshed.");
+      setIdentityActionMessage("Narrative Agent candidates refreshed.");
       setRefreshNonce((current) => current + 1);
     } catch (error) {
-      console.error("Failed to refresh identity candidates:", error);
-      setIdentityActionMessage("Identity candidate refresh failed.");
+      console.error("Failed to refresh Narrative Agent candidates:", error);
+      setIdentityActionMessage("Narrative Agent candidate refresh failed.");
     } finally {
       setIsIdentityActionBusy(false);
     }
@@ -710,7 +1063,7 @@ export default function MasterSchemaPanel({
     if (!identityLabel) return;
 
     setIsIdentityActionBusy(true);
-    setIdentityActionMessage("Promoting identity candidate...");
+    setIdentityActionMessage("Promoting Narrative Agent candidate...");
     try {
       await apiService.promoteIdentityCandidate(
         videoId,
@@ -718,12 +1071,12 @@ export default function MasterSchemaPanel({
         identityLabel,
       );
       setIdentityLedger(await apiService.getIdentityCandidates(videoId));
-      setIdentityActionMessage("Identity candidate promoted.");
+      setIdentityActionMessage("Narrative Agent candidate promoted.");
       setRefreshNonce((current) => current + 1);
       eventBus.emit("analysisCorrectionsChanged", videoId);
     } catch (error) {
-      console.error("Failed to promote identity candidate:", error);
-      setIdentityActionMessage("Identity promotion failed.");
+      console.error("Failed to promote Narrative Agent candidate:", error);
+      setIdentityActionMessage("Narrative Agent promotion failed.");
     } finally {
       setIsIdentityActionBusy(false);
     }
@@ -816,7 +1169,7 @@ export default function MasterSchemaPanel({
       existingCorrections,
       nextAnnotation,
     );
-    setLeafActionMessage(`Saving ${draft.category} / ${label}...`);
+    setLeafActionMessage(`Saving ${manualCategoryDisplayLabel(draft.category)} / ${label}...`);
     try {
       pushCorrectionSnapshot(videoId, existingCorrections);
       const savedCorrections = await VideoService.saveAnnotationCorrections(
@@ -865,7 +1218,7 @@ export default function MasterSchemaPanel({
         [savedAnnotation.id]: buildLeafDraft(savedAnnotation),
       }));
       setSelectedAnnotationId(null);
-      setLeafActionMessage(`Saved ${draft.category} / ${label}`);
+      setLeafActionMessage(`Saved ${manualCategoryDisplayLabel(draft.category)} / ${label}`);
       openManualAnnotationInVideo(videoId, savedAnnotation, {
         focusVideoPanel: false,
         seekVideo: false,
@@ -956,14 +1309,15 @@ export default function MasterSchemaPanel({
         ) : (
           <>
             <MatureEvidenceStrip analysisData={analysisData} />
-            <ConfirmationProgramStrip analysisData={analysisData} />
-            <MasterSchemaSubjectStrip analysisData={analysisData} />
+            <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
+            <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
             <SecondOrderLabelReviewTray
               plan={analysisData?.secondOrderLabelProliferation}
             />
             <AutomaticEvidenceSection
               category={category}
               analysisData={analysisData}
+          videoId={videoId}
           identityLedger={identityLedger}
           identityActionMessage={identityActionMessage}
           isIdentityActionBusy={isIdentityActionBusy}
@@ -985,7 +1339,7 @@ export default function MasterSchemaPanel({
               >
                 <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
                   <h3 className="text-[11px] font-semibold text-slate-200">
-                    {group.category}
+                    {manualCategoryDisplayLabel(group.category)}
                   </h3>
                   <span className="text-[10px] text-[var(--ui-passive-text)]">
                     {group.items.length}
@@ -1008,6 +1362,9 @@ export default function MasterSchemaPanel({
                       >
                         <button
                           type="button"
+                          data-vaa1-manual-narrative-agent-row-navigation={
+                            group.category === "Identification" ? "true" : undefined
+                          }
                           className="block w-full text-left hover:text-slate-50"
                           onClick={() => selectAnnotationForEditing(item)}
                         >
@@ -1046,7 +1403,7 @@ export default function MasterSchemaPanel({
                               >
                                 {CATEGORY_ORDER.map((option) => (
                                   <option key={option} value={option}>
-                                    {option}
+                                    {manualCategoryDisplayLabel(option)}
                                   </option>
                                 ))}
                               </select>
@@ -1061,7 +1418,7 @@ export default function MasterSchemaPanel({
                               >
                                 {(MANUAL_SUBCATEGORIES[draft.category] || []).map((option) => (
                                   <option key={option} value={option}>
-                                    {option}
+                                    {manualSubcategoryDisplayLabel(draft.category, option)}
                                   </option>
                                 ))}
                               </select>
@@ -1123,7 +1480,7 @@ export default function MasterSchemaPanel({
                                     })
                                   }
                                   className="w-full rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
-                                  placeholder="Label, identity, or indication"
+                                  placeholder="Label, Narrative Agent, or indication"
                                 />
                               </div>
                               <label className="min-w-0 text-[9px] uppercase tracking-[0.12em] text-slate-500">

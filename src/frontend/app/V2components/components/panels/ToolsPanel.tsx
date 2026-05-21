@@ -124,7 +124,7 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "expression", label: "Expressions" },
-  { value: "identification", label: "Identification" },
+  { value: "identification", label: "Narrative Agent" },
   { value: "interaction", label: "Interaction" },
   { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
@@ -188,7 +188,7 @@ const MANUAL_LEAF_NAV_OPTIONS: Array<{
   {
     category: "Identification",
     panelType: "ManualIdentification",
-    label: "Identification",
+    label: "Narrative Agent",
   },
   {
     category: "Interaction",
@@ -2988,8 +2988,8 @@ export default function ToolsPanel() {
                           videoId={videoId}
                         />
                         <ManualAnnotationLeafSection
-                          title="Manual identification annotations"
-                          categoryTone="Identity and role evidence kept separate from object detections."
+                          title="Manual Narrative Agent annotations"
+                          categoryTone="Narrative Agent and role evidence kept separate from object detections."
                           items={manualIdentificationAnnotations}
                           videoId={videoId}
                         />
@@ -3406,7 +3406,7 @@ export default function ToolsPanel() {
                           onChange={(event) => setSourceSamplePurpose(event.target.value)}
                           disabled={!videoId || sourceSampleCreating}
                           className="h-9 border-white/10 bg-[#171717] text-slate-200"
-                          placeholder="Reference, comparison, identity"
+                          placeholder="Reference, comparison, Narrative Agent"
                         />
                       </div>
                     </div>
@@ -3587,7 +3587,7 @@ export default function ToolsPanel() {
                                 </div>
                                 <div className="grid gap-2 md:grid-cols-2">
                                   <div>
-                                    Identity{" "}
+                                    Narrative Agent{" "}
                                     {activeIdentities.length
                                       ? activeIdentities.join(", ")
                                       : "none linked"}
@@ -3722,7 +3722,7 @@ export default function ToolsPanel() {
                                     Manual {compactCount(adoptedContext.manual_annotation_refs)}
                                   </span>
                                   <span>
-                                    Identity {compactCount(adoptedContext.identity_refs)}
+                                    Narrative Agent {compactCount(adoptedContext.identity_refs)}
                                   </span>
                                   <span>
                                     Transcript {compactCount(adoptedContext.transcript_refs)}

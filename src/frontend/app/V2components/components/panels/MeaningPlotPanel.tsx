@@ -95,9 +95,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
 }> = [
   {
     id: "shakespearean_performativity",
-    label: "Performed identity",
+    label: "Performed agency",
     tradition: "Shakespearean",
-    insight: "Identity shifts through public role, private motive, status pressure, and rhetoric.",
+    insight: "Agency shifts through public role, private motive, status pressure, and rhetoric.",
     cues: ["role shift", "status pressure", "double speech"],
     signalKeywords: [
       "role",
@@ -427,7 +427,7 @@ function parseRoleLineToProfile(roleLine: string, index: number): NarrativeAgent
     narrative_agent_name: name,
     aliases: [],
     attached_performer_metadata: performer
-      ? { actor_name: performer, boundary: "attached metadata, not natural-person identity" }
+      ? { actor_name: performer, boundary: "attached metadata, not a natural-person profile" }
       : undefined,
     source_metadata: {
       role_labels: [],
@@ -465,7 +465,7 @@ function sourceMetadataNarrativeAgentProfiles(
       attached_performer_metadata: definition.actor_name
         ? {
             actor_name: definition.actor_name,
-            boundary: "attached metadata, not natural-person identity",
+            boundary: "attached metadata, not a natural-person profile",
           }
         : undefined,
       source_metadata: {
@@ -526,7 +526,7 @@ function masterSchemaRecordNarrativeAgentProfile(
               undefined,
             boundary:
               metadata.attached_performer_metadata?.boundary ||
-              "attached metadata, not natural-person identity",
+              "attached metadata, not a natural-person profile",
           }
         : undefined,
       source_metadata: metadata.source_metadata || {
@@ -2046,7 +2046,7 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                         Dramatic Archetype Readings
                       </div>
                       <div className="mt-0.5 text-[10px] text-slate-500">
-                        Cross-tradition interpretive lenses; not identity labels.
+                        Cross-tradition interpretive lenses; not fixed Narrative Agent labels.
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1">

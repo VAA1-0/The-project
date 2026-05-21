@@ -932,7 +932,7 @@ export function MenuBar() {
           },
         },
         {
-          label: "Identification Leaf",
+          label: "Narrative Agent Leaf",
           onClick: () => {
             openSchemaPanel("ManualIdentification");
           },

@@ -129,6 +129,10 @@ function resolveManualVisualDisplayLabel(item: ManualVisualAnnotation): string {
   ).trim();
 }
 
+function objManualCategoryDisplayLabel(category: ManualVisualAnnotation["category"]): string {
+  return category === "Identification" ? "Narrative Agent" : category;
+}
+
 function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
   const targetType = String(item.metadata_correlation?.target_type || "").toLowerCase();
   if (targetType !== "object") {
@@ -871,7 +875,7 @@ export default function OBJDetectionPanel() {
                             >
                               {OBJECT_INDICATION_CATEGORIES.map((category) => (
                                 <option key={category} value={category}>
-                                  {category}
+                                  {objManualCategoryDisplayLabel(category)}
                                 </option>
                               ))}
                             </select>
@@ -945,7 +949,7 @@ export default function OBJDetectionPanel() {
                                 updateObjectDraft(rowKey, { label: event.target.value })
                               }
                               className="w-full rounded border border-slate-700 bg-black/70 px-1 py-0.5 text-[10px] normal-case tracking-normal text-slate-200"
-                              placeholder="Analyst label or identity"
+                              placeholder="Analyst label or Narrative Agent"
                               aria-label="Object indication label"
                             />
                           </div>
@@ -1139,7 +1143,7 @@ export default function OBJDetectionPanel() {
                     </div>
                     {obj.identityAffirmation && (
                       <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
-                        Identification: {obj.identityAffirmation}
+                        Narrative Agent: {obj.identityAffirmation}
                       </div>
                     )}
                     {obj.roleAffirmation && (

@@ -324,7 +324,7 @@ const FORENSIC_ROI_INTENT_OPTIONS: Array<{
   label: string;
 }> = [
   { value: "expression", label: "Expressions" },
-  { value: "identification", label: "Identification" },
+  { value: "identification", label: "Narrative Agent" },
   { value: "interaction", label: "Interaction" },
   { value: "micro_expression", label: "Micro-granular Expression" },
   { value: "movement", label: "Movement" },
@@ -346,6 +346,20 @@ type ForensicRegionDraftPayload = {
 };
 
 const CUSTOM_LABEL_VALUE = "__custom__";
+
+function manualCategoryDisplayLabel(category: ManualVisualAnnotation["category"]): string {
+  return category === "Identification" ? "Narrative Agent" : category;
+}
+
+function manualSubcategoryDisplayLabel(
+  category: ManualVisualAnnotation["category"],
+  subcategory: string,
+): string {
+  if (category !== "Identification") return subcategory;
+  if (subcategory === "Identity") return "Agent label";
+  if (subcategory === "Character") return "Character / Agent";
+  return subcategory;
+}
 
 const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "Action",
@@ -535,7 +549,7 @@ const NATIVE_ANNOTATION_LABELS: Record<string, string[]> = {
   "Expressions::Emotion": ["Anger", "Fear", "Joy", "Sadness", "Surprise"],
   "Expressions::Expression": ["Concern", "Determination", "Neutral", "Tension"],
   "Identification::Character": ["Character present", "Unidentified person"],
-  "Identification::Identity": ["Identity affirmed", "Identity uncertain"],
+  "Identification::Identity": ["Narrative Agent affirmed", "Narrative Agent uncertain"],
   "Interaction::Exchange": ["Confrontation", "Conversation", "Observation", "Pursuit"],
   "Interaction::Interaction": ["Assistance", "Conflict", "Contact", "Threat"],
   "Metadata::Context": ["Metadata supports annotation", "Metadata updated from annotation"],
@@ -7798,7 +7812,7 @@ export default function VideoPanel() {
                                   >
                                     {NATIVE_ANNOTATION_CATEGORIES.map((category) => (
                                       <option key={category} value={category}>
-                                        {category}
+                                        {manualCategoryDisplayLabel(category)}
                                       </option>
                                     ))}
                                   </select>
@@ -8644,7 +8658,7 @@ export default function VideoPanel() {
                     <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
                       {NATIVE_ANNOTATION_CATEGORIES.map((option) => (
                         <SelectItem key={option} value={option}>
-                          {option}
+                          {manualCategoryDisplayLabel(option)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -8676,7 +8690,7 @@ export default function VideoPanel() {
                     <SelectContent className="border-amber-400/20 bg-[#111214] text-slate-100">
                       {nativeSubcategoryOptions.map((option) => (
                         <SelectItem key={option} value={option}>
-                          {option}
+                          {manualSubcategoryDisplayLabel(nativeAnnotationDraft.category, option)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -8836,7 +8850,7 @@ export default function VideoPanel() {
                         identityAffirmation: event.target.value,
                       }))
                     }
-                    placeholder="Identity affirmation"
+                    placeholder="Narrative Agent label"
                     className="border-amber-400/20 bg-[#111214] text-slate-100"
                   />
 	                  {nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE &&
@@ -8948,7 +8962,11 @@ export default function VideoPanel() {
                       : "no box drawn yet"}
                   </span>
                   <span>
-                    {nativeAnnotationDraft.category} / {nativeAnnotationDraft.subcategory}
+                    {manualCategoryDisplayLabel(nativeAnnotationDraft.category)} /{" "}
+                    {manualSubcategoryDisplayLabel(
+                      nativeAnnotationDraft.category,
+                      nativeAnnotationDraft.subcategory,
+                    )}
                   </span>
                   <Button
                     type="button"

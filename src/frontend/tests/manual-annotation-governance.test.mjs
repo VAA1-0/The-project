@@ -34,6 +34,7 @@ const sourceMediaPanel = read("app/V2components/components/panels/SourceMediaMet
 const globalsCss = read("styles/globals.css");
 const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx");
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
+const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
 const tracebackDrawerPanel = read("app/V2components/components/panels/TracebackDrawerPanel.tsx");
@@ -705,8 +706,14 @@ test("Meaning Plot character paths keep dramatic archetypes electable", () => {
 
   assert.match(
     meaningPlotPanel,
-    /Cross-tradition interpretive lenses; not identity labels/,
-    "archetypes must remain electable readings rather than imposed identities",
+    /Cross-tradition interpretive lenses; not fixed Narrative Agent labels/,
+    "archetypes must remain electable readings rather than imposed Narrative Agent definitions",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Performed agency/,
+    "dramatic archetype copy should use agency language instead of identity-first language",
   );
 
   assert.match(
@@ -901,8 +908,14 @@ test("Narrative Agent Profiles expose agent narrative analytic layers", () => {
 
   assert.match(
     sourceMediaPanel,
-    /not imposed as identity labels/,
-    "Narrative Agent Profile readings must remain electable rather than fixed identities",
+    /not imposed as Narrative Agent labels/,
+    "Narrative Agent Profile readings must remain electable rather than fixed Narrative Agent definitions",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /Narrative Agent refs/,
+    "Narrative Agent Profile evidence trails should not expose identification-first wording",
   );
 });
 
@@ -1008,7 +1021,7 @@ test("audio sample clouds stay exposed as governed analysis artifacts", () => {
   );
 });
 
-test("identity triangulation stays exposed as a governed analysis artifact", () => {
+test("Narrative Agent triangulation stays exposed as a governed analysis artifact", () => {
   assert.match(
     apiService,
     /identity_triangulation\?: IdentityTriangulationStatus \| null;/,
@@ -1017,8 +1030,8 @@ test("identity triangulation stays exposed as a governed analysis artifact", () 
 
   assert.match(
     apiService,
-    /identity_triangulation: "Identity Triangulation Bundle \(JSON\)"/,
-    "identity triangulation must have a user-facing download label",
+    /identity_triangulation: "Narrative Agent Triangulation Bundle \(JSON\)"/,
+    "Narrative Agent triangulation must have a user-facing download label",
   );
 
   assert.match(
@@ -1218,6 +1231,44 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
   );
 });
 
+test("Master Schema Narrative Agent authority surfaces are navigable evidence anchors", () => {
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-master-schema-subject-navigation="true"/,
+    "Master Schema Subject Authority cards must be clickable evidence navigation entries",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /onContextMenu=\{\(event\) => openSubjectTraceback\(event, subject\)\}/,
+    "governed subject cards must expose a secondary traceback path",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /masterSchemaEvidenceNavigationRequested/,
+    "Master Schema evidence clicks must emit a shared navigation event",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /ANCHOR_SURFACE_NAVIGATION[\s\S]*panel_corrections[\s\S]*bbox_roi_corrections[\s\S]*metadata_corrections[\s\S]*narrative_agent_profiles/,
+    "User Confirmed Anchor surfaces must map to concrete navigation targets",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /openConfirmationFamily[\s\S]*concise_pattern_confirmation[\s\S]*emitEvidenceTraceback/,
+    "Concise Pattern Confirmation chips must open their supporting traceback evidence",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-manual-narrative-agent-row-navigation=\{[\s\S]*group\.category === "Identification"/,
+    "manual Narrative Agent rows must keep their direct video/BBox navigation affordance visible to tests",
+  );
+});
+
 test("GoldenLayout leaf tabs stay on one compact row", () => {
   assert.match(
     globalsCss,
@@ -1393,6 +1444,48 @@ test("Narrative Agent maturity policy language is reflected in UI surfaces", () 
     sourceMediaPanel,
     /Narrative Agent label/,
     "Source metadata speaker/agent UI should use Narrative Agent language",
+  );
+
+  assert.match(
+    menuBar,
+    /Narrative Agent Leaf/,
+    "Top navigation should expose the legacy Identification leaf as Narrative Agent",
+  );
+
+  assert.match(
+    layoutHost,
+    /title:\s*"Narrative Agent"/,
+    "GoldenLayout leaf title should expose the legacy Identification category as Narrative Agent",
+  );
+
+  assert.match(
+    layoutHost,
+    /normalizeLegacyLayoutLabels/,
+    "Saved GoldenLayout workspaces should migrate legacy panel labels on restore",
+  );
+
+  assert.match(
+    layoutHost,
+    /Manual \$\{manualCategoryDisplayLabel\(leaf\.category\)\} annotations/,
+    "Manual leaf descriptions should use analyst-facing Narrative Agent labels",
+  );
+
+  assert.match(
+    videoPanel,
+    /value:\s*"identification", label:\s*"Narrative Agent"/,
+    "Video ROI intent label should use Narrative Agent while preserving the legacy intent value",
+  );
+
+  assert.match(
+    toolsPanel,
+    /Manual Narrative Agent annotations/,
+    "Tools manual leaf copy should use Narrative Agent language",
+  );
+
+  assert.match(
+    apiService,
+    /identity_triangulation: "Narrative Agent Triangulation Bundle \(JSON\)"/,
+    "Download labels should use Narrative Agent language for legacy identity artifacts",
   );
 });
 

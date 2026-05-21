@@ -159,13 +159,13 @@ const displayedWebCandidateFields = new Set([
 
 const narrativeAgentProfileGovernance = {
   identityBoundary:
-    "VAA1 delivers Narrative Agent Profiles, not Natural Person Identity Profiles. Actor data remains attached performer metadata.",
+    "VAA1 delivers Narrative Agent Profiles. Actor data remains attached performer metadata.",
   agentNarrativeProfile:
     "Agent Narrative Profiles track an agent path through narrative time, context, relation networks, and linked evidence as the analysis matures.",
   dramaticArchetypeNote:
     "Dramatic archetypes are used as probabilistic narrative functions, situational roles, relational positions, rhetorical behaviors, and evolving dramaturgical trajectories.",
   shakespeareanModality:
-    "Shakespearean modality asks how identity is performed, destabilized, revealed, concealed, inverted, or transformed through interaction.",
+    "Shakespearean modality asks how agency is performed, destabilized, revealed, concealed, inverted, or transformed through interaction.",
   layers:
     "Character modes, relational dynamics, scene modes, status dynamics, and linguistic modes.",
 };
@@ -185,7 +185,7 @@ const AGENT_NARRATIVE_PROFILE_LAYERS = [
   },
   {
     label: "Evidence trail",
-    description: "lines, audio samples, visual patterns, identification refs, and scene links",
+    description: "lines, audio samples, visual patterns, Narrative Agent refs, and scene links",
   },
   {
     label: "Meaning / plot links",
@@ -200,7 +200,7 @@ const AGENT_NARRATIVE_PROFILE_LAYERS = [
 const AGENT_NARRATIVE_PROFILE_READINGS = [
   {
     tradition: "Shakespearean",
-    label: "Performed identity",
+    label: "Performed agency",
     cues: ["status", "masking", "role shift", "public role", "private self"],
   },
   {
@@ -1582,7 +1582,7 @@ export default function SourceMediaMetadataPanel() {
                     Shakespearean modality: {narrativeAgentProfileGovernance.shakespeareanModality}
                   </div>
                   <div className="mt-1 text-cyan-100/70">
-                    Dramatic archetypes remain electable readings. They can branch from the base profile, but they are not imposed as identity labels.
+                    Dramatic archetypes remain electable readings. They can branch from the base profile, but they are not imposed as Narrative Agent labels.
                   </div>
                   <div className="mt-1 text-slate-500">
                     Operational layers: {narrativeAgentProfileGovernance.layers}
@@ -2508,7 +2508,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>People and Identity</summary>
+                <summary className={subSummaryClass}>People and Narrative Agents</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">

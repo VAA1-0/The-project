@@ -79,7 +79,7 @@ const MANUAL_LEAF_PANEL_CONFIGS = [
   {
     componentType: "ManualIdentification",
     category: "Identification",
-    title: "Identification",
+    title: "Narrative Agent",
   },
   {
     componentType: "ManualInteraction",
@@ -99,6 +99,63 @@ const MANUAL_LEAF_PANEL_CONFIGS = [
     title: "Transcription Leaf",
   },
 ];
+
+function manualCategoryDisplayLabel(category: string): string {
+  return category === "Identification" ? "Narrative Agent" : category;
+}
+
+function normalizeLegacyPanelTitle(title: unknown): unknown {
+  if (title === "Identification" || title === "Identification Leaf") {
+    return "Narrative Agent";
+  }
+  if (title === "Manual Identification") {
+    return "Manual Narrative Agent";
+  }
+  return title;
+}
+
+function normalizeLegacyLayoutLabels(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeLegacyLayoutLabels(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  for (const [key, childValue] of Object.entries(record)) {
+    next[key] = normalizeLegacyLayoutLabels(childValue);
+  }
+
+  if (next.componentType === "ManualIdentification") {
+    next.title = "Narrative Agent";
+    const componentState = next.componentState;
+    if (componentState && typeof componentState === "object") {
+      next.componentState = {
+        ...(componentState as Record<string, unknown>),
+        panelTitle: "Narrative Agent",
+        panelDescription:
+          "Manual Narrative Agent annotations live here as a dedicated leaf, while also remaining visible in the Master Schema.",
+      };
+    }
+  } else if ("title" in next) {
+    next.title = normalizeLegacyPanelTitle(next.title);
+  }
+
+  if ("panelTitle" in next) {
+    next.panelTitle = normalizeLegacyPanelTitle(next.panelTitle);
+  }
+  if (
+    typeof next.panelDescription === "string" &&
+    next.panelDescription.includes("Manual Identification annotations")
+  ) {
+    next.panelDescription =
+      "Manual Narrative Agent annotations live here as a dedicated leaf, while also remaining visible in the Master Schema.";
+  }
+
+  return next;
+}
 
 const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
   settings: {
@@ -370,10 +427,16 @@ export default function LayoutHost({
           ) => void;
         };
         focus?: (suppressEvent?: boolean) => void;
+        setTitle?: (title: string) => void;
       };
 
       if (!candidate.isComponent || candidate.componentType !== panelType) {
         continue;
+      }
+
+      const title = PANEL_TITLES[panelType];
+      if (title && candidate.setTitle) {
+        candidate.setTitle(title);
       }
 
       if (
@@ -701,7 +764,7 @@ export default function LayoutHost({
               category: leaf.category,
               panelTitle: leaf.title,
               panelDescription:
-                `Manual ${leaf.category} annotations live here as a dedicated leaf, while also remaining visible in the Master Schema.`,
+                `Manual ${manualCategoryDisplayLabel(leaf.category)} annotations live here as a dedicated leaf, while also remaining visible in the Master Schema.`,
             },
             ContextWrapper,
           );
@@ -733,7 +796,9 @@ export default function LayoutHost({
     try {
       const stored = window.localStorage.getItem(SAVED_LAYOUT_STORAGE_KEY);
       if (stored) {
-        initialLayout = JSON.parse(stored) as import("golden-layout").LayoutConfig;
+        initialLayout = normalizeLegacyLayoutLabels(
+          JSON.parse(stored),
+        ) as import("golden-layout").LayoutConfig;
       }
       const params = new URLSearchParams(window.location.search);
       requestedAnalysisId = params.get("analysis_id") || "";

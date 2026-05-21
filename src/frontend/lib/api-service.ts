@@ -1454,7 +1454,7 @@ class ApiService {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Identity refinement failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Narrative Agent refinement failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 
@@ -1469,7 +1469,7 @@ class ApiService {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Identity candidates failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Narrative Agent candidates failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 
@@ -1496,7 +1496,7 @@ class ApiService {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Identity promotion failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Narrative Agent promotion failed: ${response.status} ${response.statusText} - ${errorText}`,
       );
     }
 
@@ -2523,7 +2523,7 @@ class ApiService {
       transcript: "Transcript (JSON)",
       audio_diarization: "Audio Diarization Scaffold (JSON)",
       audio_sample_clouds: "Audio Sample Clouds (JSON)",
-      identity_triangulation: "Identity Triangulation Bundle (JSON)",
+      identity_triangulation: "Narrative Agent Triangulation Bundle (JSON)",
       dependency_sfl_stage1: "Dependency + SFL Stage 1 (JSON)",
       multimodal_meaning_stage1: "Multimodal Meaning Stage 1 (JSON)",
       second_order_label_proliferation: "Second-Order Label Proliferation (JSON)",
