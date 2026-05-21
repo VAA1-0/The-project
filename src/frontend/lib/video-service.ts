@@ -26,6 +26,7 @@ import type {
   AnnotationCorrectionRule,
   AudioDiarizationScaffold,
   ForensicRenderJob,
+  EvidenceProliferationMatchSummary,
   IdentityRefinementStatus,
   AgentPersistenceLabel,
   SecondOrderLabelProliferationPlan,
@@ -338,10 +339,11 @@ export interface MasterSchemaResolvedEvidenceRecord {
     | "ocr"
     | "expression"
     | "manual_annotation"
-    | "identity"
-    | "narrative_agent_profile"
-    | "character_role"
-    | "second_order";
+      | "identity"
+      | "narrative_agent_profile"
+      | "character_role"
+      | "proliferation_match"
+      | "second_order";
   label: string;
   authority: MatureEvidenceAuthority;
   sourcePanel: string;
@@ -1182,6 +1184,38 @@ function agentPersistenceTrackRecords(
   return records;
 }
 
+function evidenceProliferationMatchRecords(
+  matches?: EvidenceProliferationMatchSummary[] | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  return (matches || []).map((match, index) => {
+    const requestId = looseString(match.request_id) || `proliferation_match:${index}`;
+    const candidateCount = Number(match.candidate_count || 0);
+    return {
+      id: requestId,
+      category: "proliferation_match",
+      label: `${candidateCount} proliferation candidate${
+        candidateCount === 1 ? "" : "s"
+      }`,
+      authority: "interpreted_detection",
+      sourcePanel: "MasterSchema",
+      maturityRoute: "evidence_proliferation.match_candidate_review",
+      targetId: requestId,
+      metadata: {
+        request_id: requestId,
+        status: match.status || "completed",
+        candidate_count: candidateCount,
+        output_json_path: match.output_json_path,
+        updated_at: match.updated_at,
+        governance: {
+          outputs_are_candidates_until_supported_by_evidence: true,
+          manual_correction_wins: true,
+          traceback_required: true,
+        },
+      },
+    };
+  });
+}
+
 function masterSchemaMaturityAudit(masterSchema: unknown): MasterSchemaMaturityAudit | undefined {
   const schema = asLooseRecord(masterSchema);
   const audit = asLooseRecord(schema?.master_schema_maturity_audit);
@@ -1197,6 +1231,7 @@ function buildMasterSchemaResolvedEvidenceView({
   corrections,
   identityRefinement,
   secondOrderLabelProliferation,
+  evidenceProliferationMatches,
   masterSchema,
 }: {
   transcript: TranscriptSegment[];
@@ -1207,6 +1242,7 @@ function buildMasterSchemaResolvedEvidenceView({
   corrections?: AnnotationCorrections | null;
   identityRefinement?: IdentityRefinementStatus | null;
   secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
+  evidenceProliferationMatches?: EvidenceProliferationMatchSummary[] | null;
   masterSchema?: unknown;
 }): MasterSchemaResolvedEvidenceView {
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
@@ -1215,6 +1251,7 @@ function buildMasterSchemaResolvedEvidenceView({
   records.push(...masterSchemaNarrativeAgentRecords(masterSchema));
   records.push(...manualAnnotationNarrativeAgentRecords(nativeAnnotations));
   records.push(...agentPersistenceTrackRecords(secondOrderLabelProliferation));
+  records.push(...evidenceProliferationMatchRecords(evidenceProliferationMatches));
 
   transcript.forEach((segment, index) => {
     records.push({
@@ -2135,6 +2172,7 @@ export interface AnalysisData {
   sourceSamples?: SourceSample[];
   identityRefinement?: IdentityRefinementStatus | null;
   secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
+  evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   audioDiarization?: AudioDiarizationScaffold | null;
   summary: string;
   rawCsv: string;
@@ -3127,6 +3165,7 @@ export interface AnalysisStatus {
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
+  evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   audio_diarization?: AudioDiarizationScaffold | null;
   vaa1_annotation_master_schema?: unknown;
   pipeline_type?: string; // This was missing
@@ -3501,6 +3540,7 @@ export class VideoService {
         corrections,
         identityRefinement: status.identity_refinement || null,
         secondOrderLabelProliferation: status.second_order_label_proliferation || null,
+        evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         masterSchema: status.vaa1_annotation_master_schema,
       });
 
@@ -3525,6 +3565,7 @@ export class VideoService {
         sourceSamples: status.source_samples || [],
         identityRefinement: status.identity_refinement || null,
         secondOrderLabelProliferation: status.second_order_label_proliferation || null,
+        evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",

@@ -341,6 +341,18 @@ test("manual bbox geometry stays timestamp scoped", () => {
     "bbox resize should allow analyst-scale small boxes without coarse minimum sizing",
   );
 
+  assert.match(
+    videoPanel,
+    /onPointerDown=\{\(event\) => \{[\s\S]*beginOverlayGeometryDrag\(event, overlay, "move"\)/,
+    "editable bbox overlays should reserve first pointer contact for drag/move editing",
+  );
+
+  assert.match(
+    videoPanel,
+    /onDoubleClick=\{\(event\) => \{[\s\S]*openEvidencePanelForOverlay\(overlay\)/,
+    "bbox evidence navigation should open on double-click, not first touch",
+  );
+
   assert.doesNotMatch(
     videoPanel,
     /jumpToTime\(nextStart\)|jumpToTime\(nextEnd\)/,
@@ -706,6 +718,30 @@ test("Meaning Plot character paths keep dramatic archetypes electable", () => {
 
   assert.match(
     meaningPlotPanel,
+    /data-vaa1-meaning-plot-section-jumps="true"/,
+    "Character Paths must expose in-panel jumps so lower archetype readings remain reachable",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /scrollCharacterPathSection\(dramaticArchetypeReadingsRef\)[\s\S]*Dramatic archetypes/,
+    "Dramatic archetype readings must be directly navigable from the Character Paths header",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-plot-dramatic-archetypes="true"/,
+    "Dramatic archetype readings must expose a stable scroll target",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /panelType:\s*"ManualIdentification"/,
+    "Meaning / Plot Character Paths must bridge back to the Narrative Agent panel",
+  );
+
+  assert.match(
+    meaningPlotPanel,
     /Cross-tradition interpretive lenses; not fixed Narrative Agent labels/,
     "archetypes must remain electable readings rather than imposed Narrative Agent definitions",
   );
@@ -756,6 +792,56 @@ test("Meaning Plot character paths keep dramatic archetypes electable", () => {
     meaningPlotPanel,
     /Metadata-seeded Narrative Agent Profile/,
     "metadata-seeded agents must remain visible before detected cues surface",
+  );
+});
+
+test("Narrative Agent panel owns Character Paths home", () => {
+  assert.match(
+    masterSchemaPanel,
+    /function NarrativeAgentCharacterPathsHome/,
+    "Narrative Agent panel must define the Character Paths home",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-character-paths="true"/,
+    "Narrative Agent Character Paths must expose a stable surface",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Agent-centered continuity, scenes, evidence, and dramatic readings live here/,
+    "Character Paths must be described as agent-centered in the Narrative Agent panel",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Meaning \/ Plot remains the cross-agent plot map/,
+    "Narrative Agent panel must preserve Meaning / Plot as the cross-agent plot map",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /const NARRATIVE_AGENT_ARCHETYPE_LENSES/,
+    "Narrative Agent panel must keep dramatic archetype readings available",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Cross-tradition readings, not imposed as Narrative Agent labels/,
+    "Dramatic archetypes must stay interpretive readings, not agent identity labels",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /buildNarrativeAgentPathRows/,
+    "Narrative Agent Character Paths must read governed agent rows from shared analysis data",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /category === "Identification"[\s\S]*<NarrativeAgentCharacterPathsHome/,
+    "Character Paths home must render in the Narrative Agent / Identification panel",
   );
 });
 
@@ -1462,6 +1548,12 @@ test("Narrative Agent maturity policy language is reflected in UI surfaces", () 
     layoutHost,
     /normalizeLegacyLayoutLabels/,
     "Saved GoldenLayout workspaces should migrate legacy panel labels on restore",
+  );
+
+  assert.match(
+    layoutHost,
+    /layoutContainsComponent\(restoredLayout,\s*"VideoPanel"\)/,
+    "Saved GoldenLayout workspaces must not restore without the Video panel",
   );
 
   assert.match(

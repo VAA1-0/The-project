@@ -6,6 +6,19 @@ API for LLM Summarization engine
 Music detection
 Graphic detection
 Do youtube links work?
+Pre-#0.1 .exe total remaining sprint ladder:
+0. checkpoint current local work: decide whether to keep/push the mature proliferation UI slice, governance docs, and schema draft; keep Bojean schema JSON separate until explicitly accepted
+1. mature data proliferation spine: implement the Master Schema-governed propagation bus, governance matrix, quality-agent audit loop, and single projection contract before adding more panel-local semantic behavior
+2. panel projection migration: move manual corrections, Narrative Agent labels, sample-cloud matches, scene/situation/role evidence, second-order labels, traceback, report/search/export claims through the bus one family at a time
+3. actionable evidence families: make audio sample clouds and visual pattern evidence editable, source-linked, maturity-aware, droppable/replacable/mergeable/splittable, and traceback-preserved
+4. CVAT/annotation round-trip: finish one-click VAA1-to-CVAT handoff, reuse stored cvatID, prevent duplicate tasks, ingest CVAT outputs into the Master Schema, and expose import validation/status
+5. panel maturation and UX completion: align remaining panels with the calm evidence-register style; finish Download, Tools, TimeBank, Video Compare, Speech/Audio, governance matrix, quality review tray, and remaining video-side surfaces
+6. traceback/forensic/reporting package: finish forensic render evidence linkage, traceback drawer maturity, report claim weighting, export payload governance, and raw-vs-mature artifact preservation
+7. user agreement, consent, and data-location governance: add first-run agreement, local-vs-external processing disclosure, per-feature consent for any external/API/remote/paid processing, inspectable local agreement state, and export/report disclosure of analysis conditions
+8. licensed add-ons and runtime configuration: audit licensed/optional components, isolate or avoid strong-copyleft/premium/remote add-ons unless explicitly configured, expose model/runtime/FFmpeg/API-key/path choices, record versions/paths/parameters/fallback reasons in traceback, and keep the core pipeline usable without optional keys or add-ons
+9. detector/transcript hardening: finish detector calibration package, transcript integrity coverage, backend QA gates, fallback retranscription strategy, and representative-media regression checks
+10. optional diagnostics after governance: add SOM/open-topology only as a diagnostic map over governed Master Schema ids, anchors, maturity scores, and traceback refs
+11. release readiness: run pre-EXE manual checklist, Playwright UI checks, frontend tests/typecheck, backend contract tests, representative full analysis smoke, package install/startup checks, consent/license/configuration checks, and rollback/restore checks before building `#0.1 .exe`
 Structured review of `petteri` against `main`, grouped into merge blocks before any main-branch merge
 Detector calibration package:
 motion, scene, person, and object detector calibration; adaptive dense sampling; genre-specific object-detection build-up; separation of heuristic description from true genre-detection workflow
@@ -15,6 +28,16 @@ Panel maturation governance package:
 align remaining panels to the calmer evidence-register style already strongest in OCR, OBJ, Expressions, POS Matrix, and Quant Matrix; mature Download, Tools, TimeBank, Video Compare, Speech/Audio, and remaining Video-side governance surfaces
 Mature data surface governance:
 implement the Master Schema as the resolved mature-evidence redistribution layer across panels; first-read indications should follow manual correction > manual annotation > mature triangulated/proliferated indication > grouped/interpreted detection > raw detection, while preserving raw detection repositories; see docs/vaa1_mature_data_surface_governance_principle_2026-05-08.md
+Mature data proliferation bus and governance matrix:
+adopt the invariant that no active semantic claim may appear in a panel, report, graph, card, sample cloud, search result, or export unless it is represented by a governed Master Schema object with source anchor, maturity state, authority level, traceback, and propagation event. Implement stepwise:
+1. add the mature-data proliferation governance schema draft under docs/schemas as a non-runtime planning contract
+2. add backend contract tests for a single Master Schema-governed propagation bus, authority resolution, propagation audit, unknown-over-known blocking, and conflict surfacing
+3. implement src/backend/analysis/mature_data_proliferation_bus.py as a distributor of mature Master Schema objects, not a meaning-decider
+4. add src/backend/analysis/master_schema_governance_matrix.py and expose rows for object id, family, mature label, authority, maturity, source anchors, traceback, used panels, propagation status, conflicts, last analyst action, and review need
+5. add src/backend/analysis/master_schema_quality_agent.py as audit-only; it may create review tickets and suggested patches but must not silently overwrite Master Schema data
+6. add MasterSchemaGovernanceMatrix frontend surface beside POS/Quant matrix logic: linear, sortable, inspectable, correctable, and traceback-linked
+7. migrate panel projections one family at a time so manual corrections, Narrative Agent labels, sample-cloud matches, scene/situation/role evidence, and traceback all flow through the bus before appearing as active meaning
+8. add SOM/open-topology diagnostics only after Master Schema ids, source anchors, maturity scores, and traceback refs are present; SOM may show clusters, outliers, duplicates, and propagation gaps but must never decide mature truth
 CVAT base workflow package:
 runtime now works locally; next implement one-click VAA1 handoff: create CVAT task if missing, store cvatID, and open the correct job without re-upload or manual route knowledge
 Release readiness test protocol:

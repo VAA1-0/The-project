@@ -8,9 +8,11 @@ import {
 } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import type {
+  EvidenceProliferationMatchSummary,
   IdentityCandidate,
   IdentityCandidateLedger,
   ManualVisualAnnotation,
+  SecondOrderLabelInstruction,
 } from "@/lib/api-service";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -23,6 +25,7 @@ import {
   openManualAnnotationInVideo,
   openVideoAtTime,
 } from "@/lib/video-navigation";
+import { matureSceneSegmentsFromAnalysis } from "@/lib/scene-governance";
 import { useLayoutHost } from "../LayoutHost";
 import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
 
@@ -103,6 +106,64 @@ type EvidenceNavigationTarget = {
   focusSurface?: string;
 };
 
+type ScenePresenceSupport = "source" | "manual" | "cue" | "scene_ref" | "profile";
+
+type NarrativeAgentPathRow = {
+  key: string;
+  label: string;
+  source: string;
+  role?: string;
+  start?: number;
+  end?: number;
+  sceneCount: number;
+  manualCount: number;
+  cueCount: number;
+  evidenceChips: string[];
+  cues: SecondOrderLabelInstruction[];
+  sceneRefs: Array<string | number>;
+  scenePresence: Array<{
+    sceneIndex: number;
+    sceneLabel: string;
+    start: number;
+    end: number;
+    support: ScenePresenceSupport;
+  }>;
+  sourceItem?: Record<string, unknown>;
+};
+
+const NARRATIVE_AGENT_ARCHETYPE_LENSES = [
+  {
+    id: "shakespearean_performativity",
+    label: "Performed agency",
+    tradition: "Shakespearean",
+    description: "Public role, private motive, status pressure, and rhetorical agency.",
+  },
+  {
+    id: "proppian_function",
+    label: "Narrative function",
+    tradition: "Proppian",
+    description: "Helper, opponent, donor, dispatcher, false hero, or task relation.",
+  },
+  {
+    id: "jungian_symbolic",
+    label: "Symbolic shadow",
+    tradition: "Jungian / Mythic",
+    description: "Shadow, mentor, trickster, mask, projection, or symbolic relation.",
+  },
+  {
+    id: "greimasian_actant",
+    label: "Actant relation",
+    tradition: "Greimasian",
+    description: "Subject, object, sender, receiver, helper, opponent, and goal structure.",
+  },
+  {
+    id: "burkean_motive",
+    label: "Motive scene",
+    tradition: "Burkean / Dramatistic",
+    description: "Act, scene, agent, agency, purpose, guilt, and motive.",
+  },
+];
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -116,6 +177,301 @@ function numberFrom(value: unknown): number | undefined {
 
 function stringFrom(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeAgentKey(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function secondsFromInstruction(instruction: SecondOrderLabelInstruction): number {
+  const raw = instruction.time_span?.start_ms ?? instruction.time_span?.start ?? 0;
+  const numeric = Number(raw || 0);
+  return instruction.time_span?.start_ms !== undefined || numeric > 1000
+    ? numeric / 1000
+    : numeric;
+}
+
+function instructionTouchesAgent(
+  instruction: SecondOrderLabelInstruction,
+  label: string,
+): boolean {
+  const labelKey = normalizeAgentKey(label);
+  if (!labelKey) return false;
+  const participants = instruction.participants_involved || [];
+  const targetText = normalizeAgentKey([
+    instruction.target_label_family,
+    instruction.candidate_label,
+    instruction.status,
+    ...participants,
+  ].join(" "));
+  return targetText.includes(labelKey) || participants.some((participant) => {
+    const participantKey = normalizeAgentKey(participant);
+    return participantKey === labelKey || participantKey.includes(labelKey) || labelKey.includes(participantKey);
+  });
+}
+
+function narrativeAgentLabelFromRecord(
+  record: MasterSchemaResolvedEvidenceRecord,
+): string {
+  const metadata = asRecord(record.metadata);
+  return (
+    stringFrom(metadata.narrative_agent_name) ||
+    stringFrom(metadata.character_name) ||
+    stringFrom(metadata.agent_label) ||
+    stringFrom(metadata.current_label) ||
+    stringFrom(record.label) ||
+    "Narrative Agent"
+  );
+}
+
+function narrativeAgentLabelFromProfile(profile: Record<string, unknown>): string {
+  const performer = asRecord(profile.attached_performer_metadata);
+  return (
+    stringFrom(profile.narrative_agent_name) ||
+    stringFrom(profile.character_name) ||
+    stringFrom(profile.current_label) ||
+    stringFrom(performer.actor_name) ||
+    stringFrom(profile.profile_id) ||
+    "Narrative Agent"
+  );
+}
+
+function narrativeAgentProfileEvidenceChips(profile: Record<string, unknown>): string[] {
+  const slots = asRecord(profile.evidence_slots);
+  return [
+    [slots.lines, "lines"],
+    [slots.audio_samples, "audio"],
+    [slots.visual_patterns, "visual"],
+    [slots.identification_refs, "ID"],
+    [slots.scene_links, "scene"],
+    [slots.meaning_plot_refs, "meaning/plot"],
+  ]
+    .filter(([items]) => Array.isArray(items) && items.length > 0)
+    .map(([items, label]) => `${label} ${Array.isArray(items) ? items.length : ""}`.trim());
+}
+
+function arrayFromUnknown(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function sceneRefsFromUnknown(value: unknown): Array<string | number> {
+  return arrayFromUnknown(value)
+    .map((item) => {
+      if (typeof item === "string" || typeof item === "number") return item;
+      const record = asRecord(item);
+      return (
+        stringFrom(record.scene_id) ||
+        numberFrom(record.scene_index) ||
+        numberFrom(record.index) ||
+        stringFrom(record.id)
+      );
+    })
+    .filter((item): item is string | number => item !== undefined && item !== null && item !== "");
+}
+
+function timeSupportsFromSourceItem(
+  item?: Record<string, unknown>,
+): Array<{ start: number; end?: number; support: ScenePresenceSupport }> {
+  if (!item) return [];
+  const start = numberFrom(
+    item.start ??
+      item.start_seconds ??
+      item.timestamp_seconds ??
+      item.time_start ??
+      asRecord(item.time_interval).start ??
+      asRecord(item.time_interval).start_seconds,
+  );
+  const end = numberFrom(
+    item.end ??
+      item.end_seconds ??
+      item.time_end ??
+      asRecord(item.time_interval).end ??
+      asRecord(item.time_interval).end_seconds,
+  );
+  if (start === undefined) return [];
+  return [{
+    start,
+    end,
+    support: item.category === "Identification" ? "manual" : "source",
+  }];
+}
+
+function upsertNarrativeAgentPathRow(
+  rows: Map<string, NarrativeAgentPathRow>,
+  patch: Partial<NarrativeAgentPathRow> & { label: string; source: string },
+) {
+  const key = normalizeAgentKey(patch.label);
+  if (!key) return;
+  const existing = rows.get(key);
+  const next: NarrativeAgentPathRow = {
+    key,
+    label: patch.label,
+    source: existing?.source || patch.source,
+    role: patch.role || existing?.role,
+    start:
+      existing?.start !== undefined && patch.start !== undefined
+        ? Math.min(existing.start, patch.start)
+        : existing?.start ?? patch.start,
+    end:
+      existing?.end !== undefined && patch.end !== undefined
+        ? Math.max(existing.end, patch.end)
+        : existing?.end ?? patch.end,
+    sceneCount: Math.max(existing?.sceneCount || 0, patch.sceneCount || 0),
+    manualCount: (existing?.manualCount || 0) + (patch.manualCount || 0),
+    cueCount: existing?.cueCount || patch.cueCount || 0,
+    evidenceChips: Array.from(
+      new Set([...(existing?.evidenceChips || []), ...(patch.evidenceChips || [])]),
+    ),
+    cues: existing?.cues || patch.cues || [],
+    sceneRefs: Array.from(new Set([...(existing?.sceneRefs || []), ...(patch.sceneRefs || [])])),
+    scenePresence: existing?.scenePresence || patch.scenePresence || [],
+    sourceItem: existing?.sourceItem || patch.sourceItem,
+  };
+  rows.set(key, next);
+}
+
+function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[] {
+  const rows = new Map<string, NarrativeAgentPathRow>();
+  const records: MasterSchemaResolvedEvidenceRecord[] =
+    analysisData?.masterSchemaResolvedEvidence?.records || [];
+  const instructions: SecondOrderLabelInstruction[] =
+    analysisData?.secondOrderLabelProliferation?.instructions || [];
+  const sceneSegments = matureSceneSegmentsFromAnalysis(analysisData);
+  const manualIdentification: ManualVisualAnnotation[] =
+    analysisData?.manualAnnotationsByCategory?.Identification || [];
+  const narrativeAgentProfiles: Record<string, unknown>[] =
+    analysisData?.metadata?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
+    analysisData?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
+    [];
+
+  for (const record of records) {
+    if (!["narrative_agent_profile", "character_role", "identity"].includes(record.category)) {
+      continue;
+    }
+    const metadata = asRecord(record.metadata);
+    const label = narrativeAgentLabelFromRecord(record);
+    upsertNarrativeAgentPathRow(rows, {
+      label,
+      source: record.category === "narrative_agent_profile"
+        ? "Master Schema Narrative Agent Profile"
+        : "Master Schema evidence",
+      role: stringFrom(metadata.role) || stringFrom(metadata.role_label),
+      start: record.start,
+      end: record.end,
+      sceneCount: Array.isArray(metadata.scene_refs) ? metadata.scene_refs.length : 0,
+      sceneRefs: sceneRefsFromUnknown(metadata.scene_refs),
+      evidenceChips: record.category === "identity" ? ["ID evidence"] : ["Master Schema"],
+      sourceItem: record as unknown as Record<string, unknown>,
+    });
+  }
+
+  for (const profile of narrativeAgentProfiles) {
+    const label = narrativeAgentLabelFromProfile(profile);
+    upsertNarrativeAgentPathRow(rows, {
+      label,
+      source: "Source Media Narrative Agent Profile",
+      role:
+        Array.isArray(asRecord(profile.source_metadata).role_labels)
+          ? (asRecord(profile.source_metadata).role_labels as string[])[0]
+          : stringFrom(asRecord(profile.source_metadata).role_description),
+      sceneCount:
+        Array.isArray(asRecord(profile.evidence_slots).scene_links)
+          ? (asRecord(profile.evidence_slots).scene_links as unknown[]).length
+          : 0,
+      sceneRefs: sceneRefsFromUnknown(asRecord(profile.evidence_slots).scene_links),
+      evidenceChips: narrativeAgentProfileEvidenceChips(profile),
+      sourceItem: profile,
+    });
+  }
+
+  for (const annotation of manualIdentification) {
+    const label =
+      annotation.identity_affirmation ||
+      annotation.custom_label ||
+      annotation.label ||
+      "Narrative Agent annotation";
+    upsertNarrativeAgentPathRow(rows, {
+      label,
+      source: "Manual Narrative Agent annotation",
+      role: annotation.role_affirmation,
+      start: numberFrom(annotation.start_seconds ?? annotation.timestamp_seconds),
+      end: numberFrom(annotation.end_seconds),
+      manualCount: 1,
+      sceneRefs: [],
+      evidenceChips: ["manual correction"],
+      sourceItem: annotation as unknown as Record<string, unknown>,
+    });
+  }
+
+  const nextRows = [...rows.values()].map((row) => {
+    const cues = instructions.filter((instruction) => instructionTouchesAgent(instruction, row.label));
+    const cueStart = cues
+      .map(secondsFromInstruction)
+      .filter((value) => Number.isFinite(value))
+      .sort((left, right) => left - right)[0];
+    const supportTimes = [
+      ...timeSupportsFromSourceItem(row.sourceItem),
+      ...cues.map((cue) => ({
+        start: secondsFromInstruction(cue),
+        end: cue.time_span?.end_ms !== undefined
+          ? Number(cue.time_span.end_ms) / 1000
+          : numberFrom(cue.time_span?.end),
+        support: "cue" as const,
+      })),
+    ].filter((support) => Number.isFinite(support.start));
+    const scenePresence = sceneSegments
+      .filter((scene) => {
+        const sceneRefKeys = [
+          scene.scene_index,
+          String(scene.scene_index),
+          scene.scene_id,
+        ].filter((value) => value !== undefined && value !== null);
+        const hasSceneRef = row.sceneRefs.some((ref) =>
+          sceneRefKeys.some((key) => String(key) === String(ref)),
+        );
+        if (hasSceneRef) return true;
+        return supportTimes.some((support) => {
+          const supportEnd = support.end ?? support.start;
+          return support.start <= scene.end && supportEnd >= scene.start;
+        });
+      })
+      .map((scene) => {
+        const support = supportTimes.find((item) => {
+          const supportEnd = item.end ?? item.start;
+          return item.start <= scene.end && supportEnd >= scene.start;
+        });
+        return {
+          sceneIndex: scene.scene_index,
+          sceneLabel: `S${scene.scene_index}`,
+          start: scene.start,
+          end: scene.end,
+          support: (support?.support || (row.sceneRefs.length ? "scene_ref" : "profile")) as ScenePresenceSupport,
+        };
+      })
+      .slice(0, 12);
+    return {
+      ...row,
+      cues,
+      cueCount: cues.length,
+      start: row.start ?? cueStart,
+      sceneCount: Math.max(row.sceneCount, scenePresence.length),
+      scenePresence,
+      evidenceChips: row.evidenceChips.length ? row.evidenceChips : ["profile"],
+    };
+  });
+
+  return nextRows.sort((left, right) => {
+    const supportDelta =
+      right.manualCount + right.cueCount + right.sceneCount -
+      (left.manualCount + left.cueCount + left.sceneCount);
+    if (supportDelta !== 0) return supportDelta;
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function sourceRefId(
@@ -923,6 +1279,249 @@ function MasterSchemaSubjectStrip({
   );
 }
 
+function MatureProliferationMatchStrip({
+  matches,
+  videoId,
+}: {
+  matches?: EvidenceProliferationMatchSummary[];
+  videoId: string;
+}) {
+  const visibleMatches = (matches || []).filter(
+    (match) => match.request_id || match.candidate_count,
+  );
+  if (visibleMatches.length === 0) {
+    return null;
+  }
+  return (
+    <section className="mb-2 rounded border border-amber-500/20 bg-amber-950/10 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-200">
+            Proliferation Candidate Matches
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
+            Mature evidence matches remain candidate support until source evidence confirms them.
+          </div>
+        </div>
+        <span className="shrink-0 rounded border border-amber-700/60 bg-[#111214] px-2 py-1 text-[10px] text-amber-100">
+          {visibleMatches.length} run{visibleMatches.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+        {visibleMatches.slice(0, 12).map((match, index) => {
+          const requestId = match.request_id || `proliferation_match:${index}`;
+          const candidateCount = Number(match.candidate_count || 0);
+          const label = `${candidateCount} candidate${
+            candidateCount === 1 ? "" : "s"
+          } / ${match.status || "completed"}`;
+          return (
+            <button
+              key={requestId}
+              type="button"
+              data-vaa1-proliferation-match-navigation="true"
+              className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-left hover:border-amber-400/70 hover:bg-amber-950/25"
+              onClick={() =>
+                emitEvidenceTraceback(videoId, {
+                  id: requestId,
+                  label,
+                  evidenceType: "evidence_proliferation_match",
+                  sourcePanel: "MasterSchema",
+                  sourceRefs: {
+                    media_id: videoId,
+                    metadata_id: requestId,
+                  },
+                  sourceItem: {
+                    ...match,
+                    governance: {
+                      outputs_are_candidates_until_supported_by_evidence: true,
+                      manual_correction_wins: true,
+                      traceback_required: true,
+                    },
+                  },
+                })
+              }
+            >
+              <div className="truncate text-[10px] font-medium text-slate-100">
+                {label}
+              </div>
+              <div className="mt-0.5 truncate text-[9px] text-[var(--ui-passive-text)]">
+                {requestId}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function NarrativeAgentCharacterPathsHome({
+  analysisData,
+  videoId,
+  openPanel,
+}: {
+  analysisData: any;
+  videoId: string;
+  openPanel: (panelType: string, panelProps?: any) => void;
+}) {
+  const rows = useMemo(
+    () => buildNarrativeAgentPathRows(analysisData),
+    [analysisData],
+  );
+  return (
+    <section
+      className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2"
+      data-vaa1-narrative-agent-character-paths="true"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+            Narrative Agent Character Paths
+          </div>
+          <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+            Agent-centered continuity, scenes, evidence, and dramatic readings live here.
+            Meaning / Plot remains the cross-agent plot map.
+          </div>
+        </div>
+        <button
+          type="button"
+          className="rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/30"
+          onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
+        >
+          Meaning / Plot map
+        </button>
+      </div>
+
+      <div className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2">
+        <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+          Dramatic Archetype Readings
+        </div>
+        <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
+          Cross-tradition readings, not imposed as Narrative Agent labels.
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {NARRATIVE_AGENT_ARCHETYPE_LENSES.map((lens) => (
+            <button
+              key={lens.label}
+              type="button"
+              className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+              title={lens.description}
+              data-vaa1-narrative-agent-archetype-navigation="true"
+              onClick={() => {
+                eventBus.emit("meaningPlotArchetypeLensRequested", lens.id);
+                openPanel("MeaningPlot", videoId ? { videoId } : {});
+              }}
+            >
+              {lens.label} / {lens.tradition}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-2 space-y-1.5">
+        {rows.length === 0 ? (
+          <div className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
+            No governed Narrative Agent paths yet. Confirm or name an agent to seed this home.
+          </div>
+        ) : (
+          rows.slice(0, 16).map((row) => (
+            <div
+              key={row.key}
+              className="rounded border border-slate-800 bg-[#111214] px-2 py-2"
+              data-vaa1-narrative-agent-path-row="true"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-medium text-slate-100">
+                    {row.label}
+                  </div>
+                  <div className="mt-0.5 text-[9px] text-[var(--ui-passive-text)]">
+                    {row.source}
+                    {row.role ? ` / ${row.role}` : ""}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-1">
+                  {row.start !== undefined && (
+                    <button
+                      type="button"
+                      className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-600 hover:text-cyan-100"
+                      onClick={() => openVideoAtTime(videoId, row.start || 0)}
+                    >
+                      source {formatSeconds(row.start)}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-600 hover:text-cyan-100"
+                    onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
+                  >
+                    plot map
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
+                  cues {row.cueCount}
+                </span>
+                <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
+                  scenes {row.sceneCount}
+                </span>
+                <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
+                  manual {row.manualCount}
+                </span>
+                {row.evidenceChips.slice(0, 6).map((chip) => (
+                  <span
+                    key={chip}
+                    className="rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100"
+                  >
+                    {chip}
+                  </span>
+                ))}
+              </div>
+              <div
+                className="mt-2 flex flex-wrap gap-1"
+                data-vaa1-narrative-agent-scene-presence="true"
+              >
+                {row.scenePresence.length > 0 ? (
+                  row.scenePresence.map((scene) => (
+                    <button
+                      key={`${row.key}:scene:${scene.sceneIndex}:${scene.start}`}
+                      type="button"
+                      className="rounded border border-emerald-800/60 bg-emerald-950/15 px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                      title={`${scene.support} support / ${formatSeconds(scene.start)}-${formatSeconds(scene.end)}`}
+                      onClick={() => openVideoAtTime(videoId, scene.start)}
+                    >
+                      {scene.sceneLabel} {formatSeconds(scene.start)}
+                    </button>
+                  ))
+                ) : (
+                  <span className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5 text-[9px] text-[var(--ui-passive-text)]">
+                    scene presence pending
+                  </span>
+                )}
+              </div>
+              {row.cues.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {row.cues.slice(0, 3).map((cue) => (
+                    <button
+                      key={cue.instruction_id}
+                      type="button"
+                      className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                      onClick={() => openVideoAtTime(videoId, secondsFromInstruction(cue))}
+                    >
+                      {formatSeconds(secondsFromInstruction(cue))} {cue.candidate_label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function MasterSchemaPanel({
   videoId: initialVideoId = "",
   category,
@@ -1311,6 +1910,17 @@ export default function MasterSchemaPanel({
             <MatureEvidenceStrip analysisData={analysisData} />
             <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
             <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
+            <MatureProliferationMatchStrip
+              matches={analysisData?.evidenceProliferationMatches}
+              videoId={videoId}
+            />
+            {category === "Identification" && (
+              <NarrativeAgentCharacterPathsHome
+                analysisData={analysisData}
+                videoId={videoId}
+                openPanel={openPanel}
+              />
+            )}
             <SecondOrderLabelReviewTray
               plan={analysisData?.secondOrderLabelProliferation}
             />

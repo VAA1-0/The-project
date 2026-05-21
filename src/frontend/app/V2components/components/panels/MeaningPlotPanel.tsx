@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
 import type { ExpressionSample, TranscriptSegment } from "@/lib/video-service";
@@ -1128,12 +1128,37 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
   const [stagedSceneAgents, setStagedSceneAgents] = useState<Record<string, string[]>>({});
   const [openCharacterSceneProfiles, setOpenCharacterSceneProfiles] = useState<Record<string, boolean>>({});
   const [governedSourceMetadata, setGovernedSourceMetadata] = useState<SourceMediaMetadata | null>(null);
+  const sceneAgentBrowserRef = useRef<HTMLDivElement | null>(null);
+  const characterSceneListRef = useRef<HTMLDivElement | null>(null);
+  const dramaticArchetypeReadingsRef = useRef<HTMLDivElement | null>(null);
+  const participantRankingRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollCharacterPathSection = useCallback(
+    (target: React.RefObject<HTMLDivElement | null>) => {
+      target.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const handler = (id: string) => setSelectedVideoId(id);
     eventBus.on("videoIdChanged", handler);
     return () => eventBus.off("videoIdChanged", handler);
   }, []);
+
+  useEffect(() => {
+    const handler = (lens: DramaticArchetypeLens) => {
+      if (DRAMATIC_ARCHETYPE_LENSES.some((item) => item.id === lens)) {
+        setActiveArchetypeLens(lens);
+        scrollCharacterPathSection(dramaticArchetypeReadingsRef);
+      }
+    };
+    eventBus.on("meaningPlotArchetypeLensRequested", handler);
+    return () => eventBus.off("meaningPlotArchetypeLensRequested", handler);
+  }, [scrollCharacterPathSection]);
 
   useEffect(() => {
     if (!selectedVideoId) {
@@ -1694,6 +1719,51 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                 <div className="mt-1 text-[11px] text-slate-500">
                   Care, power, role, relation, affect, and intensity candidates.
                 </div>
+                <div
+                  className="mt-2 flex flex-wrap gap-1"
+                  data-vaa1-meaning-plot-section-jumps="true"
+                >
+                  <button
+                    type="button"
+                    onClick={() => scrollCharacterPathSection(sceneAgentBrowserRef)}
+                    className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
+                  >
+                    Scene agents
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollCharacterPathSection(characterSceneListRef)}
+                    className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
+                  >
+                    Characters by scene
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollCharacterPathSection(dramaticArchetypeReadingsRef)}
+                    className="rounded border border-cyan-700/60 bg-cyan-950/20 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-950/35"
+                  >
+                    Dramatic archetypes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollCharacterPathSection(participantRankingRef)}
+                    className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
+                  >
+                    Participant ranking
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      eventBus.emit("openPanelRequest", {
+                        panelType: "ManualIdentification",
+                        panelProps: selectedVideoId ? { videoId: selectedVideoId } : {},
+                      })
+                    }
+                    className="rounded border border-cyan-700/60 bg-[#101010] px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
+                  >
+                    Narrative Agent paths
+                  </button>
+                </div>
                 <div className="mt-2 rounded border border-cyan-900/40 bg-cyan-950/10 px-2 py-2">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -1727,7 +1797,11 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                   )}
                 </div>
                 {sceneSegments.length > 0 && (
-                  <div className="mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2">
+                  <div
+                    ref={sceneAgentBrowserRef}
+                    className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                    data-vaa1-meaning-plot-scene-agent-browser="true"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
@@ -1890,7 +1964,11 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                   </div>
                 )}
                 {characterSceneGovernanceRows.length > 0 && (
-                  <div className="mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2">
+                  <div
+                    ref={characterSceneListRef}
+                    className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                    data-vaa1-meaning-plot-character-scene-list="true"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
@@ -2039,7 +2117,11 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                     </div>
                   </div>
                 )}
-                <div className="mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2">
+                <div
+                  ref={dramaticArchetypeReadingsRef}
+                  className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                  data-vaa1-meaning-plot-dramatic-archetypes="true"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
@@ -2097,7 +2179,11 @@ export default function MeaningPlotPanel({ videoId: initialVideoId = "" }: { vid
                   </div>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-2">
+              <div
+                ref={participantRankingRef}
+                className="scroll-mt-2 min-h-0 flex-1 space-y-3 overflow-auto p-2"
+                data-vaa1-meaning-plot-participant-ranking="true"
+              >
                 {participantGroups.length ? (
                   participantGroups.map(([participant, items]) => {
                     const matchedProfiles = narrativeAgentProfiles.filter((profile) =>

@@ -98,6 +98,61 @@ raw artifacts
 
 Until that resolved-evidence view is fully centralized, every new panel or report must explicitly apply the same authority order and preserve links back to raw evidence.
 
+## Sprint Sequence: Proliferation Bus
+
+The next mature-data hardening sprint should add one Master Schema-governed Mature Data Proliferation Bus, rather than many panel-local "helpful outputs."
+
+The operational invariant is:
+
+```text
+Nothing appears as active meaning in any panel unless it has a Master Schema object, source anchor, maturity state, authority level, traceback record, and propagation event.
+```
+
+Recommended order:
+
+1. Preserve the schema draft as documentation first: `docs/schemas/vaa1_mature_data_proliferation_governance_v1.draft.json`.
+2. Add contract tests before runtime enforcement:
+   - manual corrections proliferate everywhere
+   - unknown/raw labels cannot override known mature labels
+   - visible claims require traceback/source anchors
+   - quality agents audit rather than overwrite
+   - SOM/open topology remains diagnostic only
+3. Add `src/backend/analysis/mature_data_proliferation_bus.py`.
+   - collect changed Master Schema objects
+   - resolve authority order
+   - emit propagation events
+   - update panel projection payloads
+   - record propagation audit
+   - block unknown-over-known overrides
+   - surface conflicts
+4. Add `src/backend/analysis/master_schema_governance_matrix.py`.
+   - produce linear rows beside the POS/Quant matrix style
+   - include object id, family, mature label, authority, maturity, source anchors, traceback, used panels, propagation status, conflicts, last analyst action, and review need
+   - expose open maturity-score weights where applicable
+5. Add `src/backend/analysis/master_schema_quality_agent.py`.
+   - audit missing traceback, visible-without-Master-Schema cases, panel divergence, manual correction propagation misses, orphan evidence, stale localStorage proliferation, missing mature labels, and conflicting agent labels
+   - create review tickets and suggested patches only
+   - never silently overwrite governed mature data
+6. Add `MasterSchemaGovernanceMatrix` to the frontend.
+   - rows should be sortable, filterable, inspectable, correctable, and Traceback-linked
+   - this is a governance surface, not a decorative dashboard
+7. Migrate projection families one by one:
+   - manual corrections
+   - Narrative Agent labels
+   - audio/visual sample-cloud matches
+   - scene, situation, role, SFL, and dependency findings
+   - second-order labels
+   - report/search/export claims
+8. Add SOM/open-topology diagnostics only after nodes can reference Master Schema object ids, source anchors, maturity scores, and traceback refs.
+   - SOM may identify coherent neighborhoods, duplicate candidates, fragmented evidence, outliers, and propagation gaps
+   - SOM must not act as the authority engine
+
+Safety rule:
+
+```text
+Apply the schema in shadow/audit mode first. Do not destructively migrate legacy identity fields or block existing panel behavior until adapters, validators, tests, and rollback paths exist.
+```
+
 ## Master Schema Acid Test
 
 The Master Schema is the core maturity coordination layer. VAA1 should not add a competing

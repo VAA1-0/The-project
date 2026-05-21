@@ -43,6 +43,18 @@ test("VideoService builds a single mature evidence view from corrected and Maste
 
   assert.match(
     videoService,
+    /evidenceProliferationMatches:\s*status\.evidence_proliferation_matches \|\| \[\]/,
+    "completed proliferation matches must be carried into frontend analysis data",
+  );
+
+  assert.match(
+    videoService,
+    /records\.push\(\.\.\.evidenceProliferationMatchRecords\(evidenceProliferationMatches\)\);[\s\S]*transcript\.forEach/,
+    "proliferation match summaries must enter resolved evidence before raw panel records",
+  );
+
+  assert.match(
+    videoService,
     /masterSchemaMaturityAudit\(\s*status\.vaa1_annotation_master_schema/,
     "metadata indicators must expose the current Master Schema maturity audit",
   );
@@ -83,6 +95,18 @@ test("Meaning and Master Schema panels consume mature subject authority instead 
     masterSchemaPanel,
     /masterSchemaResolvedEvidence/,
     "Master Schema panel must display the same resolved evidence surface used by downstream panels",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-proliferation-match-navigation="true"/,
+    "Master Schema must expose persisted proliferation matches as navigable candidate evidence",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /outputs_are_candidates_until_supported_by_evidence/,
+    "proliferation match UI must preserve candidate-not-confirmed governance language",
   );
 });
 

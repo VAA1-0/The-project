@@ -231,13 +231,7 @@ export interface AnalysisStatus {
     output_json_path?: string;
     updated_at?: string;
   } | null;
-  evidence_proliferation_matches?: Array<{
-    request_id?: string;
-    status?: string;
-    candidate_count?: number;
-    output_json_path?: string;
-    updated_at?: string;
-  }>;
+  evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   audio_diarization?: AudioDiarizationScaffold | null;
   audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
@@ -459,6 +453,14 @@ export interface EvidenceProliferationMatch {
   governance?: Record<string, unknown>;
   request?: EvidenceProliferationRequest;
   candidates?: EvidenceProliferationCandidate[];
+}
+
+export interface EvidenceProliferationMatchSummary {
+  request_id?: string;
+  status?: string;
+  candidate_count?: number;
+  output_json_path?: string;
+  updated_at?: string;
 }
 
 export interface AudioDiarizationScaffold {

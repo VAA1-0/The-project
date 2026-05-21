@@ -157,6 +157,24 @@ function normalizeLegacyLayoutLabels(value: unknown): unknown {
   return next;
 }
 
+function layoutContainsComponent(value: unknown, componentType: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => layoutContainsComponent(item, componentType));
+  }
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (record.componentType === componentType) {
+    return true;
+  }
+
+  return Object.values(record).some((childValue) =>
+    layoutContainsComponent(childValue, componentType),
+  );
+}
+
 const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
   settings: {
     showMaximiseIcon: false,
@@ -796,9 +814,12 @@ export default function LayoutHost({
     try {
       const stored = window.localStorage.getItem(SAVED_LAYOUT_STORAGE_KEY);
       if (stored) {
-        initialLayout = normalizeLegacyLayoutLabels(
+        const restoredLayout = normalizeLegacyLayoutLabels(
           JSON.parse(stored),
         ) as import("golden-layout").LayoutConfig;
+        initialLayout = layoutContainsComponent(restoredLayout, "VideoPanel")
+          ? restoredLayout
+          : buildDefaultLayoutConfig();
       }
       const params = new URLSearchParams(window.location.search);
       requestedAnalysisId = params.get("analysis_id") || "";

@@ -1,0 +1,806 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1_mature_data_proliferation_governance.v1.draft.json",
+  "title": "VAA1 Mature Data Proliferation Governance Schema Draft",
+  "schema_name": "vaa1.mature_data_proliferation_governance.v1",
+  "version": "1.0.0-draft",
+  "status": "planning_contract_shadow_mode",
+  "description": "Draft operational schema for governing VAA1 mature-data proliferation. Master Schema is the authority hub, panels are projections, the propagation bus distributes governed mature objects, quality agents audit only, and SOM/open topology diagnostics must not become authority.",
+  "type": "object",
+  "required": [
+    "operative_principle",
+    "authority_order",
+    "maturity_states",
+    "master_schema_objects",
+    "propagation_bus",
+    "governance_matrix",
+    "quality_agent"
+  ],
+  "properties": {
+    "operative_principle": {
+      "type": "object",
+      "required": [
+        "master_schema_invariant",
+        "panel_projection_rule",
+        "manual_authority_rule",
+        "traceability_rule",
+        "non_mutation_rule",
+        "quality_rule"
+      ],
+      "properties": {
+        "core_promise": {
+          "type": "string",
+          "default": "VAA1 delivers multimodal analysis by maturing, governing, and proliferating linked evidence across all analytical surfaces."
+        },
+        "master_schema_invariant": {
+          "type": "string",
+          "default": "All active semantic claims visible in panels must be projections from governed Master Schema objects."
+        },
+        "panel_projection_rule": {
+          "type": "string",
+          "default": "Frontend panels may display, filter, edit, and navigate mature data, but must not become independent sources of semantic truth."
+        },
+        "manual_authority_rule": {
+          "type": "string",
+          "default": "Manual correction, confirmation, annotation, merge, split, rejection, or replacement has the highest operational authority."
+        },
+        "traceability_rule": {
+          "type": "string",
+          "default": "Every mature claim must preserve source anchors, evidence references, maturity state, authority level, and traceback."
+        },
+        "non_mutation_rule": {
+          "type": "string",
+          "default": "Proliferated candidates must not mutate source evidence; they generate governed projections and reviewable candidates."
+        },
+        "quality_rule": {
+          "type": "string",
+          "default": "Quality agents may audit, flag, and suggest corrections but must not silently overwrite governed mature data."
+        }
+      },
+      "additionalProperties": true
+    },
+    "authority_order": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["rank", "authority_level", "description"],
+        "properties": {
+          "rank": { "type": "integer", "minimum": 1 },
+          "authority_level": { "$ref": "#/$defs/authority_level" },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      },
+      "default": [
+        { "rank": 1, "authority_level": "manual_correction", "description": "Analyst-corrected data. Highest authority." },
+        { "rank": 2, "authority_level": "manual_confirmation", "description": "Analyst-confirmed data." },
+        { "rank": 3, "authority_level": "manual_annotation", "description": "Analyst-created annotation." },
+        { "rank": 4, "authority_level": "governed_metadata", "description": "User-provided or source-provided metadata routed through Master Schema governance." },
+        { "rank": 5, "authority_level": "mature_triangulated_evidence", "description": "Cross-modal evidence with maturity score and traceback." },
+        { "rank": 6, "authority_level": "supported_candidate", "description": "Candidate supported by evidence but below mature authority." },
+        { "rank": 7, "authority_level": "single_modality_candidate", "description": "Candidate from one modality only." },
+        { "rank": 8, "authority_level": "raw_detection", "description": "Detector substrate preserved as provenance only." }
+      ]
+    },
+    "maturity_states": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/maturity_state" },
+      "default": [
+        "raw_detection_seed",
+        "local_candidate",
+        "media_candidate",
+        "media_array_candidate",
+        "cross_modal_candidate",
+        "probable",
+        "strongly_supported",
+        "analyst_named",
+        "analyst_confirmed",
+        "manual_correction",
+        "merged_object",
+        "split_object",
+        "rejected_object",
+        "archived_object",
+        "blocked_from_proliferation"
+      ]
+    },
+    "master_schema_objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/master_schema_object" }
+    },
+    "propagation_bus": {
+      "type": "object",
+      "required": ["bus_id", "events", "audit_log"],
+      "properties": {
+        "bus_id": {
+          "type": "string",
+          "default": "vaa1_mature_data_proliferation_bus"
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/propagation_event" }
+        },
+        "audit_log": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/propagation_audit_row" }
+        }
+      }
+    },
+    "governance_matrix": {
+      "type": "object",
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "master_object_id",
+            "object_family",
+            "current_label",
+            "maturity_state",
+            "authority_level",
+            "overall_maturity_score",
+            "source_modalities",
+            "source_anchors",
+            "traceback_ref",
+            "used_by_panels",
+            "propagation_status",
+            "conflict_state",
+            "last_analyst_action",
+            "review_required"
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/governance_matrix_row" }
+        }
+      }
+    },
+    "quality_agent": {
+      "type": "object",
+      "required": ["agent_name", "authority_policy", "checks"],
+      "properties": {
+        "agent_name": {
+          "type": "string",
+          "default": "MasterSchemaQualityAgent"
+        },
+        "authority_policy": {
+          "type": "object",
+          "required": [
+            "may_overwrite_master_schema",
+            "may_create_review_tickets",
+            "may_suggest_patches",
+            "may_block_unknown_overrides",
+            "requires_analyst_confirmation_for_authority_change"
+          ],
+          "properties": {
+            "may_overwrite_master_schema": { "const": false },
+            "may_create_review_tickets": { "const": true },
+            "may_suggest_patches": { "const": true },
+            "may_block_unknown_overrides": { "const": true },
+            "requires_analyst_confirmation_for_authority_change": { "const": true }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/quality_check" },
+          "default": [
+            "missing_traceback",
+            "visible_without_master_schema_object",
+            "unknown_overrides_known_agent",
+            "panel_state_diverges_from_master_schema",
+            "manual_correction_not_propagated",
+            "sample_cloud_not_polled",
+            "mature_label_missing_from_bbox",
+            "conflicting_agent_labels",
+            "orphan_evidence"
+          ]
+        },
+        "review_tickets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/review_ticket" }
+        }
+      }
+    },
+    "som_open_topology_diagnostic": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "authority_policy": {
+          "type": "object",
+          "properties": {
+            "som_is_authority": { "const": false },
+            "som_may_generate_candidates": { "const": true },
+            "som_candidates_require_master_schema_governance": { "const": true },
+            "som_nodes_require_traceback": { "const": true }
+          }
+        },
+        "input_feature_families": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "narrative_agent_vectors",
+              "audio_sample_embeddings",
+              "speaker_embeddings",
+              "visual_sample_embeddings",
+              "face_embeddings",
+              "clothing_histograms",
+              "object_detection_features",
+              "transcript_sfl_features",
+              "dependency_features",
+              "scene_feature_vectors",
+              "expression_features",
+              "prosody_features",
+              "second_order_label_vectors"
+            ]
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/som_node" }
+        }
+      }
+    },
+    "acceptance_tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["test_id", "given", "expect"],
+        "properties": {
+          "test_id": { "type": "string" },
+          "given": { "type": "string" },
+          "expect": { "type": "string" }
+        }
+      },
+      "default": [
+        {
+          "test_id": "AT_001_manual_correction_proliferates_everywhere",
+          "given": "An analyst renames or corrects a Narrative Agent.",
+          "expect": "Master Schema updates first, then downstream projections update through the propagation bus."
+        },
+        {
+          "test_id": "AT_002_unknown_cannot_override_known",
+          "given": "Known Master Schema subject exists and raw detector says unknown.",
+          "expect": "Unknown is blocked from overriding mature label and is preserved only as raw substrate."
+        },
+        {
+          "test_id": "AT_003_visible_claim_has_traceback",
+          "given": "A mature claim is visible in any panel.",
+          "expect": "The claim exposes traceback, source anchors, evidence references, maturity state, and authority level."
+        },
+        {
+          "test_id": "AT_004_quality_agent_audits_not_overwrites",
+          "given": "A propagation failure is detected.",
+          "expect": "Quality agent creates a review ticket and suggested action but does not overwrite Master Schema."
+        },
+        {
+          "test_id": "AT_005_som_is_diagnostic_only",
+          "given": "SOM groups two agents as similar.",
+          "expect": "SOM may create a possible_same_as candidate, but Master Schema governance decides authority."
+        }
+      ]
+    },
+    "recommended_files": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "src/backend/analysis/mature_data_proliferation_bus.py",
+            "src/backend/analysis/master_schema_quality_agent.py",
+            "src/backend/analysis/master_schema_governance_matrix.py",
+            "src/backend/analysis/som_open_topology_diagnostic.py"
+          ]
+        },
+        "frontend": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "src/frontend/app/V2components/components/panels/MasterSchemaGovernanceMatrix.tsx",
+            "src/frontend/app/V2components/components/panels/QualityAgentReviewTray.tsx"
+          ]
+        },
+        "tests": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "tests/test_mature_data_proliferation_bus_contract.py",
+            "tests/test_master_schema_quality_agent_contract.py",
+            "src/frontend/tests/master-schema-governance-matrix.test.mjs",
+            "src/frontend/tests/mature-data-proliferation-ui.test.mjs"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "authority_level": {
+      "type": "string",
+      "enum": [
+        "manual_correction",
+        "manual_confirmation",
+        "manual_annotation",
+        "governed_metadata",
+        "mature_triangulated_evidence",
+        "supported_candidate",
+        "single_modality_candidate",
+        "raw_detection"
+      ]
+    },
+    "maturity_state": {
+      "type": "string",
+      "enum": [
+        "raw_detection_seed",
+        "local_candidate",
+        "media_candidate",
+        "media_array_candidate",
+        "cross_modal_candidate",
+        "probable",
+        "strongly_supported",
+        "analyst_named",
+        "analyst_confirmed",
+        "manual_correction",
+        "merged_object",
+        "split_object",
+        "rejected_object",
+        "archived_object",
+        "blocked_from_proliferation"
+      ]
+    },
+    "object_family": {
+      "type": "string",
+      "enum": [
+        "NarrativeAgent",
+        "PersonTrack",
+        "Object",
+        "AudioSample",
+        "VisualSample",
+        "TranscriptSegment",
+        "Scene",
+        "Episode",
+        "Situation",
+        "Interaction",
+        "Action",
+        "Movement",
+        "Expression",
+        "Role",
+        "Relationship",
+        "SFLFeature",
+        "DependencyFeature",
+        "SecondOrderLabel",
+        "ReportClaim",
+        "ForensicObservation",
+        "MetadataSubject",
+        "TracebackNode"
+      ]
+    },
+    "source_modality": {
+      "type": "string",
+      "enum": [
+        "video",
+        "audio",
+        "transcript",
+        "metadata",
+        "ocr",
+        "object_detection",
+        "face_embedding",
+        "speaker_embedding",
+        "prosody",
+        "sfl",
+        "dependency_parsing",
+        "scene_card",
+        "manual_annotation",
+        "report_writer",
+        "external_reference"
+      ]
+    },
+    "projection_target": {
+      "type": "string",
+      "enum": [
+        "backend_agent_registry",
+        "frontend_global_state",
+        "master_schema_panel",
+        "video_panel",
+        "bbox_roi_panel",
+        "objects_panel",
+        "audio_panel",
+        "sample_cloud_panel",
+        "transcript_panel",
+        "diarization_panel",
+        "pos_analysis_panel",
+        "dependency_sfl_panel",
+        "scene_browser",
+        "scene_card_panel",
+        "mise_en_scene_panel",
+        "meaning_plot_panel",
+        "narrative_agent_panel",
+        "traceback_drawer",
+        "evidence_graph",
+        "governance_matrix",
+        "search_index",
+        "report_writer",
+        "export_payloads"
+      ]
+    },
+    "master_schema_object": {
+      "type": "object",
+      "required": [
+        "master_object_id",
+        "object_family",
+        "current_label",
+        "maturity_state",
+        "authority_level",
+        "evidence_refs",
+        "traceback_ref",
+        "source_anchors",
+        "projection_targets",
+        "governance_status"
+      ],
+      "properties": {
+        "master_object_id": { "type": "string", "minLength": 1 },
+        "object_family": { "$ref": "#/$defs/object_family" },
+        "legacy_aliases": { "type": "array", "items": { "type": "string" } },
+        "current_label": { "type": "string", "minLength": 1 },
+        "previous_labels": { "type": "array", "items": { "type": "string" } },
+        "maturity_state": { "$ref": "#/$defs/maturity_state" },
+        "authority_level": { "$ref": "#/$defs/authority_level" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "maturity_score": { "$ref": "#/$defs/maturity_score" },
+        "source_modalities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source_modality" }
+        },
+        "source_anchors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/source_anchor" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidence_ref" }
+        },
+        "traceback_ref": { "type": "string", "minLength": 1 },
+        "relations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relation" }
+        },
+        "projection_targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/projection_target" }
+        },
+        "governance_status": { "$ref": "#/$defs/governance_status" }
+      },
+      "additionalProperties": true
+    },
+    "maturity_score": {
+      "type": "object",
+      "properties": {
+        "overall_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "components": {
+          "type": "object",
+          "properties": {
+            "manual_authority": { "type": "number", "minimum": 0, "maximum": 1 },
+            "source_traceability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "cross_modal_support": { "type": "number", "minimum": 0, "maximum": 1 },
+            "temporal_spatial_fit": { "type": "number", "minimum": 0, "maximum": 1 },
+            "semantic_fit": { "type": "number", "minimum": 0, "maximum": 1 },
+            "sample_cloud_support": { "type": "number", "minimum": 0, "maximum": 1 },
+            "metadata_support": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "open_weights": {
+          "type": "object",
+          "properties": {
+            "manual_authority": { "type": "number", "default": 0.3 },
+            "source_traceability": { "type": "number", "default": 0.15 },
+            "cross_modal_support": { "type": "number", "default": 0.2 },
+            "temporal_spatial_fit": { "type": "number", "default": 0.15 },
+            "semantic_fit": { "type": "number", "default": 0.1 },
+            "sample_cloud_support": { "type": "number", "default": 0.1 },
+            "metadata_support": { "type": "number", "default": 0 }
+          }
+        }
+      }
+    },
+    "source_anchor": {
+      "type": "object",
+      "required": ["anchor_id", "anchor_type"],
+      "properties": {
+        "anchor_id": { "type": "string", "minLength": 1 },
+        "anchor_type": {
+          "enum": [
+            "media_time_interval",
+            "frame_ref",
+            "bbox",
+            "roi",
+            "waveform_region",
+            "transcript_token_range",
+            "transcript_segment",
+            "scene_interval",
+            "metadata_field",
+            "dom_selector",
+            "source_url",
+            "report_section"
+          ]
+        },
+        "source_media_id": { "type": ["string", "null"] },
+        "time_interval": {
+          "type": ["object", "null"],
+          "properties": {
+            "start_ms": { "type": ["integer", "null"] },
+            "end_ms": { "type": ["integer", "null"] },
+            "start_seconds": { "type": ["number", "null"] },
+            "end_seconds": { "type": ["number", "null"] }
+          }
+        },
+        "bbox": {
+          "type": ["object", "null"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "width": { "type": "number" },
+            "height": { "type": "number" },
+            "coordinate_system": { "type": "string", "default": "source_frame_pixels" }
+          }
+        },
+        "panel_source": { "type": ["string", "null"] },
+        "stable_selector": { "type": ["string", "null"] }
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": ["evidence_id", "evidence_kind"],
+      "properties": {
+        "evidence_id": { "type": "string", "minLength": 1 },
+        "evidence_kind": {
+          "enum": [
+            "manual_correction",
+            "manual_confirmation",
+            "manual_annotation",
+            "metadata_reference",
+            "raw_detection",
+            "proliferated_candidate",
+            "cross_modal_support",
+            "audio_sample_cloud",
+            "visual_sample_cloud",
+            "face_embedding_match",
+            "speaker_embedding_match",
+            "sfl_feature",
+            "dependency_feature",
+            "scene_card",
+            "second_order_label",
+            "traceback_node",
+            "report_claim"
+          ]
+        },
+        "authority_level": { "oneOf": [{ "$ref": "#/$defs/authority_level" }, { "type": "null" }] },
+        "support_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "provenance_note": { "type": ["string", "null"] }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "required": ["relation_type", "target_master_object_id"],
+      "properties": {
+        "relation_type": {
+          "enum": [
+            "same_as",
+            "possible_same_as",
+            "derived_from",
+            "supports",
+            "contradicts",
+            "member_of",
+            "participant_in",
+            "speaker_of",
+            "owner_of_expression",
+            "actor_of_action",
+            "subject_of_role",
+            "located_in_scene",
+            "appears_in_episode",
+            "used_by_report_claim",
+            "needs_review_against"
+          ]
+        },
+        "target_master_object_id": { "type": "string", "minLength": 1 },
+        "relation_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "review_state": {
+          "enum": ["unreviewed", "candidate", "confirmed", "rejected", "blocked"],
+          "default": "unreviewed"
+        }
+      }
+    },
+    "governance_status": {
+      "type": "object",
+      "required": ["active", "proliferation_allowed", "review_required"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "proliferation_allowed": { "type": "boolean" },
+        "review_required": { "type": "boolean" },
+        "review_reason": { "type": ["string", "null"] },
+        "conflict_state": {
+          "enum": ["none", "weak_conflict", "strong_conflict", "manual_conflict", "blocked"],
+          "default": "none"
+        },
+        "unknown_override_blocked": { "type": "boolean", "default": true }
+      }
+    },
+    "propagation_event": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "master_object_id",
+        "source_of_change",
+        "authority_level",
+        "must_propagate_to",
+        "partial_propagation_allowed"
+      ],
+      "properties": {
+        "event_id": { "type": "string", "minLength": 1 },
+        "event_type": {
+          "enum": [
+            "master_object_created",
+            "maturity_state_changed",
+            "label_changed",
+            "manual_correction_applied",
+            "manual_confirmation_applied",
+            "object_merged",
+            "object_split",
+            "object_rejected",
+            "object_archived",
+            "evidence_added",
+            "traceback_updated",
+            "sample_cloud_match_added",
+            "scene_participation_updated",
+            "second_order_label_affirmed",
+            "projection_refresh_required",
+            "unknown_override_blocked"
+          ]
+        },
+        "master_object_id": { "type": "string", "minLength": 1 },
+        "previous_state": { "type": ["object", "null"] },
+        "new_state": { "type": ["object", "null"] },
+        "changed_fields": { "type": "object" },
+        "source_of_change": {
+          "enum": [
+            "manual_analyst_action",
+            "metadata_ingest",
+            "maturity_engine",
+            "sample_cloud_matcher",
+            "second_order_proliferation",
+            "scene_card_governance",
+            "sfl_dependency_engine",
+            "traceback_engine",
+            "quality_agent_suggestion"
+          ]
+        },
+        "authority_level": { "$ref": "#/$defs/authority_level" },
+        "must_propagate_to": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/projection_target" }
+        },
+        "partial_propagation_allowed": { "const": false },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "propagation_audit_row": {
+      "type": "object",
+      "required": ["audit_id", "event_id", "target", "status"],
+      "properties": {
+        "audit_id": { "type": "string" },
+        "event_id": { "type": "string" },
+        "target": { "$ref": "#/$defs/projection_target" },
+        "status": { "enum": ["pending", "success", "failed", "blocked", "stale"] },
+        "failure_reason": { "type": ["string", "null"] },
+        "last_checked_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "governance_matrix_row": {
+      "type": "object",
+      "required": [
+        "master_object_id",
+        "object_family",
+        "current_label",
+        "maturity_state",
+        "authority_level",
+        "traceback_ref",
+        "used_by_panels",
+        "propagation_status",
+        "review_required"
+      ],
+      "properties": {
+        "master_object_id": { "type": "string" },
+        "object_family": { "$ref": "#/$defs/object_family" },
+        "current_label": { "type": "string" },
+        "maturity_state": { "$ref": "#/$defs/maturity_state" },
+        "authority_level": { "$ref": "#/$defs/authority_level" },
+        "overall_maturity_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "source_modalities": { "type": "array", "items": { "$ref": "#/$defs/source_modality" } },
+        "source_anchors": { "type": "array", "items": { "$ref": "#/$defs/source_anchor" } },
+        "traceback_ref": { "type": "string" },
+        "used_by_panels": { "type": "array", "items": { "$ref": "#/$defs/projection_target" } },
+        "propagation_status": { "enum": ["complete", "partial", "failed", "pending", "stale"] },
+        "conflict_state": { "enum": ["none", "weak_conflict", "strong_conflict", "manual_conflict", "blocked"] },
+        "last_analyst_action": { "type": ["string", "null"] },
+        "review_required": { "type": "boolean" }
+      }
+    },
+    "quality_check": {
+      "enum": [
+        "missing_traceback",
+        "visible_without_master_schema_object",
+        "unknown_overrides_known_agent",
+        "panel_state_diverges_from_master_schema",
+        "manual_correction_not_propagated",
+        "manual_merge_not_propagated",
+        "manual_split_not_propagated",
+        "sample_cloud_not_polled",
+        "mature_label_missing_from_bbox",
+        "mature_label_missing_from_transcript",
+        "scene_card_not_back_propagating_to_bbox",
+        "sfl_feature_not_projected_to_pos_matrix",
+        "second_order_label_not_projected",
+        "conflicting_agent_labels",
+        "orphan_evidence",
+        "stale_localstorage_proliferation",
+        "missing_source_anchor",
+        "missing_governance_matrix_row"
+      ]
+    },
+    "review_ticket": {
+      "type": "object",
+      "required": ["ticket_id", "severity", "finding_type", "requires_analyst_review"],
+      "properties": {
+        "ticket_id": { "type": "string" },
+        "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+        "finding_type": { "$ref": "#/$defs/quality_check" },
+        "affected_master_object_ids": { "type": "array", "items": { "type": "string" } },
+        "affected_panels": { "type": "array", "items": { "$ref": "#/$defs/projection_target" } },
+        "suggested_action": { "type": "string" },
+        "requires_analyst_review": { "type": "boolean", "default": true }
+      }
+    },
+    "som_node": {
+      "type": "object",
+      "required": ["som_node_id", "linked_master_object_ids", "traceback_refs"],
+      "properties": {
+        "som_node_id": { "type": "string" },
+        "coordinates": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "integer" },
+            "y": { "type": "integer" }
+          }
+        },
+        "linked_master_object_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "diagnostic_labels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "coherent_cluster",
+              "possible_duplicate_agents",
+              "fragmented_evidence",
+              "weakly_connected_object",
+              "outlier",
+              "under_governed_region",
+              "missing_cross_modal_support",
+              "proliferation_failure_zone"
+            ]
+          }
+        },
+        "traceback_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

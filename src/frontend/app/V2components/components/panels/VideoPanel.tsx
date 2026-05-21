@@ -7252,7 +7252,18 @@ export default function VideoPanel() {
                           key={overlay.key}
                           role="button"
                           tabIndex={0}
+                          onPointerDown={(event) => {
+                            if (!editableOverlay || isInteractiveElement(event.target)) {
+                              return;
+                            }
+                            beginOverlayGeometryDrag(event, overlay, "move");
+                          }}
                           onClick={(event) => {
+                            event.stopPropagation();
+                            selectOverlayForEditing(overlay);
+                          }}
+                          onDoubleClick={(event) => {
+                            event.preventDefault();
                             event.stopPropagation();
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
@@ -7280,7 +7291,7 @@ export default function VideoPanel() {
                           } absolute rounded border ${overlay.color} ${
                             selected ? "overflow-visible" : "overflow-hidden"
                           } ${
-                            "cursor-pointer"
+                            editableOverlay ? "cursor-move" : "cursor-pointer"
                           } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
                           style={{
                             left: `${normalizedBox.x * 100}%`,
@@ -7291,8 +7302,8 @@ export default function VideoPanel() {
                           }}
                           title={
                             overlay.modality === "object" || overlay.modality === "manual"
-                              ? "Click for evidence panel and bbox actions"
-                              : "Click for evidence panel"
+                              ? "Drag to move; double-click for evidence panel and bbox actions"
+                              : "Double-click for evidence panel"
                           }
                         >
                           <div
