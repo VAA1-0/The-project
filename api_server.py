@@ -86,6 +86,15 @@ from src.backend.analysis.multimodal_meaning_stage1 import (
 from src.backend.analysis.second_order_label_proliferation import (
     write_second_order_label_proliferation_plan,
 )
+from src.backend.analysis.narrative_lens_reading import (
+    write_narrative_lens_reading_artifact,
+)
+from src.backend.analysis.character_path_reading import (
+    write_character_path_reading_artifact,
+)
+from src.backend.analysis.datascene_meaning_network import (
+    write_datascene_meaning_network_artifact,
+)
 from src.backend.analysis.agent_persistence import (
     build_agent_persistence_feature_event,
 )
@@ -3102,6 +3111,13 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
         "label_overrides": corrections.get("label_overrides", []),
         "manual_transcript_entries": corrections.get("manual_transcript_entries", []),
         "manual_visual_annotations": corrections.get("manual_visual_annotations", []),
+        "proliferation_decisions": corrections.get("proliferation_decisions", []),
+        "master_schema_presence_intervals": corrections.get(
+            "master_schema_presence_intervals", []
+        ),
+        "meaning_network_custom_lanes": corrections.get(
+            "meaning_network_custom_lanes", []
+        ),
     }
 
 
@@ -3257,6 +3273,9 @@ def normalize_imported_output_files_for_status(status: Dict[str, Any]) -> bool:
         ("multimodal_meaning_stage1", "multimodal_meaning_stage1.json"),
         ("agent_persistence_scene_cut", "agent_persistence_scene_cut.json"),
         ("second_order_label_proliferation", "second_order_label_proliferation.json"),
+        ("narrative_lens_reading", "narrative_lens_reading.json"),
+        ("character_path_reading", "character_path_reading.json"),
+        ("datascene_meaning_network", "datascene_meaning_network.json"),
     ):
         if output_file_exists(status, file_type):
             continue
@@ -4222,6 +4241,9 @@ def write_second_order_meaning_artifacts_for_status(
     dependency_path = analysis_dir / "dependency_sfl_stage1.json"
     meaning_path = analysis_dir / "multimodal_meaning_stage1.json"
     proliferation_path = analysis_dir / "second_order_label_proliferation.json"
+    narrative_lens_path = analysis_dir / "narrative_lens_reading.json"
+    character_path_path = analysis_dir / "character_path_reading.json"
+    datascene_meaning_network_path = analysis_dir / "datascene_meaning_network.json"
     agent_persistence_path = analysis_dir / "agent_persistence_scene_cut.json"
 
     sfl_artifact = write_dependency_sfl_stage1_artifact(
@@ -4270,18 +4292,81 @@ def write_second_order_meaning_artifacts_for_status(
         proliferation_path,
         agent_persistence_path=agent_persistence_path,
     )
+    scene_cards = status.get("mise_en_scene_scene_cards")
+    narrative_lens_artifact = write_narrative_lens_reading_artifact(
+        analysis_id,
+        plan,
+        narrative_lens_path,
+        dependency_sfl_stage1=sfl_artifact,
+        multimodal_meaning_stage1=meaning_artifact,
+        scene_cards=(scene_cards or {}).get("scene_cards") if isinstance(scene_cards, dict) else None,
+        source_metadata=source_metadata,
+    )
+    narrative_agent_profiles = []
+    if isinstance(source_metadata, dict):
+        narrative_agent_profiles = [
+            profile
+            for profile in source_metadata.get("narrative_agent_profiles") or []
+            if isinstance(profile, dict)
+        ]
+    master_schema = status.get("vaa1_annotation_master_schema")
+    if not narrative_agent_profiles and isinstance(master_schema, dict):
+        narrative_agent_profiles = [
+            profile
+            for profile in master_schema.get("narrative_agent_profile_annotations") or []
+            if isinstance(profile, dict)
+        ]
+    character_path_artifact = write_character_path_reading_artifact(
+        analysis_id,
+        narrative_agent_profiles,
+        plan,
+        character_path_path,
+        scene_refs=(scene_cards or {}).get("scene_cards") if isinstance(scene_cards, dict) else None,
+        manual_agent_annotations=(
+            master_schema.get("narrative_agent_profile_annotations") if isinstance(master_schema, dict) else None
+        ),
+    )
+    datascene_meaning_network_artifact = write_datascene_meaning_network_artifact(
+        analysis_id,
+        status,
+        datascene_meaning_network_path,
+        transcript=transcript,
+        visual_analysis=visual,
+        scene_cards=scene_cards,
+    )
 
     internal_artifacts = status.setdefault("internal_artifacts", {})
     output_files = status.setdefault("output_files", {})
     internal_artifacts["dependency_sfl_stage1"] = str(dependency_path)
     internal_artifacts["multimodal_meaning_stage1"] = str(meaning_path)
     internal_artifacts["second_order_label_proliferation"] = str(proliferation_path)
+    internal_artifacts["narrative_lens_reading"] = str(narrative_lens_path)
+    internal_artifacts["character_path_reading"] = str(character_path_path)
+    internal_artifacts["datascene_meaning_network"] = str(datascene_meaning_network_path)
     output_files["dependency_sfl_stage1"] = str(dependency_path)
     output_files["multimodal_meaning_stage1"] = str(meaning_path)
     output_files["second_order_label_proliferation"] = str(proliferation_path)
+    output_files["narrative_lens_reading"] = str(narrative_lens_path)
+    output_files["character_path_reading"] = str(character_path_path)
+    output_files["datascene_meaning_network"] = str(datascene_meaning_network_path)
     status["second_order_label_proliferation"] = {
         **plan,
         "output_json_path": str(proliferation_path),
+        "updated_at": utc_now_iso(),
+    }
+    status["narrative_lens_reading"] = {
+        **narrative_lens_artifact,
+        "output_json_path": str(narrative_lens_path),
+        "updated_at": utc_now_iso(),
+    }
+    status["character_path_reading"] = {
+        **character_path_artifact,
+        "output_json_path": str(character_path_path),
+        "updated_at": utc_now_iso(),
+    }
+    status["datascene_meaning_network"] = {
+        **datascene_meaning_network_artifact,
+        "output_json_path": str(datascene_meaning_network_path),
         "updated_at": utc_now_iso(),
     }
     return plan
@@ -5415,6 +5500,24 @@ def build_master_schema_maturity_audit(
             "status": "active" if status.get("second_order_label_proliferation") or internal_artifacts.get("second_order_label_proliferation") else "missing",
             "master_schema_surface": "pending_candidate_evidence_refs",
             "maturity_route": "master_schema.proliferation_candidate_maturity",
+        },
+        {
+            "producer": "interpretive_lens_readings",
+            "status": "active" if status.get("narrative_lens_reading") or internal_artifacts.get("narrative_lens_reading") else "missing",
+            "master_schema_surface": "pending_interpretive_lens_evidence_refs",
+            "maturity_route": "master_schema.interpretive_lens_reading_maturity",
+        },
+        {
+            "producer": "character_path_readings",
+            "status": "active" if status.get("character_path_reading") or internal_artifacts.get("character_path_reading") else "missing",
+            "master_schema_surface": "pending_narrative_agent_path_evidence_refs",
+            "maturity_route": "master_schema.character_path_reading_maturity",
+        },
+        {
+            "producer": "datascene_meaning_network",
+            "status": "active" if status.get("datascene_meaning_network") or internal_artifacts.get("datascene_meaning_network") else "missing",
+            "master_schema_surface": "pending_meaning_network_nodes_edges / scene-bounded character presence candidates",
+            "maturity_route": "master_schema.datascene_meaning_network_maturity",
         },
         {
             "producer": "forensic_render_jobs",
@@ -7441,6 +7544,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "identity_triangulation": status.get("identity_triangulation"),
         "agent_persistence_scene_cut": status.get("agent_persistence_scene_cut"),
         "second_order_label_proliferation": status.get("second_order_label_proliferation"),
+        "narrative_lens_reading": status.get("narrative_lens_reading"),
+        "character_path_reading": status.get("character_path_reading"),
+        "datascene_meaning_network": status.get("datascene_meaning_network"),
         "mise_en_scene_scene_cards": status.get("mise_en_scene_scene_cards"),
         "source_extraction_metadata_summary": status.get("source_extraction_metadata_summary"),
         "vaa1_annotation_master_schema": status.get("vaa1_annotation_master_schema"),
@@ -7482,7 +7588,12 @@ async def get_analysis_status(analysis_id: str) -> dict:
                 )
             persist_analysis_record_for_status(status)
             output_files = status.get("output_files", {})
-        if not status.get("second_order_label_proliferation"):
+        if (
+            not status.get("second_order_label_proliferation")
+            or not status.get("narrative_lens_reading")
+            or not status.get("character_path_reading")
+            or not status.get("datascene_meaning_network")
+        ):
             try:
                 proliferation_plan = write_second_order_meaning_artifacts_for_status(status)
                 if proliferation_plan:
@@ -7500,6 +7611,15 @@ async def get_analysis_status(analysis_id: str) -> dict:
                     output_files = status.get("output_files", {})
                     response_data["second_order_label_proliferation"] = status.get(
                         "second_order_label_proliferation"
+                    )
+                    response_data["narrative_lens_reading"] = status.get(
+                        "narrative_lens_reading"
+                    )
+                    response_data["character_path_reading"] = status.get(
+                        "character_path_reading"
+                    )
+                    response_data["datascene_meaning_network"] = status.get(
+                        "datascene_meaning_network"
                     )
             except Exception as proliferation_error:
                 logger.warning(
@@ -7923,6 +8043,7 @@ async def download_file(analysis_id: str, file_type: str):
     Supported file_types: video, yolo_csv, ocr_csv, summary_json, audio, transcript,
     linked_transcript, audio_prosody, audio_diarization, time_bank_audio, lm_transcript, pos_analysis, expression_json,
     quan_analysis, dependency_sfl_stage1, multimodal_meaning_stage1, agent_persistence_scene_cut, second_order_label_proliferation,
+    narrative_lens_reading, character_path_reading, datascene_meaning_network,
     mise_en_scene_scene_cards, source_extraction_metadata_summary, mise_en_scene_scene_card_report_draft_md,
     face_anonymization_manifest
     """
@@ -7956,6 +8077,18 @@ async def download_file(analysis_id: str, file_type: str):
         "agent_persistence_scene_cut": ("agent_persistence_scene_cut.json", "application/json"),
         "second_order_label_proliferation": (
             "second_order_label_proliferation.json",
+            "application/json",
+        ),
+        "narrative_lens_reading": (
+            "narrative_lens_reading.json",
+            "application/json",
+        ),
+        "character_path_reading": (
+            "character_path_reading.json",
+            "application/json",
+        ),
+        "datascene_meaning_network": (
+            "datascene_meaning_network.json",
             "application/json",
         ),
         "mise_en_scene_scene_cards": ("mise_en_scene_scene_card_report.json", "application/json"),
@@ -8043,6 +8176,9 @@ async def download_bundle(analysis_id: str):
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
         "agent_persistence_scene_cut": "agent_persistence_scene_cut.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
+        "narrative_lens_reading": "narrative_lens_reading.json",
+        "character_path_reading": "character_path_reading.json",
+        "datascene_meaning_network": "datascene_meaning_network.json",
         "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
         "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",
         "source_extraction_metadata_summary": "scene_card_source_extraction_metadata_summary.json",
@@ -8118,6 +8254,9 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "multimodal_meaning_stage1": "multimodal_meaning_stage1.json",
         "agent_persistence_scene_cut": "agent_persistence_scene_cut.json",
         "second_order_label_proliferation": "second_order_label_proliferation.json",
+        "narrative_lens_reading": "narrative_lens_reading.json",
+        "character_path_reading": "character_path_reading.json",
+        "datascene_meaning_network": "datascene_meaning_network.json",
         "mise_en_scene_scene_cards": "mise_en_scene_scene_card_report.json",
         "mise_en_scene_scene_card_report_draft_md": "mise_en_scene_scene_card_report_draft.md",
         "source_extraction_metadata_summary": "scene_card_source_extraction_metadata_summary.json",
@@ -9190,6 +9329,27 @@ async def update_annotation_corrections(
     else:
         corrections.setdefault("manual_visual_annotations", [])
 
+    if "proliferation_decisions" in payload:
+        corrections["proliferation_decisions"] = (
+            payload.get("proliferation_decisions") or []
+        )
+    else:
+        corrections.setdefault("proliferation_decisions", [])
+
+    if "master_schema_presence_intervals" in payload:
+        corrections["master_schema_presence_intervals"] = (
+            payload.get("master_schema_presence_intervals") or []
+        )
+    else:
+        corrections.setdefault("master_schema_presence_intervals", [])
+
+    if "meaning_network_custom_lanes" in payload:
+        corrections["meaning_network_custom_lanes"] = (
+            payload.get("meaning_network_custom_lanes") or []
+        )
+    else:
+        corrections.setdefault("meaning_network_custom_lanes", [])
+
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)
     append_analysis_event(
@@ -9203,6 +9363,12 @@ async def update_annotation_corrections(
             ),
             "manual_visual_annotations": len(
                 corrections.get("manual_visual_annotations", [])
+            ),
+            "master_schema_presence_intervals": len(
+                corrections.get("master_schema_presence_intervals", [])
+            ),
+            "meaning_network_custom_lanes": len(
+                corrections.get("meaning_network_custom_lanes", [])
             ),
         },
     )

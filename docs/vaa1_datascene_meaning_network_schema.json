@@ -1,0 +1,1329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/datascene_meaning_network.schema.json",
+  "title": "VAA1 Datascene Meaning Network Schema",
+  "version": "0.1.0",
+  "status": "operational_draft",
+  "description": "A governed multimodal meaning-network schema for VAA1/Datascene. It models SFL-governed semantic, cinematic, narrative, emotional, moral, and rhythmic anchors as traceable, navigable, maturity-aware graph data.",
+  "operative_principle": {
+    "core_claim": "The Datascene Meaning Network converts multimodal detections and analyst confirmations into mature, reusable, traceable meaning anchors that proliferate across VAA1 panels.",
+    "governing_rule": "Manual analyst confirmation is the highest available maturity state and overrides automated detections everywhere, while preserving raw detection history for traceback.",
+    "design_formula": "raw evidence -> structured detection -> analyst confirmation -> maturity uplift -> governed proliferation -> traceback/navigation"
+  },
+  "top_level_objects": {
+    "meaning_network": {
+      "type": "object",
+      "required": [
+        "network_id",
+        "project_id",
+        "media_scope",
+        "nodes",
+        "edges",
+        "confirmations",
+        "taxonomy_backbone",
+        "traceback_index",
+        "proliferation_rules"
+      ],
+      "properties": {
+        "network_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "media_scope": {
+          "type": "object",
+          "properties": {
+            "media_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "time_range": {
+              "$ref": "#/$defs/time_range"
+            },
+            "scene_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "document_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        },
+        "confirmations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/confirmation"
+          }
+        },
+        "continuity_anchors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/continuity_anchor"
+          }
+        },
+        "taxonomy_backbone": {
+          "$ref": "#/$defs/taxonomy_backbone"
+        },
+        "traceback_index": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/traceback_record"
+          }
+        },
+        "proliferation_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/proliferation_rule"
+          }
+        },
+        "ui_contract": {
+          "$ref": "#/$defs/ui_contract"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "time_range": {
+      "type": "object",
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "number",
+          "description": "Start time in seconds."
+        },
+        "end": {
+          "type": "number",
+          "description": "End time in seconds."
+        },
+        "timecode_start": {
+          "type": "string"
+        },
+        "timecode_end": {
+          "type": "string"
+        }
+      }
+    },
+    "bbox": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "coordinate_system": {
+          "type": "string",
+          "enum": [
+            "pixel",
+            "normalized"
+          ]
+        }
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "evidence_id",
+        "source_type"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "video_frame",
+            "shot",
+            "scene",
+            "transcript",
+            "subtitle",
+            "ocr_text",
+            "audio",
+            "prosody",
+            "music",
+            "expression_detection",
+            "object_detection",
+            "bbox_roi",
+            "speaker_diarization",
+            "manual_annotation",
+            "metadata",
+            "external_document",
+            "web_dom",
+            "screenshot"
+          ]
+        },
+        "media_id": {
+          "type": "string"
+        },
+        "time_range": {
+          "$ref": "#/$defs/time_range"
+        },
+        "bbox": {
+          "$ref": "#/$defs/bbox"
+        },
+        "transcript_span": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "token_start": {
+              "type": "integer"
+            },
+            "token_end": {
+              "type": "integer"
+            },
+            "speaker_id": {
+              "type": "string"
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "traceback_record_id": {
+          "type": "string"
+        }
+      }
+    },
+    "maturity": {
+      "type": "object",
+      "required": [
+        "level",
+        "authority"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "raw_detected",
+            "machine_inferred",
+            "candidate",
+            "analyst_reviewed",
+            "analyst_confirmed",
+            "manual_corrected",
+            "canonical",
+            "deprecated",
+            "rejected"
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "detector",
+            "model",
+            "analyst",
+            "schema_rule",
+            "imported_reference"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "manual_override": {
+          "type": "boolean"
+        },
+        "confirmed_by": {
+          "type": "string"
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "previous_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "node_type",
+        "label",
+        "maturity",
+        "evidence_refs"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "scene",
+            "shot",
+            "situation",
+            "narrative_agent",
+            "character",
+            "speaker",
+            "object",
+            "location",
+            "time_context",
+            "action",
+            "event",
+            "claim",
+            "concept",
+            "theme",
+            "emotion",
+            "expression",
+            "framing_mode",
+            "rhythm_mode",
+            "continuity_anchor",
+            "virtue_strength",
+            "vice_antithesis",
+            "sfl_judgement",
+            "boje_5b",
+            "genre",
+            "evidence_fragment",
+            "annotation"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "taxonomy_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object"
+        },
+        "maturity": {
+          "$ref": "#/$defs/maturity"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        },
+        "ui": {
+          "type": "object",
+          "properties": {
+            "display_group": {
+              "type": "string"
+            },
+            "color_role": {
+              "type": "string"
+            },
+            "icon_role": {
+              "type": "string"
+            },
+            "copy_paste_enabled": {
+              "type": "boolean"
+            },
+            "quick_confirm_enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "edge_id",
+        "source_node_id",
+        "target_node_id",
+        "edge_type",
+        "maturity",
+        "evidence_refs"
+      ],
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "source_node_id": {
+          "type": "string"
+        },
+        "target_node_id": {
+          "type": "string"
+        },
+        "edge_type": {
+          "type": "string",
+          "enum": [
+            "co_occurs_with",
+            "spoken_by",
+            "belongs_to_scene",
+            "belongs_to_situation",
+            "appears_with",
+            "tracks_same_entity_as",
+            "supports",
+            "contradicts",
+            "frames_as",
+            "emotionally_amplifies",
+            "visually_emphasizes",
+            "narratively_isolates",
+            "morally_legitimizes",
+            "morally_delegitimizes",
+            "causes",
+            "precedes",
+            "follows",
+            "contrasts_with",
+            "repeats",
+            "continues",
+            "interrupts",
+            "confirms",
+            "rejects",
+            "aligns_with",
+            "opposes",
+            "copy_of_anchor",
+            "proliferates_to"
+          ]
+        },
+        "directionality": {
+          "type": "string",
+          "enum": [
+            "directed",
+            "undirected",
+            "temporal"
+          ]
+        },
+        "weight": {
+          "type": "number"
+        },
+        "maturity": {
+          "$ref": "#/$defs/maturity"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        },
+        "traceback_record_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "required": [
+        "confirmation_id",
+        "confirmation_type",
+        "target_ids",
+        "maturity_result"
+      ],
+      "properties": {
+        "confirmation_id": {
+          "type": "string"
+        },
+        "confirmation_type": {
+          "type": "string",
+          "enum": [
+            "scene_boundary",
+            "character_presence",
+            "narrative_agent_role",
+            "object_track",
+            "scene_name_label",
+            "location_time",
+            "situation",
+            "relationship",
+            "framing_mode",
+            "expression",
+            "emotional_directional_continuity",
+            "rhythm_mode",
+            "claim_or_statement",
+            "sfl_judgement",
+            "virtue_vice_axis",
+            "boje_5b",
+            "genre",
+            "continuity_anchor"
+          ]
+        },
+        "target_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maturity_result": {
+          "$ref": "#/$defs/maturity"
+        },
+        "proliferation_scope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "master_schema",
+              "scene_browser",
+              "video_panel",
+              "transcript_panel",
+              "pos_panel",
+              "meaning_network_panel",
+              "bbox_roi_panel",
+              "narrative_agent_panel",
+              "genre_panel",
+              "boje_5b_panel",
+              "traceback_drawer",
+              "exports"
+            ]
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "continuity_anchor": {
+      "type": "object",
+      "required": [
+        "anchor_id",
+        "anchor_type",
+        "label",
+        "applies_to_node_ids",
+        "maturity"
+      ],
+      "properties": {
+        "anchor_id": {
+          "type": "string"
+        },
+        "anchor_type": {
+          "type": "string",
+          "enum": [
+            "narrative_continuity",
+            "character_continuity",
+            "object_continuity",
+            "location_continuity",
+            "time_continuity",
+            "situation_continuity",
+            "emotional_continuity",
+            "rhythm_continuity",
+            "framing_continuity",
+            "thematic_continuity"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "applies_to_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "copy_paste_contract": {
+          "type": "object",
+          "properties": {
+            "copy_enabled": {
+              "type": "boolean"
+            },
+            "paste_to_selected_nodes": {
+              "type": "boolean"
+            },
+            "apply_forward": {
+              "type": "boolean"
+            },
+            "apply_backward": {
+              "type": "boolean"
+            },
+            "create_linked_duplicate": {
+              "type": "boolean"
+            },
+            "detach_from_chain": {
+              "type": "boolean"
+            }
+          }
+        },
+        "maturity": {
+          "$ref": "#/$defs/maturity"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "taxonomy_backbone": {
+      "type": "object",
+      "required": [
+        "sfl",
+        "emotional_directional_continuity",
+        "rhythm",
+        "virtues_and_vices"
+      ],
+      "properties": {
+        "sfl": {
+          "type": "object",
+          "properties": {
+            "ideational": {
+              "description": "What exists, happens, acts, changes, causes, or is situated.",
+              "categories": [
+                "actor",
+                "object",
+                "action",
+                "event",
+                "process",
+                "situation",
+                "location",
+                "time",
+                "causal_relation",
+                "material_relation",
+                "symbolic_object"
+              ]
+            },
+            "interpersonal": {
+              "description": "How relations, stance, power, care, value, alignment, authority, and judgement are enacted.",
+              "judgement_categories": {
+                "alignment_positive": [
+                  "acceptance",
+                  "affirmation",
+                  "confirmation",
+                  "agreement",
+                  "support",
+                  "solidarity",
+                  "trust",
+                  "endorsement",
+                  "legitimization"
+                ],
+                "alignment_negative": [
+                  "rejection",
+                  "denial",
+                  "contradiction",
+                  "dismissal",
+                  "hostility",
+                  "delegitimization",
+                  "distrust",
+                  "opposition",
+                  "alienation"
+                ],
+                "authority_positive": [
+                  "command",
+                  "guidance",
+                  "permission",
+                  "advice",
+                  "validation",
+                  "authorization"
+                ],
+                "authority_negative": [
+                  "prohibition",
+                  "suppression",
+                  "silencing",
+                  "humiliation",
+                  "coercion",
+                  "domination"
+                ],
+                "relational_positive": [
+                  "care",
+                  "love",
+                  "compassion",
+                  "respect",
+                  "admiration",
+                  "reconciliation"
+                ],
+                "relational_negative": [
+                  "cruelty",
+                  "contempt",
+                  "ridicule",
+                  "hatred",
+                  "abandonment",
+                  "exclusion"
+                ]
+              }
+            },
+            "textual": {
+              "description": "How meaning is organized, sequenced, emphasized, repeated, interrupted, contrasted, or framed.",
+              "categories": [
+                "sequence",
+                "continuity",
+                "contrast",
+                "emphasis",
+                "framing",
+                "rhythm",
+                "transition",
+                "repetition",
+                "silence",
+                "editing_structure"
+              ]
+            }
+          }
+        },
+        "cinematic_framing": {
+          "shot_scale": [
+            "close_up",
+            "medium_shot",
+            "wide_shot",
+            "extreme_close_up",
+            "establishing_shot"
+          ],
+          "composition": [
+            "symmetry",
+            "asymmetry",
+            "centrality",
+            "isolation",
+            "crowding",
+            "occlusion"
+          ],
+          "camera_relation": [
+            "dominance",
+            "submission",
+            "surveillance",
+            "intimacy",
+            "distance",
+            "over_the_shoulder",
+            "reaction_shot"
+          ],
+          "visual_emphasis": [
+            "light_emphasis",
+            "color_emphasis",
+            "movement_emphasis",
+            "gaze_direction",
+            "screen_position"
+          ]
+        },
+        "emotional_directional_continuity": {
+          "dimensions": [
+            "valence",
+            "activation",
+            "dominance",
+            "trajectory",
+            "transition",
+            "counterforce"
+          ],
+          "upward_spiral_examples": [
+            "trust",
+            "courage",
+            "cooperation",
+            "hope",
+            "joy",
+            "reconciliation"
+          ],
+          "downward_spiral_examples": [
+            "uncertainty",
+            "fear",
+            "anger",
+            "despair",
+            "cruelty",
+            "collapse"
+          ],
+          "mixed_state_examples": [
+            "comic_anxiety",
+            "tender_sadness",
+            "triumphant_rage",
+            "calm_menace",
+            "melancholic_hope"
+          ]
+        },
+        "rhythm": {
+          "description": "Balanced rhythm model: not only intensity, but tempo, pause, repetition, variation, continuity, and release.",
+          "categories": [
+            "stillness",
+            "pause",
+            "slow_build",
+            "steady_continuity",
+            "ritual_rhythm",
+            "comic_timing",
+            "conversational_rhythm",
+            "suspense_rhythm",
+            "escalation",
+            "release",
+            "fragmentation",
+            "montage",
+            "collapse",
+            "recovery"
+          ]
+        },
+        "virtues_and_vices": {
+          "wisdom_and_knowledge": {
+            "creativity": {
+              "positive": [
+                "creativity",
+                "inventiveness",
+                "adaptive_imagination",
+                "innovation",
+                "resourcefulness"
+              ],
+              "antithesis": [
+                "rigidity",
+                "dogmatism",
+                "mental_stagnation",
+                "imitative_thinking",
+                "destructive_chaos"
+              ]
+            },
+            "curiosity": {
+              "positive": [
+                "exploration",
+                "wonder",
+                "interest",
+                "discovery",
+                "questioning"
+              ],
+              "antithesis": [
+                "apathy",
+                "closedness",
+                "avoidance",
+                "fear_of_discovery",
+                "intellectual_passivity"
+              ]
+            },
+            "open_mindedness_judgment": {
+              "positive": [
+                "critical_thinking",
+                "reflection",
+                "balanced_reasoning",
+                "fair_evaluation",
+                "perspective_taking"
+              ],
+              "antithesis": [
+                "bias",
+                "prejudice",
+                "fanaticism",
+                "impulsiveness",
+                "delusion"
+              ]
+            },
+            "love_of_learning": {
+              "positive": [
+                "study",
+                "mastery",
+                "growth",
+                "deep_engagement",
+                "discipline_of_learning"
+              ],
+              "antithesis": [
+                "anti_intellectualism",
+                "shallowness",
+                "willful_ignorance",
+                "cynical_disengagement"
+              ]
+            },
+            "perspective": {
+              "positive": [
+                "wisdom",
+                "guidance",
+                "counsel",
+                "holistic_understanding",
+                "maturity"
+              ],
+              "antithesis": [
+                "confusion",
+                "naivety",
+                "misguidance",
+                "short_sightedness"
+              ]
+            }
+          },
+          "courage": {
+            "bravery": {
+              "positive": [
+                "bravery",
+                "risk_taking",
+                "moral_courage",
+                "steadfastness",
+                "resistance"
+              ],
+              "antithesis": [
+                "cowardice",
+                "avoidance",
+                "submission",
+                "paralysis"
+              ]
+            },
+            "persistence_perseverance": {
+              "positive": [
+                "perseverance",
+                "discipline",
+                "endurance",
+                "commitment",
+                "finishing_what_one_starts"
+              ],
+              "antithesis": [
+                "quitting",
+                "collapse",
+                "fickleness",
+                "disintegration"
+              ]
+            },
+            "integrity_honesty": {
+              "positive": [
+                "truthfulness",
+                "authenticity",
+                "transparency",
+                "sincerity"
+              ],
+              "antithesis": [
+                "deception",
+                "manipulation",
+                "corruption",
+                "duplicity"
+              ]
+            },
+            "vitality_zest": {
+              "positive": [
+                "energy",
+                "enthusiasm",
+                "aliveness",
+                "engagement"
+              ],
+              "antithesis": [
+                "apathy",
+                "exhaustion",
+                "nihilism",
+                "emotional_deadness"
+              ]
+            }
+          },
+          "humanity": {
+            "love": {
+              "positive": [
+                "love",
+                "attachment",
+                "care",
+                "devotion",
+                "intimacy"
+              ],
+              "antithesis": [
+                "alienation",
+                "detachment",
+                "abandonment",
+                "emotional_coldness"
+              ]
+            },
+            "kindness": {
+              "positive": [
+                "kindness",
+                "compassion",
+                "generosity",
+                "mercy",
+                "helpfulness"
+              ],
+              "antithesis": [
+                "cruelty",
+                "sadism",
+                "selfishness",
+                "indifference"
+              ]
+            },
+            "social_intelligence": {
+              "positive": [
+                "empathy",
+                "attunement",
+                "diplomacy",
+                "relational_awareness"
+              ],
+              "antithesis": [
+                "social_blindness",
+                "manipulation",
+                "emotional_stupidity",
+                "callousness"
+              ]
+            }
+          },
+          "justice": {
+            "teamwork_citizenship": {
+              "positive": [
+                "cooperation",
+                "solidarity",
+                "loyalty",
+                "shared_responsibility"
+              ],
+              "antithesis": [
+                "betrayal",
+                "fragmentation",
+                "self_interest",
+                "tribal_sabotage"
+              ]
+            },
+            "fairness": {
+              "positive": [
+                "equity",
+                "impartiality",
+                "justice",
+                "reciprocity"
+              ],
+              "antithesis": [
+                "corruption",
+                "bias",
+                "favoritism",
+                "oppression"
+              ]
+            },
+            "leadership": {
+              "positive": [
+                "guidance",
+                "organization",
+                "protection",
+                "collective_motivation"
+              ],
+              "antithesis": [
+                "tyranny",
+                "chaos",
+                "abdication",
+                "manipulative_domination"
+              ]
+            }
+          },
+          "temperance": {
+            "forgiveness": {
+              "positive": [
+                "forgiveness",
+                "reconciliation",
+                "release",
+                "mercy",
+                "restoration"
+              ],
+              "antithesis": [
+                "vengefulness",
+                "resentment",
+                "obsession",
+                "punitive_fixation"
+              ]
+            },
+            "humility_modesty": {
+              "positive": [
+                "humility",
+                "modesty",
+                "balance",
+                "self_awareness",
+                "groundedness"
+              ],
+              "antithesis": [
+                "arrogance",
+                "grandiosity",
+                "narcissism",
+                "hubris"
+              ]
+            },
+            "prudence": {
+              "positive": [
+                "foresight",
+                "restraint",
+                "carefulness",
+                "deliberation"
+              ],
+              "antithesis": [
+                "recklessness",
+                "impulsiveness",
+                "self_destruction"
+              ]
+            },
+            "self_regulation": {
+              "positive": [
+                "discipline",
+                "control",
+                "stability",
+                "consistency"
+              ],
+              "antithesis": [
+                "addiction",
+                "compulsion",
+                "loss_of_control",
+                "chaotic_behavior"
+              ]
+            }
+          },
+          "transcendence": {
+            "appreciation_of_beauty_and_excellence": {
+              "positive": [
+                "awe",
+                "elevation",
+                "admiration",
+                "reverence"
+              ],
+              "antithesis": [
+                "cynicism",
+                "degradation",
+                "vulgarization",
+                "emptiness"
+              ]
+            },
+            "gratitude": {
+              "positive": [
+                "thankfulness",
+                "recognition",
+                "reciprocity",
+                "humble_appreciation"
+              ],
+              "antithesis": [
+                "entitlement",
+                "bitterness",
+                "ingratitude",
+                "resentful_consumption"
+              ]
+            },
+            "hope": {
+              "positive": [
+                "optimism",
+                "future_orientation",
+                "faith_in_possibility",
+                "renewal"
+              ],
+              "antithesis": [
+                "despair",
+                "fatalism",
+                "hopelessness",
+                "collapse"
+              ]
+            },
+            "humor": {
+              "positive": [
+                "playfulness",
+                "joy",
+                "comic_relief",
+                "bonding",
+                "lightness"
+              ],
+              "antithesis": [
+                "cynical_ridicule",
+                "humiliation",
+                "mockery",
+                "nihilistic_irony"
+              ]
+            },
+            "spirituality": {
+              "positive": [
+                "meaning",
+                "sacredness",
+                "connectedness",
+                "transcendent_orientation"
+              ],
+              "antithesis": [
+                "nihilism",
+                "existential_emptiness",
+                "alienation",
+                "spiritual_collapse"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "traceback_record": {
+      "type": "object",
+      "required": [
+        "traceback_record_id",
+        "claim_or_anchor_id",
+        "source_chain"
+      ],
+      "properties": {
+        "traceback_record_id": {
+          "type": "string"
+        },
+        "claim_or_anchor_id": {
+          "type": "string"
+        },
+        "source_chain": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "mature_claim",
+                  "analyst_confirmation",
+                  "manual_annotation",
+                  "automated_detection",
+                  "raw_media",
+                  "metadata",
+                  "transcript",
+                  "expression",
+                  "object",
+                  "frame_bbox"
+                ]
+              },
+              "evidence_ref": {
+                "$ref": "#/$defs/evidence_ref"
+              }
+            }
+          }
+        },
+        "one_click_jumps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "target_panel": {
+                "type": "string"
+              },
+              "target_time": {
+                "type": "number"
+              },
+              "target_node_id": {
+                "type": "string"
+              },
+              "dom_selector": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "proliferation_rule": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "trigger_confirmation_type",
+        "target_panels"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string"
+        },
+        "trigger_confirmation_type": {
+          "type": "string"
+        },
+        "target_panels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "proliferation_mode": {
+          "type": "string",
+          "enum": [
+            "hard_confirm",
+            "maturity_uplift",
+            "candidate_suggestion",
+            "visual_highlight",
+            "traceback_link_only"
+          ]
+        },
+        "preserve_raw_history": {
+          "type": "boolean"
+        },
+        "manual_override_priority": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ui_contract": {
+      "type": "object",
+      "properties": {
+        "primary_panel_name": {
+          "const": "Datascene Meaning Network"
+        },
+        "required_affordances": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "add_node",
+              "add_edge",
+              "quick_confirm",
+              "copy_anchor",
+              "paste_anchor",
+              "apply_anchor_forward",
+              "apply_anchor_backward",
+              "merge_nodes",
+              "split_node",
+              "rename_node",
+              "reject_candidate",
+              "open_traceback_drawer",
+              "jump_to_video_time",
+              "filter_by_sfl_layer",
+              "filter_by_maturity",
+              "filter_by_emotional_trajectory",
+              "filter_by_virtue_vice_axis",
+              "filter_by_rhythm",
+              "export_graph"
+            ]
+          }
+        },
+        "recommended_quick_add_buttons": [
+          "+ Character",
+          "+ Narrative Agent",
+          "+ Object",
+          "+ Situation",
+          "+ Location/Time",
+          "+ Framing",
+          "+ Expression",
+          "+ Emotion",
+          "+ Rhythm",
+          "+ SFL Judgement",
+          "+ Virtue/Vice",
+          "+ Claim",
+          "+ Theme",
+          "+ Continuity Anchor"
+        ],
+        "export_formats": [
+          "json",
+          "csv",
+          "graphml",
+          "gexf",
+          "cytoscape_json"
+        ]
+      }
+    }
+  },
+  "example_minimal_node": {
+    "node_id": "node_scene_004",
+    "node_type": "situation",
+    "label": "car_chase",
+    "taxonomy_refs": [
+      "sfl.ideational.situation",
+      "rhythm.escalation"
+    ],
+    "maturity": {
+      "level": "analyst_confirmed",
+      "authority": "analyst",
+      "confidence": 1.0,
+      "manual_override": true
+    },
+    "evidence_refs": [
+      {
+        "evidence_id": "ev_scene_004",
+        "source_type": "scene",
+        "media_id": "media_001",
+        "time_range": {
+          "start": 241.3,
+          "end": 318.8
+        }
+      }
+    ]
+  }
+}

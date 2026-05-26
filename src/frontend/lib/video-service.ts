@@ -2172,6 +2172,9 @@ export interface AnalysisData {
   sourceSamples?: SourceSample[];
   identityRefinement?: IdentityRefinementStatus | null;
   secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
+  narrativeLensReading?: Record<string, unknown> | null;
+  characterPathReading?: Record<string, unknown> | null;
+  datasceneMeaningNetwork?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   audioDiarization?: AudioDiarizationScaffold | null;
   summary: string;
@@ -3165,6 +3168,10 @@ export interface AnalysisStatus {
   source_samples?: SourceSample[];
   identity_refinement?: IdentityRefinementStatus | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
+  narrative_lens_reading?: Record<string, unknown> | null;
+  character_path_reading?: Record<string, unknown> | null;
+  datascene_meaning_network?: Record<string, unknown> | null;
+  mise_en_scene_scene_cards?: Record<string, unknown> | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   audio_diarization?: AudioDiarizationScaffold | null;
   vaa1_annotation_master_schema?: unknown;
@@ -3565,11 +3572,20 @@ export class VideoService {
         sourceSamples: status.source_samples || [],
         identityRefinement: status.identity_refinement || null,
         secondOrderLabelProliferation: status.second_order_label_proliferation || null,
+        narrativeLensReading: status.narrative_lens_reading || null,
+        characterPathReading: status.character_path_reading || null,
+        datasceneMeaningNetwork: status.datascene_meaning_network || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
-        rawJson: { vaa1_annotation_master_schema: status.vaa1_annotation_master_schema },
+        rawJson: {
+          vaa1_annotation_master_schema: status.vaa1_annotation_master_schema,
+          narrative_lens_reading: status.narrative_lens_reading || null,
+          character_path_reading: status.character_path_reading || null,
+          datascene_meaning_network: status.datascene_meaning_network || null,
+          mise_en_scene_scene_cards: status.mise_en_scene_scene_cards || null,
+        },
         status: "completed",
         downloadLinks: status.download_links,
         metadata: {

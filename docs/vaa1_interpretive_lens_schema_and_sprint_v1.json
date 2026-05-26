@@ -1,0 +1,995 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.interpretive_lens_path_forward.schema_and_sprint.v1",
+  "title": "VAA1 Interpretive Lens Schema and Sprint Plan",
+  "version": "1.0.0",
+  "date_created": "2026-05-22",
+  "purpose": "Operationalize governed interpretive lenses for Meaning / Plot, Scene Cards, and Narrative Agent without allowing narrative interpretations to override source evidence or manual analyst authority.",
+  "governing_principle": "Interpretive lenses do not create truth. They create disciplined views over governed evidence.",
+  "authority_policy": {
+    "manual_correction_wins": true,
+    "manual_annotation_wins": true,
+    "parser_outputs_are_candidates": true,
+    "interpretive_lens_outputs_are_candidates": true,
+    "prose_outputs_do_not_mutate_source_evidence": true,
+    "derived_readings_do_not_override_manual_interpretation": true,
+    "external_llm_review_may_assist_but_not_be_hidden_authority": true,
+    "authority_order": [
+      "manual_correction",
+      "manual_annotation",
+      "analyst_confirmed_interpretation",
+      "governed_interpretive_reading",
+      "multimodal_meaning_candidate",
+      "sfl_dependency_candidate",
+      "raw_detection"
+    ]
+  },
+  "domain_separation": {
+    "meaning_plot": {
+      "role": "Contextual narrative reading",
+      "home_surfaces": [
+        "MeaningPlotPanel",
+        "SceneCards"
+      ],
+      "governing_question": "What kind of narrative situation is this?",
+      "allowed_targets": [
+        "scene",
+        "episode",
+        "full_video",
+        "sequence"
+      ],
+      "lens_families": [
+        "aristotelian",
+        "freytagian",
+        "campbellian",
+        "fryean",
+        "bookerian",
+        "burkean_motive"
+      ]
+    },
+    "narrative_agent": {
+      "role": "Agent-centered trajectory and role-function reading",
+      "home_surfaces": [
+        "NarrativeAgentProfile",
+        "MeaningPlotPanel_character_paths",
+        "SceneCards_agent_refs"
+      ],
+      "governing_question": "What kind of participant trajectory or role-function is this agent performing?",
+      "allowed_views": [
+        "scene_agents",
+        "characters_by_scene",
+        "dramatic_archetypes",
+        "participant_ranking",
+        "narrative_agent_paths",
+        "genre_specific_profile_extensions"
+      ],
+      "boundary": "Analyze media-internal Narrative Agent Profiles, not Natural Person Identity Profiles."
+    }
+  },
+  "pipeline": [
+    {
+      "stage": 1,
+      "name": "linguistic_evidence",
+      "artifact_schema": "vaa1.dependency_sfl_stage1.v1",
+      "primary_inputs": [
+        "transcript_segments",
+        "speaker_refs",
+        "manual_transcript_corrections"
+      ],
+      "primary_outputs": [
+        "token_traceback",
+        "dependency_roles",
+        "process_type_candidates",
+        "speech_function_candidates",
+        "modality_hints",
+        "stance_hints",
+        "affect_hints",
+        "appraisal_hints"
+      ],
+      "governance": "Parser output may seed candidates but cannot override manual annotation or correction."
+    },
+    {
+      "stage": 2,
+      "name": "multimodal_meaning_events",
+      "artifact_schema": "vaa1.multimodal_meaning.stage1.v1",
+      "primary_inputs": [
+        "dependency_sfl_stage1",
+        "transcript_patterns",
+        "audio_prosody",
+        "visual_cues",
+        "cinematic_clues",
+        "metadata_context",
+        "genre_context"
+      ],
+      "primary_outputs": [
+        "meaning_events",
+        "speech_act_power",
+        "affiliation_care",
+        "intimacy_commitment",
+        "judgment_denigration",
+        "narration_commentary",
+        "plot_function_candidates"
+      ],
+      "governance": "Meaning events are candidates with open support weights and traceback."
+    },
+    {
+      "stage": 3,
+      "name": "second_order_label_proliferation",
+      "artifact_schema": "vaa1.second_order_label_proliferation_plan.v1",
+      "primary_inputs": [
+        "multimodal_meaning_events",
+        "manual_annotations",
+        "metadata_context"
+      ],
+      "primary_outputs": [
+        "Interaction",
+        "Action",
+        "Movement",
+        "Identification",
+        "Role",
+        "Relationship",
+        "Scene",
+        "Episode",
+        "Situation",
+        "Expression",
+        "Object",
+        "ReportClaim",
+        "ForensicObservation"
+      ],
+      "maturity_states": [
+        "candidate",
+        "probable",
+        "strongly_supported",
+        "analyst_confirmed"
+      ],
+      "governance": "Routine affirmations may surface as chips; high-impact or report-bound claims need analyst review."
+    },
+    {
+      "stage": 4,
+      "name": "narrative_lens_reading",
+      "artifact_schema": "vaa1.narrative_lens_reading.v1",
+      "primary_inputs": [
+        "second_order_label_proliferation",
+        "dependency_sfl_stage1",
+        "multimodal_meaning_stage1",
+        "scene_cards",
+        "source_metadata",
+        "manual_interpretations"
+      ],
+      "primary_outputs": [
+        "contextual_lens_claims",
+        "scene_readings",
+        "episode_readings",
+        "plot_path_candidates",
+        "lens_specific_prose"
+      ],
+      "governance": "Lens readings must be phrased as suggested readings, not final truth claims."
+    },
+    {
+      "stage": 5,
+      "name": "character_path_reading",
+      "artifact_schema": "vaa1.character_path_reading.v1",
+      "primary_inputs": [
+        "narrative_agent_profiles",
+        "second_order_label_proliferation",
+        "scene_refs",
+        "utterance_refs",
+        "visual_audio_refs",
+        "manual_agent_annotations"
+      ],
+      "primary_outputs": [
+        "scene_presence_readings",
+        "participant_ranking_readings",
+        "archetype_readings",
+        "relation_readings",
+        "trajectory_readings",
+        "profile_extension_candidates"
+      ],
+      "governance": "Archetypes are probabilistic dramaturgical tendencies, not identities."
+    },
+    {
+      "stage": 6,
+      "name": "analyst_facing_prose",
+      "artifact_schema": "vaa1.interpretive_prose_surface.v1",
+      "primary_inputs": [
+        "narrative_lens_reading",
+        "character_path_reading",
+        "evidence_anchors",
+        "counter_evidence",
+        "maturity_state"
+      ],
+      "primary_outputs": [
+        "scene_card_lens_prose",
+        "meaning_plot_prose",
+        "narrative_agent_path_prose",
+        "report_export_paragraphs"
+      ],
+      "governance": "Prose is generated from governed interpretive objects, never directly from raw parser output alone."
+    }
+  ],
+  "schemas": {
+    "common_definitions": {
+      "evidence_ref": {
+        "type": "object",
+        "required": [
+          "evidence_id",
+          "evidence_kind",
+          "source_surface"
+        ],
+        "properties": {
+          "evidence_id": {
+            "type": "string"
+          },
+          "evidence_kind": {
+            "type": "string",
+            "enum": [
+              "manual_correction",
+              "manual_annotation",
+              "transcript_segment",
+              "dependency_sfl_candidate",
+              "multimodal_meaning_event",
+              "second_order_label_instruction",
+              "visual_detection",
+              "audio_prosody",
+              "source_metadata",
+              "scene_card",
+              "bbox_roi",
+              "ocr_text",
+              "external_review"
+            ]
+          },
+          "source_surface": {
+            "type": "string"
+          },
+          "time_span": {
+            "type": "object",
+            "properties": {
+              "start_ms": {
+                "type": "integer"
+              },
+              "end_ms": {
+                "type": "integer"
+              }
+            }
+          },
+          "bbox_ref": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              },
+              "coordinate_space": {
+                "type": "string"
+              }
+            }
+          },
+          "jump_target": {
+            "type": "object",
+            "properties": {
+              "panel": {
+                "type": "string"
+              },
+              "selector": {
+                "type": "string"
+              },
+              "open_video_at_ms": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "open_weights": {
+        "type": "object",
+        "properties": {
+          "linguistic_support": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "multimodal_support": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "manual_support": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "metadata_support": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "genre_context_support": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "counter_evidence_penalty": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "weighted_support_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "review_state": {
+        "type": "string",
+        "enum": [
+          "candidate",
+          "probable",
+          "strongly_supported",
+          "analyst_confirmed",
+          "analyst_rejected",
+          "analyst_revised",
+          "deferred"
+        ]
+      }
+    },
+    "linguistic_evidence_record": {
+      "schema_id": "vaa1.linguistic_evidence_record.v1",
+      "type": "object",
+      "required": [
+        "utterance_id",
+        "source_span",
+        "traceback_refs"
+      ],
+      "properties": {
+        "utterance_id": {
+          "type": "string"
+        },
+        "speaker_ref": {
+          "type": "string"
+        },
+        "narrative_agent_ref": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "source_span": {
+          "type": "object",
+          "required": [
+            "start_ms",
+            "end_ms"
+          ],
+          "properties": {
+            "start_ms": {
+              "type": "integer"
+            },
+            "end_ms": {
+              "type": "integer"
+            }
+          }
+        },
+        "dependency_roles": {
+          "type": "object",
+          "properties": {
+            "subject_actor": {
+              "type": "string"
+            },
+            "predicate_action": {
+              "type": "string"
+            },
+            "object_goal": {
+              "type": "string"
+            },
+            "modifiers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "negation": {
+              "type": "boolean"
+            }
+          }
+        },
+        "sfl_features": {
+          "type": "object",
+          "properties": {
+            "process_type": {
+              "type": "string",
+              "enum": [
+                "material",
+                "mental",
+                "relational",
+                "verbal",
+                "behavioral",
+                "existential",
+                "unknown"
+              ]
+            },
+            "speech_function": {
+              "type": "string",
+              "enum": [
+                "command",
+                "request",
+                "offer",
+                "question",
+                "statement",
+                "warning",
+                "promise",
+                "refusal",
+                "unknown"
+              ]
+            },
+            "modality": {
+              "type": "string"
+            },
+            "appraisal": {
+              "type": "object",
+              "properties": {
+                "affect": {
+                  "type": "string"
+                },
+                "judgment": {
+                  "type": "string"
+                },
+                "appreciation": {
+                  "type": "string"
+                }
+              }
+            },
+            "agency": {
+              "type": "string"
+            },
+            "interpersonal_stance": {
+              "type": "string"
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "traceback_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "open_weights": {
+          "$ref": "#/schemas/common_definitions/open_weights"
+        },
+        "review_state": {
+          "$ref": "#/schemas/common_definitions/review_state"
+        }
+      }
+    },
+    "narrative_lens_reading": {
+      "schema_id": "vaa1.narrative_lens_reading.v1",
+      "type": "object",
+      "required": [
+        "reading_id",
+        "lens_type",
+        "target_scope",
+        "claim_label",
+        "claim_prose",
+        "supporting_evidence_refs",
+        "review_state"
+      ],
+      "properties": {
+        "reading_id": {
+          "type": "string"
+        },
+        "lens_type": {
+          "type": "string",
+          "enum": [
+            "aristotelian",
+            "freytagian",
+            "campbellian",
+            "fryean",
+            "bookerian",
+            "burkean_motive",
+            "genre_specific",
+            "analyst_defined"
+          ]
+        },
+        "lens_tradition_label": {
+          "type": "string"
+        },
+        "target_scope": {
+          "type": "string",
+          "enum": [
+            "scene",
+            "episode",
+            "sequence",
+            "full_video",
+            "source_collection"
+          ]
+        },
+        "target_ref": {
+          "type": "string"
+        },
+        "claim_label": {
+          "type": "string"
+        },
+        "claim_prose": {
+          "type": "string"
+        },
+        "cautious_prose_template": {
+          "type": "string",
+          "default": "Under a {lens_tradition_label} reading, this {target_scope} appears to function as {claim_label} because {support_summary}. This remains a {review_state} reading until analyst confirmation."
+        },
+        "supporting_linguistic_cues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cue_type": {
+                "type": "string"
+              },
+              "cue_label": {
+                "type": "string"
+              },
+              "source_utterance_id": {
+                "type": "string"
+              },
+              "evidence_ref": {
+                "$ref": "#/schemas/common_definitions/evidence_ref"
+              }
+            }
+          }
+        },
+        "supporting_visual_audio_cues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "supporting_evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "counter_evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "open_weights": {
+          "$ref": "#/schemas/common_definitions/open_weights"
+        },
+        "review_state": {
+          "$ref": "#/schemas/common_definitions/review_state"
+        },
+        "analyst_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "confirm",
+              "reject",
+              "revise",
+              "defer",
+              "promote_to_report",
+              "link_to_agent_path"
+            ]
+          }
+        },
+        "proliferation_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "MeaningPlotPanel",
+              "SceneCards",
+              "TimeBank",
+              "ReportExport",
+              "TracebackPanel"
+            ]
+          }
+        }
+      }
+    },
+    "character_path_reading": {
+      "schema_id": "vaa1.character_path_reading.v1",
+      "type": "object",
+      "required": [
+        "path_reading_id",
+        "narrative_agent_id",
+        "reading_type",
+        "role_function_candidate",
+        "evidence_anchors",
+        "review_state"
+      ],
+      "properties": {
+        "path_reading_id": {
+          "type": "string"
+        },
+        "narrative_agent_id": {
+          "type": "string"
+        },
+        "narrative_agent_label": {
+          "type": "string"
+        },
+        "reading_type": {
+          "type": "string",
+          "enum": [
+            "scene_presence",
+            "participant_ranking",
+            "dramatic_archetype",
+            "relation",
+            "trajectory",
+            "status_dynamics",
+            "genre_specific_extension",
+            "shakespearean_modality",
+            "analyst_defined"
+          ]
+        },
+        "role_function_candidate": {
+          "type": "string"
+        },
+        "role_function_prose": {
+          "type": "string"
+        },
+        "trajectory_summary": {
+          "type": "string"
+        },
+        "scene_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "utterance_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sfl_dependency_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "visual_audio_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "relation_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_anchors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "counter_evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        },
+        "open_weights": {
+          "$ref": "#/schemas/common_definitions/open_weights"
+        },
+        "review_state": {
+          "$ref": "#/schemas/common_definitions/review_state"
+        },
+        "allowed_profile_extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "spy_action",
+              "shakespearean_modality",
+              "political_media",
+              "documentary_interview",
+              "romance",
+              "horror",
+              "adult_entertainment",
+              "sci_fi",
+              "animation",
+              "musical",
+              "analyst_defined"
+            ]
+          }
+        },
+        "proliferation_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "NarrativeAgentProfile",
+              "MeaningPlotPanel",
+              "SceneCards",
+              "ReportExport",
+              "TracebackPanel"
+            ]
+          }
+        }
+      }
+    },
+    "interpretive_prose_surface": {
+      "schema_id": "vaa1.interpretive_prose_surface.v1",
+      "type": "object",
+      "required": [
+        "prose_id",
+        "source_reading_refs",
+        "surface",
+        "prose_text",
+        "traceback_refs"
+      ],
+      "properties": {
+        "prose_id": {
+          "type": "string"
+        },
+        "surface": {
+          "type": "string",
+          "enum": [
+            "SceneCards",
+            "MeaningPlotPanel",
+            "NarrativeAgentProfile",
+            "TimeBank",
+            "ReportExport"
+          ]
+        },
+        "source_reading_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "prose_text": {
+          "type": "string"
+        },
+        "claim_status_phrase": {
+          "type": "string",
+          "enum": [
+            "suggested by",
+            "weakly suggested by",
+            "moderately supported by",
+            "strongly supported by",
+            "analyst confirmed from"
+          ]
+        },
+        "must_include": [
+          "lens_name_or_reading_type",
+          "claim_as_candidate",
+          "strongest_evidence",
+          "maturity_state",
+          "traceback_jump_targets"
+        ],
+        "must_not_include": [
+          "uncited_final_truth_claim",
+          "natural_person_identity_profile_claim",
+          "hidden_llm_authority",
+          "manual_override_violation"
+        ],
+        "traceback_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/common_definitions/evidence_ref"
+          }
+        }
+      }
+    }
+  },
+  "sprint_plan": {
+    "sprint_name": "VAA1 Governed Interpretive Lenses Sprint",
+    "sprint_goal": "Make contextual narrative readings and Narrative Agent path readings operational, traceable, navigable, and useful in prose without weakening manual authority.",
+    "duration_recommendation": "2-3 focused development weeks",
+    "workstreams": [
+      {
+        "id": "WS1",
+        "name": "Artifact reliability and backfill",
+        "priority": "P0",
+        "objective": "Ensure dependency/SFL, multimodal meaning, second-order proliferation, narrative lens, and character path artifacts are generated or backfilled for every analysis where inputs exist.",
+        "tasks": [
+          "Add backfill trigger for missing dependency_sfl_stage1 artifacts.",
+          "Add backfill trigger for missing multimodal_meaning_stage1 artifacts.",
+          "Add backfill trigger for missing second_order_label_proliferation artifacts.",
+          "Add new narrative_lens_reading artifact writer.",
+          "Add new character_path_reading artifact writer.",
+          "Expose all new artifact paths through status/download APIs."
+        ],
+        "acceptance_criteria": [
+          "Older analyses no longer show empty Meaning / Plot when source evidence exists.",
+          "Status object can carry narrative_lens_reading and character_path_reading.",
+          "All generated readings include source evidence refs and maturity state."
+        ],
+        "tests": [
+          "tests/test_interpretive_lens_artifact_backfill_contract.py",
+          "tests/test_narrative_lens_reading_contract.py",
+          "tests/test_character_path_reading_contract.py"
+        ]
+      },
+      {
+        "id": "WS2",
+        "name": "Schema implementation",
+        "priority": "P0",
+        "objective": "Implement typed backend schemas for narrative lens readings, character path readings, and interpretive prose surfaces.",
+        "tasks": [
+          "Create src/backend/analysis/narrative_lens_reading.py.",
+          "Create src/backend/analysis/character_path_reading.py.",
+          "Create shared evidence_ref and open_weights helpers or reuse existing structures.",
+          "Add JSON schema validation fixtures.",
+          "Ensure manual correction and manual annotation are carried into authority scoring."
+        ],
+        "acceptance_criteria": [
+          "Schema objects validate with required fields.",
+          "Manual evidence increases authority without mutating raw evidence.",
+          "Counter-evidence can be represented explicitly."
+        ],
+        "tests": [
+          "python3 -m py_compile src/backend/analysis/narrative_lens_reading.py src/backend/analysis/character_path_reading.py",
+          "python3 tests/test_narrative_lens_schema_validation.py",
+          "python3 tests/test_character_path_schema_validation.py"
+        ]
+      },
+      {
+        "id": "WS3",
+        "name": "Meaning / Plot contextual narrative",
+        "priority": "P1",
+        "objective": "Make Meaning / Plot the home for contextual scene, episode, and plot readings.",
+        "tasks": [
+          "Wire narrative_lens_reading into MeaningPlotPanel.",
+          "Separate contextual plot readings from character/agent path views.",
+          "Add lens tabs or switcher for Aristotle, Freytag, Campbell, Frye, Booker, and Burkean motive.",
+          "Show cautious claim prose, support score, maturity state, and source jump buttons.",
+          "Avoid statements like 'This scene is Campbellian'; use 'Campbellian reading is suggested by...'."
+        ],
+        "acceptance_criteria": [
+          "Meaning / Plot displays lens readings when evidence exists.",
+          "Every reading has jumpable evidence anchors.",
+          "UI distinguishes facts, candidates, and analyst-confirmed interpretations."
+        ],
+        "tests": [
+          "src/frontend/tests/meaning-plot-narrative-lens-render.test.mjs",
+          "src/frontend/tests/meaning-plot-traceback-navigation.test.mjs",
+          "npx tsc --noEmit"
+        ]
+      },
+      {
+        "id": "WS4",
+        "name": "Narrative Agent path readings",
+        "priority": "P1",
+        "objective": "Make Narrative Agent the home for participant trajectory, ranking, archetype, relation, and profile-extension readings.",
+        "tasks": [
+          "Wire character_path_reading into Narrative Agent profile surfaces.",
+          "Keep scene agents, characters by scene, dramatic archetypes, participant ranking, and Narrative Agent paths as agent-centered views.",
+          "Represent archetypes as dramaturgical tendencies, not identity labels.",
+          "Add genre-specific profile extension slots without bloating the base profile.",
+          "Expose source evidence for contradiction frequency, coalition shifts, interruption asymmetry, status movement, turn rhythm, vocal certainty, gaze hierarchy, and related traces."
+        ],
+        "acceptance_criteria": [
+          "Narrative Agent readings do not create Natural Person Identity Profiles.",
+          "Multiple interpretive readings can coexist under one agent profile.",
+          "Analyst can confirm, reject, revise, or defer each reading."
+        ],
+        "tests": [
+          "src/frontend/tests/narrative-agent-path-reading-render.test.mjs",
+          "tests/test_character_path_reading_no_natural_person_identity_contract.py"
+        ]
+      },
+      {
+        "id": "WS5",
+        "name": "Scene Card prose synthesis",
+        "priority": "P1",
+        "objective": "Use Scene Cards as readable synthesis surfaces for governed lens and agent-path readings.",
+        "tasks": [
+          "Add Scene Card lens switcher.",
+          "Generate neutral default prose and optional lens-specific prose.",
+          "Pull prose from governed narrative_lens_reading and character_path_reading objects.",
+          "Include strongest evidence anchors, counter-signals, maturity state, and source jump targets.",
+          "Add inline correction affordances for topic, role, situation, genre, and summary text."
+        ],
+        "acceptance_criteria": [
+          "Scene Card prose is more natural but remains cautious.",
+          "Scene Card prose does not directly hallucinate from raw parser output.",
+          "Analyst corrections update mature evidence routes without overwriting raw detections."
+        ],
+        "tests": [
+          "tests/test_scene_card_interpretive_prose_contract.py",
+          "src/frontend/tests/scene-card-lens-switcher.test.mjs"
+        ]
+      },
+      {
+        "id": "WS6",
+        "name": "Traceback and evidence navigation",
+        "priority": "P1",
+        "objective": "Ensure every interpretive claim can be traced back to source media, transcript, SFL/dependency cues, visual/audio evidence, metadata, and analyst corrections.",
+        "tasks": [
+          "Add traceback refs to every narrative_lens_reading and character_path_reading object.",
+          "Add jump buttons from prose claims to video time, transcript segment, BBox/ROI, audio cue, scene card, and metadata source.",
+          "Prepare data contract for future traceback tree/network panel.",
+          "Represent evidence relation types: supports, contradicts, derived_from, supersedes, analyst_corrected_from, attached_to_track."
+        ],
+        "acceptance_criteria": [
+          "No prose claim appears without at least one source evidence ref.",
+          "Clicking a source ref opens the correct panel/time target.",
+          "Manual correction visibly supersedes earlier derived readings."
+        ],
+        "tests": [
+          "tests/test_interpretive_traceback_refs_contract.py",
+          "src/frontend/tests/interpretive-source-jump-buttons.test.mjs"
+        ]
+      },
+      {
+        "id": "WS7",
+        "name": "Report export readiness",
+        "priority": "P2",
+        "objective": "Make governed interpretive readings exportable as cautious research/archive-facing prose.",
+        "tasks": [
+          "Add export renderer for narrative_lens_reading.",
+          "Add export renderer for character_path_reading.",
+          "Group report prose by scene, episode, agent, and lens.",
+          "Include maturity state and evidence anchors in export metadata.",
+          "Keep source extraction metadata separate from interpretive claims."
+        ],
+        "acceptance_criteria": [
+          "Exported report distinguishes evidence, candidate interpretation, analyst-confirmed interpretation, and metadata.",
+          "Report prose can be regenerated after analyst corrections.",
+          "No hidden LLM or parser authority is presented as final judgment."
+        ],
+        "tests": [
+          "tests/test_interpretive_report_export_contract.py"
+        ]
+      }
+    ],
+    "definition_of_done": [
+      "Artifacts generate reliably for current and older analyses.",
+      "Meaning / Plot shows contextual narrative readings with source anchors.",
+      "Narrative Agent shows agent-centered path readings without natural-person profiling.",
+      "Scene Cards synthesize governed readings into cautious, readable prose.",
+      "Every interpretive claim has source traceback.",
+      "Manual correction and manual annotation remain authoritative everywhere.",
+      "Open weights and maturity states remain visible.",
+      "Analyst confirmation is required only at meaningful authority/export/report boundaries."
+    ],
+    "recommended_commit_sequence": [
+      "feat: add governed narrative lens reading schema",
+      "feat: add character path reading schema",
+      "feat: wire interpretive reading artifact generation and backfill",
+      "feat: surface narrative lens readings in Meaning Plot",
+      "feat: surface character path readings in Narrative Agent",
+      "feat: add Scene Card lens prose synthesis",
+      "feat: add traceback refs for interpretive prose claims",
+      "test: add governed interpretive lens contract coverage"
+    ],
+    "manual_validation_script": [
+      "Start backend and confirm /api/health returns 200.",
+      "Open an analysis with transcript and scene evidence.",
+      "Confirm dependency_sfl_stage1 artifact exists.",
+      "Confirm multimodal_meaning_stage1 artifact exists.",
+      "Confirm second_order_label_proliferation artifact exists.",
+      "Run interpretive artifact backfill.",
+      "Open Meaning / Plot and confirm lens readings appear.",
+      "Switch Aristotle/Freytag/Campbell/Frye/Booker views and confirm claim phrasing remains cautious.",
+      "Open Narrative Agent and confirm scene agents, character-by-scene, archetype, participant ranking, and path views are agent-centered.",
+      "Open Scene Cards and confirm neutral prose plus optional lens prose.",
+      "Click evidence anchors and confirm source navigation works.",
+      "Create manual correction and confirm it supersedes derived readings."
+    ]
+  }
+}

@@ -8,19 +8,46 @@ from pathlib import Path
 
 
 def _install_pipeline_stubs():
+    stubbed_modules = [
+        "cv2",
+        "numpy",
+        "pandas",
+        "ultralytics",
+        "easyocr",
+        "app.pipeline.face_analysis",
+        "app.pipeline.face_anonymizer",
+        "src.backend.utils.logger",
+    ]
+    originals = {name: sys.modules.get(name) for name in stubbed_modules}
+
     cv2 = types.ModuleType("cv2")
     cv2.CAP_PROP_FPS = 1
     cv2.CAP_PROP_FRAME_WIDTH = 2
     cv2.CAP_PROP_FRAME_HEIGHT = 3
     cv2.CAP_PROP_FRAME_COUNT = 4
+    cv2.CAP_PROP_POS_MSEC = 5
     cv2.COLOR_BGR2GRAY = 10
     cv2.COLOR_GRAY2RGB = 11
     cv2.THRESH_BINARY = 12
+    cv2.INTER_CUBIC = 13
+    cv2.COLOR_BGR2RGB = 14
+    cv2.ADAPTIVE_THRESH_GAUSSIAN_C = 15
+    cv2.COLOR_BGR2HSV = 16
     cv2.FONT_HERSHEY_SIMPLEX = 0
+
+    class FakeRegion:
+        size = 1
+
+        def mean(self, axis=None):
+            return [32.0, 32.0, 32.0]
 
     class FakeFrame:
         def __init__(self, index):
             self.index = index
+            self.shape = (480, 640, 3)
+
+        def __getitem__(self, key):
+            return FakeRegion()
 
     class VideoCapture:
         def __init__(self, path):
@@ -38,6 +65,14 @@ def _install_pipeline_stubs():
                 cv2.CAP_PROP_FRAME_COUNT: len(self.frames),
             }
             return mapping[prop]
+
+        def set(self, prop, value):
+            if prop == cv2.CAP_PROP_POS_MSEC:
+                self.cursor = min(
+                    len(self.frames),
+                    max(0, int(round((float(value) / 1000.0) * 2.0))),
+                )
+            return True
 
         def read(self):
             if self.cursor >= len(self.frames):
@@ -69,6 +104,8 @@ def _install_pipeline_stubs():
     cv2.imshow = lambda *args, **kwargs: None
     cv2.waitKey = lambda *args, **kwargs: -1
     cv2.cvtColor = lambda frame, code: frame
+    cv2.resize = lambda frame, *args, **kwargs: frame
+    cv2.adaptiveThreshold = lambda frame, *args, **kwargs: frame
     cv2.threshold = lambda frame, a, b, c: (None, frame)
     cv2.polylines = lambda *args, **kwargs: None
     cv2.putText = lambda *args, **kwargs: None
@@ -78,6 +115,21 @@ def _install_pipeline_stubs():
     numpy.int32 = int
     numpy.ndarray = object
     numpy.array = lambda value, dtype=None: value
+    numpy.mean = lambda values: sum(values) / len(values) if values else 0.0
+    def arange(start, stop=None, step=1.0):
+        if stop is None:
+            current = 0.0
+            end = float(start)
+        else:
+            current = float(start)
+            end = float(stop)
+        values = []
+        while current < end:
+            values.append(current)
+            current += float(step)
+        return values
+
+    numpy.arange = arange
     sys.modules["numpy"] = numpy
 
     pandas = types.ModuleType("pandas")
@@ -193,13 +245,24 @@ def _install_pipeline_stubs():
     logger_mod.get_logger = lambda name: _Logger()
     sys.modules["src.backend.utils.logger"] = logger_mod
 
+    return originals
+
 
 class FrameAnalysisPipelineContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _install_pipeline_stubs()
+        cls._module_originals = _install_pipeline_stubs()
         sys.modules.pop("src.backend.analysis.pipeline_video_frames", None)
         cls.mod = importlib.import_module("src.backend.analysis.pipeline_video_frames")
+
+    @classmethod
+    def tearDownClass(cls):
+        sys.modules.pop("src.backend.analysis.pipeline_video_frames", None)
+        for name, module in cls._module_originals.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
     def test_person_gate_filters_sampled_frames_and_preserves_source_timestamps(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -216,6 +216,9 @@ export interface AnalysisStatus {
     updated_at?: string;
   } | null;
   second_order_label_proliferation?: SecondOrderLabelProliferationPlan | null;
+  narrative_lens_reading?: Record<string, unknown> | null;
+  character_path_reading?: Record<string, unknown> | null;
+  datascene_meaning_network?: Record<string, unknown> | null;
   mise_en_scene_scene_cards?: {
     schema?: string;
     scene_card_count?: number;
@@ -420,8 +423,39 @@ export interface EvidenceProliferationCandidate {
   source_panel?: string;
   match_score?: number;
   match_probability?: number;
+  probability_band?: string;
   legacy_match_score?: number;
   review_state?: "candidate" | string;
+  decision_required?: boolean;
+  allowed_actions?: string[];
+  proliferation_allowed?: boolean;
+  proliferation_reason?: string;
+  source_anchors?: Array<Record<string, unknown>>;
+  evidence_refs?: Array<Record<string, unknown>>;
+  projection_targets?: string[];
+  situational_options?: Array<Record<string, unknown>>;
+  master_object_projection?: {
+    schema?: string;
+    master_object_id?: string;
+    object_family?: string;
+    current_label?: string;
+    maturity_state?: string;
+    authority_level?: string;
+    confidence?: number;
+    maturity_score?: Record<string, unknown>;
+    source_anchors?: Array<Record<string, unknown>>;
+    evidence_refs?: Array<Record<string, unknown>>;
+    traceback_ref?: string;
+    projection_targets?: string[];
+    governance_status?: {
+      active?: boolean;
+      proliferation_allowed?: boolean;
+      review_required?: boolean;
+      review_reason?: string | null;
+      conflict_state?: string;
+      unknown_override_blocked?: boolean;
+    };
+  };
   time?: {
     start?: number | null;
     end?: number | null;
@@ -442,6 +476,7 @@ export interface EvidenceProliferationCandidate {
 
 export interface EvidenceProliferationMatch {
   schema: "vaa1.evidence_proliferation_match.v1" | string;
+  governance_schema?: string;
   analysis_id?: string;
   request_id?: string;
   status?: "completed" | string;
@@ -451,6 +486,7 @@ export interface EvidenceProliferationMatch {
   };
   candidate_count?: number;
   governance?: Record<string, unknown>;
+  probability_policy?: Record<string, unknown>;
   request?: EvidenceProliferationRequest;
   candidates?: EvidenceProliferationCandidate[];
 }
@@ -1026,6 +1062,26 @@ export interface AnnotationCorrectionRule {
   updated_by?: string;
 }
 
+export interface ProliferationDecision {
+  decision_id: string;
+  candidate_id: string;
+  request_id?: string;
+  decision: "confirmed" | "canceled" | "deferred" | "inspected" | string;
+  authority_level?: string;
+  candidate_label?: string;
+  applied_label?: string;
+  target_evidence_id?: string;
+  target_track_id?: number | string;
+  source_anchors?: Array<Record<string, unknown>>;
+  evidence_refs?: Array<Record<string, unknown>>;
+  projection_targets?: string[];
+  governance_status?: Record<string, unknown>;
+  proliferation_allowed?: boolean;
+  decision_reason?: string;
+  created_at?: string;
+  created_by?: string;
+}
+
 export interface ManualVisualAnnotation {
   id: string;
   category:
@@ -1127,6 +1183,34 @@ export interface AnnotationCorrections {
   label_overrides?: AnnotationCorrectionRule[];
   manual_transcript_entries?: ManualTranscriptEntry[];
   manual_visual_annotations?: ManualVisualAnnotation[];
+  proliferation_decisions?: ProliferationDecision[];
+  master_schema_presence_intervals?: Array<{
+    id: string;
+    node_id: string;
+    node_type?: string;
+    label?: string;
+    narrative_agent_profile_id?: string;
+    master_schema_surface?: string;
+    lane_id?: string;
+    presence_mode?: "on_camera" | "off_camera" | "ambient" | "location" | "music" | string;
+    start_seconds: number;
+    end_seconds: number;
+    authority_level: "manual_correction" | "manual_confirmation" | "system_candidate" | string;
+    source_panel?: string;
+    source_profile_surface?: string;
+    propagation_required?: boolean;
+    partial_propagation_allowed?: boolean;
+    proliferates_to?: string[];
+    updated_at?: string;
+    updated_by?: string;
+  }>;
+  meaning_network_custom_lanes?: Array<{
+    lane_id: string;
+    label: string;
+    description?: string;
+    created_by?: string;
+    updated_at?: string;
+  }>;
 }
 
 export type WorkspacePathType = "results" | "imports";
@@ -2499,6 +2583,9 @@ class ApiService {
       "dependency_sfl_stage1",
       "multimodal_meaning_stage1",
       "second_order_label_proliferation",
+      "narrative_lens_reading",
+      "character_path_reading",
+      "datascene_meaning_network",
       "mise_en_scene_scene_cards",
       "mise_en_scene_scene_card_report_draft_md",
       "source_extraction_metadata_summary",
@@ -2529,6 +2616,9 @@ class ApiService {
       dependency_sfl_stage1: "Dependency + SFL Stage 1 (JSON)",
       multimodal_meaning_stage1: "Multimodal Meaning Stage 1 (JSON)",
       second_order_label_proliferation: "Second-Order Label Proliferation (JSON)",
+      narrative_lens_reading: "Narrative Lens Readings (JSON)",
+      character_path_reading: "Character Path Readings (JSON)",
+      datascene_meaning_network: "Datascene Meaning Network (JSON)",
       mise_en_scene_scene_cards: "Mise-en-Scene Scene Card Report (JSON)",
       mise_en_scene_scene_card_report_draft_md: "Scene Card Report Draft (Markdown)",
       source_extraction_metadata_summary:
@@ -2562,6 +2652,9 @@ class ApiService {
       dependency_sfl_stage1: ".json",
       multimodal_meaning_stage1: ".json",
       second_order_label_proliferation: ".json",
+      narrative_lens_reading: ".json",
+      character_path_reading: ".json",
+      datascene_meaning_network: ".json",
       mise_en_scene_scene_cards: ".json",
       mise_en_scene_scene_card_report_draft_md: ".md",
       source_extraction_metadata_summary: ".json",

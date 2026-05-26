@@ -539,6 +539,32 @@ test("video bbox labels consume Master Schema maturity before raw detector label
   );
 });
 
+test("manual OBJ corrections outrank stale narrative-agent labels on object bboxes", () => {
+  assert.match(
+    videoPanel,
+    /function isObjectManualOverride/,
+    "Video overlays must identify active OBJ manual corrections",
+  );
+
+  assert.match(
+    videoPanel,
+    /if \(objectManualOverrideActive \|\| localOverride\) \{\s*return undefined;\s*\}/,
+    "active OBJ corrections must suppress stale narrative-agent recognition for the same bbox",
+  );
+
+  assert.match(
+    videoPanel,
+    /const objectOverlayLabel =[\s\S]*localOverlayLabel \|\|[\s\S]*manualOverrideOverlayLabel \|\|[\s\S]*manualTrackOverlayLabel \|\|[\s\S]*narrativeAgentOverlayLabel/,
+    "manual object labels must render before narrative-agent labels in bbox headers",
+  );
+
+  assert.match(
+    videoPanel,
+    /displayLabel:\s*manualOverrideOverlayLabel \|\| unresolvedOverlayLabel/,
+    "active manual object overrides must surface their label in sourceItem displayLabel",
+  );
+});
+
 test("video bbox labels keep mature narrative-agent identity above plot cues", () => {
   assert.match(
     videoPanel,
@@ -793,6 +819,42 @@ test("Meaning Plot character paths keep dramatic archetypes electable", () => {
     /Metadata-seeded Narrative Agent Profile/,
     "metadata-seeded agents must remain visible before detected cues surface",
   );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrativeLensReadingsFromAnalysis/,
+    "Meaning / Plot must consume governed narrative lens reading artifacts, not only local second-order terms",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /characterPathReadingsFromAnalysis/,
+    "Character Paths must consume governed character path reading artifacts",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-character-path-reading-artifact="true"/,
+    "Character Paths must expose a stable governed artifact surface",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /scenePresenceReadings/,
+    "scene-presence indicators must stay navigable from governed character path readings",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /INTERPRETIVE_READING_UI_CONFIG/,
+    "Meaning / Plot must keep interpretive lens visibility configurable before manual polishing",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /readingCanSurface/,
+    "Meaning / Plot must gate readings by maturity before surfacing interpretive prose",
+  );
 });
 
 test("Narrative Agent panel owns Character Paths home", () => {
@@ -952,6 +1014,44 @@ test("Meaning Plot character paths expose scene-based narrative agent browsing",
     meaningPlotPanel,
     /min-h-0 flex-1 overflow-hidden p-3/,
     "Meaning / Plot body must constrain height so child panels can scroll through full data arrays",
+  );
+});
+
+test("Scene Cards bridge to interpretive lens readings", () => {
+  assert.match(
+    sceneCardPanel,
+    /data-vaa1-scene-card-interpretive-readings="true"/,
+    "Scene Cards must expose a stable bridge for scene-scoped interpretive readings",
+  );
+
+  assert.match(
+    sceneCardPanel,
+    /interpretiveReadingsFromStatus/,
+    "Scene Cards must read governed interpretive artifacts from analysis status",
+  );
+
+  assert.match(
+    sceneCardPanel,
+    /navigateToInterpretiveReading/,
+    "Scene Card readings must remain navigable back to source evidence and Meaning / Plot",
+  );
+
+  assert.match(
+    sceneCardPanel,
+    /readingCanSurface/,
+    "Scene Cards must gate interpretive readings by maturity before surfacing them",
+  );
+
+  assert.match(
+    videoService,
+    /narrativeLensReading:\s*status\.narrative_lens_reading/,
+    "VideoService must carry narrative lens readings into panel analysis data",
+  );
+
+  assert.match(
+    videoService,
+    /characterPathReading:\s*status\.character_path_reading/,
+    "VideoService must carry character path readings into panel analysis data",
   );
 });
 
@@ -1247,6 +1347,482 @@ test("evidence proliferation launch remains governed and analyst initiated", () 
     /outputs_are_candidates_until_verified_by_evidence:\s*true/,
     "proliferation outputs must remain candidates until supported by evidence",
   );
+
+  assert.match(
+    apiService,
+    /proliferation_allowed\?:\s*boolean/,
+    "frontend API types must expose whether a candidate may actually proliferate",
+  );
+
+  assert.match(
+    apiService,
+    /master_object_projection\?:/,
+    "proliferation candidates must carry the Master Schema governance projection",
+  );
+
+  assert.match(
+    videoPanel,
+    /function isReviewableProliferationCandidate/,
+    "BBox/ROI overlays must distinguish reviewable near matches from mature projections",
+  );
+
+  assert.match(
+    videoPanel,
+    /to_be_confirmed_or_canceled/,
+    "near matches must surface as confirm-or-cancel candidates instead of hidden backend options",
+  );
+
+  assert.match(
+    videoPanel,
+    /proliferated_review_candidate/,
+    "BBox/ROI source items must preserve review candidate data for inspection and traceback",
+  );
+
+  assert.match(
+    apiService,
+    /proliferation_decisions\?:\s*ProliferationDecision\[\]/,
+    "annotation corrections must persist proliferation confirm/cancel decisions",
+  );
+
+  assert.match(
+    videoPanel,
+    /recordProliferationCandidateDecision/,
+    "BBox/ROI review candidates must support durable analyst decisions",
+  );
+
+  assert.match(
+    videoPanel,
+    /evidenceProliferationCandidateDecided/,
+    "candidate decisions must emit an event for downstream propagation surfaces",
+  );
+
+  assert.match(
+    videoPanel,
+    /Confirmed proliferation candidate/,
+    "confirmed candidates must create scoped mature correction rules",
+  );
+});
+
+test("Datascene Meaning Network remains available for mature scene presence proliferation", () => {
+  assert.match(
+    apiService,
+    /datascene_meaning_network\?:\s*Record<string, unknown> \| null/,
+    "frontend API status must expose the datascene meaning network artifact",
+  );
+
+  assert.match(
+    videoService,
+    /datasceneMeaningNetwork\?:\s*Record<string, unknown> \| null/,
+    "analysis data must carry the datascene meaning network for panels",
+  );
+
+  assert.match(
+    videoService,
+    /datasceneMeaningNetwork:\s*status\.datascene_meaning_network \|\| null/,
+    "video service must map backend datascene meaning network status into analysis data",
+  );
+
+  assert.match(
+    videoService,
+    /datascene_meaning_network:\s*status\.datascene_meaning_network \|\| null/,
+    "raw analysis JSON must retain the datascene meaning network for traceback and downloads",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-panel-tools="true"/,
+    "Meaning / Plot must surface the Meaning Network panel tooling contract",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-add-node="true"/,
+    "Meaning Network tooling must support fast new-node creation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-quick-confirm="true"/,
+    "Meaning Network node markers must support fast manual confirmation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-copy-anchor="true"/,
+    "Meaning Network node markers must support copying known anchors",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-paste-anchor="true"/,
+    "Meaning Network tooling must support pasting known nodes to new coordinates",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-edge-marker="true"/,
+    "Meaning Network edge markers must stay visible and navigable",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-graph-panel="true"/,
+    "Meaning Network must render as a graph panel, not only as a row of buttons",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-graph-node="true"/,
+    "Meaning Network graph nodes must be visible interactive markers",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /masterRecordToMeaningNode/,
+    "Meaning Network must surface Master Schema records as graph and timeline nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /master_schema_narrative_agents/,
+    "Meaning Network must group Master Schema Narrative Agent nodes for review",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /master_schema_objects/,
+    "Meaning Network must group Master Schema object nodes for review",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /tracks_same_entity_as/,
+    "Meaning Network must expose probable object-agent continuity relations",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-whole-timeline="true"/,
+    "Meaning Network must provide a whole timeline view over governed scenes and evidence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-scene-timeline="true"/,
+    "Meaning Network must provide a closer scene timeline view",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-character-timeline="true"/,
+    "Meaning Network must provide Narrative Agent timeline views",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-expanded=\{meaningNetworkExpanded \? "true" : "false"\}/,
+    "Meaning Network must support a larger workbench mode for holistic timeline review",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-scrollable-graph="true"/,
+    "Meaning Network graph must be scrollable when mature evidence density grows",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-resizable-workspace=\{meaningNetworkExpanded \? "true" : "false"\}/,
+    "Meaning Network expanded mode must behave as a resizable workspace, not a cramped embedded strip",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-open-own-panel="true"/,
+    "Meaning Network must expose an own-panel workspace affordance for secondary display work",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-wheel-zoom="true"/,
+    "Meaning Network graph must support mouse-wheel zoom for close inspection",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-zoom-controls="true"/,
+    "Meaning Network graph must expose non-wheel zoom controls",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-zoom-in="true"/,
+    "Meaning Network graph must expose zoom-in control",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-zoom-out="true"/,
+    "Meaning Network graph must expose zoom-out control",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-paintable-scene="true"/,
+    "Meaning Network scenes must render as paintable timeline spans, not only isolated nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-node-presence-bar="true"/,
+    "Meaning Network graph nodes must render time-anchored presence bars",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-stretchable-node-presence="true"/,
+    "Meaning Network node presence bars must expose stretch handles for analyst duration correction",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-draggable-node-presence="true"/,
+    "Meaning Network node presence bars must be draggable along the scene timeline",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-single-click-selects="true"/,
+    "Meaning Network graph nodes must select and activate handles on single click instead of opening another panel",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-single-click-source-verifies="true"/,
+    "Meaning Network graph nodes must remain attached to video source verification on single click",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkVerificationRange/,
+    "Meaning Network navigation must resolve source time from evidence, mature presence intervals, or active scene fallback",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkSourceVerified/,
+    "Meaning Network source verification must emit a traceable event before falling back to schema inspection",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-source-verifying-click="true"/,
+    "Meaning Network presence bars must seek the source video when clicked",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-double-click-opens-agent=\{isNarrativeAgentMeaningNode\(node\) \? "true" : "false"\}/,
+    "Narrative Agent Meaning Network nodes must advertise double-click agent navigation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /openMeaningNetworkNodeInspector[\s\S]*panelType:\s*"ManualIdentification"/,
+    "Double-clicking a Narrative Agent Meaning Network node must open the Narrative Agent path instead of Master Schema by default",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-active-handle=\{selected \? "true" : "false"\}/,
+    "Meaning Network handle visibility must be governed by active node selection",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /persistMeaningNetworkPresenceInterval/,
+    "Dragged Meaning Network presence intervals must persist as mature correction records",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-master-schema-presence-anchor="true"/,
+    "Meaning Network presence bars must be framed as Master Schema presence anchors",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkNodePriority/,
+    "Meaning Network graph density control must preserve scenes and on-camera agents before spoken-word crowding",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkCanonicalNodeType/,
+    "Meaning Network lane routing must normalize backend node type variants before deciding on-camera agent lanes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrativeAgentProfileToMeaningNode/,
+    "Meaning Network must seed on-camera Narrative Agent lanes from governed Narrative Agent profiles",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrative_agent_profile_id/,
+    "Meaning Network presence intervals must retain the governed Narrative Agent profile id for Master Schema sync",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /master_schema_surface:\s*"narrative_agent_profile_annotations"/,
+    "Narrative Agent presence edits must point back to the Master Schema Narrative Agent profile surface",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrativeAgentProfilePresenceUpdated/,
+    "Meaning Network edits must notify Narrative Agent profile/card surfaces after Master Schema presence updates",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkPresenceHandleScrubbed/,
+    "Meaning Network presence handles must scrub the source video while an analyst drags timing",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-handle-live-video-scrub="true"/,
+    "Meaning Network presence handles must advertise live video scrubbing",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /eventBus\.on\("analysisCorrectionsChanged", correctionsHandler\)/,
+    "Meaning / Plot must refresh when other panels commit Master Schema correction updates",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /eventBus\.on\("narrativeAgentProfilePresenceUpdated", metadataHandler\)/,
+    "Narrative Agent profile cards must refresh when Meaning Network presence edits update profile timing",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /data-vaa1-narrative-agent-card-presence-from-meaning-network="true"/,
+    "Narrative Agent profile cards must display Meaning Network handle-derived presence intervals",
+  );
+
+  assert.match(
+    sourceMediaPanel,
+    /VideoService\.refreshAnalysis\(videoId\)/,
+    "Narrative Agent profile cards must read Master Schema correction intervals, not only local metadata",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-master-schema-presence-interval-sync="true"/,
+    "Master Schema subjects must expose Meaning Network presence interval synchronization",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /master_schema_presence_intervals/,
+    "Master Schema panel must read canonical presence intervals from annotation corrections",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /lane_id:\s*"on_camera_agents"/,
+    "Narrative Agent profile nodes must be explicitly routed to the on-camera agents lane",
+  );
+
+  assert.match(
+    layoutHost,
+    /registerComponentFactoryFunction\(\s*"MeaningNetwork"/,
+    "Meaning Network must be available as its own GoldenLayout panel, not only an embedded subfield",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-dedicated-panel=\{dedicatedMeaningNetworkPanel \? "true" : "false"\}/,
+    "Meaning Network dedicated panel mode must advertise its full-panel state",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-video-sync-cursor="true"/,
+    "Meaning Network must expose a timeline cursor synchronized with the video",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkCursorChanged/,
+    "Meaning Network cursor movement must emit a sync event for graph-video navigation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /off_camera_presence/,
+    "Meaning Network must support off-camera or presumed scene presence tracks",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-add-lane="true"/,
+    "Meaning Network must allow analysts to add custom timeline lanes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /spoken_word[\s\S]*prosody/,
+    "Meaning Network must place spoken word and prosody evidence onto the shared timeline",
+  );
+
+  assert.match(
+    apiService,
+    /master_schema_presence_intervals\?:/,
+    "annotation corrections must persist Master Schema presence intervals",
+  );
+
+  assert.match(
+    apiService,
+    /meaning_network_custom_lanes\?:/,
+    "annotation corrections must persist analyst-defined Meaning Network lanes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-show-all-scenes="true"/,
+    "Meaning Network must let analysts reset scene focus after isolating a scene",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-add-scene="true"/,
+    "Meaning Network must expose a navigable add-scene operation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-delete-scene="true"/,
+    "Meaning Network must expose a navigable delete-scene operation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkEvidenceTimeRange/,
+    "Meaning Network node and edge markers must only navigate to video when a real source time range exists",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkSourceAnchorMissing/,
+    "Meaning Network must route source-missing nodes to governed schema/traceback handling instead of fake frame zero",
+  );
 });
 
 test("BBox/ROI editor behaves as an evidence navigation hub", () => {
@@ -1314,6 +1890,36 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
     videoPanel,
     /manual_confirmation_event[\s\S]*manual_bbox_roi_confirmation[\s\S]*old_states_retained_as:\s*"traceback_provenance"/,
     "BBox/ROI saves must record manual confirmation events and retain old history as traceback provenance",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /const visibleTime =\s*const visibleTime =/,
+    "BBox/ROI interaction timing must not contain duplicate ghost refresh/timing declarations",
+  );
+
+  assert.match(
+    videoPanel,
+    /useVisibleObjectTime[\s\S]*overlay\.modality === "object"/,
+    "Object BBox/ROI correction timing must prefer the visible interaction time when detector bounds are stale",
+  );
+
+  assert.match(
+    videoPanel,
+    /setSelectedWorkspaceAnnotationId\(annotation\.id\)/,
+    "Saved manual BBox/ROI corrections must remain selected as the mature workspace annotation",
+  );
+
+  assert.match(
+    videoPanel,
+    /setSelectedOverlayKey\(`manual-\$\{annotation\.id\}`\)/,
+    "Saved manual BBox/ROI corrections must surface as the active overlay instead of falling back to stale detector labels",
+  );
+
+  assert.match(
+    videoPanel,
+    /masterSchemaManualCorrectionCommitted[\s\S]*partial_propagation_allowed:\s*false/,
+    "Manual BBox/ROI corrections must emit a Master Schema propagation event that disallows partial propagation",
   );
 });
 
@@ -1684,5 +2290,25 @@ test("Video panel swaps loaded media atomically without duplicate preload frames
     videoPanel,
     /Loading video\.\.\./,
     "VideoPanel should not show the old raw loading-video text frame",
+  );
+});
+
+test("browser refresh shortcuts remain reserved for the browser", () => {
+  assert.match(
+    videoPanel,
+    /event\.defaultPrevented \|\| event\.metaKey \|\| event\.ctrlKey \|\| event\.altKey/,
+    "global video keyboard shortcuts must leave Cmd/Ctrl browser shortcuts alone",
+  );
+
+  assert.doesNotMatch(
+    `${videoPanel}\n${meaningPlotPanel}\n${menuBar}\n${layoutHost}`,
+    /(?:metaKey|ctrlKey)[\s\S]{0,160}key(?:\.toLowerCase\(\))?\s*={0,2}={0,1}\s*["']r["'][\s\S]{0,160}preventDefault\(\)/i,
+    "VAA1 must not intercept Cmd/Ctrl+R refresh",
+  );
+
+  assert.match(
+    menuBar,
+    /Reload UI \/ Refresh Workspace/,
+    "the menu must expose an explicit reload path when HMR does not surface new frontend changes",
   );
 });

@@ -110,6 +110,49 @@ type SceneMeaningPlot = {
   meaning_events?: SceneMeaningPlotItem[];
 };
 
+type SceneInterpretiveReading = {
+  reading_id?: string;
+  lens_id?: string;
+  lens_label?: string;
+  reading_type?: string;
+  claim_label?: string;
+  claim_prose?: string;
+  support_score?: number;
+  maturity_state?: string;
+  maturity_gate?: {
+    state?: string;
+    reason?: string;
+    can_surface?: boolean;
+    support_band?: string;
+    source_ref_count?: number;
+  };
+  target?: {
+    time_span?: {
+      start_ms?: number;
+      end_ms?: number;
+      start?: number;
+      end?: number;
+    };
+  };
+  time_span?: {
+    start_ms?: number;
+    end_ms?: number;
+    start?: number;
+    end?: number;
+  };
+  narrative_agent?: {
+    current_label?: string;
+    profile_key?: string;
+  };
+  evidence_refs?: Array<Record<string, unknown>>;
+};
+
+const INTERPRETIVE_READING_UI_CONFIG = {
+  minVisibleSupport: 0.35,
+  maxSceneReadings: 10,
+  showLowSupportCandidates: true,
+};
+
 type SceneNlpSummary = {
   sentence?: string;
   authority?: string;
@@ -293,6 +336,53 @@ function instructionEndSeconds(instruction: SecondOrderLabelInstruction): number
     0;
   const value = Number(raw || 0);
   return instruction.time_span?.end_ms !== undefined || value > 1000 ? value / 1000 : value;
+}
+
+function readingStartSeconds(reading: SceneInterpretiveReading): number {
+  const span = reading.target?.time_span || reading.time_span || {};
+  const raw = span.start_ms ?? span.start ?? 0;
+  const value = Number(raw || 0);
+  return span.start_ms !== undefined || value > 1000 ? value / 1000 : value;
+}
+
+function readingEndSeconds(reading: SceneInterpretiveReading): number {
+  const span = reading.target?.time_span || reading.time_span || {};
+  const raw = span.end_ms ?? span.end ?? span.start_ms ?? span.start ?? 0;
+  const value = Number(raw || 0);
+  return span.end_ms !== undefined || value > 1000 ? value / 1000 : value;
+}
+
+function readingEvidenceSummary(reading: SceneInterpretiveReading): string {
+  const refs = reading.evidence_refs || [];
+  if (!refs.length) return "traceback pending";
+  const first = refs[0];
+  const label = first.evidence_id || first.evidence_kind || first.source_surface || "source";
+  return refs.length === 1 ? String(label) : `${label} +${refs.length - 1}`;
+}
+
+function readingCanSurface(reading: SceneInterpretiveReading): boolean {
+  if (reading.maturity_gate?.can_surface === false) return false;
+  const support = typeof reading.support_score === "number" ? reading.support_score : 1;
+  if (support >= INTERPRETIVE_READING_UI_CONFIG.minVisibleSupport) return true;
+  return Boolean(
+    INTERPRETIVE_READING_UI_CONFIG.showLowSupportCandidates &&
+      reading.maturity_state === "candidate_low_support",
+  );
+}
+
+function readingMaturityLabel(reading: SceneInterpretiveReading): string {
+  return String(reading.maturity_gate?.state || reading.maturity_state || "candidate")
+    .replaceAll("_", " ");
+}
+
+function interpretiveReadingsFromStatus(payload: unknown): SceneInterpretiveReading[] {
+  if (!payload || typeof payload !== "object") return [];
+  const readings = (payload as { readings?: unknown }).readings;
+  return Array.isArray(readings)
+    ? readings.filter((reading): reading is SceneInterpretiveReading =>
+        Boolean(reading && typeof reading === "object"),
+      )
+    : [];
 }
 
 function meaningLensTerms(instruction: SecondOrderLabelInstruction): string[] {
@@ -597,6 +687,37 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
     selectedVideoId,
   ]);
 
+  const sceneInterpretiveReadings = useMemo(() => {
+    const narrativeReadings = interpretiveReadingsFromStatus(
+      (analysisData as any)?.narrativeLensReading ||
+        (analysisData as any)?.rawJson?.narrative_lens_reading,
+    );
+    const characterReadings = interpretiveReadingsFromStatus(
+      (analysisData as any)?.characterPathReading ||
+        (analysisData as any)?.rawJson?.character_path_reading,
+    );
+    return [...narrativeReadings, ...characterReadings]
+      .filter((reading) =>
+        intervalsOverlap(
+          sceneStart,
+          sceneEnd,
+          readingStartSeconds(reading),
+          readingEndSeconds(reading),
+        ),
+      )
+      .filter(readingCanSurface)
+      .sort((left, right) => {
+        const scoreDelta = Number(right.support_score || 0) - Number(left.support_score || 0);
+        if (scoreDelta !== 0) return scoreDelta;
+        return readingStartSeconds(left) - readingStartSeconds(right);
+      })
+      .slice(0, INTERPRETIVE_READING_UI_CONFIG.maxSceneReadings);
+  }, [
+    analysisData,
+    sceneEnd,
+    sceneStart,
+  ]);
+
   const visibleItems = useMemo(() => {
     const rawItems = selectedCard?.resolved_items || selectedCard?.items || [];
     const byIdentity = new Map<string, SceneCardItem>();
@@ -684,6 +805,13 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
         : secondsFromMs(item.time_interval?.start_ms);
     if (selectedVideoId) {
       openVideoAtTime(selectedVideoId, seconds);
+      openPanel("MeaningPlot", { videoId: selectedVideoId });
+    }
+  };
+
+  const navigateToInterpretiveReading = (reading: SceneInterpretiveReading) => {
+    if (selectedVideoId) {
+      openVideoAtTime(selectedVideoId, readingStartSeconds(reading));
       openPanel("MeaningPlot", { videoId: selectedVideoId });
     }
   };
@@ -1329,6 +1457,71 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                             </button>
                           );
                         })}
+                    </div>
+                  </section>
+                )}
+
+                {sceneInterpretiveReadings.length > 0 && (
+                  <section
+                    className="border-b border-slate-800 pb-3"
+                    data-vaa1-scene-card-interpretive-readings="true"
+                  >
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
+                      Interpretive Readings
+                    </div>
+                    <p className="text-[12px] leading-5 text-slate-400">
+                      Lens and character-path readings available for this scene. Open them in Meaning / Plot to review source anchors.
+                    </p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      {sceneInterpretiveReadings.map((reading, index) => {
+                        const start = readingStartSeconds(reading);
+                        const label =
+                          reading.lens_label ||
+                          reading.reading_type?.replaceAll("_", " ") ||
+                          reading.narrative_agent?.current_label ||
+                          "Interpretive reading";
+                        return (
+                          <button
+                            key={reading.reading_id || `scene-reading:${index}:${start}`}
+                            type="button"
+                            onClick={() => navigateToInterpretiveReading(reading)}
+                            className="border border-cyan-900/60 bg-cyan-950/10 px-2 py-2 text-left hover:border-cyan-500/70 hover:bg-cyan-950/20"
+                            title={`Open source-linked reading. ${readingEvidenceSummary(reading)}`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="min-w-0 truncate text-[12px] text-cyan-100">
+                                {label}
+                              </span>
+                              <span className="shrink-0 text-[10px] text-slate-500">
+                                {formatTime(start)}
+                              </span>
+                            </div>
+                            <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-300">
+                              {reading.claim_prose || reading.claim_label || "Reading prose pending."}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {reading.narrative_agent?.current_label && (
+                                <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300">
+                                  {reading.narrative_agent.current_label}
+                                </span>
+                              )}
+                              {reading.maturity_state && (
+                                <span className="rounded border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                                  {readingMaturityLabel(reading)}
+                                </span>
+                              )}
+                              <span className="rounded border border-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                                {readingEvidenceSummary(reading)}
+                              </span>
+                            </div>
+                            {reading.maturity_gate?.reason && (
+                              <div className="mt-1 line-clamp-1 text-[9px] text-slate-500">
+                                {reading.maturity_gate.reason}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </section>
                 )}

@@ -1,7 +1,33 @@
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+
+expression_detector = types.ModuleType("src.backend.analysis.expression_detector")
+expression_detector.ExpressionDetectorDeepFace = type(
+    "ExpressionDetectorDeepFace", (), {}
+)
+sys.modules["src.backend.analysis.expression_detector"] = expression_detector
+
+quantitative_analysis = types.ModuleType("src.backend.analysis.quantitative_analysis")
+
+
+class QuantitativeAnalysis:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        return {}
+
+
+quantitative_analysis.QuantitativeAnalysis = QuantitativeAnalysis
+quantitative_analysis.attach_quant_evidence_to_transcript = (
+    lambda transcript, *args, **kwargs: transcript
+)
+sys.modules["src.backend.analysis.quantitative_analysis"] = quantitative_analysis
 
 from api_server import (
     build_vaa1_master_schema_from_cvat,

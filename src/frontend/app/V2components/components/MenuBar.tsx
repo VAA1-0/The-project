@@ -903,7 +903,7 @@ export function MenuBar() {
           },
         },
         {
-          label: "Refresh",
+          label: "Reload UI / Refresh Workspace",
           onClick: () => {
             handleRefreshWorkspace();
           },

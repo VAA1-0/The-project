@@ -95,8 +95,32 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
                 for candidate in result["candidates"]
             )
         )
+        self.assertEqual(
+            result["governance_schema"],
+            "vaa1.mature_data_proliferation_governance.v1",
+        )
+        self.assertIn("probability_policy", result)
+        self.assertTrue(result["governance"]["near_matches_surface_to_analyst"])
+        self.assertTrue(result["governance"]["near_matches_require_confirm_or_cancel"])
         self.assertTrue(
-            all(candidate["review_state"] == "candidate" for candidate in result["candidates"])
+            all(
+                "master_object_projection" in candidate
+                and "governance_status" in candidate["master_object_projection"]
+                for candidate in result["candidates"]
+            )
+        )
+        self.assertTrue(
+            all(
+                candidate["review_state"]
+                in {
+                    "candidate_manual_source",
+                    "review_candidate",
+                    "to_be_confirmed_or_canceled",
+                    "very_high_probability_candidate",
+                    "below_surface_candidate",
+                }
+                for candidate in result["candidates"]
+            )
         )
 
     def test_matcher_writes_json_ledger(self):
@@ -361,6 +385,101 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertGreaterEqual(
             visual_sample["closest_match"]["components"]["sample_cloud_support"],
             0.8,
+        )
+
+    def test_near_matches_surface_for_confirm_or_cancel_without_silent_proliferation(self):
+        status = {
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": [
+                        {
+                            "track_id": 8,
+                            "label": "person",
+                            "start": 12.0,
+                            "end": 12.2,
+                            "x": 0.32,
+                            "y": 0.1,
+                            "width": 0.3,
+                            "height": 0.7,
+                        }
+                    ]
+                }
+            }
+        }
+        request = {
+            "request_id": "request-near",
+            "target": "character_continuity",
+            "scope": "same_video",
+            "evidence": {
+                "overlay_key": "manual:origin",
+                "label": "Confirmed suited agent",
+                "source_label": "person",
+                "category": "Identification",
+                "geometry": {
+                    "geometry_type": "bbox",
+                    "bbox": {"x": 0.3, "y": 0.1, "width": 0.3, "height": 0.7},
+                },
+                "interval": {"start": 10.0, "end": 10.2},
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match("analysis-1", status, request)
+
+        self.assertEqual(result["candidate_count"], 1)
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["probability_band"], "probable_candidate")
+        self.assertTrue(candidate["decision_required"])
+        self.assertFalse(candidate["proliferation_allowed"])
+        self.assertEqual(candidate["review_state"], "to_be_confirmed_or_canceled")
+        self.assertIn("confirm", candidate["allowed_actions"])
+        self.assertIn("cancel", candidate["allowed_actions"])
+        projection = candidate["master_object_projection"]
+        self.assertEqual(projection["schema"], "vaa1.mature_data_proliferation_governance.v1")
+        self.assertTrue(projection["governance_status"]["review_required"])
+        self.assertFalse(projection["governance_status"]["proliferation_allowed"])
+        self.assertGreaterEqual(len(projection["source_anchors"]), 2)
+        self.assertIn("bbox_roi_panel", projection["projection_targets"])
+        self.assertGreaterEqual(len(candidate["situational_options"]), 1)
+        self.assertFalse(candidate["situational_options"][0]["proliferation_allowed"])
+
+    def test_manual_source_candidate_can_proliferate_when_traceable(self):
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "manual:bond:2",
+                        "category": "Identification",
+                        "label": "James Bond",
+                        "identity_affirmation": "James Bond",
+                        "coordinates": {"x": 0.31, "y": 0.1, "w": 0.3, "h": 0.7},
+                        "start_seconds": 8.0,
+                        "end_seconds": 8.1,
+                    }
+                ]
+            }
+        }
+        request = {
+            "request_id": "request-manual",
+            "target": "character_continuity",
+            "evidence": {
+                "overlay_key": "manual:bond:1",
+                "label": "James Bond",
+                "source_label": "person",
+                "category": "Identification",
+                "interval": {"start": 8.0, "end": 8.1},
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match("analysis-1", status, request)
+
+        self.assertEqual(result["candidate_count"], 1)
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["review_state"], "candidate_manual_source")
+        self.assertTrue(candidate["proliferation_allowed"])
+        self.assertFalse(candidate["decision_required"])
+        self.assertEqual(
+            candidate["master_object_projection"]["authority_level"],
+            "manual_annotation",
         )
 
 

@@ -1,0 +1,1173 @@
+{
+  "schema_name": "VAA1_Bojean_Antenarrative_5B_Genre_Traceability_Schema",
+  "schema_version": "0.1.0",
+  "created_for": "VAA1 / Datascene",
+  "operative_principle": {
+    "summary": "This schema operationalizes Bojean antenarrative analysis inside VAA1 as a traceable, navigable, genre-sensitive, multimodal interpretation layer. The system treats transcript and text-based linguistic evidence as the first mature analytical substrate, then cultivates audio, visual, spatial, metadata, and analyst-validated evidence around it. Boje's 5 B's are not implemented as isolated labels, but as situated antenarrative functions conditioned by genre, scene, speaker, institutional context, and available multimodal evidence.",
+    "core_rules": [
+      "All antenarrative claims must remain linked to source evidence.",
+      "All detections must be timestamped where source media allows it.",
+      "All visual evidence must be spatially linked through BBox/ROI or frame-level references where applicable.",
+      "Transcript and linguistic detections are the initial maturity baseline.",
+      "Genre conditions interpretation; it does not replace evidence.",
+      "Manual analyst validation overrides automated detection, while raw detections remain preserved for traceback.",
+      "Every 5B object must be navigable from and to transcript, POS matrix, scene browser, BBox/ROI panel, narrative agents, timeline, traceback drawer, and report outputs.",
+      "Visual detections are cultivated gradually and initially treated as supportive or contextual evidence unless analyst-confirmed.",
+      "5B objects may feed other VAA1 features, including POS analysis, SFL/dependency parsing, narrative agents, plot candidates, worldview analysis, quantitative analysis, and report writing."
+    ]
+  },
+  "top_level_architecture": {
+    "input_layers": [
+      "media_file",
+      "transcript",
+      "text_document",
+      "metadata",
+      "speaker_diarization",
+      "audio_prosody",
+      "POS_analysis",
+      "dependency_parse",
+      "SFL_analysis",
+      "sentiment_stance_modality",
+      "scene_segmentation",
+      "BBox_ROI_annotations",
+      "object_detection",
+      "OCR",
+      "visual_pattern_recognition",
+      "analyst_annotations"
+    ],
+    "conditioning_layers": [
+      "genre_context",
+      "institutional_context",
+      "platform_context",
+      "interaction_context",
+      "dramatic_context",
+      "cultural_context",
+      "source_reliability_context"
+    ],
+    "interpretation_layers": [
+      "bojean_5B_candidate_detection",
+      "cross_modal_support",
+      "antenarrative_relation_mapping",
+      "maturity_assessment",
+      "analyst_validation",
+      "publication_ready_claim_generation"
+    ],
+    "output_layers": [
+      "POS_matrix",
+      "scene_browser",
+      "narrative_agents",
+      "BBox_ROI_panel",
+      "traceback_drawer",
+      "timeline",
+      "meaning_plot_candidates",
+      "worldview_analysis",
+      "quantitative_analysis",
+      "report_writer_agent"
+    ]
+  },
+  "bojean_5B_taxonomy": {
+    "before": {
+      "definition": "Pre-narrative fragments, weak signals, unfinished meanings, ambiguity, emergent motifs, and unstable sensemaking before a stabilized narrative takes shape.",
+      "dominant_question": "What is beginning to emerge before it becomes coherent?",
+      "linguistic_targets": [
+        "hedging",
+        "unfinished syntax",
+        "ellipsis",
+        "ambiguous pronouns",
+        "modal uncertainty",
+        "low coherence",
+        "emergent repeated keywords",
+        "weakly connected noun phrases",
+        "discourse markers",
+        "self-correction",
+        "interruption",
+        "fragmented testimony",
+        "vague temporal references",
+        "incomplete causal claims"
+      ],
+      "pos_and_syntax_patterns": [
+        "high pronoun density",
+        "interjections",
+        "modal auxiliaries",
+        "sentence fragments",
+        "discourse particles",
+        "low main-verb completion",
+        "weak dependency cohesion"
+      ],
+      "audio_targets": [
+        "hesitation",
+        "long pauses",
+        "nervous laughter",
+        "breath instability",
+        "unfinished cadence"
+      ],
+      "visual_targets": [
+        "uncertain gestures",
+        "unstable crowd formation",
+        "emerging symbols",
+        "partial signage",
+        "ambiguous spatial attention"
+      ],
+      "typical_outputs": [
+        "weak_signal_cluster",
+        "fragment_candidate",
+        "emergent_motif",
+        "unstable_interpretation"
+      ]
+    },
+    "bets": {
+      "definition": "Future-oriented claims, projections, promises, strategies, wagers, roadmaps, hopes, threats, and institutional commitments.",
+      "dominant_question": "What future is being projected, promised, risked, or strategically wagered?",
+      "linguistic_targets": [
+        "future tense",
+        "promissory language",
+        "strategic verbs",
+        "roadmap language",
+        "vision statements",
+        "investment language",
+        "risk language",
+        "conditional futures",
+        "scenario language",
+        "mission statements",
+        "prediction",
+        "expectation",
+        "commitment",
+        "obligation",
+        "policy target language"
+      ],
+      "pos_and_syntax_patterns": [
+        "future auxiliaries",
+        "modal verbs such as will, shall, must, should, could",
+        "conditional clauses",
+        "commitment verbs",
+        "purpose clauses",
+        "teleological constructions"
+      ],
+      "audio_targets": [
+        "confident declarative tone",
+        "emphatic future projection",
+        "pitch-like escalation"
+      ],
+      "visual_targets": [
+        "future mockups",
+        "roadmaps",
+        "vision slides",
+        "renderings",
+        "symbolic future imagery",
+        "technology demonstrations"
+      ],
+      "typical_outputs": [
+        "strategic_bet",
+        "future_projection",
+        "institutional_commitment",
+        "risk_claim",
+        "promise_chain"
+      ]
+    },
+    "becoming": {
+      "definition": "Processes of transformation, identity change, role shift, institutional evolution, movement formation, relational development, and ontological transition.",
+      "dominant_question": "What is changing, transforming, becoming, or reconfiguring?",
+      "linguistic_targets": [
+        "identity transformation language",
+        "role change",
+        "process verbs",
+        "developmental sequencing",
+        "before-after contrast",
+        "self-description shift",
+        "movement from old to new",
+        "evolution language",
+        "transition markers",
+        "learning language",
+        "emergence language",
+        "conversion language",
+        "professionalization",
+        "radicalization",
+        "normalization"
+      ],
+      "pos_and_syntax_patterns": [
+        "dynamic verbs",
+        "temporal adverbs",
+        "comparatives",
+        "change-of-state verbs",
+        "first-person singular/plural shifts",
+        "progressive aspect",
+        "sequence markers"
+      ],
+      "audio_targets": [
+        "emotional shift",
+        "voice softening or intensification",
+        "reflective cadence"
+      ],
+      "visual_targets": [
+        "symbolic transition",
+        "wardrobe change",
+        "ritual behavior",
+        "spatial repositioning",
+        "identity markers",
+        "movement from margin to centre"
+      ],
+      "typical_outputs": [
+        "identity_shift",
+        "transformation_sequence",
+        "role_transition",
+        "process_arc",
+        "institutional_evolution"
+      ]
+    },
+    "beneath": {
+      "definition": "Latent structures, hidden assumptions, ideological formations, institutional power, material conditions, suppressed agency, and deep cultural logics shaping visible events.",
+      "dominant_question": "What hidden structures, assumptions, powers, or material conditions are operating beneath the visible narrative?",
+      "linguistic_targets": [
+        "passive voice",
+        "institutional abstraction",
+        "nominalisation",
+        "hidden agency",
+        "bureaucratic compression",
+        "ideological vocabulary",
+        "taken-for-granted assumptions",
+        "depersonalized responsibility",
+        "technical inevitability claims",
+        "naturalization",
+        "legitimation language",
+        "classification language",
+        "governance vocabulary",
+        "material substrate references"
+      ],
+      "pos_and_syntax_patterns": [
+        "nominalisations",
+        "agentless passive constructions",
+        "abstract nouns",
+        "institutional nouns",
+        "high noun-to-verb ratio",
+        "suppressed subject",
+        "prepositional chains"
+      ],
+      "audio_targets": [
+        "authority tone",
+        "bureaucratic flatness",
+        "controlled affect"
+      ],
+      "visual_targets": [
+        "spatial hierarchy",
+        "institutional symbols",
+        "dominance framing",
+        "exclusionary composition",
+        "architecture of authority",
+        "backstage infrastructures"
+      ],
+      "typical_outputs": [
+        "hidden_structure_claim",
+        "ideological_substrate",
+        "institutional_power_pattern",
+        "material_condition",
+        "suppressed_agency"
+      ]
+    },
+    "between": {
+      "definition": "Dialogic tension, contradiction, disagreement, negotiation, conflict, irony, rupture, and contested meaning between actors, positions, scenes, institutions, or claims.",
+      "dominant_question": "Where is meaning contested, contradicted, negotiated, or split?",
+      "linguistic_targets": [
+        "negation",
+        "contrast markers",
+        "counterclaims",
+        "rebuttals",
+        "concessive clauses",
+        "reported disagreement",
+        "polarized adjectives",
+        "irony markers",
+        "correction",
+        "question-answer tension",
+        "stance opposition",
+        "argumentative sequencing",
+        "disclaimer-plus-claim structures",
+        "conflict verbs"
+      ],
+      "pos_and_syntax_patterns": [
+        "adversative conjunctions",
+        "negation particles",
+        "concessive clauses",
+        "contrastive discourse markers",
+        "reported speech structures",
+        "interrogatives",
+        "antonym pairs"
+      ],
+      "audio_targets": [
+        "interruption",
+        "overlap",
+        "prosodic tension",
+        "raised intensity",
+        "sarcasm-like contour"
+      ],
+      "visual_targets": [
+        "opposing spatial groups",
+        "conflicting signs",
+        "divided frame composition",
+        "confrontational posture",
+        "symbolic clash",
+        "gesture disagreement"
+      ],
+      "typical_outputs": [
+        "contradiction_chain",
+        "dialogic_tension",
+        "conflict_cluster",
+        "negotiation_sequence",
+        "polarization_signal"
+      ]
+    }
+  },
+  "genre_context": {
+    "operative_rule": "Genre is an interpretive conditioning layer. It calibrates how linguistic, visual, audio, and interactional signals are interpreted by the 5B system. Genre never replaces evidence and must be analyst-correctable.",
+    "genre_object": {
+      "genre_context_id": "uuid",
+      "scope": "project|document|media_file|scene|segment|speaker_turn|bbox_roi|claim",
+      "institutional_genre": null,
+      "platform_genre": null,
+      "interaction_genre": null,
+      "dramatic_genre_primary": null,
+      "dramatic_genre_secondary": [],
+      "dramatic_genre_mixture_weights": {},
+      "confidence": 0.0,
+      "source_refs": [],
+      "analyst_override": false,
+      "traceback_id": null
+    },
+    "institutional_genres": [
+      "parliamentary_debate",
+      "policy_document",
+      "startup_pitch",
+      "academic_lecture",
+      "courtroom",
+      "news_broadcast",
+      "corporate_PR",
+      "activist_statement",
+      "public_consultation",
+      "research_interview",
+      "archive_metadata_record",
+      "museum_exhibition_text",
+      "government_report"
+    ],
+    "platform_genres": [
+      "podcast",
+      "livestream",
+      "youtube_commentary",
+      "short_form_video",
+      "social_media_post",
+      "news_clip",
+      "webpage",
+      "conference_recording",
+      "documentary_clip",
+      "broadcast_archive"
+    ],
+    "interaction_genres": [
+      "interview",
+      "debate",
+      "presentation",
+      "workshop",
+      "ritual",
+      "negotiation",
+      "testimonial",
+      "sales_pitch",
+      "instruction",
+      "performance",
+      "panel_discussion"
+    ],
+    "dramatic_genres": [
+      "tragedy",
+      "comedy",
+      "satire",
+      "epic",
+      "thriller",
+      "documentary",
+      "romance",
+      "horror",
+      "adult_entertainment",
+      "science_fiction",
+      "animation",
+      "musical"
+    ],
+    "dramatic_genre_conditioning_rules": {
+      "tragedy": {
+        "increase_weight": [
+          "becoming",
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Track transformation toward collapse, loss, recognition, fate, or moral consequence."
+      },
+      "comedy": {
+        "increase_weight": [
+          "between",
+          "before"
+        ],
+        "interpretive_bias": "Treat contradiction, mismatch, timing, and reversal as potentially humorous rather than simply incoherent."
+      },
+      "satire": {
+        "increase_weight": [
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Prioritize exposure of hidden power, hypocrisy, institutional absurdity, and ideological contradiction."
+      },
+      "epic": {
+        "increase_weight": [
+          "bets",
+          "becoming"
+        ],
+        "interpretive_bias": "Track collective destiny, quest formation, world-scale stakes, and heroic transformation."
+      },
+      "thriller": {
+        "increase_weight": [
+          "before",
+          "between"
+        ],
+        "interpretive_bias": "Treat fragmentation, concealment, threat signals, and uncertainty as tension-building structures."
+      },
+      "documentary": {
+        "increase_weight": [
+          "beneath",
+          "becoming",
+          "between"
+        ],
+        "interpretive_bias": "Prioritize real-world institutional context, testimony, evidence, and contested truth claims."
+      },
+      "romance": {
+        "increase_weight": [
+          "becoming",
+          "bets",
+          "between"
+        ],
+        "interpretive_bias": "Track intimacy formation, attachment, vulnerability, jealousy, promise, rupture, repair, and relational transformation."
+      },
+      "horror": {
+        "increase_weight": [
+          "before",
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Track threat emergence, contamination, hidden monstrosity, survival projection, panic, and safety collapse."
+      },
+      "adult_entertainment": {
+        "increase_weight": [
+          "before",
+          "bets",
+          "becoming",
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Treat the genre as intimacy-performance systems involving bodily rhetoric, fantasy framing, consent negotiation, role performance, power dynamics, and symbolic interaction rather than simplistic explicit-content scoring."
+      },
+      "science_fiction": {
+        "increase_weight": [
+          "bets",
+          "becoming",
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Track speculative futures, technological systems, posthuman change, governance critique, civilizational risk, utopia, dystopia, and hidden present-day ideology."
+      },
+      "animation": {
+        "increase_weight": [
+          "before",
+          "becoming",
+          "beneath",
+          "between"
+        ],
+        "interpretive_bias": "Use non-naturalistic interpretation. Exaggerated gestures, impossible physics, color shifts, and stylized embodiment may encode symbolic or emotional functions rather than literal physical behavior."
+      },
+      "musical": {
+        "increase_weight": [
+          "bets",
+          "becoming",
+          "between"
+        ],
+        "interpretive_bias": "Treat music, lyrics, rhythm, choreography, chorus structures, and synchronized movement as primary communicative modalities."
+      }
+    }
+  },
+  "linguistic_detection_stack": {
+    "maturity_status": "primary_initial_evidence_layer",
+    "recommended_libraries": [
+      {
+        "name": "spaCy",
+        "uses": [
+          "tokenization",
+          "lemmatization",
+          "POS tagging",
+          "morphology",
+          "dependency parsing",
+          "named entity recognition",
+          "sentence segmentation"
+        ],
+        "role_in_5B": "Fast linguistic substrate for POS matrix and 5B candidate triggers."
+      },
+      {
+        "name": "Stanza",
+        "uses": [
+          "Universal Dependencies",
+          "multilingual POS",
+          "morphology",
+          "dependency parsing",
+          "NER"
+        ],
+        "role_in_5B": "Multilingual grammatical support and cross-language robustness."
+      },
+      {
+        "name": "NLTK",
+        "uses": [
+          "baseline sentiment",
+          "VADER sentiment",
+          "lexicon support",
+          "text preprocessing"
+        ],
+        "role_in_5B": "Lightweight baseline affect and lexical features."
+      },
+      {
+        "name": "Hugging Face Transformers or SetFit",
+        "uses": [
+          "zero-shot classification",
+          "few-shot 5B classification",
+          "stance classification",
+          "modality classification",
+          "genre classification"
+        ],
+        "role_in_5B": "Trainable or prompt-conditioned classifier layer."
+      },
+      {
+        "name": "textstat or readability libraries",
+        "uses": [
+          "readability",
+          "complexity",
+          "sentence length",
+          "lexical density"
+        ],
+        "role_in_5B": "Support genre and Beneath-style institutional abstraction analysis."
+      }
+    ],
+    "feature_library": [
+      "token",
+      "lemma",
+      "POS",
+      "morphology",
+      "dependency_role",
+      "head_token",
+      "named_entity",
+      "modality",
+      "tense",
+      "aspect",
+      "negation",
+      "hedging",
+      "certainty",
+      "stance",
+      "sentiment",
+      "affect_intensity",
+      "agency_visibility",
+      "passive_voice",
+      "nominalisation",
+      "future_orientation",
+      "contrast_marker",
+      "causal_marker",
+      "temporal_marker",
+      "pronoun_pattern",
+      "speaker_turn_position",
+      "sentence_coherence_score",
+      "rhetorical_function",
+      "genre_signal",
+      "five_b_candidate",
+      "five_b_confidence"
+    ]
+  },
+  "POS_panel_integration": {
+    "operative_rule": "The 5B layer must surface inside the POS analysis panel and populate the POS matrix. POS analysis is not only grammatical; it becomes an antenarrative trigger and evidence surface.",
+    "pos_matrix_columns": [
+      "project_id",
+      "media_id",
+      "segment_id",
+      "scene_id",
+      "speaker_id",
+      "turn_id",
+      "sentence_id",
+      "token_id",
+      "token",
+      "lemma",
+      "pos",
+      "morphology",
+      "dependency_role",
+      "head_token_id",
+      "entity_type",
+      "modality",
+      "tense",
+      "aspect",
+      "negation",
+      "hedging",
+      "stance",
+      "sentiment",
+      "agency_visibility",
+      "nominalisation",
+      "passive_voice",
+      "genre_signal",
+      "five_b_candidate",
+      "five_b_confidence",
+      "antenarrative_function",
+      "traceback_id",
+      "manual_override_status"
+    ],
+    "ui_behaviors": {
+      "highlight_tokens_by_5B": true,
+      "filter_by_5B": true,
+      "filter_by_genre": true,
+      "sort_by_confidence": true,
+      "click_token_to_traceback": true,
+      "click_5B_candidate_to_scene": true,
+      "manual_reclassification_enabled": true,
+      "manual_reclassification_overrides_detector": true,
+      "show_source_sentence": true,
+      "show_linked_audio_visual_evidence": true,
+      "allow_export_to_quantitative_matrix": true
+    }
+  },
+  "visual_detection_cultivation_plan": {
+    "operative_rule": "Visual 5B detection must be cultivated gradually. Early visual evidence supports, contextualizes, contradicts, or intensifies text-based 5B claims. It becomes primary only when sufficiently mature or analyst-confirmed.",
+    "phases": {
+      "phase_1_manual_symbolic_annotation": {
+        "goal": "Let analysts manually tag visual evidence and link it to scenes, BBox/ROI objects, and 5B claims.",
+        "annotation_targets": [
+          "protest_sign",
+          "institutional_logo",
+          "stage_setting",
+          "gesture",
+          "crowd_formation",
+          "object_of_authority",
+          "symbolic_object",
+          "ritual_action",
+          "spatial_hierarchy",
+          "future_mockup",
+          "romantic_proximity",
+          "horror_threat_signal",
+          "musical_choreography",
+          "science_fiction_interface",
+          "animation_symbolic_distortion"
+        ]
+      },
+      "phase_2_detector_support": {
+        "goal": "Use computer vision and OCR as supportive evidence.",
+        "detectors": [
+          "object_detection",
+          "OCR",
+          "face_detection",
+          "pose_estimation",
+          "scene_segmentation",
+          "shot_boundary_detection",
+          "logo_detection",
+          "visual_embedding_similarity",
+          "color_palette_summary",
+          "spatial_composition_analysis"
+        ]
+      },
+      "phase_3_visual_rhetoric_patterns": {
+        "goal": "Detect recurring symbolic arrangements and visual rhetoric.",
+        "patterns": [
+          "leader_elevated_above_crowd",
+          "institutional_backdrop",
+          "conflict_staging",
+          "future_oriented_mockup",
+          "ritual_transition",
+          "isolation_in_frame",
+          "dominance_spatiality",
+          "intimacy_choreography",
+          "collective_synchronization",
+          "threat_emergence",
+          "symbolic_exclusion",
+          "technological_sublime"
+        ]
+      },
+      "phase_4_cross_modal_claims": {
+        "goal": "Connect text-based 5B claims to visual and audio evidence.",
+        "allowed_relations": [
+          "supports",
+          "contradicts",
+          "intensifies",
+          "contextualizes",
+          "weakens",
+          "extends",
+          "transforms"
+        ]
+      },
+      "phase_5_analyst_validated_visual_5B": {
+        "goal": "Allow visual evidence to become publication-ready when analyst-confirmed and traceable.",
+        "requirements": [
+          "timestamp_reference",
+          "frame_reference",
+          "BBox_or_ROI_reference_if_applicable",
+          "visual_detection_or_manual_annotation_source",
+          "genre_context",
+          "traceback_chain",
+          "analyst_confirmation"
+        ]
+      }
+    }
+  },
+  "antenarrative_entity_schema": {
+    "antenarrative_entity_id": "uuid",
+    "project_id": "uuid",
+    "media_id": "uuid",
+    "type": "before|bets|becoming|beneath|between|mixed",
+    "title": "string",
+    "description": "string",
+    "dominant_question": "string",
+    "claim_text": "string",
+    "claim_status": "raw_candidate|supported_candidate|cross_modal_claim|analyst_validated|publication_ready|rejected",
+    "genre_context_id": "uuid|null",
+    "source_refs": {
+      "transcript_refs": [],
+      "token_refs": [],
+      "sentence_refs": [],
+      "speaker_turn_refs": [],
+      "audio_refs": [],
+      "frame_refs": [],
+      "bbox_roi_refs": [],
+      "object_refs": [],
+      "scene_refs": [],
+      "metadata_refs": [],
+      "document_refs": [],
+      "web_dom_refs": [],
+      "external_source_refs": []
+    },
+    "time_refs": {
+      "start_seconds": null,
+      "end_seconds": null,
+      "source_timecode": null
+    },
+    "spatial_refs": {
+      "frame_id": null,
+      "bbox_ids": [],
+      "roi_ids": [],
+      "coordinates": [],
+      "dom_selectors": []
+    },
+    "actors": {
+      "speaker_refs": [],
+      "narrative_agent_refs": [],
+      "organization_refs": [],
+      "character_refs": [],
+      "group_refs": []
+    },
+    "scores": {
+      "confidence": 0.0,
+      "genre_conditioned_confidence": 0.0,
+      "textual_evidence_strength": 0.0,
+      "audio_evidence_strength": 0.0,
+      "visual_evidence_strength": 0.0,
+      "metadata_evidence_strength": 0.0,
+      "cross_modal_support_score": 0.0,
+      "analyst_maturity_score": 0.0
+    },
+    "maturity": {
+      "raw_detection": true,
+      "linguistically_supported": false,
+      "POS_supported": false,
+      "dependency_supported": false,
+      "SFL_supported": false,
+      "audio_supported": false,
+      "visual_supported": false,
+      "metadata_supported": false,
+      "cross_modal_supported": false,
+      "analyst_validated": false,
+      "publication_ready": false,
+      "manual_override": false
+    },
+    "relations": {
+      "supports": [],
+      "contradicts": [],
+      "extends": [],
+      "transforms": [],
+      "emerges_from": [],
+      "conditions": [],
+      "is_conditioned_by": [],
+      "precedes": [],
+      "follows": [],
+      "co_occurs_with": [],
+      "is_genre_variant_of": [],
+      "feeds_feature": []
+    },
+    "traceback": {
+      "traceback_id": "uuid",
+      "detector_chain": [],
+      "classifier_versions": [],
+      "manual_edits": [],
+      "source_media": [],
+      "source_metadata": [],
+      "evidence_chain": [],
+      "last_validated_by": null,
+      "last_validated_at": null
+    },
+    "ui": {
+      "visible_in_POS_panel": true,
+      "visible_in_scene_browser": true,
+      "visible_in_traceback_drawer": true,
+      "visible_in_timeline": true,
+      "visible_in_bbox_roi_panel": true,
+      "visible_in_narrative_agent_panel": true,
+      "visible_in_meaning_plot_panel": true,
+      "click_to_source_enabled": true,
+      "cross_panel_activation_enabled": true
+    }
+  },
+  "traceability_and_navigability": {
+    "operative_rule": "Every antenarrative object must be bidirectionally navigable. A user must be able to move from claim to evidence and from evidence back to claim.",
+    "navigation_targets": [
+      "source_video_time",
+      "source_audio_waveform",
+      "transcript_sentence",
+      "POS_matrix_row",
+      "dependency_parse_view",
+      "SFL_panel",
+      "scene_browser_row",
+      "BBox_ROI_object",
+      "object_detection_row",
+      "OCR_snippet",
+      "metadata_record",
+      "narrative_agent_profile",
+      "timeline_marker",
+      "traceback_drawer",
+      "report_paragraph"
+    ],
+    "required_ids": [
+      "project_id",
+      "media_id",
+      "segment_id",
+      "scene_id",
+      "sentence_id",
+      "token_id",
+      "speaker_id",
+      "bbox_roi_id",
+      "traceback_id",
+      "antenarrative_entity_id",
+      "genre_context_id"
+    ],
+    "cross_panel_activation_rule": "When a 5B claim is selected in any panel, all associated panels must highlight the linked transcript, tokens, timestamps, scenes, BBox/ROI objects, narrative agents, and traceback evidence.",
+    "manual_authority_rule": "Manual analyst corrections override automated 5B labels, genre labels, BBox/ROI associations, speaker associations, and interpretation maturity scores. Raw automated detections remain stored for provenance and rollback, but do not override saved manual corrections."
+  },
+  "feature_proliferation": {
+    "operative_rule": "5B objects are not terminal outputs. They feed other VAA1 analysis features as structured interpretive evidence.",
+    "feature_links": {
+      "POS_analysis": {
+        "input_from_5B": [
+          "five_b_candidate",
+          "five_b_confidence",
+          "antenarrative_function",
+          "genre_signal"
+        ],
+        "output_to_5B": [
+          "token_level_evidence",
+          "POS_patterns",
+          "modality",
+          "negation",
+          "agency_visibility",
+          "nominalisation"
+        ]
+      },
+      "SFL_dependency_analysis": {
+        "input_from_5B": [
+          "claim_type",
+          "speaker_role",
+          "genre_context"
+        ],
+        "output_to_5B": [
+          "process_type",
+          "participant_roles",
+          "agency_structure",
+          "theme_rheme_structure",
+          "transitivity_patterns"
+        ]
+      },
+      "scene_browser": {
+        "input_from_5B": [
+          "dominant_5B_scene_label",
+          "scene_antenarrative_density",
+          "scene_conflict_score",
+          "scene_transformation_score"
+        ],
+        "output_to_5B": [
+          "scene_context",
+          "shot_sequence",
+          "scene_boundary",
+          "local_genre_context"
+        ]
+      },
+      "narrative_agents": {
+        "input_from_5B": [
+          "agent_5B_profile",
+          "agent_bets",
+          "agent_conflicts",
+          "agent_becoming_arc",
+          "agent_beneath_associations"
+        ],
+        "output_to_5B": [
+          "speaker_identity",
+          "role",
+          "institutional_position",
+          "relationship_network"
+        ]
+      },
+      "BBox_ROI_panel": {
+        "input_from_5B": [
+          "visual_symbolic_5B_tags",
+          "linked_antenarrative_claims"
+        ],
+        "output_to_5B": [
+          "spatial_evidence",
+          "symbolic_object",
+          "gesture_evidence",
+          "visual_scene_evidence"
+        ]
+      },
+      "timeline": {
+        "input_from_5B": [
+          "before_to_bets_sequences",
+          "becoming_arcs",
+          "between_conflict_chains",
+          "beneath_recurrence"
+        ],
+        "output_to_5B": [
+          "temporal_ordering",
+          "episode_structure",
+          "longitudinal_change"
+        ]
+      },
+      "meaning_plot_candidates": {
+        "input_from_5B": [
+          "dramatic_genre_context",
+          "conflict_patterns",
+          "transformation_patterns",
+          "future_projection_patterns",
+          "hidden_structure_patterns"
+        ],
+        "output_to_5B": [
+          "plot_arc_candidate",
+          "dramatic_role",
+          "genre_hypothesis",
+          "theme_candidate"
+        ]
+      },
+      "worldview_analysis": {
+        "input_from_5B": [
+          "beneath_claims",
+          "bets_claims",
+          "between_conflicts",
+          "genre_conditioned_interpretations"
+        ],
+        "output_to_5B": [
+          "moral_order",
+          "institutional_legitimacy_claim",
+          "ideological_cluster",
+          "cultural_assumption"
+        ]
+      },
+      "quantitative_analysis": {
+        "input_from_5B": [
+          "5B_counts",
+          "5B_density_by_scene",
+          "5B_density_by_speaker",
+          "5B_density_by_genre",
+          "5B_density_over_time"
+        ],
+        "output_to_5B": [
+          "distributional_context",
+          "outlier_detection",
+          "trend_detection"
+        ]
+      },
+      "report_writer_agent": {
+        "input_from_5B": [
+          "validated_antenarrative_claims",
+          "traceback_chains",
+          "genre_context",
+          "evidence_summaries"
+        ],
+        "output_to_5B": [
+          "publication_ready_summary",
+          "claim_paragraph",
+          "evidence_table",
+          "methodological_note"
+        ]
+      }
+    }
+  },
+  "processing_pipeline": [
+    {
+      "step": 1,
+      "name": "ingest_source",
+      "outputs": [
+        "media_id",
+        "metadata_refs",
+        "initial_genre_hints"
+      ]
+    },
+    {
+      "step": 2,
+      "name": "generate_or_import_transcript",
+      "outputs": [
+        "transcript_refs",
+        "sentence_refs",
+        "speaker_turn_refs",
+        "time_refs"
+      ]
+    },
+    {
+      "step": 3,
+      "name": "run_text_linguistic_stack",
+      "outputs": [
+        "POS_matrix",
+        "dependency_parse",
+        "modality_features",
+        "stance_features",
+        "sentiment_features"
+      ]
+    },
+    {
+      "step": 4,
+      "name": "detect_genre_context",
+      "outputs": [
+        "genre_context_candidates",
+        "genre_conditioning_weights"
+      ]
+    },
+    {
+      "step": 5,
+      "name": "generate_5B_candidates_from_text",
+      "outputs": [
+        "raw_antenarrative_entities"
+      ]
+    },
+    {
+      "step": 6,
+      "name": "surface_5B_in_POS_panel",
+      "outputs": [
+        "token_level_5B_markers",
+        "sentence_level_5B_markers"
+      ]
+    },
+    {
+      "step": 7,
+      "name": "link_to_scene_speaker_and_narrative_agents",
+      "outputs": [
+        "scene_5B_density",
+        "agent_5B_profiles"
+      ]
+    },
+    {
+      "step": 8,
+      "name": "cultivate_audio_visual_support",
+      "outputs": [
+        "audio_support_refs",
+        "visual_support_refs",
+        "BBox_ROI_support_refs"
+      ]
+    },
+    {
+      "step": 9,
+      "name": "build_traceback_chains",
+      "outputs": [
+        "traceback_drawer_entries",
+        "evidence_chains"
+      ]
+    },
+    {
+      "step": 10,
+      "name": "allow_analyst_validation_and_override",
+      "outputs": [
+        "validated_claims",
+        "rejected_claims",
+        "manual_edits"
+      ]
+    },
+    {
+      "step": 11,
+      "name": "proliferate_to_analysis_features",
+      "outputs": [
+        "timeline_markers",
+        "meaning_plot_candidates",
+        "worldview_entries",
+        "quantitative_matrices",
+        "report_writer_inputs"
+      ]
+    }
+  ],
+  "example_minimal_antenarrative_entity": {
+    "antenarrative_entity_id": "example_uuid",
+    "type": "bets",
+    "title": "Projected institutional future",
+    "claim_text": "Speaker projects a future transformation of the institution through technology.",
+    "claim_status": "supported_candidate",
+    "genre_context_id": "example_genre_uuid",
+    "source_refs": {
+      "transcript_refs": [
+        "transcript_001"
+      ],
+      "sentence_refs": [
+        "sentence_024"
+      ],
+      "token_refs": [
+        "token_024_003",
+        "token_024_004"
+      ],
+      "speaker_turn_refs": [
+        "turn_008"
+      ],
+      "scene_refs": [
+        "scene_002"
+      ],
+      "bbox_roi_refs": [],
+      "metadata_refs": [
+        "metadata_001"
+      ]
+    },
+    "time_refs": {
+      "start_seconds": 122.4,
+      "end_seconds": 131.8,
+      "source_timecode": "00:02:02.400-00:02:11.800"
+    },
+    "scores": {
+      "confidence": 0.74,
+      "genre_conditioned_confidence": 0.83,
+      "textual_evidence_strength": 0.91,
+      "audio_evidence_strength": 0.25,
+      "visual_evidence_strength": 0.1,
+      "metadata_evidence_strength": 0.42,
+      "cross_modal_support_score": 0.36,
+      "analyst_maturity_score": 0.0
+    },
+    "maturity": {
+      "raw_detection": true,
+      "linguistically_supported": true,
+      "POS_supported": true,
+      "dependency_supported": true,
+      "SFL_supported": false,
+      "audio_supported": false,
+      "visual_supported": false,
+      "metadata_supported": true,
+      "cross_modal_supported": false,
+      "analyst_validated": false,
+      "publication_ready": false,
+      "manual_override": false
+    },
+    "relations": {
+      "supports": [],
+      "contradicts": [],
+      "extends": [],
+      "transforms": [],
+      "emerges_from": [
+        "before_example_uuid"
+      ],
+      "conditions": [],
+      "is_conditioned_by": [
+        "genre_context_startup_pitch"
+      ],
+      "feeds_feature": [
+        "timeline",
+        "narrative_agents",
+        "report_writer_agent"
+      ]
+    }
+  }
+}

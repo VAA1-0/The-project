@@ -156,6 +156,22 @@ def _target_label_fit(event: Dict[str, Any], target_label: str) -> float:
             "Role": 0.58,
             "ReportClaim": 0.62,
         },
+        "antenarrative_bet": {
+            "Situation": 0.85,
+            "Action": 0.70,
+            "ReportClaim": 0.80,
+            "Role": 0.65,
+        },
+        "antenarrative_beneath": {
+            "Interaction": 0.90,
+            "Role": 0.85,
+            "Situation": 0.75,
+        },
+        "antenarrative_between": {
+            "Interaction": 0.85,
+            "Relationship": 0.90,
+            "Scene": 0.70,
+        },
         "agent_persistence_scene_cut": {
             "Identification": 0.9,
             "Role": 0.62,
@@ -337,6 +353,12 @@ def _candidate_label_for_event(event: Dict[str, Any], target_label: str) -> str:
         return _safe_text(payload.get("judgment_signal_type"), "judgment_denigration_candidate")
     if feature_type == "plot_function":
         return _safe_text(payload.get("plot_function"), "plot_function_candidate")
+    if feature_type == "antenarrative_bet":
+        return _safe_text(payload.get("speculation_type"), "speculative_bet_candidate")
+    if feature_type == "antenarrative_beneath":
+        return _safe_text(payload.get("marginalization_type"), "suppressed_voice_candidate")
+    if feature_type == "antenarrative_between":
+        return _safe_text(payload.get("relation_type"), "rhizomatic_link_candidate")
     if feature_type == "agent_persistence_scene_cut":
         return _safe_text(payload.get("agent_label"), "agent_persistence_candidate")
     if feature_type == "person_identity_prompt":

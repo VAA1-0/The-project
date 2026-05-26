@@ -23,6 +23,7 @@ export function createEmptyCorrections(
     label_overrides: [],
     manual_transcript_entries: [],
     manual_visual_annotations: [],
+    proliferation_decisions: [],
   };
 }
 
@@ -92,6 +93,7 @@ export function mergeCorrectionRule(
     text_substitutions: [...(existing?.text_substitutions || [])],
     label_overrides: [...(existing?.label_overrides || [])],
     manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
+    proliferation_decisions: [...(existing?.proliferation_decisions || [])],
   };
 
   const targetKey =

@@ -8,13 +8,46 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 
 SCHEMA = "vaa1.evidence_proliferation_match.v1"
+GOVERNANCE_SCHEMA = "vaa1.mature_data_proliferation_governance.v1"
+
+NEAR_MATCH_PROBABILITY_POLICY = {
+    "candidate_floor": 0.20,
+    "surface_to_analyst": 0.35,
+    "probable_candidate": 0.45,
+    "strongly_supported": 0.85,
+    "very_high_probability": 0.95,
+    "auto_proliferation_allowed_above": 0.95,
+    "manual_confirmation_required_below": 0.95,
+    "notes": [
+        "Near matches are surfaced as review candidates, not mature semantic authority.",
+        "Only manual confirmation, manual correction, or very high probability may proliferate.",
+        "Probability boundaries are open policy values and should remain analyst-discussable.",
+    ],
+}
+
+PROJECTION_TARGETS_BY_SOURCE_PANEL = {
+    "objects_panel": ["video_panel", "bbox_roi_panel", "objects_panel", "traceback_drawer"],
+    "manual_visual_annotations": ["video_panel", "bbox_roi_panel", "objects_panel", "traceback_drawer"],
+    "visual_sample_cloud": ["video_panel", "bbox_roi_panel", "sample_cloud_panel", "traceback_drawer"],
+    "audio_panel": ["audio_panel", "sample_cloud_panel", "diarization_panel", "traceback_drawer"],
+    "transcript_panel": ["transcript_panel", "narrative_agent_panel", "traceback_drawer"],
+    "source_media_metadata": ["master_schema_panel", "narrative_agent_panel", "traceback_drawer"],
+    "visual_cues": ["video_panel", "scene_card_panel", "traceback_drawer"],
+    "cinematic_clues": ["scene_card_panel", "mise_en_scene_panel", "traceback_drawer"],
+}
 
 AUTHORITY_POLICY = {
     "manual_correction_wins": True,
     "manual_annotation_wins": True,
+    "manual_confirmation_wins": True,
     "outputs_are_candidates_until_supported_by_evidence": True,
     "evidence_linked_not_timeline_linear": True,
     "proliferated_candidates_do_not_mutate_source_evidence": True,
+    "near_matches_surface_to_analyst": True,
+    "near_matches_require_confirm_or_cancel": True,
+    "situational_mirror_candidates_require_review": True,
+    "probability_policy": NEAR_MATCH_PROBABILITY_POLICY,
+    "governance_schema": GOVERNANCE_SCHEMA,
 }
 
 TARGET_CATEGORY_HINTS = {
@@ -965,6 +998,261 @@ def _timesphere_from_seed(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _probability_band(probability: float) -> str:
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["very_high_probability"]:
+        return "very_high_probability"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["strongly_supported"]:
+        return "strongly_supported"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["probable_candidate"]:
+        return "probable_candidate"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["surface_to_analyst"]:
+        return "surface_to_analyst"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["candidate_floor"]:
+        return "below_surface_candidate"
+    return "blocked_from_proliferation"
+
+
+def _candidate_source_anchors(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
+    anchors: List[Dict[str, Any]] = []
+    time = candidate.get("time") or {}
+    start = _safe_float(time.get("start"))
+    end = _safe_float(time.get("end"), start)
+    if start is not None:
+        anchors.append(
+            {
+                "anchor_id": f"{candidate.get('evidence_id', 'candidate')}:time",
+                "anchor_type": "media_time_interval",
+                "time_interval": {
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "start_ms": int(start * 1000),
+                    "end_ms": int((end if end is not None else start) * 1000),
+                },
+                "panel_source": candidate.get("source_panel"),
+            }
+        )
+    box = _bbox_from_geometry(candidate.get("geometry"))
+    if box:
+        anchors.append(
+            {
+                "anchor_id": f"{candidate.get('evidence_id', 'candidate')}:bbox",
+                "anchor_type": "bbox",
+                "bbox": {**box, "coordinate_system": "normalized_or_source_frame"},
+                "panel_source": candidate.get("source_panel"),
+            }
+        )
+    return anchors
+
+
+def _authority_level_for_candidate(candidate: Dict[str, Any], probability: float) -> str:
+    source_kind = _safe_text(candidate.get("source_kind"))
+    if source_kind == "manual_correction":
+        return "manual_correction"
+    if source_kind == "manual_annotation":
+        return "manual_annotation"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["very_high_probability"]:
+        return "mature_triangulated_evidence"
+    if probability >= NEAR_MATCH_PROBABILITY_POLICY["surface_to_analyst"]:
+        return "supported_candidate"
+    return "single_modality_candidate"
+
+
+def _review_state_for_candidate(candidate: Dict[str, Any], probability: float) -> str:
+    if candidate.get("source_kind") in {"manual_correction", "manual_annotation"}:
+        return "candidate_manual_source"
+    band = _probability_band(probability)
+    if band == "very_high_probability":
+        return "very_high_probability_candidate"
+    if band in {"strongly_supported", "probable_candidate"}:
+        return "to_be_confirmed_or_canceled"
+    if band == "surface_to_analyst":
+        return "review_candidate"
+    return "below_surface_candidate"
+
+
+def _candidate_projection_targets(candidate: Dict[str, Any], request: Dict[str, Any]) -> List[str]:
+    targets = set(PROJECTION_TARGETS_BY_SOURCE_PANEL.get(_safe_text(candidate.get("source_panel")), []))
+    target = _safe_text(request.get("target"))
+    if target in {"character_continuity", "speaker_voice_continuity"}:
+        targets.update(["narrative_agent_panel", "evidence_graph"])
+    if target in {"scene_episode", "action", "interaction", "visual_pattern"}:
+        targets.update(["scene_card_panel", "meaning_plot_panel", "evidence_graph"])
+    targets.update(["governance_matrix", "search_index"])
+    return sorted(targets)
+
+
+def _governance_status(candidate: Dict[str, Any], probability: float, source_anchors: List[Dict[str, Any]]) -> Dict[str, Any]:
+    source_kind = _safe_text(candidate.get("source_kind"))
+    manual_authority = source_kind in {"manual_correction", "manual_annotation"}
+    very_high = probability >= NEAR_MATCH_PROBABILITY_POLICY["auto_proliferation_allowed_above"]
+    has_anchor = bool(source_anchors)
+    proliferation_allowed = bool((manual_authority or very_high) and has_anchor)
+    review_required = not proliferation_allowed
+    if not has_anchor:
+        review_reason = "Candidate lacks a source anchor and cannot proliferate."
+    elif proliferation_allowed:
+        review_reason = "Proliferation allowed by manual authority or very high probability with traceback."
+    else:
+        review_reason = "Near match must be confirmed or canceled before it can proliferate."
+    return {
+        "active": True,
+        "proliferation_allowed": proliferation_allowed,
+        "review_required": review_required,
+        "review_reason": review_reason,
+        "conflict_state": "none",
+        "unknown_override_blocked": True,
+    }
+
+
+def _maturity_score_from_match(
+    closest_match: Dict[str, Any],
+    candidate: Dict[str, Any],
+    probability: float,
+) -> Dict[str, Any]:
+    components = closest_match.get("components") or {}
+    source_kind = _safe_text(candidate.get("source_kind"))
+    manual_authority = 1.0 if source_kind in {"manual_correction", "manual_annotation"} else 0.0
+    source_traceability = 1.0 if _candidate_source_anchors(candidate) else 0.0
+    cross_modal_support = 1.0 if components.get("sample_cloud_support", 0) and components.get("contextual_modality", 0) else 0.0
+    temporal_spatial_values = [
+        value
+        for value in (components.get("time_proximity"), components.get("spatial_consistency"))
+        if isinstance(value, (int, float))
+    ]
+    temporal_spatial_fit = (
+        sum(float(value) for value in temporal_spatial_values) / len(temporal_spatial_values)
+        if temporal_spatial_values
+        else 0.0
+    )
+    score_components = {
+        "manual_authority": round(manual_authority, 4),
+        "source_traceability": round(source_traceability, 4),
+        "cross_modal_support": round(cross_modal_support, 4),
+        "temporal_spatial_fit": round(temporal_spatial_fit, 4),
+        "semantic_fit": round(float(components.get("text_semantic") or 0.0), 4),
+        "sample_cloud_support": round(float(components.get("sample_cloud_support") or 0.0), 4),
+        "metadata_support": 1.0 if candidate.get("source_panel") == "source_media_metadata" else 0.0,
+    }
+    open_weights = {
+        "manual_authority": 0.22,
+        "source_traceability": 0.18,
+        "cross_modal_support": 0.14,
+        "temporal_spatial_fit": 0.18,
+        "semantic_fit": 0.12,
+        "sample_cloud_support": 0.1,
+        "metadata_support": 0.06,
+    }
+    return {
+        "overall_score": round(probability, 4),
+        "components": score_components,
+        "open_weights": open_weights,
+    }
+
+
+def _situational_options_for_candidate(
+    request: Dict[str, Any],
+    candidate: Dict[str, Any],
+    probability: float,
+) -> List[Dict[str, Any]]:
+    target = _safe_text(request.get("target"))
+    source_panel = _safe_text(candidate.get("source_panel"))
+    if target not in {"character_continuity", "visual_pattern", "interaction", "scene_episode"}:
+        return []
+    if probability < NEAR_MATCH_PROBABILITY_POLICY["probable_candidate"]:
+        return []
+    options = []
+    if source_panel in {"objects_panel", "visual_sample_cloud", "manual_visual_annotations"}:
+        options.append("similar_visual_situation")
+    if source_panel in {"transcript_panel", "audio_panel"}:
+        options.append("similar_speaking_situation")
+    if source_panel in {"visual_cues", "cinematic_clues"}:
+        options.append("similar_scene_situation")
+    return [
+        {
+            "candidate_type": "situational_mirror_candidate",
+            "situational_option": option,
+            "origin_request_id": request.get("request_id"),
+            "candidate_evidence_id": candidate.get("evidence_id"),
+            "probability": probability,
+            "review_state": "to_be_confirmed_or_canceled",
+            "proliferation_allowed": False,
+            "proliferation_reason": "Situational mirrors are suggestions until analyst confirmation or very high evidence support.",
+            "allowed_actions": ["confirm", "cancel", "defer", "inspect_sources"],
+        }
+        for option in options
+    ]
+
+
+def _govern_candidate(
+    *,
+    analysis_id: str,
+    request: Dict[str, Any],
+    item: Dict[str, Any],
+    score: float,
+    closest_match: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    probability = closest_match["match_probability"]
+    band = _probability_band(probability)
+    if probability < NEAR_MATCH_PROBABILITY_POLICY["candidate_floor"]:
+        return None
+    source_anchors = _candidate_source_anchors(item)
+    authority_level = _authority_level_for_candidate(item, probability)
+    maturity_state = "probable" if band in {"probable_candidate", "strongly_supported"} else band
+    governance_status = _governance_status(item, probability, source_anchors)
+    candidate_id = f"{request.get('request_id', 'request')}:{item['evidence_id']}"
+    evidence_refs = [
+        {
+            "evidence_id": item["evidence_id"],
+            "evidence_kind": "proliferated_candidate",
+            "authority_level": authority_level,
+            "support_score": probability,
+            "provenance_note": "Evidence surfaced by mature-data proliferation matcher.",
+        }
+    ]
+    return {
+        "candidate_id": candidate_id,
+        "master_object_projection": {
+            "schema": GOVERNANCE_SCHEMA,
+            "master_object_id": f"candidate:{candidate_id}",
+            "object_family": "NarrativeAgent"
+            if _safe_text(request.get("target")) in {"character_continuity", "speaker_voice_continuity"}
+            else "TracebackNode",
+            "current_label": item.get("label"),
+            "maturity_state": maturity_state,
+            "authority_level": authority_level,
+            "confidence": probability,
+            "maturity_score": _maturity_score_from_match(closest_match, item, probability),
+            "source_anchors": source_anchors,
+            "evidence_refs": evidence_refs,
+            "traceback_ref": f"traceback:{candidate_id}",
+            "projection_targets": _candidate_projection_targets(item, request),
+            "governance_status": governance_status,
+        },
+        "match_score": probability,
+        "match_probability": probability,
+        "probability_band": band,
+        "legacy_match_score": score,
+        "closest_match": closest_match,
+        "review_state": _review_state_for_candidate(item, probability),
+        "decision_required": governance_status["review_required"],
+        "allowed_actions": ["confirm", "cancel", "defer", "inspect_sources"],
+        "proliferation_allowed": governance_status["proliferation_allowed"],
+        "proliferation_reason": governance_status["review_reason"],
+        "source_anchors": source_anchors,
+        "evidence_refs": evidence_refs,
+        "projection_targets": _candidate_projection_targets(item, request),
+        "situational_options": _situational_options_for_candidate(request, item, probability),
+        "provenance": {
+            "request_id": request.get("request_id"),
+            "source_evidence": request.get("evidence"),
+            "candidate_evidence_id": item["evidence_id"],
+            "candidate_source_kind": item["source_kind"],
+            "governance_schema": GOVERNANCE_SCHEMA,
+        },
+        **item,
+    }
+
+
 def _score_candidate(request: Dict[str, Any], candidate: Dict[str, Any]) -> float:
     evidence = request.get("evidence") or {}
     if candidate.get("evidence_id") == evidence.get("overlay_key"):
@@ -1096,27 +1384,21 @@ def build_evidence_proliferation_match(
         probability = closest_match["match_probability"]
         if probability <= 0:
             continue
-        scored.append(
-            {
-                "candidate_id": f"{request.get('request_id', 'request')}:{item['evidence_id']}",
-                "match_score": probability,
-                "match_probability": probability,
-                "legacy_match_score": score,
-                "closest_match": closest_match,
-                "review_state": "candidate",
-                "provenance": {
-                    "request_id": request.get("request_id"),
-                    "source_evidence": request.get("evidence"),
-                    "candidate_evidence_id": item["evidence_id"],
-                    "candidate_source_kind": item["source_kind"],
-                },
-                **item,
-            }
+        governed = _govern_candidate(
+            analysis_id=analysis_id,
+            request=request,
+            item=item,
+            score=score,
+            closest_match=closest_match,
         )
+        if governed is None:
+            continue
+        scored.append(governed)
     scored.sort(key=lambda item: item["match_score"], reverse=True)
     candidates = _cluster_same_timespace_candidates(scored)[:limit]
     return {
         "schema": SCHEMA,
+        "governance_schema": GOVERNANCE_SCHEMA,
         "analysis_id": analysis_id,
         "request_id": request.get("request_id"),
         "created_at": _now_iso(),
@@ -1124,6 +1406,7 @@ def build_evidence_proliferation_match(
         "progress": {"request_preparation": 100, "candidate_matching": 100},
         "candidate_count": len(candidates),
         "governance": AUTHORITY_POLICY,
+        "probability_policy": NEAR_MATCH_PROBABILITY_POLICY,
         "request": request,
         "candidates": candidates,
     }

@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 def _install_cv2_stub():
+    original_cv2 = sys.modules.get("cv2")
     cv2 = types.ModuleType("cv2")
 
     class _Image:
@@ -46,14 +47,23 @@ def _install_cv2_stub():
     cv2.imwrite = lambda path, image: Path(path).write_text("stub-image", encoding="utf-8") or True
 
     sys.modules["cv2"] = cv2
+    return original_cv2
 
 
 class FaceAnonymizerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _install_cv2_stub()
+        cls._original_cv2 = _install_cv2_stub()
         sys.modules.pop("app.pipeline.face_anonymizer", None)
         cls.mod = importlib.import_module("app.pipeline.face_anonymizer")
+
+    @classmethod
+    def tearDownClass(cls):
+        sys.modules.pop("app.pipeline.face_anonymizer", None)
+        if cls._original_cv2 is None:
+            sys.modules.pop("cv2", None)
+        else:
+            sys.modules["cv2"] = cls._original_cv2
 
     def test_clamp_region_rejects_invalid_boxes_and_clamps_valid_ones(self):
         self.assertIsNone(self.mod._clamp_region({"x": 1, "y": 2, "w": 0, "h": 5}, 100, 80))

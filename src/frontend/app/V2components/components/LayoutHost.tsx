@@ -55,6 +55,7 @@ const RIGHT_STACK_ANCHOR_TYPES = [
   "Audio",
   "SourceMediaMetadata",
   "TimeBank",
+  "MeaningNetwork",
   "MeaningPlot",
   "SceneCards",
   "Transcript",
@@ -408,6 +409,7 @@ export default function LayoutHost({
     QuantMatrix: "Quant matrix",
     SourceMediaMetadata: "Source Media",
     TimeBank: "Time Bank",
+    MeaningNetwork: "Meaning Network",
     MeaningPlot: "Meaning / Plot",
     SceneCards: "Scene Cards",
     MasterSchema: "Master Schema",
@@ -510,7 +512,9 @@ export default function LayoutHost({
   // --- openPanel function ---
   const openPanel = (panelType: string, panelProps?: JsonValue) => {
     if (!layoutRef.current) return;
-    if (activateExistingPanel(panelType)) {
+    const forceNewPanel =
+      Boolean(panelProps && typeof panelProps === "object" && "forceNewPanel" in panelProps && (panelProps as Record<string, unknown>).forceNewPanel);
+    if (!forceNewPanel && activateExistingPanel(panelType)) {
       return;
     }
     const rightStack = findPreferredRightStack();
@@ -729,6 +733,23 @@ export default function LayoutHost({
           container,
           MeaningPlotPanel,
           (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "MeaningNetwork",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          MeaningPlotPanel,
+          {
+            ...((state as Record<string, unknown>) || {}),
+            dedicatedMeaningNetworkPanel: true,
+            initialMeaningNetworkExpanded: true,
+            initialMeaningNetworkViewMode: "graph",
+          },
           ContextWrapper,
         );
       },

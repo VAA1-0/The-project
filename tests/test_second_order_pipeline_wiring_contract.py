@@ -22,6 +22,9 @@ class SecondOrderPipelineWiringContractTest(unittest.TestCase):
             API_SERVER,
         )
         self.assertIn("write_second_order_label_proliferation_plan", API_SERVER)
+        self.assertIn("write_narrative_lens_reading_artifact", API_SERVER)
+        self.assertIn("write_character_path_reading_artifact", API_SERVER)
+        self.assertIn("write_datascene_meaning_network_artifact", API_SERVER)
         self.assertIn("def write_second_order_meaning_artifacts_for_status", API_SERVER)
         self.assertIn("write_second_order_meaning_artifacts_for_status(status)", API_SERVER)
         self.assertIn('"created_during": "status_refresh"', API_SERVER)
@@ -38,6 +41,18 @@ class SecondOrderPipelineWiringContractTest(unittest.TestCase):
             '"second_order_label_proliferation": status.get("second_order_label_proliferation")',
             API_SERVER,
         )
+        self.assertIn(
+            '"narrative_lens_reading": status.get("narrative_lens_reading")',
+            API_SERVER,
+        )
+        self.assertIn(
+            '"character_path_reading": status.get("character_path_reading")',
+            API_SERVER,
+        )
+        self.assertIn(
+            '"datascene_meaning_network": status.get("datascene_meaning_network")',
+            API_SERVER,
+        )
         self.assertIn('"second_order_label_proliferation_error"', API_SERVER)
         self.assertIn('"second_order_label_proliferation_created"', API_SERVER)
 
@@ -47,6 +62,9 @@ class SecondOrderPipelineWiringContractTest(unittest.TestCase):
             "multimodal_meaning_stage1",
             "agent_persistence_scene_cut",
             "second_order_label_proliferation",
+            "narrative_lens_reading",
+            "character_path_reading",
+            "datascene_meaning_network",
         ):
             self.assertIn(file_type, API_SERVER)
 
@@ -55,6 +73,9 @@ class SecondOrderPipelineWiringContractTest(unittest.TestCase):
             "dependency_sfl_stage1",
             "multimodal_meaning_stage1",
             "second_order_label_proliferation",
+            "narrative_lens_reading",
+            "character_path_reading",
+            "datascene_meaning_network",
         ):
             self.assertIn(file_type, API_SERVICE)
             self.assertIn(file_type, CONFIG)

@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
   apiService,
+  type AnnotationCorrections,
   type SharedTaxonomyLabel,
   type SourceMediaMetadata,
 } from "@/lib/api-service";
+import { VideoService } from "@/lib/video-service";
+import { openVideoAtTime } from "@/lib/video-navigation";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
   getLearnedTaxonomyLabels,
@@ -146,6 +149,8 @@ type NarrativeAgentProfile = NonNullable<
   NonNullable<SourceMediaMetadata["user_annotations"]>["narrative_agent_profiles"]
 >[number];
 
+type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
+
 const displayedWebCandidateFields = new Set([
   "title",
   "description",
@@ -229,6 +234,41 @@ const AGENT_NARRATIVE_PROFILE_READINGS = [
     cues: ["act", "agent", "agency", "scene", "purpose", "motive"],
   },
 ];
+
+function normalizePresenceMatch(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function formatPresenceSeconds(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "time n/a";
+  }
+  const safeValue = Math.max(0, value);
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = Math.floor(safeValue % 60);
+  const milliseconds = Math.floor((safeValue - Math.floor(safeValue)) * 1000);
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
+function presenceIntervalsForNarrativeAgentProfile(
+  intervals: MeaningNetworkPresenceInterval[],
+  profile: NarrativeAgentProfile,
+) {
+  const profileId = normalizePresenceMatch(profile.profile_id);
+  const profileLabel = normalizePresenceMatch(profile.narrative_agent_name);
+  return intervals.filter((interval) => {
+    const intervalProfileId = normalizePresenceMatch(interval.narrative_agent_profile_id);
+    const intervalLabel = normalizePresenceMatch(interval.label);
+    const intervalNodeId = normalizePresenceMatch(interval.node_id);
+    return Boolean(
+      (profileId && (intervalProfileId === profileId || intervalNodeId.includes(profileId))) ||
+        (profileLabel && (intervalLabel.includes(profileLabel) || intervalNodeId.includes(profileLabel))),
+    );
+  });
+}
 
 function formatCandidateValue(value: unknown, separator = ", "): string {
   if (Array.isArray(value)) {
@@ -363,6 +403,7 @@ export default function SourceMediaMetadataPanel() {
   const [videoId, setVideoId] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
+  const [presenceIntervals, setPresenceIntervals] = useState<MeaningNetworkPresenceInterval[]>([]);
   const [editorNotes, setEditorNotes] = useState("");
   const [sourceContext, setSourceContext] = useState("");
   const [provenanceNotes, setProvenanceNotes] = useState("");
@@ -486,16 +527,21 @@ export default function SourceMediaMetadataPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const metadataHandler = (id: string) => {
-      if (id === videoId) {
+    const metadataHandler = (payload: string | { videoId?: string }) => {
+      const changedVideoId = typeof payload === "string" ? payload : payload?.videoId;
+      if (changedVideoId === videoId) {
         setRefreshNonce((value) => value + 1);
       }
     };
     eventBus.on("videoIdChanged", handler);
     eventBus.on("sourceMediaMetadataChanged", metadataHandler);
+    eventBus.on("analysisCorrectionsChanged", metadataHandler);
+    eventBus.on("narrativeAgentProfilePresenceUpdated", metadataHandler);
     return () => {
       eventBus.off("videoIdChanged", handler);
       eventBus.off("sourceMediaMetadataChanged", metadataHandler);
+      eventBus.off("analysisCorrectionsChanged", metadataHandler);
+      eventBus.off("narrativeAgentProfilePresenceUpdated", metadataHandler);
     };
   }, [videoId]);
 
@@ -503,6 +549,7 @@ export default function SourceMediaMetadataPanel() {
     async function load() {
       if (!videoId) {
         setMetadata(null);
+        setPresenceIntervals([]);
         setEditorNotes("");
         setSourceContext("");
         setProvenanceNotes("");
@@ -553,11 +600,19 @@ export default function SourceMediaMetadataPanel() {
       }
 
       try {
-        const nextMetadata = await apiService.getSourceMediaMetadata(videoId);
+        const [nextMetadata, nextAnalysis] = await Promise.all([
+          apiService.getSourceMediaMetadata(videoId),
+          VideoService.refreshAnalysis(videoId).catch((error) => {
+            console.warn("Failed to load Narrative Agent presence intervals:", error);
+            return null;
+          }),
+        ]);
         hydrateMetadataState(nextMetadata);
+        setPresenceIntervals(nextAnalysis?.annotationCorrections?.master_schema_presence_intervals || []);
       } catch (error) {
         console.error("Failed to load source media metadata:", error);
         setMetadata(null);
+        setPresenceIntervals([]);
       }
     }
     void load();
@@ -1171,6 +1226,14 @@ export default function SourceMediaMetadataPanel() {
   const characterDefinitions = metadata?.user_annotations?.character_definitions || [];
   const narrativeAgentProfiles = metadata?.user_annotations?.narrative_agent_profiles || [];
   const narrativeAgentProfileCount = narrativeAgentProfiles.length || characterDefinitions.length;
+  const narrativeAgentProfilePresenceById = useMemo(() => {
+    const entries = new Map<string, MeaningNetworkPresenceInterval[]>();
+    narrativeAgentProfiles.forEach((profile, index) => {
+      const key = profile.profile_id || `${profile.narrative_agent_name || "agent"}-${index}`;
+      entries.set(key, presenceIntervalsForNarrativeAgentProfile(presenceIntervals, profile));
+    });
+    return entries;
+  }, [narrativeAgentProfiles, presenceIntervals]);
   const maturityIteration = metadata?.maturity_iteration;
   const referenceFiles = metadata?.user_annotations?.reference_files || [];
   const webMetadataPreferenceRank: Record<WebMetadataPreference, number> = {
@@ -1589,9 +1652,12 @@ export default function SourceMediaMetadataPanel() {
                   </div>
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
-                  {narrativeAgentProfiles.length > 0 ? narrativeAgentProfiles.slice(0, 6).map((profile, index) => (
+                  {narrativeAgentProfiles.length > 0 ? narrativeAgentProfiles.slice(0, 6).map((profile, index) => {
+                    const profileKey = profile.profile_id || `${profile.narrative_agent_name || "agent"}-${index}`;
+                    const profilePresenceIntervals = narrativeAgentProfilePresenceById.get(profileKey) || [];
+                    return (
                     <div
-                      key={profile.profile_id || `${profile.narrative_agent_name || "agent"}-${index}`}
+                      key={profileKey}
                       className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"
                     >
                       <div className="text-xs text-slate-100">
@@ -1676,8 +1742,41 @@ export default function SourceMediaMetadataPanel() {
                           {profile.source_metadata?.source_preference || "supporting"}: {profile.source_metadata.source_url}
                         </div>
                       ) : null}
+                      <div
+                        className="mt-2 rounded border border-emerald-900/40 bg-emerald-950/10 px-2 py-1.5"
+                        data-vaa1-narrative-agent-card-presence-from-meaning-network="true"
+                        data-vaa1-narrative-agent-card-master-schema-presence-sync="true"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[10px] uppercase tracking-[0.12em] text-emerald-100/80">
+                            Meaning Network Presence
+                          </div>
+                          <div className="text-[10px] text-emerald-100/60">
+                            {profilePresenceIntervals.length} interval{profilePresenceIntervals.length === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        {profilePresenceIntervals.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {profilePresenceIntervals.slice(0, 4).map((interval) => (
+                              <button
+                                key={interval.id || `${interval.node_id}:${interval.start_seconds}`}
+                                type="button"
+                                className="rounded border border-emerald-800/60 bg-[#101010] px-1.5 py-0.5 text-[10px] text-emerald-100 hover:border-emerald-400"
+                                title={`${interval.presence_mode || "presence"} / ${interval.authority_level || "candidate"} / ${interval.master_schema_surface || "master schema"}`}
+                                onClick={() => videoId && openVideoAtTime(videoId, Number(interval.start_seconds || 0))}
+                              >
+                                {formatPresenceSeconds(interval.start_seconds)}-{formatPresenceSeconds(interval.end_seconds)}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            Presence interval pending from Meaning Network handles.
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )) : characterDefinitions.slice(0, 6).map((definition, index) => (
+                  );}) : characterDefinitions.slice(0, 6).map((definition, index) => (
                     <div
                       key={`${definition.character_name || "character"}-${definition.actor_name || index}`}
                       className="rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5"

@@ -8,6 +8,7 @@ import {
 } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import type {
+  AnnotationCorrections,
   EvidenceProliferationMatchSummary,
   IdentityCandidate,
   IdentityCandidateLedger,
@@ -643,6 +644,40 @@ function formatSeconds(value?: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
+type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
+
+function normalizePresenceMatch(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function presenceIntervalsForMasterSubject(
+  intervals: MeaningNetworkPresenceInterval[],
+  subject: MasterSchemaResolvedEvidenceRecord,
+) {
+  const subjectId = normalizePresenceMatch(subject.id);
+  const subjectLabel = normalizePresenceMatch(subject.label);
+  const sourceItem = subject as unknown as Record<string, unknown>;
+  const profileId = normalizePresenceMatch(
+    sourceItem.profile_id ||
+      sourceItem.narrative_agent_profile_id ||
+      (sourceItem.attributes as Record<string, unknown> | undefined)?.profile_id ||
+      (sourceItem.attributes as Record<string, unknown> | undefined)?.narrative_agent_profile_id,
+  );
+  return intervals.filter((interval) => {
+    const intervalProfileId = normalizePresenceMatch(interval.narrative_agent_profile_id);
+    const intervalLabel = normalizePresenceMatch(interval.label);
+    const intervalNodeId = normalizePresenceMatch(interval.node_id);
+    return Boolean(
+      (profileId && (intervalProfileId === profileId || intervalNodeId.includes(profileId))) ||
+        (subjectId && intervalNodeId.includes(subjectId)) ||
+        (subjectLabel && (intervalLabel.includes(subjectLabel) || intervalNodeId.includes(subjectLabel))),
+    );
+  });
+}
+
 function parseTimeInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -1203,6 +1238,7 @@ function MasterSchemaSubjectStrip({
   videoId: string;
 }) {
   const subjects = masterSubjectRecords(analysisData);
+  const presenceIntervals = analysisData?.annotationCorrections?.master_schema_presence_intervals || [];
   if (subjects.length === 0) {
     return null;
   }
@@ -1257,11 +1293,14 @@ function MasterSchemaSubjectStrip({
         </span>
       </div>
       <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
-        {subjects.slice(0, 18).map((subject) => (
+        {subjects.slice(0, 18).map((subject) => {
+          const subjectPresenceIntervals = presenceIntervalsForMasterSubject(presenceIntervals, subject);
+          return (
           <button
             key={subject.id}
             type="button"
             data-vaa1-master-schema-subject-navigation="true"
+            data-vaa1-master-schema-presence-interval-sync="true"
             onClick={() => openSubject(subject)}
             onContextMenu={(event) => openSubjectTraceback(event, subject)}
             className="rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-left hover:border-cyan-400/70 hover:bg-cyan-950/25"
@@ -1272,8 +1311,21 @@ function MasterSchemaSubjectStrip({
             <div className="mt-0.5 truncate text-[9px] text-[var(--ui-passive-text)]">
               {subject.category.replaceAll("_", " ")} / {subject.maturityRoute || "master schema"}
             </div>
+            {subjectPresenceIntervals.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {subjectPresenceIntervals.slice(0, 2).map((interval) => (
+                  <span
+                    key={interval.id || `${interval.node_id}:${interval.start_seconds}`}
+                    className="rounded border border-emerald-800/70 bg-emerald-950/20 px-1 py-0.5 text-[8px] text-emerald-100"
+                    title={`${interval.source_panel || "MeaningNetwork"} / ${interval.authority_level || "candidate"}`}
+                  >
+                    {formatSeconds(interval.start_seconds)}-{formatSeconds(interval.end_seconds)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </button>
-        ))}
+        );})}
       </div>
     </section>
   );

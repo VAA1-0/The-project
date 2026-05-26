@@ -54,7 +54,13 @@ import {
   getPrimarySecondOrderInstruction,
   SecondOrderLabelAffirmationChips,
 } from "./SecondOrderLabelAffirmations";
-import { apiService, type EvidenceProliferationCandidate, type ManualVisualAnnotation } from "@/lib/api-service";
+import {
+  apiService,
+  type AnnotationCorrections,
+  type EvidenceProliferationCandidate,
+  type ManualVisualAnnotation,
+  type ProliferationDecision,
+} from "@/lib/api-service";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
@@ -1045,6 +1051,10 @@ function manualVisualAnnotationMatureLabel(
   ).trim();
 }
 
+function isObjectManualOverride(item: ManualVisualAnnotation | undefined | null): boolean {
+  return Boolean(item && item.category === "OBJ");
+}
+
 function buildManualTrackMatureAuthority(
   annotations: ManualVisualAnnotation[],
 ): Map<string, BBoxMatureAuthority> {
@@ -1168,23 +1178,77 @@ function candidateTrackTargetId(candidate: EvidenceProliferationCandidate): stri
 function isMatureProliferationCandidate(
   candidate: EvidenceProliferationCandidate,
 ): boolean {
-  if (isManualProliferationCandidate(candidate)) {
-    return false;
+  const projectionAllowed =
+    candidate.master_object_projection?.governance_status?.proliferation_allowed;
+  if (candidate.proliferation_allowed === true || projectionAllowed === true) {
+    return true;
   }
   const reviewState = String(candidate.review_state || "").toLowerCase();
   if (
     [
-      "supported",
-      "probable",
-      "strong_support",
-      "strongly_supported",
-      "analyst_supported",
       "confirmed",
+      "analyst_confirmed",
+      "manual_confirmation",
+      "manual_correction",
     ].includes(reviewState)
   ) {
     return true;
   }
-  return candidateProbability(candidate) >= 0.5;
+  return candidateProbability(candidate) >= 0.95 && candidate.decision_required !== true;
+}
+
+function isReviewableProliferationCandidate(
+  candidate: EvidenceProliferationCandidate,
+): boolean {
+  if (isMatureProliferationCandidate(candidate)) {
+    return false;
+  }
+  const reviewState = String(candidate.review_state || "").toLowerCase();
+  return (
+    candidate.decision_required === true ||
+    [
+      "to_be_confirmed_or_canceled",
+      "review_candidate",
+      "probable_candidate",
+      "very_high_probability_candidate",
+    ].includes(reviewState) ||
+    candidateProbability(candidate) >= 0.35
+  );
+}
+
+function resolveReviewCandidateDisplayLabel(
+  candidate: EvidenceProliferationCandidate,
+): string {
+  const label = governedOverlayLabel(resolveProliferatedDisplayLabel(candidate)) || "candidate";
+  return `Review ${label} ${Math.round(candidateProbability(candidate) * 100)}%`;
+}
+
+function candidateCorrectionRawValue(candidate: EvidenceProliferationCandidate): string {
+  return String(
+    candidate.raw?.class_name ||
+      candidate.raw?.raw_class_name ||
+      candidate.raw?.class ||
+      candidate.raw?.label ||
+      candidate.label ||
+      candidate.evidence_id ||
+      "candidate",
+  );
+}
+
+function candidateCorrectionTrackId(candidate: EvidenceProliferationCandidate): number | undefined {
+  const value = candidate.raw?.track_id ?? candidate.raw?.trackId;
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function candidateDecisionId(
+  candidate: EvidenceProliferationCandidate,
+  decision: string,
+): string {
+  return `proliferation:${decision}:${candidate.candidate_id || candidate.evidence_id || "candidate"}`;
 }
 
 function resolveProliferatedDisplayLabel(
@@ -3988,6 +4052,15 @@ export default function VideoPanel() {
       box: DraftBox;
       updatedAt: number;
     }> = [];
+    const reviewProliferationByObjectTrack = new Map<
+      string,
+      { candidate: EvidenceProliferationCandidate; updatedAt: number }
+    >();
+    const reviewProliferationSpatialCandidates: Array<{
+      candidate: EvidenceProliferationCandidate;
+      box: DraftBox;
+      updatedAt: number;
+    }> = [];
     storedProliferationMatches.forEach((match) => {
       if (match.videoId && match.videoId !== videoId) {
         return;
@@ -3995,7 +4068,9 @@ export default function VideoPanel() {
       const updatedAt = Date.parse(match.updated_at || "");
       const matchUpdatedAt = Number.isFinite(updatedAt) ? updatedAt : 0;
       (match.candidates || []).forEach((candidate) => {
-        if (!isMatureProliferationCandidate(candidate)) {
+        const matureCandidate = isMatureProliferationCandidate(candidate);
+        const reviewCandidate = isReviewableProliferationCandidate(candidate);
+        if (!matureCandidate && !reviewCandidate) {
           return;
         }
         const trackId = candidateTrackTargetId(candidate);
@@ -4014,14 +4089,21 @@ export default function VideoPanel() {
           return;
         }
         const candidateBox = geometryToNormalizedBox(candidate.geometry, videoWidth, videoHeight);
-        if (candidateBox) {
+        if (matureCandidate && candidateBox) {
           matureProliferationSpatialCandidates.push({
             candidate,
             box: candidateBox,
             updatedAt: matchUpdatedAt,
           });
         }
-        if (trackId) {
+        if (reviewCandidate && candidateBox) {
+          reviewProliferationSpatialCandidates.push({
+            candidate,
+            box: candidateBox,
+            updatedAt: matchUpdatedAt,
+          });
+        }
+        if (matureCandidate && trackId) {
           const existing = matureProliferationByObjectTrack.get(trackId);
           const candidateScore =
             matchUpdatedAt + (candidateProbability(candidate) * 1000);
@@ -4030,6 +4112,20 @@ export default function VideoPanel() {
             : Number.NEGATIVE_INFINITY;
           if (!existing || candidateScore > existingScore) {
             matureProliferationByObjectTrack.set(trackId, {
+              candidate,
+              updatedAt: matchUpdatedAt,
+            });
+          }
+        }
+        if (reviewCandidate && trackId) {
+          const existing = reviewProliferationByObjectTrack.get(trackId);
+          const candidateScore =
+            matchUpdatedAt + (candidateProbability(candidate) * 1000);
+          const existingScore = existing
+            ? existing.updatedAt + (candidateProbability(existing.candidate) * 1000)
+            : Number.NEGATIVE_INFINITY;
+          if (!existing || candidateScore > existingScore) {
+            reviewProliferationByObjectTrack.set(trackId, {
               candidate,
               updatedAt: matchUpdatedAt,
             });
@@ -4115,7 +4211,24 @@ export default function VideoPanel() {
             `person track ${trackId}`,
           ]),
         ].map(normalizeEvidenceLabel);
+        const objectManualOverrideActive =
+          manualOverrideActive && isObjectManualOverride(manualOverride);
+        const localOverride = (() => {
+          return activeLocalObjectLabelOverrides.find((override) => {
+            const sameTrack =
+              override.trackId !== undefined &&
+              targetIds.some((trackId) => Number(override.trackId) === Number(trackId));
+            if (override.trackId !== undefined) {
+              return sameTrack;
+            }
+            const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
+            return targetIds.length === 0 && Boolean(overrideSource && sourceLabels.includes(overrideSource));
+          });
+        })();
         const narrativeAgentOverride = (() => {
+          if (objectManualOverrideActive || localOverride) {
+            return undefined;
+          }
           for (const trackId of targetIds) {
             const trackOverride = matureSubjectOverlayLookup.byTrack.get(trackId);
             if (trackOverride) {
@@ -4131,18 +4244,6 @@ export default function VideoPanel() {
             }
           }
           return undefined;
-        })();
-        const localOverride = (() => {
-          return activeLocalObjectLabelOverrides.find((override) => {
-            const sameTrack =
-              override.trackId !== undefined &&
-              targetIds.some((trackId) => Number(override.trackId) === Number(trackId));
-            if (override.trackId !== undefined) {
-              return sameTrack;
-            }
-            const overrideSource = normalizeEvidenceLabel(override.sourceLabel);
-            return targetIds.length === 0 && Boolean(overrideSource && sourceLabels.includes(overrideSource));
-          });
         })();
         const masterSchemaMatureOverride = (() => {
           if (manualOverrideActive || localOverride) {
@@ -4186,6 +4287,38 @@ export default function VideoPanel() {
             return undefined;
           }
           return matureProliferationSpatialCandidates
+            .filter(({ box }) => isSameSpaceBoxMatch(objectNormalizedBox, box))
+            .sort((left, right) => {
+              const rightScore =
+                calculateDraftBoxIoU(objectNormalizedBox, right.box) * 2 +
+                candidateProbability(right.candidate) +
+                right.updatedAt / 10000000000000;
+              const leftScore =
+                calculateDraftBoxIoU(objectNormalizedBox, left.box) * 2 +
+                candidateProbability(left.candidate) +
+                left.updatedAt / 10000000000000;
+              return rightScore - leftScore;
+            })[0]?.candidate;
+        })();
+        const reviewProliferatedCandidate = (() => {
+          if (
+            manualOverrideActive ||
+            localOverride ||
+            masterSchemaMatureOverride ||
+            matureProliferatedOverride
+          ) {
+            return undefined;
+          }
+          for (const trackId of targetIds) {
+            const trackCandidate = reviewProliferationByObjectTrack.get(trackId)?.candidate;
+            if (trackCandidate) {
+              return trackCandidate;
+            }
+          }
+          if (!objectNormalizedBox) {
+            return undefined;
+          }
+          return reviewProliferationSpatialCandidates
             .filter(({ box }) => isSameSpaceBoxMatch(objectNormalizedBox, box))
             .sort((left, right) => {
               const rightScore =
@@ -4243,17 +4376,21 @@ export default function VideoPanel() {
         const proliferatedOverlayLabel = matureProliferatedOverride
           ? governedOverlayLabel(resolveProliferatedDisplayLabel(matureProliferatedOverride))
           : undefined;
+        const reviewProliferatedOverlayLabel = reviewProliferatedCandidate
+          ? resolveReviewCandidateDisplayLabel(reviewProliferatedCandidate)
+          : undefined;
         const manualOverrideOverlayLabel = manualOverrideActive
           ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
           : undefined;
         const unresolvedOverlayLabel = unresolvedObjectConfirmationLabel(item);
         const objectOverlayLabel =
           localOverlayLabel ||
+          manualOverrideOverlayLabel ||
           manualTrackOverlayLabel ||
           narrativeAgentOverlayLabel ||
           masterSchemaOverlayLabel ||
           proliferatedOverlayLabel ||
-          manualOverrideOverlayLabel ||
+          reviewProliferatedOverlayLabel ||
           unresolvedOverlayLabel;
 
         overlays.push({
@@ -4268,6 +4405,8 @@ export default function VideoPanel() {
             ? "border-violet-300/85 bg-violet-300/10"
             : matureProliferatedOverride
             ? "border-sky-300/85 bg-sky-300/10"
+            : reviewProliferatedCandidate
+            ? "border-cyan-300/85 bg-cyan-300/10"
             : "border-amber-300/80 bg-amber-300/10",
           x: resolvedBox.x,
           y: resolvedBox.y,
@@ -4278,6 +4417,24 @@ export default function VideoPanel() {
               ? {
                   ...item,
                   manual_annotation: manualOverride,
+                  master_schema_mature_label: {
+                    label: manualOverrideOverlayLabel || resolveManualVisualDisplayLabel(manualOverride),
+                    authority: "manual_correction",
+                    sourcePanel: "VideoPanel",
+                    source: "manual_visual_annotation",
+                    sourceItem: manualOverride,
+                    traceback: manualOverride.id,
+                    evidence_refs: [manualOverride.id],
+                  },
+                  bbox_mature_authority: {
+                    label: manualOverrideOverlayLabel || resolveManualVisualDisplayLabel(manualOverride),
+                    authority: "manual_correction",
+                    source: "manual_visual_annotation",
+                    sourceItem: manualOverride,
+                    traceback: manualOverride.id,
+                    evidence_refs: [manualOverride.id],
+                  },
+                  displayLabel: manualOverrideOverlayLabel || unresolvedOverlayLabel,
                 }
               : manualTrackAuthority
               ? {
@@ -4298,6 +4455,21 @@ export default function VideoPanel() {
                   proliferated_annotation: matureProliferatedOverride,
                   displayLabel: proliferatedOverlayLabel || unresolvedOverlayLabel,
                   agent_persistence_labels: ["Constellational Match"],
+                }
+              : reviewProliferatedCandidate
+              ? {
+                  ...item,
+                  proliferated_review_candidate: reviewProliferatedCandidate,
+                  displayLabel: reviewProliferatedOverlayLabel || unresolvedOverlayLabel,
+                  narrative_agent_confirmation_required: true,
+                  agent_persistence_labels: ["Review candidate"],
+                  traceback:
+                    reviewProliferatedCandidate.master_object_projection?.traceback_ref ||
+                    reviewProliferatedCandidate.provenance,
+                  evidence_refs:
+                    reviewProliferatedCandidate.evidence_refs ||
+                    reviewProliferatedCandidate.master_object_projection?.evidence_refs,
+                  source_bbox_refs: reviewProliferatedCandidate.source_anchors,
                 }
               : narrativeAgentOverride
               ? {
@@ -4794,6 +4966,17 @@ export default function VideoPanel() {
       const source = overlay.sourceItem || {};
       const bounds = getOverlayTimeBounds(overlay);
       const category = getDefaultCategoryForOverlay(overlay);
+      const visibleTime =
+        Number.isFinite(currentTime) ? clamp(currentTime, 0, duration || Number.MAX_SAFE_INTEGER) : bounds.start;
+      const useVisibleObjectTime =
+        overlay.modality === "object" &&
+        Number.isFinite(visibleTime) &&
+        (visibleTime < bounds.start - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS ||
+          visibleTime > bounds.end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS);
+      const editStart = useVisibleObjectTime ? visibleTime : bounds.start;
+      const editEnd = useVisibleObjectTime
+        ? Math.min(visibleTime + 0.1, duration || Number.MAX_SAFE_INTEGER)
+        : bounds.end;
       const manual =
         overlay.modality === "manual"
           ? (source as ManualVisualAnnotation)
@@ -4824,12 +5007,12 @@ export default function VideoPanel() {
         quickAnnotations:
           ((manual?.metadata_correlation as any)?.quick_annotations as string[]) ||
           [],
-        start: bounds.start,
-        end: bounds.end,
+        start: editStart,
+        end: Math.max(editEnd, editStart + 0.001),
         note: manual?.open_note || "",
       };
     },
-    [getOverlayTimeBounds],
+    [currentTime, duration, getOverlayTimeBounds],
   );
 
   const getSelectedIndicationEdit = React.useCallback(
@@ -5703,6 +5886,8 @@ export default function VideoPanel() {
         ...current,
         [`manual-${annotation.id}`]: edit,
       }));
+      setSelectedWorkspaceAnnotationId(annotation.id);
+      setSelectedOverlayKey(`manual-${annotation.id}`);
       setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
       if (synthesizedExpressionOwnerBox) {
         eventBus.emit("expressionOwnerPersonDetectionRequested", {
@@ -5724,6 +5909,26 @@ export default function VideoPanel() {
         timestamp: start,
         label,
         sourceItem: annotation,
+      });
+      eventBus.emit("masterSchemaManualCorrectionCommitted", {
+        event_type: "master_schema_updated",
+        videoId,
+        annotationId: annotation.id,
+        category: annotation.category,
+        label,
+        source_panel: "BBox/ROI",
+        authority_level: "manual_correction",
+        propagation_required: true,
+        partial_propagation_allowed: false,
+        affected_panels: [
+          "video_panel",
+          "bbox_roi_panel",
+          "object_panel",
+          "narrative_agent_panel",
+          "meaning_network",
+          "master_schema",
+          "traceback_log",
+        ],
       });
       broadcastAnalysisCorrectionRefresh(videoId);
     },
@@ -6042,6 +6247,137 @@ export default function VideoPanel() {
     setSelectedOverlayKey(null);
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [analysisData?.annotationCorrections, selectedOverlay, videoId]);
+
+  const recordProliferationCandidateDecision = React.useCallback(
+    async (
+      candidate: EvidenceProliferationCandidate,
+      decision: "confirmed" | "canceled" | "deferred" | "inspected",
+    ) => {
+      if (!videoId) {
+        return;
+      }
+      const existingCorrections = analysisData?.annotationCorrections;
+      const sourceEvidence =
+        candidate.provenance?.source_evidence &&
+        typeof candidate.provenance.source_evidence === "object" &&
+        !Array.isArray(candidate.provenance.source_evidence)
+          ? (candidate.provenance.source_evidence as Record<string, unknown>)
+          : {};
+      const requestId = String(candidate.provenance?.request_id || "");
+      const appliedLabel = governedOverlayLabel(resolveProliferatedDisplayLabel(candidate));
+      const now = new Date().toISOString();
+      const rawTrackId = candidate.raw?.track_id ?? candidate.raw?.trackId;
+      const targetTrackId =
+        typeof rawTrackId === "number" || typeof rawTrackId === "string"
+          ? rawTrackId
+          : undefined;
+      const nextDecision: ProliferationDecision = {
+        decision_id: candidateDecisionId(candidate, decision),
+        candidate_id: candidate.candidate_id,
+        request_id: requestId || undefined,
+        decision,
+        authority_level:
+          decision === "confirmed"
+            ? "manual_confirmation"
+            : "manual_annotation_review",
+        candidate_label: String(candidate.label || ""),
+        applied_label: decision === "confirmed" ? appliedLabel : undefined,
+        target_evidence_id: candidate.evidence_id,
+        target_track_id: targetTrackId,
+        source_anchors: candidate.source_anchors,
+        evidence_refs: candidate.evidence_refs,
+        projection_targets: candidate.projection_targets,
+        governance_status: candidate.master_object_projection?.governance_status,
+        proliferation_allowed: decision === "confirmed",
+        decision_reason:
+          decision === "confirmed"
+            ? "Analyst confirmed surfaced near match."
+            : decision === "canceled"
+            ? "Analyst canceled surfaced near match."
+            : "Analyst left surfaced near match for later review.",
+        created_at: now,
+        created_by: "analyst",
+      };
+      const decisions = [
+        ...(existingCorrections?.proliferation_decisions || []).filter(
+          (item) => item.decision_id !== nextDecision.decision_id,
+        ),
+        nextDecision,
+      ];
+      let nextCorrections: AnnotationCorrections = {
+        ...(existingCorrections || {}),
+        version: 1,
+        updated_at: now,
+        updated_by: "analyst",
+        text_substitutions: [...(existingCorrections?.text_substitutions || [])],
+        label_overrides: [...(existingCorrections?.label_overrides || [])],
+        manual_transcript_entries: [
+          ...(existingCorrections?.manual_transcript_entries || []),
+        ],
+        manual_visual_annotations: [
+          ...(existingCorrections?.manual_visual_annotations || []),
+        ],
+        proliferation_decisions: decisions,
+      };
+
+      if (decision === "confirmed" && appliedLabel) {
+        const rawValue = candidateCorrectionRawValue(candidate);
+        const start = Number(candidate.time?.start);
+        const end = Number(candidate.time?.end ?? start);
+        nextCorrections = mergeCorrectionRule(
+          nextCorrections,
+          buildCorrectionRule("object", rawValue, appliedLabel, "Confirmed proliferation candidate", {
+            targetTimestamp: Number.isFinite(start) ? start : undefined,
+            targetStartTimestamp: Number.isFinite(start) ? start : undefined,
+            targetEndTimestamp: Number.isFinite(end) ? end : undefined,
+            targetTrackId: candidateCorrectionTrackId(candidate),
+          }),
+        );
+      }
+
+      pushCorrectionSnapshot(videoId, existingCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      broadcastAnalysisCorrectionRefresh(videoId);
+      setSelectedOverlayProliferation((current) => {
+        const next = { ...current };
+        Object.entries(next).forEach(([overlayKey, state]) => {
+          if (!state?.candidates?.length) {
+            return;
+          }
+          next[overlayKey] = {
+            ...state,
+            candidates: state.candidates.map((item) =>
+              item.candidate_id === candidate.candidate_id
+                ? {
+                    ...item,
+                    review_state: decision,
+                    decision_required: false,
+                    proliferation_allowed: decision === "confirmed",
+                    proliferation_reason: nextDecision.decision_reason,
+                  }
+                : item,
+            ),
+            message:
+              decision === "confirmed"
+                ? "Candidate confirmed and saved as mature correction."
+                : decision === "canceled"
+                ? "Candidate canceled and saved to the review ledger."
+                : "Candidate decision saved.",
+          };
+        });
+        return next;
+      });
+      eventBus.emit("evidenceProliferationCandidateDecided", {
+        videoId,
+        candidate_id: candidate.candidate_id,
+        decision,
+        sourceEvidence,
+      });
+    },
+    [analysisData?.annotationCorrections, videoId],
+  );
 
   const transcriptMarkers = useMemo(
     () => dedupeTimelinePoints(transcript.map((segment) => segment.start), duration),
@@ -8233,6 +8569,16 @@ export default function VideoPanel() {
                                                   <span className="rounded bg-amber-950/70 px-1 text-amber-100/80">
                                                     {candidate.review_state || "candidate"}
                                                   </span>
+                                                  {candidate.decision_required ? (
+                                                    <span className="rounded bg-cyan-950/80 px-1 text-cyan-100/85">
+                                                      confirm / cancel
+                                                    </span>
+                                                  ) : null}
+                                                  {candidate.proliferation_allowed ? (
+                                                    <span className="rounded bg-emerald-950/70 px-1 text-emerald-100/85">
+                                                      can proliferate
+                                                    </span>
+                                                  ) : null}
                                                 </div>
                                                 {candidate.closest_match?.components ? (
                                                   <div className="mt-0.5 grid grid-cols-3 gap-0.5 text-[8px] text-slate-500">
@@ -8248,6 +8594,49 @@ export default function VideoPanel() {
                                                           : "open"}
                                                       </span>
                                                     ))}
+                                                  </div>
+                                                ) : null}
+                                                {candidate.decision_required ? (
+                                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void recordProliferationCandidateDecision(
+                                                          candidate,
+                                                          "confirmed",
+                                                        );
+                                                      }}
+                                                      className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-800/80"
+                                                    >
+                                                      Confirm
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void recordProliferationCandidateDecision(
+                                                          candidate,
+                                                          "canceled",
+                                                        );
+                                                      }}
+                                                      className="rounded bg-rose-950/70 px-1.5 py-0.5 text-[9px] text-rose-100 hover:bg-rose-900/80"
+                                                    >
+                                                      Cancel
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        void recordProliferationCandidateDecision(
+                                                          candidate,
+                                                          "deferred",
+                                                        );
+                                                      }}
+                                                      className="rounded bg-slate-900 px-1.5 py-0.5 text-[9px] text-slate-300 hover:bg-slate-800"
+                                                    >
+                                                      Defer
+                                                    </button>
                                                   </div>
                                                 ) : null}
                                               </div>

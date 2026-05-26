@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+from src.backend.analysis.antenarrative_lexicon_engine import evaluate_antenarrative_cues
+
 
 SCHEMA = "vaa1.multimodal_meaning.stage1.v1"
 
@@ -278,6 +280,11 @@ def _candidate_target_labels(feature_type: str) -> List[str]:
         "person_identity_prompt": ["Identification", "Role"],
         "expression_owner_prompt": ["Expression", "Identification"],
         "scene_participant_prompt": ["Interaction", "Identification", "Scene"],
+        "antenarrative_bet": ["Scene", "Episode", "Situation", "ReportClaim"],
+        "antenarrative_beneath": ["Interaction", "Role", "Situation", "ReportClaim"],
+        "antenarrative_between": ["Scene", "Episode", "Situation", "ReportClaim"],
+        "antenarrative_beyond": ["Scene", "Episode", "Situation", "ReportClaim"],
+        "antenarrative_becoming": ["Scene", "Episode", "Situation", "Action", "Role", "ReportClaim"],
     }
     return mapping.get(feature_type, [])
 
@@ -370,6 +377,9 @@ def _build_linguistic_events(
     analysis_id: str,
     sfl_artifact: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
+    *,
+    genre: str = "",
+    prosody_cues: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     utterances = _utterances(sfl_artifact)
@@ -673,6 +683,56 @@ def _build_linguistic_events(
             )
             event_index += 1
 
+        token_trace = utterance.get("token_trace") or []
+        if token_trace:
+            parsed_tokens = [{"lemma": t.get("lemma", ""), "text": t.get("text", "")} for t in token_trace]
+            id_to_text = {t.get("token_id"): t.get("text", "").lower() for t in token_trace}
+            deps = [
+                {
+                    "relation": t.get("dep", ""),
+                    "head": id_to_text.get(t.get("head_token_id"), "")
+                }
+                for t in token_trace
+            ]
+        else:
+            parsed_tokens = [{"lemma": tok.lower(), "text": tok} for tok in tokens]
+            deps = []
+
+        utt_prosody = []
+        if prosody_cues:
+            utt_start_s = span["start_ms"] / 1000.0
+            utt_end_s = span["end_ms"] / 1000.0
+            for cue in prosody_cues:
+                cue_start = float(cue.get("start", 0.0))
+                cue_end = float(cue.get("end", 0.0))
+                if max(utt_start_s, cue_start) <= min(utt_end_s, cue_end):
+                    utt_prosody.append(cue)
+
+        ante_candidates = evaluate_antenarrative_cues(
+            parsed_tokens=parsed_tokens,
+            dependencies=deps,
+            genre=genre,
+            prosody_cues=utt_prosody
+        )
+
+        for cand in ante_candidates:
+            events.append(
+                _base_event(
+                    analysis_id,
+                    cand["feature_type"],
+                    event_index,
+                    span,
+                    cand["feature_payload"],
+                    participants=[speaker],
+                    evidence_refs=evidence_refs,
+                    traceback_refs=traceback_refs,
+                    interpretive_tags=["antenarrative", cand["feature_type"].split("_")[-1]],
+                    confidence_score=cand.get("confidence", 0.5),
+                    confidence_notes="Antenarrative candidate from lexicon engine."
+                )
+            )
+            event_index += 1
+
         previous = utterance
         previous_terms = terms
 
@@ -945,7 +1005,21 @@ def build_multimodal_meaning_stage1_artifact(
     culture_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     utterances = _utterances(sfl_artifact)
-    linguistic_events = _build_linguistic_events(analysis_id, sfl_artifact, source_metadata)
+
+    annotations = (source_metadata or {}).get("user_annotations") or {}
+    genre_tags = annotations.get("genre_tags") or []
+    if isinstance(genre_tags, str):
+        genre_tags = [genre_tags]
+    genre_hint = _safe_text((genre_profile or {}).get("genre") or (genre_tags[0] if genre_tags else ""))
+    prosody_cues = (audio_features or {}).get("cues") or []
+
+    linguistic_events = _build_linguistic_events(
+        analysis_id,
+        sfl_artifact,
+        source_metadata,
+        genre=genre_hint,
+        prosody_cues=prosody_cues
+    )
     visual_events = _build_visual_events(
         analysis_id,
         visual_cues,
