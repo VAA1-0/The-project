@@ -693,6 +693,18 @@ function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
   if (targetType !== "object") {
     return null;
   }
+  const scope = String(item.metadata_correlation?.apply_scope || "").toLowerCase();
+  if (
+    scope &&
+    ![
+      "track_family",
+      "narrative_agent_family",
+      "current_continuity_segment",
+      "current_scene",
+    ].includes(scope)
+  ) {
+    return null;
+  }
   const targetId = item.metadata_correlation?.target_id;
   return targetId === undefined || targetId === null ? null : String(targetId);
 }
@@ -815,17 +827,23 @@ function masterSchemaRecordActiveAtTime(
   const end = Number(record.end ?? record.start);
   if (
     Number.isFinite(start) &&
-    currentTime < Math.min(start, end) - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+    currentTime < Math.min(start, end)
   ) {
     return false;
   }
   if (
     Number.isFinite(end) &&
-    currentTime > Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+    currentTime > Math.max(start, end)
   ) {
     return false;
   }
   return true;
+}
+
+function masterSchemaRecordHasFiniteTimeAnchor(
+  record: MasterSchemaResolvedEvidenceRecord,
+): boolean {
+  return Number.isFinite(Number(record.start)) || Number.isFinite(Number(record.end));
 }
 
 function chooseMatureObjectRecord(
@@ -856,6 +874,7 @@ function buildMatureObjectOverlayLookup(
       record.label &&
       !isRawDetectionLikeLabel(record.label) &&
       record.authority !== "raw_detection" &&
+      masterSchemaRecordHasFiniteTimeAnchor(record) &&
       masterSchemaRecordActiveAtTime(record, currentTime),
   );
   const groupedByTrack = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
@@ -932,6 +951,7 @@ function buildMatureSubjectOverlayLookup(
       record.label &&
       !isRawDetectionLikeLabel(record.label) &&
       record.authority !== "raw_detection" &&
+      masterSchemaRecordHasFiniteTimeAnchor(record) &&
       masterSchemaRecordActiveAtTime(record, currentTime),
   );
   const groupedByTrack = new Map<string, MasterSchemaResolvedEvidenceRecord[]>();
@@ -1019,16 +1039,13 @@ function isManualAnnotationVisibleAtTime(
     return false;
   }
 
-  if (bounds.duration <= MANUAL_POINT_VISIBILITY_SECONDS) {
-    return (
-      currentTime >= bounds.timestamp &&
-      currentTime <= bounds.timestamp + MANUAL_POINT_VISIBILITY_SECONDS
-    );
+  if (bounds.duration <= Number.EPSILON) {
+    return currentTime === bounds.timestamp;
   }
 
   return (
     currentTime >= bounds.start &&
-    currentTime <= bounds.end + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+    currentTime <= bounds.end
   );
 }
 
@@ -1051,15 +1068,32 @@ function manualVisualAnnotationMatureLabel(
   ).trim();
 }
 
+function manualAnnotationTimeScopeKey(start: number, end: number): string {
+  return `${Number(start).toFixed(3)}-${Number(end).toFixed(3)}`;
+}
+
+function manualAnnotationBBoxFingerprint(box: DraftBox): string {
+  return [
+    box.x,
+    box.y,
+    box.w,
+    box.h,
+  ].map((value) => Number(value).toFixed(4)).join("-");
+}
+
 function isObjectManualOverride(item: ManualVisualAnnotation | undefined | null): boolean {
   return Boolean(item && item.category === "OBJ");
 }
 
 function buildManualTrackMatureAuthority(
   annotations: ManualVisualAnnotation[],
+  currentTime: number,
 ): Map<string, BBoxMatureAuthority> {
   const byTrack = new Map<string, BBoxMatureAuthority>();
   annotations.forEach((item) => {
+    if (!isManualAnnotationVisibleAtTime(item, currentTime)) {
+      return;
+    }
     const targetId = manualObjectTargetId(item);
     const label = manualVisualAnnotationMatureLabel(item);
     if (!targetId || !label) {
@@ -4001,14 +4035,10 @@ export default function VideoPanel() {
         manualOverridesBySourceLabel.set(targetLabel, item);
       }
     });
-    const manualTrackMatureAuthority = buildManualTrackMatureAuthority(allManualVisualAnnotations);
-    const activeManualObjectTrackIds = new Set<string>();
-    manualVisualAnnotations.forEach((item) => {
-      const targetId = manualObjectTargetId(item);
-      if (targetId) {
-        activeManualObjectTrackIds.add(targetId);
-      }
-    });
+    const manualTrackMatureAuthority = buildManualTrackMatureAuthority(
+      allManualVisualAnnotations,
+      currentTime,
+    );
     const activeLocalObjectLabelOverrides = localObjectLabelOverrides.filter((item) => {
       if (item.videoId && item.videoId !== videoId) {
         return false;
@@ -4017,7 +4047,7 @@ export default function VideoPanel() {
       const end = typeof item.end === "number" ? item.end : Number.POSITIVE_INFINITY;
       return (
         currentTime >= Math.min(start, end) &&
-        currentTime <= Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+        currentTime <= Math.max(start, end)
       );
     });
     const matureObjectOverlayLookup = buildMatureObjectOverlayLookup(
@@ -4078,13 +4108,13 @@ export default function VideoPanel() {
         const end = Number(candidate.time?.end ?? start);
         if (
           Number.isFinite(start) &&
-          currentTime < Math.min(start, end) - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+          currentTime < Math.min(start, end)
         ) {
           return;
         }
         if (
           Number.isFinite(end) &&
-          currentTime > Math.max(start, end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+          currentTime > Math.max(start, end)
         ) {
           return;
         }
@@ -4349,9 +4379,8 @@ export default function VideoPanel() {
           return;
         }
         if (
-          targetIds.length > 0 &&
           manualOverrideActive &&
-          targetIds.some((trackId) => activeManualObjectTrackIds.has(trackId)) &&
+          manualOverride?.geometry_type === "box" &&
           overlayToggles.manual
         ) {
           return;
@@ -5623,8 +5652,9 @@ export default function VideoPanel() {
     setAnalysisData(refreshed);
     jumpToTime(annotationTimestamp);
     setNativeAnnotationMode(false);
-    setSelectedWorkspaceAnnotationId(annotation.id);
-    setSelectedOverlayKey(`manual-${annotation.id}`);
+    setSelectedWorkspaceAnnotationId(null);
+    setSelectedOverlayKey(null);
+    setSelectedOverlaySnapshot(null);
     const savedDetail = (
       annotation.identity_affirmation ||
       annotation.role_affirmation ||
@@ -5755,21 +5785,30 @@ export default function VideoPanel() {
             : null) ??
           "",
       ).trim();
+      const normalizedBox = expressionPersonAnchor?.box || synthesizedExpressionOwnerBox || expressionBox;
+      const intervalScope = manualAnnotationTimeScopeKey(start, end);
+      const bboxScope = manualAnnotationBBoxFingerprint(normalizedBox);
+      const targetScope = String(
+        expressionPersonAnchor?.trackId ??
+          expressionOwnerTargetId ??
+          source.trackId ??
+          source.track_id ??
+          overlay.key,
+      ).replace(/[^a-zA-Z0-9_.:-]+/g, "_");
       const annotationId =
         overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)?.id ||
             `${videoId}:indication:${overlay.modality}:${overlay.key}`
           : expressionPersonAnchor
-            ? `${videoId}:indication:expression-agent:${targetTrackId || "untracked"}:${overlay.key}`
+            ? `${videoId}:indication:expression-agent:${targetScope || "untracked"}:${intervalScope}:${bboxScope}`
             : expressionOwnerTargetId
-              ? `${videoId}:indication:${expressionOwnerTargetId}`
-            : `${videoId}:indication:${overlay.modality}:${source.trackId ?? source.track_id ?? overlay.key}`;
+              ? `${videoId}:indication:${expressionOwnerTargetId}:${intervalScope}:${bboxScope}`
+              : `${videoId}:indication:${overlay.modality}:${targetScope || "untracked"}:${intervalScope}:${bboxScope}`;
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
-      const normalizedBox = expressionPersonAnchor?.box || synthesizedExpressionOwnerBox || expressionBox;
       const keyframeTime = clamp(
         getOverlayInteractionTime(overlay),
         start,
@@ -5886,8 +5925,9 @@ export default function VideoPanel() {
         ...current,
         [`manual-${annotation.id}`]: edit,
       }));
-      setSelectedWorkspaceAnnotationId(annotation.id);
-      setSelectedOverlayKey(`manual-${annotation.id}`);
+      setSelectedWorkspaceAnnotationId(null);
+      setSelectedOverlayKey(null);
+      setSelectedOverlaySnapshot(null);
       setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
       if (synthesizedExpressionOwnerBox) {
         eventBus.emit("expressionOwnerPersonDetectionRequested", {

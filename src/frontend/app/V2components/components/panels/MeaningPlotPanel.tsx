@@ -204,6 +204,11 @@ type MeaningNetworkPresenceBar = {
   sourceTimed: boolean;
 };
 
+type MeaningNetworkTimeRange = {
+  start: number;
+  end: number;
+};
+
 type MeaningNetworkPresenceDrag = {
   nodeId: string;
   handle: "start" | "end" | "move";
@@ -846,9 +851,7 @@ function isNarrativeAgentMeaningNode(node: MeaningNetworkNode): boolean {
 
 function meaningNetworkNodeOverlapsScene(node: MeaningNetworkNode, scene: MeaningSceneSegment): boolean {
   const range = meaningNetworkEvidenceTimeRange(node.evidence_refs);
-  if (!range && isNarrativeAgentMeaningNode(node)) {
-    return true;
-  }
+  if (!range) return false;
   const start = range?.start ?? meaningNetworkEvidenceStart(node.evidence_refs);
   const end = range?.end ?? meaningNetworkNodeEnd(node);
   return Math.max(start, scene.start) <= Math.min(end, scene.end);
@@ -875,7 +878,8 @@ function meaningNetworkGraphLayout(
   edges: MeaningNetworkEdge[],
   lanes: MeaningNetworkLane[] = MEANING_NETWORK_DEFAULT_LANES,
   presenceOverrides: Record<string, { start: number; end: number }> = {},
-  fallbackUntimedRange: { start: number; end: number } | null = null,
+  fallbackUntimedRange: MeaningNetworkTimeRange | null = null,
+  timelineDomain: MeaningNetworkTimeRange | null = null,
 ) {
   const laneNodes = lanes.map((lane) => ({
     lane,
@@ -905,8 +909,10 @@ function meaningNetworkGraphLayout(
   const ordered = laneNodes.flatMap((entry) => entry.nodes)
     .filter((node) => visibleNodes.includes(node));
   const positions = new Map<string, { x: number; y: number }>();
-  const temporalStart = Math.min(0, ...ordered.map((node) => meaningNetworkPresenceRange(node, presenceOverrides, fallbackUntimedRange).start));
-  const temporalEnd = Math.max(1, ...ordered.map((node) => meaningNetworkPresenceRange(node, presenceOverrides, fallbackUntimedRange).end));
+  const domainStart = Number.isFinite(Number(timelineDomain?.start)) ? Number(timelineDomain?.start) : 0;
+  const domainEnd = Number.isFinite(Number(timelineDomain?.end)) ? Number(timelineDomain?.end) : 1;
+  const temporalStart = Math.min(domainStart, ...ordered.map((node) => meaningNetworkPresenceRange(node, presenceOverrides, fallbackUntimedRange).start));
+  const temporalEnd = Math.max(domainEnd, ...ordered.map((node) => meaningNetworkPresenceRange(node, presenceOverrides, fallbackUntimedRange).end));
   const temporalSpan = Math.max(1, temporalEnd - temporalStart);
   const xForNode = (node: MeaningNetworkNode, fallbackIndex: number, fallbackCount: number) => {
     const start = meaningNetworkEvidenceStart(node.evidence_refs);
@@ -2374,19 +2380,41 @@ export default function MeaningPlotPanel({
       : null) ||
     meaningNetworkSceneSegments[activeSceneIndex] ||
     meaningNetworkSceneSegments[0];
+  const meaningNetworkTimelineDuration = useMemo(
+    () => {
+      const mediaDuration = Number(sourceMediaMetadata?.duration_seconds || 0);
+      const sceneEnd = Math.max(0, ...sceneSegments.map((scene) => Number(scene.end || 0)));
+      const nodeEnd = Math.max(
+        0,
+        ...meaningNetworkNodes.map((node) => meaningNetworkNodeEnd(node)),
+      );
+      const duration = Math.max(mediaDuration, sceneEnd, nodeEnd, 1);
+      return Number.isFinite(duration) && duration > 0 ? duration : 1;
+    },
+    [meaningNetworkNodes, sceneSegments, sourceMediaMetadata?.duration_seconds],
+  );
+  const meaningNetworkLayoutSceneFallback = useMemo(() => {
+    const sceneForFocusedLayout =
+      focusedMeaningNetworkSceneKey || meaningNetworkViewMode === "scene_timeline"
+        ? activeMeaningNetworkScene
+        : null;
+    return sceneForFocusedLayout
+      ? {
+          start: Number(sceneForFocusedLayout.start || 0),
+          end: Number(sceneForFocusedLayout.end || sceneForFocusedLayout.start || 0),
+        }
+      : null;
+  }, [activeMeaningNetworkScene, focusedMeaningNetworkSceneKey, meaningNetworkViewMode]);
   const meaningNetworkGraph = useMemo(
     () => meaningNetworkGraphLayout(
       visibleMeaningNetworkNodes,
       visibleMeaningNetworkEdges,
       meaningNetworkLanes,
       meaningNetworkPresenceOverrides,
-      activeMeaningNetworkScene
-        ? { start: Number(activeMeaningNetworkScene.start || 0), end: Number(activeMeaningNetworkScene.end || activeMeaningNetworkScene.start || 0) }
-        : activeScene
-          ? { start: Number(activeScene.start || 0), end: Number(activeScene.end || activeScene.start || 0) }
-          : null,
+      meaningNetworkLayoutSceneFallback,
+      { start: 0, end: meaningNetworkTimelineDuration },
     ),
-    [activeMeaningNetworkScene, activeScene, meaningNetworkLanes, meaningNetworkPresenceOverrides, visibleMeaningNetworkEdges, visibleMeaningNetworkNodes],
+    [meaningNetworkLanes, meaningNetworkLayoutSceneFallback, meaningNetworkPresenceOverrides, meaningNetworkTimelineDuration, visibleMeaningNetworkEdges, visibleMeaningNetworkNodes],
   );
   const meaningNetworkCursorX = useMemo(() => {
     const span = Math.max(0.001, meaningNetworkGraph.temporalEnd - meaningNetworkGraph.temporalStart);
@@ -2406,19 +2434,6 @@ export default function MeaningPlotPanel({
         .filter((node) => ["narrative_agent", "character", "identity"].includes(meaningNetworkCanonicalNodeType(node.node_type)))
         .sort((left, right) => meaningNetworkEvidenceStart(left.evidence_refs) - meaningNetworkEvidenceStart(right.evidence_refs)),
     [meaningNetworkNodes],
-  );
-  const meaningNetworkTimelineDuration = useMemo(
-    () => {
-      const mediaDuration = Number(sourceMediaMetadata?.duration_seconds || 0);
-      const sceneEnd = Math.max(0, ...sceneSegments.map((scene) => Number(scene.end || 0)));
-      const nodeEnd = Math.max(
-        0,
-        ...meaningNetworkNodes.map((node) => meaningNetworkNodeEnd(node)),
-      );
-      const duration = Math.max(mediaDuration, sceneEnd, nodeEnd, 1);
-      return Number.isFinite(duration) && duration > 0 ? duration : 1;
-    },
-    [meaningNetworkNodes, sceneSegments, sourceMediaMetadata?.duration_seconds],
   );
   const characterTimelineGroups = useMemo(
     () => {
@@ -2489,23 +2504,16 @@ export default function MeaningPlotPanel({
     if (!item.node_id || !item.node_type || !item.label) {
       return null;
     }
-    const fallbackScene = activeMeaningNetworkScene || activeScene;
-    const fallbackRange = fallbackScene
-      ? {
-          start: Number(fallbackScene.start || 0),
-          end: Number(fallbackScene.end || fallbackScene.start || 0),
-        }
-      : null;
-    if (!fallbackRange && !meaningNetworkPresenceOverrides[item.node_id]) {
+    if (!meaningNetworkPresenceOverrides[item.node_id]) {
       return null;
     }
     const range = meaningNetworkPresenceRange(
       item as MeaningNetworkNode,
       meaningNetworkPresenceOverrides,
-      fallbackRange,
+      null,
     );
     return { start: range.start, end: range.end };
-  }, [activeMeaningNetworkScene, activeScene, meaningNetworkPresenceOverrides]);
+  }, [meaningNetworkPresenceOverrides]);
 
   const navigateToMeaningNetworkEvidence = useCallback(
     (item: Partial<MeaningNetworkNode> & { evidence_refs?: MeaningNetworkEvidenceRef[] }) => {

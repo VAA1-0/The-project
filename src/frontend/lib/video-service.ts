@@ -527,10 +527,11 @@ function applyLabelOverride(
     .find((rule) => {
       if (
         rule.target_track_id !== undefined &&
-        context?.trackId !== undefined &&
-        context?.trackId !== null
+        (context?.trackId === undefined ||
+          context?.trackId === null ||
+          Number(rule.target_track_id) !== Number(context.trackId))
       ) {
-        return Number(rule.target_track_id) === Number(context.trackId);
+        return false;
       }
       if (
         rule.target_start_timestamp !== undefined ||
@@ -543,11 +544,11 @@ function applyLabelOverride(
         }
         const lower =
           rule.target_start_timestamp !== undefined
-            ? Number(rule.target_start_timestamp) - 0.15
+            ? Number(rule.target_start_timestamp)
             : Number.NEGATIVE_INFINITY;
         const upper =
           rule.target_end_timestamp !== undefined
-            ? Number(rule.target_end_timestamp) + 0.15
+            ? Number(rule.target_end_timestamp)
             : Number.POSITIVE_INFINITY;
         return Number(end) >= lower && Number(start) <= upper;
       }
@@ -557,7 +558,7 @@ function applyLabelOverride(
       if (context?.timestamp === undefined || context?.timestamp === null) {
         return false;
       }
-      return Math.abs(Number(rule.target_timestamp) - Number(context.timestamp)) <= 0.15;
+      return Math.abs(Number(rule.target_timestamp) - Number(context.timestamp)) <= 0.001;
     });
   return matched && !isDropValue(matched.corrected_value)
     ? String(matched.corrected_value).trim()
@@ -591,10 +592,11 @@ function isDetectionDropped(
     .find((rule) => {
       if (
         rule.target_track_id !== undefined &&
-        context?.trackId !== undefined &&
-        context?.trackId !== null
+        (context?.trackId === undefined ||
+          context?.trackId === null ||
+          Number(rule.target_track_id) !== Number(context.trackId))
       ) {
-        return Number(rule.target_track_id) === Number(context.trackId);
+        return false;
       }
       if (
         rule.target_start_timestamp !== undefined ||
@@ -607,11 +609,11 @@ function isDetectionDropped(
         }
         const lower =
           rule.target_start_timestamp !== undefined
-            ? Number(rule.target_start_timestamp) - 0.15
+            ? Number(rule.target_start_timestamp)
             : Number.NEGATIVE_INFINITY;
         const upper =
           rule.target_end_timestamp !== undefined
-            ? Number(rule.target_end_timestamp) + 0.15
+            ? Number(rule.target_end_timestamp)
             : Number.POSITIVE_INFINITY;
         return Number(end) >= lower && Number(start) <= upper;
       }
@@ -621,7 +623,7 @@ function isDetectionDropped(
       if (context?.timestamp === undefined || context?.timestamp === null) {
         return false;
       }
-      return Math.abs(Number(rule.target_timestamp) - Number(context.timestamp)) <= 0.15;
+      return Math.abs(Number(rule.target_timestamp) - Number(context.timestamp)) <= 0.001;
     });
   return Boolean(matched);
 }

@@ -235,14 +235,14 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /currentTime >= bounds\.timestamp &&[\s\S]*currentTime <= bounds\.timestamp \+ MANUAL_POINT_VISIBILITY_SECONDS/,
-    "manual point annotations must not surface before their actual timestamp",
+    /bounds\.duration <= Number\.EPSILON[\s\S]*currentTime === bounds\.timestamp/,
+    "manual point annotations must only surface at their allotted timestamp",
   );
 
   assert.match(
     videoPanel,
-    /currentTime >= bounds\.start &&[\s\S]*currentTime <= bounds\.end \+ MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS/,
-    "manual interval annotations must not surface before their actual in time",
+    /currentTime >= bounds\.start &&[\s\S]*currentTime <= bounds\.end/,
+    "manual interval annotations must only surface inside their allotted in/out time",
   );
 
   assert.match(
@@ -537,6 +537,48 @@ test("video bbox labels consume Master Schema maturity before raw detector label
     /master_schema_mature_label/,
     "BBox source items must carry the chosen Master Schema label for traceback",
   );
+
+  assert.match(
+    videoPanel,
+    /masterSchemaRecordHasFiniteTimeAnchor/,
+    "Master Schema overlay labels must require a finite source time anchor before painting onto video frames",
+  );
+
+  assert.match(
+    videoPanel,
+    /currentTime < Math\.min\(start, end\)[\s\S]*currentTime > Math\.max\(start, end\)/,
+    "Master Schema overlay labels must deactivate exactly outside their allotted start/end interval",
+  );
+
+  assert.match(
+    videoPanel,
+    /buildManualTrackMatureAuthority\([\s\S]*allManualVisualAnnotations,[\s\S]*currentTime,[\s\S]*\)/,
+    "manual track authority must be resolved at the current video time, not across the whole raw track",
+  );
+
+  assert.match(
+    videoPanel,
+    /manualAnnotationTimeScopeKey/,
+    "object-backed bbox annotation ids must include the analyst-confirmed time interval",
+  );
+
+  assert.match(
+    videoPanel,
+    /manualAnnotationBBoxFingerprint/,
+    "object-backed bbox annotation ids must include a bbox fingerprint so new scene confirmations do not overwrite previous scene agents",
+  );
+
+  assert.match(
+    videoPanel,
+    /metadata_correlation\?\.apply_scope[\s\S]*track_family[\s\S]*narrative_agent_family/,
+    "manual object target authority must only become track-wide when the analyst explicitly chooses a wide apply scope",
+  );
+
+  assert.match(
+    videoService,
+    /rule\.target_track_id !== undefined[\s\S]*Number\(rule\.target_track_id\) !== Number\(context\.trackId\)[\s\S]*return false;/,
+    "scoped object correction rules must not return on track id before checking their time window",
+  );
 });
 
 test("manual OBJ corrections outrank stale narrative-agent labels on object bboxes", () => {
@@ -562,6 +604,20 @@ test("manual OBJ corrections outrank stale narrative-agent labels on object bbox
     videoPanel,
     /displayLabel:\s*manualOverrideOverlayLabel \|\| unresolvedOverlayLabel/,
     "active manual object overrides must surface their label in sourceItem displayLabel",
+  );
+});
+
+test("saving bbox annotations closes the editor and clears selected workspace state", () => {
+  assert.match(
+    videoPanel,
+    /setNativeAnnotationMode\(false\);[\s\S]*setSelectedWorkspaceAnnotationId\(null\);[\s\S]*setSelectedOverlayKey\(null\);[\s\S]*setSelectedOverlaySnapshot\(null\);/,
+    "saving a newly drawn native bbox must close the bbox editor instead of reselecting it",
+  );
+
+  assert.match(
+    videoPanel,
+    /closeSelectedOverlayEditor\(overlay\.key\);[\s\S]*clearOverlayEditingWorkspace\(\[overlay\.key, `manual-\$\{annotation\.id\}`\]\);[\s\S]*setSelectedWorkspaceAnnotationId\(null\);[\s\S]*setSelectedOverlayKey\(null\);[\s\S]*setSelectedOverlaySnapshot\(null\);/,
+    "saving an edited bbox indication must clear selected workspace state so stale anchors cannot remain active",
   );
 });
 
@@ -1823,6 +1879,24 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     /meaningNetworkSourceAnchorMissing/,
     "Meaning Network must route source-missing nodes to governed schema/traceback handling instead of fake frame zero",
   );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkLayoutSceneFallback/,
+    "Meaning Network graph layout must only use scene fallback while a scene timeline or scene focus is active",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /timelineDomain/,
+    "Meaning Network graph layout must keep a whole-media time domain separate from focused scene fallback",
+  );
+
+  assert.doesNotMatch(
+    meaningPlotPanel,
+    /if \(!range && isNarrativeAgentMeaningNode\(node\)\) \{\s*return true;\s*\}/,
+    "Untimed Narrative Agent nodes must not be treated as overlapping every scene",
+  );
 });
 
 test("BBox/ROI editor behaves as an evidence navigation hub", () => {
@@ -1906,14 +1980,14 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
 
   assert.match(
     videoPanel,
-    /setSelectedWorkspaceAnnotationId\(annotation\.id\)/,
-    "Saved manual BBox/ROI corrections must remain selected as the mature workspace annotation",
+    /setSelectedWorkspaceAnnotationId\(null\)/,
+    "Saved manual BBox/ROI corrections must clear selected workspace state after persistence",
   );
 
   assert.match(
     videoPanel,
-    /setSelectedOverlayKey\(`manual-\$\{annotation\.id\}`\)/,
-    "Saved manual BBox/ROI corrections must surface as the active overlay instead of falling back to stale detector labels",
+    /setSelectedOverlayKey\(null\)/,
+    "Saved manual BBox/ROI corrections must close the active overlay instead of falling back to stale detector labels",
   );
 
   assert.match(

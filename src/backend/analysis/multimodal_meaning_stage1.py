@@ -5,8 +5,21 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+import importlib.util
 
-from src.backend.analysis.antenarrative_lexicon_engine import evaluate_antenarrative_cues
+try:
+    from src.backend.analysis.antenarrative_lexicon_engine import evaluate_antenarrative_cues
+except ModuleNotFoundError:
+    _lexicon_path = Path(__file__).with_name("antenarrative_lexicon_engine.py")
+    _lexicon_spec = importlib.util.spec_from_file_location(
+        "antenarrative_lexicon_engine",
+        _lexicon_path,
+    )
+    if _lexicon_spec is None or _lexicon_spec.loader is None:
+        raise
+    _lexicon_module = importlib.util.module_from_spec(_lexicon_spec)
+    _lexicon_spec.loader.exec_module(_lexicon_module)
+    evaluate_antenarrative_cues = _lexicon_module.evaluate_antenarrative_cues
 
 
 SCHEMA = "vaa1.multimodal_meaning.stage1.v1"
