@@ -1068,13 +1068,18 @@ export interface ProliferationDecision {
   request_id?: string;
   decision: "confirmed" | "canceled" | "deferred" | "inspected" | string;
   authority_level?: string;
+  source_panel?: string;
+  source_verification_status?: "source_time_resolved" | "source_anchor_missing" | string;
+  source_range_source?: "evidence_ref" | "presence_override" | "manual_interval" | string;
   candidate_label?: string;
   applied_label?: string;
   target_evidence_id?: string;
   target_track_id?: number | string;
   source_anchors?: Array<Record<string, unknown>>;
   evidence_refs?: Array<Record<string, unknown>>;
+  source_traceback_refs?: string[];
   projection_targets?: string[];
+  proliferates_to?: string[];
   governance_status?: Record<string, unknown>;
   proliferation_allowed?: boolean;
   decision_reason?: string;
@@ -1152,6 +1157,10 @@ export interface ManualVisualAnnotation {
       old_states_retained_as?: string;
       propagation_required?: boolean;
     };
+    source_track_keyframes_retained_for_traceback?: Array<{
+      time: number;
+      source?: "manual" | "track" | "interpolated";
+    }>;
     quick_annotations?: string[];
     maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
@@ -1198,6 +1207,16 @@ export interface AnnotationCorrections {
     authority_level: "manual_correction" | "manual_confirmation" | "system_candidate" | string;
     source_panel?: string;
     source_profile_surface?: string;
+    source_verification_status?: "source_time_resolved" | "source_anchor_missing" | string;
+    source_range_source?: "evidence_ref" | "presence_override" | "manual_interval" | string;
+    source_evidence_refs?: Array<{
+      evidence_id?: string;
+      source_type?: string;
+      time_range?: { start?: number; end?: number };
+      traceback_record_id?: string;
+      confidence?: number;
+    }>;
+    source_traceback_refs?: string[];
     propagation_required?: boolean;
     partial_propagation_allowed?: boolean;
     proliferates_to?: string[];

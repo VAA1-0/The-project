@@ -43,6 +43,7 @@ const secondOrderAffirmations = read(
 );
 const videoService = read("lib/video-service.ts");
 const evidenceAuthority = read("lib/evidence-authority.ts");
+const bboxAuthority = read("lib/bbox-authority.ts");
 const sceneGovernance = read("lib/scene-governance.ts");
 
 function manualCategoryUnion() {
@@ -223,8 +224,20 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /resolveAuthoritativeManualGeometryAtTime/,
+    "VideoPanel must delegate manual bbox geometry resolution to the shared authority boundary",
+  );
+
+  assert.match(
+    bboxAuthority,
     /MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS/,
     "manual bbox geometry must not interpolate freely across distant timestamps or cuts",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /keyframe\.source !== "track"/,
+    "raw track keyframes must not be treated as manual geometry authority",
   );
 
   assert.match(
@@ -235,12 +248,18 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /source_track_keyframes_retained_for_traceback/,
+    "object-backed bbox saves must retain raw track keyframes as traceback metadata, not authoritative manual geometry",
+  );
+
+  assert.match(
+    bboxAuthority,
     /bounds\.duration <= Number\.EPSILON[\s\S]*currentTime === bounds\.timestamp/,
     "manual point annotations must only surface at their allotted timestamp",
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /currentTime >= bounds\.start &&[\s\S]*currentTime <= bounds\.end/,
     "manual interval annotations must only surface inside their allotted in/out time",
   );
@@ -319,6 +338,60 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /const resolveEditWithTimeInputDrafts = React\.useCallback/,
+    "BBox/ROI Save must resolve visible typed In/Out drafts before persisting",
+  );
+
+  assert.match(
+    videoPanel,
+    /void saveSelectedIndication\(overlay, nextEdit\)/,
+    "BBox/ROI Save must persist the resolved typed interval, not a stale edit object",
+  );
+
+  assert.match(
+    videoPanel,
+    /void saveSelectedIndicationAtFrame\([\s\S]*overlay,[\s\S]*nextEdit,[\s\S]*workingFrameTime/,
+    "BBox/ROI Save here must stretch from the resolved typed interval before saving",
+  );
+
+  assert.match(
+    videoPanel,
+    /const scrubSelectedOverlayTo[\s\S]*holdVideoPausedForBBoxNavigation\(\)[\s\S]*jumpToTime\(safeTime\)[\s\S]*holdVideoPausedForBBoxNavigation\(\)/,
+    "BBox/ROI timeline scrubbing must hold playback instead of letting video controls start rolling",
+  );
+
+  assert.match(
+    videoPanel,
+    /bboxNavigationPauseLockRef[\s\S]*onPlay=\{\(\) => \{[\s\S]*bboxNavigationPauseLockRef\.current[\s\S]*videoRef\.current\?\.pause\(\)/,
+    "BBox/ROI navigation must reject stray play events during bbox timeline seeking",
+  );
+
+  assert.match(
+    videoPanel,
+    /controls=\{false\}[\s\S]*data-vaa1-video-frame-fullscreen/,
+    "video overlays must not depend on browser-native controls that can be covered by BBox layers",
+  );
+
+  assert.match(
+    videoPanel,
+    /const ANALYSIS_FRAME_STEP_SECONDS = 1 \/ 25/,
+    "analysis transport should expose a stable frame-step unit outside the native player controls",
+  );
+
+  assert.match(
+    videoPanel,
+    /primaryPlaybackRate[\s\S]*0\.25[\s\S]*0\.5[\s\S]*1[\s\S]*2[\s\S]*4/,
+    "analysis transport should expose slow and fast playback rates for repeated evidence review",
+  );
+
+  assert.match(
+    videoPanel,
+    /seekByAnalysisStep\(step\.delta\)/,
+    "fine seek buttons should pause-and-step through the governed analysis transport",
+  );
+
+  assert.match(
+    videoPanel,
     /type LockedForensicRoi = \{[\s\S]*box: DraftBox;[\s\S]*videoId\?: string;[\s\S]*time\?: number;/,
     "locked ROI overlays must carry video/time scope instead of rendering as global boxes",
   );
@@ -347,10 +420,68 @@ test("manual bbox geometry stays timestamp scoped", () => {
     "editable bbox overlays should reserve first pointer contact for drag/move editing",
   );
 
+  const bboxSingleClickHandler = videoPanel.match(
+    /onClick=\{\(event\) => \{([\s\S]*?)\n\s*\}\}/,
+  )?.[1];
+  assert.ok(bboxSingleClickHandler, "bbox single-click handler was not found");
+  assert.doesNotMatch(
+    bboxSingleClickHandler,
+    /openEvidencePanelForOverlay|setActiveOverlayEditorKey\(overlay\.key\)/,
+    "single-click must only select/grab a bbox, not open the BBox/ROI navigation hub",
+  );
+
   assert.match(
     videoPanel,
     /onDoubleClick=\{\(event\) => \{[\s\S]*openEvidencePanelForOverlay\(overlay\)/,
     "bbox evidence navigation should open on double-click, not first touch",
+  );
+
+  assert.match(
+    videoPanel,
+    /selected && activeOverlayEditorKey === overlay\.key/,
+    "BBox/ROI navigation hub must render only after explicit double-click/editor activation",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-bbox-roi-move-handle="true"[\s\S]*beginOverlayGeometryDrag\(event, overlay, "move"\)/,
+    "open BBox/ROI navigation must keep a dedicated move handle so the bbox remains spatially draggable",
+  );
+
+  assert.match(
+    videoPanel,
+    /event\.currentTarget\.setPointerCapture\?\.\(event\.pointerId\)/,
+    "bbox drag must capture the pointer so horizontal movement is not lost while repositioning",
+  );
+
+  assert.match(
+    videoPanel,
+    /videoRef\.current\?\.getBoundingClientRect\(\)[\s\S]*clientX - videoElementRect\.left - renderedVideoRect\.x[\s\S]*clientY - videoElementRect\.top - renderedVideoRect\.y/,
+    "bbox drag coordinates must subtract the rendered video element viewport position before normalizing",
+  );
+
+  assert.match(
+    videoPanel,
+    /new ResizeObserver\(\(\) => scheduleRenderedVideoRectUpdate\(\)\)/,
+    "BBox overlays must recompute rendered video geometry when the panel or video element is dynamically resized",
+  );
+
+  assert.match(
+    videoPanel,
+    /controlsList="nofullscreen"[\s\S]*data-vaa1-video-frame-fullscreen="true"/,
+    "fullscreen must be routed through the VAA1 video workspace so overlays remain visible",
+  );
+
+  assert.match(
+    videoPanel,
+    /document\.addEventListener\("fullscreenchange", handleFullscreenChange\)/,
+    "fullscreen transitions must refresh the rendered video rectangle for proportional bbox placement",
+  );
+
+  assert.match(
+    videoPanel,
+    /editableOverlay \|\| !overlapsVideoControls[\s\S]*\? "pointer-events-auto"[\s\S]*: "pointer-events-none"/,
+    "editable bbox overlays must remain draggable even when they overlap the browser video controls area",
   );
 
   assert.doesNotMatch(
@@ -369,6 +500,12 @@ test("manual bbox geometry stays timestamp scoped", () => {
     videoPanel,
     /spanStart - 0\.06/,
     "raw object overlays must not surface before their actual start timestamp",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /const analystKeyframes = manualKeyframes\.filter\([\s\S]*keyframe\.source !== "track"[\s\S]*analystKeyframes\.length > 0 \? analystKeyframes : trackKeyframes/,
+    "manual bbox keyframes must become the timing/geometry authority without raw OBJ track keyframes",
   );
 
   assert.doesNotMatch(
@@ -569,9 +706,33 @@ test("video bbox labels consume Master Schema maturity before raw detector label
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /metadata_correlation\?\.apply_scope[\s\S]*track_family[\s\S]*narrative_agent_family/,
     "manual object target authority must only become track-wide when the analyst explicitly chooses a wide apply scope",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /export function manualObjectCorrectionTargetId/,
+    "interval-scoped object corrections must still resolve their target track without becoming track-wide authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /const targetId = manualObjectCorrectionTargetId\(item\)/,
+    "Video BBox overlays must apply this-interval object corrections to the matching raw track",
+  );
+
+  assert.match(
+    videoPanel,
+    /manualObjectCorrectionTargetId\(overlay\.sourceItem as ManualVisualAnnotation\)/,
+    "editing an existing manual object correction must preserve its object target id",
+  );
+
+  assert.match(
+    videoPanel,
+    /id: existingManual\?\.id \|\| annotationId/,
+    "saving a revised interval-scoped object correction must update the existing manual annotation instead of creating duplicate track corrections",
   );
 
   assert.match(
@@ -604,6 +765,30 @@ test("manual OBJ corrections outrank stale narrative-agent labels on object bbox
     videoPanel,
     /displayLabel:\s*manualOverrideOverlayLabel \|\| unresolvedOverlayLabel/,
     "active manual object overrides must surface their label in sourceItem displayLabel",
+  );
+
+  assert.match(
+    objPanel,
+    /const manualOverride = getManualOverrideForObject\(obj\)/,
+    "Objects panel rows must use the selected authoritative manual override, not the raw override array",
+  );
+
+  assert.match(
+    objPanel,
+    /geometry_keyframes:\s*\[[\s\S]*source: "manual"/,
+    "Objects panel BBox saves must persist manual geometry keyframes as authority",
+  );
+
+  assert.match(
+    objPanel,
+    /manual_confirmation_event:[\s\S]*authority_level: "manual_correction"/,
+    "Objects panel BBox saves must persist manual correction confirmation metadata",
+  );
+
+  assert.match(
+    objPanel,
+    /resolveObjectDraftWithTimeInputs/,
+    "Objects panel BBox Save must resolve visible typed In/Out drafts before persisting",
   );
 });
 
@@ -1193,7 +1378,7 @@ test("timestamped overlay geometry stays scoped to one analysis and timestamp", 
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /span <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS/,
     "manual bbox interpolation must be bounded so later boxes cannot smear across cuts",
   );
@@ -1522,6 +1707,12 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
+    /onContextMenu=\{\(event\) => openMeaningNetworkEdgeContextMenu\(event, edge\)\}/,
+    "Meaning Network graph edges must expose the same VAA1 context menu workflow as nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
     /data-vaa1-meaning-network-graph-panel="true"/,
     "Meaning Network must render as a graph panel, not only as a row of buttons",
   );
@@ -1530,6 +1721,78 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /data-vaa1-meaning-network-graph-node="true"/,
     "Meaning Network graph nodes must be visible interactive markers",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /onContextMenu=\{\(event\) => openMeaningNetworkNodeContextMenu\(event, node\)\}/,
+    "Meaning Network graph nodes must replace the browser context menu with VAA1 analyst tools",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-menu="true"/,
+    "Meaning Network right-click must open a VAA1 context menu",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-copy-item="true"/,
+    "Meaning Network context menu must copy whole nodes or edges",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-copy-content="true"/,
+    "Meaning Network context menu must copy node or edge content separately from the graph item",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-paste-content="true"/,
+    "Meaning Network context menu must paste copied content onto existing nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-traceback="true"/,
+    "Meaning Network context menu must expose traceback as a first-class analyst action",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /openMeaningNetworkTraceback[\s\S]*tracebackOpenRequested/,
+    "Meaning Network traceback context actions must open the shared traceback drawer",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /quickConfirmMeaningNetworkNode/,
+    "Meaning Network nodes must offer a quick confirm control for analyst maturation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaning-network-quick-confirm/,
+    "Meaning Network quick confirm must persist as a governed proliferation decision",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /authority_level:\s*"manual_confirmation"/,
+    "Meaning Network quick confirm must persist manual confirmation authority",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /raw_detection_retained_as:\s*"traceback_only"/,
+    "Meaning Network quick confirm must preserve old detector state as traceback rather than active truth",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /VideoService\.saveAnnotationCorrections[\s\S]*VideoService\.refreshAnalysis/,
+    "Meaning Network quick confirm must refresh mature projections after saving governed corrections",
   );
 
   assert.match(
@@ -1668,6 +1931,18 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /meaningNetworkSourceVerified/,
     "Meaning Network source verification must emit a traceable event before falling back to schema inspection",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /range_source/,
+    "Meaning Network source verification must identify whether the timestamp came from source evidence or a governed presence override",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /source_traceback_refs/,
+    "Meaning Network source verification must preserve traceback references for mature proliferation",
   );
 
   assert.match(
@@ -1846,6 +2121,24 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     apiService,
+    /source_verification_status\?:/,
+    "persisted Master Schema presence intervals must carry source verification status",
+  );
+
+  assert.match(
+    apiService,
+    /source_evidence_refs\?:/,
+    "persisted Master Schema presence intervals must carry source evidence references",
+  );
+
+  assert.match(
+    apiService,
+    /source_traceback_refs\?:/,
+    "persisted Master Schema presence intervals must carry source traceback references",
+  );
+
+  assert.match(
+    apiService,
     /meaning_network_custom_lanes\?:/,
     "annotation corrections must persist analyst-defined Meaning Network lanes",
   );
@@ -1914,6 +2207,24 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
 
   assert.match(
     videoPanel,
+    /selectedEditUsesNarrativeAgentPicker\s*=[\s\S]*edit\.category === "Identification"/,
+    "BBox/ROI Narrative Agent choices must be gated to Identification work",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-bbox-roi-open-evidence-label="true"/,
+    "BBox/ROI non-agent categories must keep a generic evidence-label input",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-native-open-evidence-label="true"/,
+    "native OBJ/OCR/custom annotations must keep generic evidence labels instead of character pickers",
+  );
+
+  assert.match(
+    videoPanel,
     /BBOX_ROI_RELATION_QUICK_ACTIONS[\s\S]*speaking to[\s\S]*flirting with[\s\S]*making out with[\s\S]*leading[\s\S]*cooperating with/,
     "BBox/ROI hub must expose relational quick actions across positive, intimate, and analytic social phenomena",
   );
@@ -1964,6 +2275,36 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
     videoPanel,
     /manual_confirmation_event[\s\S]*manual_bbox_roi_confirmation[\s\S]*old_states_retained_as:\s*"traceback_provenance"/,
     "BBox/ROI saves must record manual confirmation events and retain old history as traceback provenance",
+  );
+
+  assert.match(
+    videoPanel,
+    /nativeVisualAnnotationSaved/,
+    "saving a native visual annotation must emit a live update event for mature downstream surfaces",
+  );
+
+  assert.match(
+    videoPanel,
+    /meaningNetworkPresenceManualOverlays/,
+    "Video panel must surface source-anchored Meaning Network presence intervals as governed BBox overlays",
+  );
+
+  assert.match(
+    videoPanel,
+    /meaning_network_presence_interval/,
+    "Meaning Network-derived video BBoxes must retain their presence interval provenance",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /eventBus\.on\("nativeVisualAnnotationSaved", handler\)/,
+    "Meaning Network must consume native annotation saves as live node updates",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /manual_visual_annotations/,
+    "Meaning Network live native annotation nodes must point back to the Master Schema manual annotation surface",
   );
 
   assert.doesNotMatch(
@@ -2120,7 +2461,7 @@ test("expression identity saves anchor to nearby person geometry", () => {
 
   assert.match(
     videoPanel,
-    /expressionPersonAnchor \|\| synthesizedExpressionOwnerBox \? "object" : overlay\.modality/,
+    /expressionPersonAnchor \|\| synthesizedExpressionOwnerBox \|\| targetCandidateId[\s\S]*\? "object"/,
     "expression-derived Identification saves must correlate to the person/object target, not the raw expression event",
   );
 

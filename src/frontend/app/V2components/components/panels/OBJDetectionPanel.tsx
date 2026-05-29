@@ -142,6 +142,17 @@ function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
   return targetId === undefined || targetId === null ? null : String(targetId);
 }
 
+function manualAnnotationBBoxFingerprint(
+  box: ManualVisualAnnotation["coordinates"],
+): string {
+  return [
+    box.x.toFixed(4),
+    box.y.toFixed(4),
+    box.w.toFixed(4),
+    box.h.toFixed(4),
+  ].join("-");
+}
+
 function getObjectTrackId(obj: any): string | null {
   const trackId = obj?.trackId ?? obj?.track_id;
   return trackId === undefined || trackId === null ? null : String(trackId);
@@ -473,6 +484,35 @@ export default function OBJDetectionPanel() {
     });
   };
 
+  const resolveObjectDraftWithTimeInputs = (
+    rowKey: string,
+    draft: ObjectIndicationDraft,
+  ): ObjectIndicationDraft => {
+    const startDraft = objectTimeInputDrafts[`${rowKey}:start`];
+    const endDraft = objectTimeInputDrafts[`${rowKey}:end`];
+    const parsedStart =
+      startDraft !== undefined ? parsePreciseTimeInput(startDraft) : null;
+    const parsedEnd =
+      endDraft !== undefined ? parsePreciseTimeInput(endDraft) : null;
+    const start = Math.max(0, parsedStart ?? draft.start);
+    const end = Math.max(parsedEnd ?? draft.end, start + 0.001);
+    return { ...draft, start, end };
+  };
+
+  const clearObjectTimeInputDrafts = (rowKey: string) => {
+    setObjectTimeInputDrafts((current) => {
+      const startKey = `${rowKey}:start`;
+      const endKey = `${rowKey}:end`;
+      if (current[startKey] === undefined && current[endKey] === undefined) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[startKey];
+      delete next[endKey];
+      return next;
+    });
+  };
+
   const activateObjectInVideo = (obj: any, key: string) => {
     const latestLabel = getLatestObjectLabel(obj);
     const draft =
@@ -500,6 +540,7 @@ export default function OBJDetectionPanel() {
     const draft =
       objectDrafts[key] ||
       buildObjectIndicationDraft(obj, latestLabel, getManualOverrideForObject(obj));
+    const resolvedDraft = resolveObjectDraftWithTimeInputs(key, draft);
     const width = Number(
       metadata?.width ??
         metadata?.source_media_metadata?.width ??
@@ -519,28 +560,57 @@ export default function OBJDetectionPanel() {
       setObjectActionMessage("Could not save indication: object has no usable box.");
       return;
     }
-    const start = Number(draft.start || obj.startTimestamp || obj.timestamp || 0);
-    const end = Math.max(Number(draft.end || start), start + 0.001);
-    const label = draft.label.trim() || latestLabel || obj.displayLabel || obj.class_name || "Object present";
+    const start = Number(resolvedDraft.start || obj.startTimestamp || obj.timestamp || 0);
+    const end = Math.max(Number(resolvedDraft.end || start), start + 0.001);
+    const label = resolvedDraft.label.trim() || latestLabel || obj.displayLabel || obj.class_name || "Object present";
+    const existingManual = getManualOverrideForObject(obj);
+    const targetId = String(obj.trackId ?? key);
     const annotation: ManualVisualAnnotation = {
-      id: `${videoId}:object-indication:${obj.trackId ?? key}`,
-      category: draft.category,
-      subcategory: draft.subcategory || firstSubcategory(draft.category),
+      id:
+        existingManual?.id ||
+        `${videoId}:object-indication:${targetId}:${Number(start).toFixed(3)}-${Number(end).toFixed(3)}:${manualAnnotationBBoxFingerprint(coordinates)}`,
+      category: resolvedDraft.category,
+      subcategory: resolvedDraft.subcategory || firstSubcategory(resolvedDraft.category),
       label,
-      custom_label: draft.label.trim() || undefined,
+      custom_label: resolvedDraft.label.trim() || undefined,
       geometry_type: "box",
       coordinates,
+      geometry_keyframes: [
+        ...((existingManual?.geometry_keyframes || []).filter(
+          (keyframe) => keyframe.source !== "track",
+        )),
+        {
+          time: Number(start.toFixed(3)),
+          coordinates,
+          source: "manual",
+          updated_at: new Date().toISOString(),
+        },
+      ],
       timestamp_seconds: Number(start.toFixed(3)),
       start_seconds: Number(start.toFixed(3)),
       end_seconds: Number(end.toFixed(3)),
       identity_affirmation:
-        draft.category === "Identification" ? label : undefined,
-      role_affirmation: draft.category === "Role" ? label : undefined,
-      open_note: draft.note.trim() || undefined,
+        resolvedDraft.category === "Identification" ? label : undefined,
+      role_affirmation: resolvedDraft.category === "Role" ? label : undefined,
+      open_note: resolvedDraft.note.trim() || undefined,
       metadata_correlation: {
+        ...(existingManual?.metadata_correlation || {}),
         target_type: "object",
-        target_id: String(obj.trackId ?? key),
-      target_label: getObjectSourceLabel(obj),
+        target_id: targetId,
+        target_label: existingManual?.metadata_correlation?.target_label || getObjectSourceLabel(obj),
+        apply_scope: "this_interval_only",
+        manual_confirmation_event: {
+          event_type: "manual_bbox_roi_confirmation",
+          authority_level: "manual_correction",
+          active_state_after_save: {
+            start_seconds: Number(start.toFixed(3)),
+            end_seconds: Number(end.toFixed(3)),
+            label,
+            category: resolvedDraft.category,
+          },
+          old_states_retained_as: "traceback_provenance",
+          propagation_required: true,
+        },
         relation: "extends",
         note: "Adopted from Objects leaf panel indication editor.",
       },
@@ -559,6 +629,7 @@ export default function OBJDetectionPanel() {
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
+    clearObjectTimeInputDrafts(key);
     setSelectedObjectKey(null);
     setObjectDrafts((current) => ({
       ...current,
@@ -789,9 +860,10 @@ export default function OBJDetectionPanel() {
                   const latestLabel = getLatestObjectLabel(obj);
                   const trackId = getObjectTrackId(obj);
                   const sourceLabel = getObjectSourceLabel(obj);
-                  const manualOverride = trackId ? manualOverridesByTrack.get(trackId) : undefined;
+                  const manualOverride = getManualOverrideForObject(obj);
                   const draft =
-                    objectDrafts[rowKey] || buildObjectIndicationDraft(obj, latestLabel);
+                    objectDrafts[rowKey] ||
+                    buildObjectIndicationDraft(obj, latestLabel, manualOverride);
                   const startInputKey = `${rowKey}:start`;
                   const endInputKey = `${rowKey}:end`;
                   return (

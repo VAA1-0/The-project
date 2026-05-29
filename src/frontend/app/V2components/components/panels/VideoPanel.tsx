@@ -2,6 +2,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import {
+  FastForward,
+  Pause,
+  Play,
+  Rewind,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
   VideoService,
@@ -61,15 +69,30 @@ import {
   type ManualVisualAnnotation,
   type ProliferationDecision,
 } from "@/lib/api-service";
+import {
+  MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS,
+  MANUAL_POINT_VISIBILITY_SECONDS,
+  buildManualTrackMatureAuthority,
+  clamp,
+  detectedObjectToNormalizedBox,
+  isManualAnnotationVisibleAtTime,
+  manualObjectCorrectionTargetId,
+  manualObjectTargetId,
+  normalizeDraftBox,
+  resolveManualGeometryAtTime as resolveAuthoritativeManualGeometryAtTime,
+  resolveManualVisualDisplayLabel,
+  resolveObjectOverlayBBox,
+  type BBoxMatureAuthority,
+  type DraftBox,
+  type ManualGeometryKeyframe,
+} from "@/lib/bbox-authority";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
-const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
-const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
-const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 0.5;
 const EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS = 1.5;
 const SELECTED_OVERLAY_STACK_RANK = 50000;
 const VIDEO_CONTROL_CLEARANCE_PX = 52;
+const ANALYSIS_FRAME_STEP_SECONDS = 1 / 25;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -127,18 +150,6 @@ type MatureObjectOverlayLabel = {
   source_frame_refs?: unknown;
 };
 
-type BBoxMatureAuthority = {
-  label: string;
-  authority: MatureEvidenceAuthority;
-  source: "manual_visual_annotation" | "master_schema" | "narrative_agent" | "proliferated_candidate";
-  sourceItem?: unknown;
-  roleLabel?: string;
-  traceback?: unknown;
-  evidence_refs?: unknown;
-  source_bbox_refs?: unknown;
-  source_frame_refs?: unknown;
-};
-
 type SelectedIndicationEdit = {
   category: ManualVisualAnnotation["category"];
   subcategory: string;
@@ -164,22 +175,11 @@ type ManualAnnotationDraft = {
   openNote: string;
 };
 
-type DraftBox = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-};
-
 type LockedForensicRoi = {
   box: DraftBox;
   videoId?: string;
   time?: number;
 };
-
-type ManualGeometryKeyframe = NonNullable<
-  ManualVisualAnnotation["geometry_keyframes"]
->[number];
 
 type OverlayGeometryDraft = {
   box: DraftBox;
@@ -648,16 +648,6 @@ function resolveIndicationLabel(
   return `${category} indication`;
 }
 
-function resolveManualVisualDisplayLabel(item: ManualVisualAnnotation): string {
-  return (
-    item.identity_affirmation ||
-    item.role_affirmation ||
-    item.custom_label ||
-    item.label ||
-    "manual annotation"
-  ).trim();
-}
-
 function objectTrackTargetId(item: DetectedObject): string | null {
   const correlatedTargetId = (item as any).metadataCorrelation?.target_id;
   if (correlatedTargetId !== undefined && correlatedTargetId !== null) {
@@ -686,27 +676,6 @@ function objectTrackTargetIds(item: DetectedObject): string[] {
     ids.add(String(correlatedTargetId));
   }
   return Array.from(ids);
-}
-
-function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
-  const targetType = String(item.metadata_correlation?.target_type || "").toLowerCase();
-  if (targetType !== "object") {
-    return null;
-  }
-  const scope = String(item.metadata_correlation?.apply_scope || "").toLowerCase();
-  if (
-    scope &&
-    ![
-      "track_family",
-      "narrative_agent_family",
-      "current_continuity_segment",
-      "current_scene",
-    ].includes(scope)
-  ) {
-    return null;
-  }
-  const targetId = item.metadata_correlation?.target_id;
-  return targetId === undefined || targetId === null ? null : String(targetId);
 }
 
 function normalizeEvidenceLabel(value: unknown): string {
@@ -1000,72 +969,11 @@ function buildMatureSubjectOverlayLookup(
   };
 }
 
-function getManualAnnotationBounds(entry: ManualVisualAnnotation) {
-  const rawStart =
-    typeof entry.start_seconds === "number"
-      ? entry.start_seconds
-      : entry.timestamp_seconds;
-  const rawEnd =
-    typeof entry.end_seconds === "number"
-      ? entry.end_seconds
-      : entry.timestamp_seconds;
-
-  if (typeof rawStart !== "number" || typeof rawEnd !== "number") {
-    return null;
-  }
-
-  const start = Math.min(rawStart, rawEnd);
-  const end = Math.max(rawStart, rawEnd);
-  const duration = end - start;
-  const timestamp =
-    typeof entry.timestamp_seconds === "number"
-      ? entry.timestamp_seconds
-      : (start + end) / 2;
-
-  return {
-    start,
-    end,
-    duration,
-    timestamp,
-  };
-}
-
-function isManualAnnotationVisibleAtTime(
-  entry: ManualVisualAnnotation,
-  currentTime: number,
-) {
-  const bounds = getManualAnnotationBounds(entry);
-  if (!bounds) {
-    return false;
-  }
-
-  if (bounds.duration <= Number.EPSILON) {
-    return currentTime === bounds.timestamp;
-  }
-
-  return (
-    currentTime >= bounds.start &&
-    currentTime <= bounds.end
-  );
-}
-
 function getAttachedManualAnnotation(source: any): ManualVisualAnnotation | null {
   const candidate = source?.manual_annotation;
   return candidate && typeof candidate === "object"
     ? (candidate as ManualVisualAnnotation)
     : null;
-}
-
-function manualVisualAnnotationMatureLabel(
-  item: ManualVisualAnnotation,
-): string {
-  return (
-    item.identity_affirmation ||
-    item.role_affirmation ||
-    item.custom_label ||
-    item.label ||
-    ""
-  ).trim();
 }
 
 function manualAnnotationTimeScopeKey(start: number, end: number): string {
@@ -1083,54 +991,6 @@ function manualAnnotationBBoxFingerprint(box: DraftBox): string {
 
 function isObjectManualOverride(item: ManualVisualAnnotation | undefined | null): boolean {
   return Boolean(item && item.category === "OBJ");
-}
-
-function buildManualTrackMatureAuthority(
-  annotations: ManualVisualAnnotation[],
-  currentTime: number,
-): Map<string, BBoxMatureAuthority> {
-  const byTrack = new Map<string, BBoxMatureAuthority>();
-  annotations.forEach((item) => {
-    if (!isManualAnnotationVisibleAtTime(item, currentTime)) {
-      return;
-    }
-    const targetId = manualObjectTargetId(item);
-    const label = manualVisualAnnotationMatureLabel(item);
-    if (!targetId || !label) {
-      return;
-    }
-    const existing = byTrack.get(targetId);
-    const existingStart =
-      typeof (existing?.sourceItem as any)?.start_seconds === "number"
-        ? Number((existing?.sourceItem as any).start_seconds)
-        : Number.NEGATIVE_INFINITY;
-    const itemStart =
-      typeof item.start_seconds === "number"
-        ? Number(item.start_seconds)
-        : Number(item.timestamp_seconds ?? Number.NEGATIVE_INFINITY);
-    if (existing && existing.authority === "manual_annotation" && existingStart > itemStart) {
-      return;
-    }
-    byTrack.set(targetId, {
-      label,
-      authority: "manual_annotation",
-      source: "manual_visual_annotation",
-      sourceItem: item,
-      roleLabel: item.role_affirmation || undefined,
-      traceback: item.id,
-      evidence_refs: [item.id],
-      source_bbox_refs: item.geometry_keyframes?.map((keyframe) => ({
-        time: keyframe.time,
-        source: keyframe.source,
-      })),
-      source_frame_refs: [
-        item.timestamp_seconds,
-        item.start_seconds,
-        item.end_seconds,
-      ].filter((value) => typeof value === "number"),
-    });
-  });
-  return byTrack;
 }
 
 function formatTime(value: number): string {
@@ -1356,10 +1216,6 @@ function parsePreciseTimeInput(value: string): number | null {
   return minutes * 60 + seconds;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
 function getOverlayStackRank(
   modality: OverlayBox["modality"],
   normalizedBox: DraftBox,
@@ -1375,104 +1231,6 @@ function getOverlayStackRank(
           : 1000;
   const smallBoxPriority = Math.round((1 - area) * 900);
   return specificity + smallBoxPriority;
-}
-
-function resolveObjectOverlayBBox(
-  bbox: DetectedObject["bbox"],
-  videoWidth: number,
-  videoHeight: number,
-): { x: number; y: number; w: number; h: number } | null {
-  if (
-    !bbox ||
-    bbox.x1 === undefined ||
-    bbox.y1 === undefined ||
-    bbox.x2 === undefined ||
-    bbox.y2 === undefined
-  ) {
-    return null;
-  }
-
-  const values = [bbox.x1, bbox.y1, bbox.x2, bbox.y2].map(Number);
-  if (values.some((value) => !Number.isFinite(value))) {
-    return null;
-  }
-
-  const [rawX1, rawY1, rawX2, rawY2] = values;
-  const appearsNormalized =
-    rawX1 >= 0 &&
-    rawY1 >= 0 &&
-    rawX2 >= 0 &&
-    rawY2 >= 0 &&
-    Math.max(rawX1, rawY1, rawX2, rawY2) <= 1.5;
-  const scaleX = appearsNormalized ? videoWidth : 1;
-  const scaleY = appearsNormalized ? videoHeight : 1;
-  const x1 = rawX1 * scaleX;
-  const y1 = rawY1 * scaleY;
-  const x2 = rawX2 * scaleX;
-  const y2 = rawY2 * scaleY;
-  const left = clamp(Math.min(x1, x2), 0, videoWidth);
-  const top = clamp(Math.min(y1, y2), 0, videoHeight);
-  const right = clamp(Math.max(x1, x2), 0, videoWidth);
-  const bottom = clamp(Math.max(y1, y2), 0, videoHeight);
-
-  if (right - left < 2 || bottom - top < 2) {
-    return null;
-  }
-
-  return {
-    x: left,
-    y: top,
-    w: right - left,
-    h: bottom - top,
-  };
-}
-
-function resolveManualOverlayBBox(
-  coordinates: ManualVisualAnnotation["coordinates"] | undefined,
-  videoWidth: number,
-  videoHeight: number,
-): { x: number; y: number; w: number; h: number } | null {
-  if (
-    !coordinates ||
-    coordinates.x === undefined ||
-    coordinates.y === undefined ||
-    coordinates.w === undefined ||
-    coordinates.h === undefined
-  ) {
-    return null;
-  }
-  const values = [coordinates.x, coordinates.y, coordinates.w, coordinates.h].map(Number);
-  if (values.some((value) => !Number.isFinite(value))) {
-    return null;
-  }
-  const [rawX, rawY, rawW, rawH] = values;
-  const appearsNormalized =
-    rawX >= 0 &&
-    rawY >= 0 &&
-    rawW >= 0 &&
-    rawH >= 0 &&
-    Math.max(rawX, rawY, rawW, rawH) <= 1.5;
-  const x = appearsNormalized ? rawX * videoWidth : rawX;
-  const y = appearsNormalized ? rawY * videoHeight : rawY;
-  const w = appearsNormalized ? rawW * videoWidth : rawW;
-  const h = appearsNormalized ? rawH * videoHeight : rawH;
-  const safeW = clamp(Math.max(8, w), 8, videoWidth);
-  const safeH = clamp(Math.max(8, h), 8, videoHeight);
-  return {
-    x: clamp(x, 0, Math.max(0, videoWidth - safeW)),
-    y: clamp(y, 0, Math.max(0, videoHeight - safeH)),
-    w: safeW,
-    h: safeH,
-  };
-}
-
-function normalizeDraftBox(box: DraftBox): DraftBox {
-  return {
-    x: clamp(box.x, 0, 1),
-    y: clamp(box.y, 0, 1),
-    w: clamp(box.w, 0.002, 1),
-    h: clamp(box.h, 0.002, 1),
-  };
 }
 
 function calculateDraftBoxIoU(left: DraftBox | null, right: DraftBox | null): number {
@@ -1510,37 +1268,6 @@ function synthesizePersonBoxFromExpression(expressionBox: DraftBox): DraftBox {
   const x = clamp(centerX - width / 2, 0, Math.max(0, 1 - width));
   const y = clamp(expressionBox.y - expressionBox.h * 0.65, 0, Math.max(0, 1 - height));
   return normalizeDraftBox({ x, y, w: width, h: height });
-}
-
-function detectedObjectToNormalizedBox(
-  item: DetectedObject | undefined,
-  videoWidth: number,
-  videoHeight: number,
-): DraftBox | null {
-  if (
-    !item?.bbox ||
-    item.bbox.x1 === undefined ||
-    item.bbox.y1 === undefined ||
-    item.bbox.x2 === undefined ||
-    item.bbox.y2 === undefined
-  ) {
-    return null;
-  }
-  const width = Math.max(1, videoWidth);
-  const height = Math.max(1, videoHeight);
-  const x1 = Number(item.bbox.x1);
-  const y1 = Number(item.bbox.y1);
-  const x2 = Number(item.bbox.x2);
-  const y2 = Number(item.bbox.y2);
-  if (![x1, y1, x2, y2].some((value) => !Number.isFinite(value))) {
-    return normalizeDraftBox({
-      x: Math.min(x1, x2) / width,
-      y: Math.min(y1, y2) / height,
-      w: Math.abs(x2 - x1) / width,
-      h: Math.abs(y2 - y1) / height,
-    });
-  }
-  return null;
 }
 
 function geometryToNormalizedBox(
@@ -1601,20 +1328,6 @@ function isSameSpaceBoxMatch(left: DraftBox | null, right: DraftBox | null): boo
     Math.min(left.w * left.h, right.w * right.h) /
     Math.max(left.w * left.h, right.w * right.h, 0.000001);
   return iou >= 0.25 && centerDistance <= 0.06 && areaRatio >= 0.35;
-}
-
-function interpolateBoxes(
-  left: DraftBox,
-  right: DraftBox,
-  ratio: number,
-): DraftBox {
-  const safeRatio = clamp(ratio, 0, 1);
-  return normalizeDraftBox({
-    x: left.x + (right.x - left.x) * safeRatio,
-    y: left.y + (right.y - left.y) * safeRatio,
-    w: left.w + (right.w - left.w) * safeRatio,
-    h: left.h + (right.h - left.h) * safeRatio,
-  });
 }
 
 function mergeGeometryKeyframes(
@@ -2388,7 +2101,11 @@ export default function VideoPanel() {
   const [showCompareInPanel, setShowCompareInPanel] = useState(false);
   const [linkedComparePlayback, setLinkedComparePlayback] = useState(true);
   const [compareSource, setCompareSource] = useState<CompareVideoSource | null>(null);
+  const [mediaFrameFullscreen, setMediaFrameFullscreen] = useState(false);
+  const [primaryPlaying, setPrimaryPlaying] = useState(false);
+  const [primaryPlaybackRate, setPrimaryPlaybackRate] = useState(1);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [activeOverlayEditorKey, setActiveOverlayEditorKey] = useState<string | null>(null);
   const [selectedOverlaySnapshot, setSelectedOverlaySnapshot] =
     useState<OverlayBox | null>(null);
   const [selectedWorkspaceAnnotationId, setSelectedWorkspaceAnnotationId] = useState<
@@ -2522,6 +2239,8 @@ export default function VideoPanel() {
   const nativeOverlayRef = React.useRef<HTMLDivElement | null>(null);
   const frameReadyTimeRef = React.useRef<number | null>(null);
   const usesFrameCallbackRef = React.useRef(false);
+  const bboxNavigationPauseLockRef = React.useRef(false);
+  const bboxNavigationPauseReleaseRef = React.useRef<number | null>(null);
   const previousToneProbeRef = React.useRef<{
     overallBrightness: number;
     overallSaturation: number;
@@ -2616,6 +2335,11 @@ export default function VideoPanel() {
     );
   }, []);
 
+  const scheduleRenderedVideoRectUpdate = React.useCallback(() => {
+    updateRenderedVideoRect();
+    window.requestAnimationFrame(() => updateRenderedVideoRect());
+  }, [updateRenderedVideoRect]);
+
   const persistSingleSourceMarks = React.useCallback(
     (nextMarks: SingleSourceMarks) => {
       setSingleSourceMarks(nextMarks);
@@ -2645,6 +2369,28 @@ export default function VideoPanel() {
     eventBus.emit("videoTimeLineChanged", safeTime);
   }, [duration]);
 
+  const holdVideoPausedForBBoxNavigation = React.useCallback(() => {
+    bboxNavigationPauseLockRef.current = true;
+    if (bboxNavigationPauseReleaseRef.current !== null) {
+      window.clearTimeout(bboxNavigationPauseReleaseRef.current);
+    }
+    videoRef.current?.pause();
+    compareVideoRef.current?.pause();
+    window.setTimeout(() => {
+      if (!bboxNavigationPauseLockRef.current) {
+        return;
+      }
+      videoRef.current?.pause();
+      compareVideoRef.current?.pause();
+    }, 0);
+    bboxNavigationPauseReleaseRef.current = window.setTimeout(() => {
+      videoRef.current?.pause();
+      compareVideoRef.current?.pause();
+      bboxNavigationPauseLockRef.current = false;
+      bboxNavigationPauseReleaseRef.current = null;
+    }, 250);
+  }, []);
+
   const nudgeTime = React.useCallback(
     (deltaSeconds: number) => {
       const baseTime = videoRef.current?.currentTime ?? currentTime;
@@ -2653,16 +2399,53 @@ export default function VideoPanel() {
     [currentTime, jumpToTime],
   );
 
+  const pausePrimaryPlayback = React.useCallback(() => {
+    videoRef.current?.pause();
+    compareVideoRef.current?.pause();
+    setPrimaryPlaying(false);
+  }, []);
+
+  const seekByAnalysisStep = React.useCallback(
+    (deltaSeconds: number) => {
+      pausePrimaryPlayback();
+      nudgeTime(deltaSeconds);
+    },
+    [nudgeTime, pausePrimaryPlayback],
+  );
+
   const togglePrimaryPlayback = React.useCallback(() => {
     const videoElement = videoRef.current;
     if (!videoElement) {
       return;
     }
     if (videoElement.paused || videoElement.ended) {
+      videoElement.playbackRate = primaryPlaybackRate;
       void videoElement.play().catch(() => {});
     } else {
       videoElement.pause();
     }
+  }, [primaryPlaybackRate]);
+
+  const setAnalysisPlaybackRate = React.useCallback((rate: number) => {
+    setPrimaryPlaybackRate(rate);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate;
+    }
+    if (compareVideoRef.current) {
+      compareVideoRef.current.playbackRate = rate;
+    }
+  }, []);
+
+  const toggleMediaFrameFullscreen = React.useCallback(() => {
+    const frameElement = mediaFrameRef.current;
+    if (!frameElement) {
+      return;
+    }
+    if (document.fullscreenElement === frameElement) {
+      void document.exitFullscreen?.();
+      return;
+    }
+    void frameElement.requestFullscreen?.();
   }, []);
 
   useEffect(() => {
@@ -2680,17 +2463,17 @@ export default function VideoPanel() {
       }
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        nudgeTime(event.shiftKey ? -0.1 : -1);
+        seekByAnalysisStep(event.shiftKey ? -0.1 : -1);
         return;
       }
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        nudgeTime(event.shiftKey ? 0.1 : 1);
+        seekByAnalysisStep(event.shiftKey ? 0.1 : 1);
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, [nudgeTime, togglePrimaryPlayback, videoId]);
+  }, [seekByAnalysisStep, togglePrimaryPlayback, videoId]);
 
   const setSingleSourceMark = React.useCallback(
     (mark: "a" | "b") => {
@@ -2709,17 +2492,20 @@ export default function VideoPanel() {
         Math.max(0, minTime),
         Math.max(Math.max(0, minTime), maxTime || duration || Number.MAX_SAFE_INTEGER),
       );
+      holdVideoPausedForBBoxNavigation();
       setSelectedOverlayScrub({ overlayKey, value: safeTime, active: true });
       jumpToTime(safeTime);
+      holdVideoPausedForBBoxNavigation();
     },
-    [duration, jumpToTime],
+    [duration, holdVideoPausedForBBoxNavigation, jumpToTime],
   );
 
   const finishSelectedOverlayScrub = React.useCallback(() => {
     setSelectedOverlayScrub((current) =>
       current ? { ...current, active: false } : current,
     );
-  }, []);
+    holdVideoPausedForBBoxNavigation();
+  }, [holdVideoPausedForBBoxNavigation]);
 
   useEffect(() => {
     if (!selectedOverlayScrub || selectedOverlayScrub.active) {
@@ -2742,6 +2528,7 @@ export default function VideoPanel() {
   }, [selectedOverlayKey]);
 
   const closeSelectedOverlayEditor = React.useCallback((overlayKey: string) => {
+    setActiveOverlayEditorKey((current) => (current === overlayKey ? null : current));
     setSelectedOverlayKey((current) => (current === overlayKey ? null : current));
     setSelectedOverlaySnapshot((current) =>
       current?.key === overlayKey ? null : current,
@@ -2817,6 +2604,9 @@ export default function VideoPanel() {
       });
       return changed ? next : current;
     });
+    setActiveOverlayEditorKey((current) =>
+      current && keys.has(current) ? null : current,
+    );
   }, []);
 
   const clearSingleSourceMarks = React.useCallback(() => {
@@ -2966,6 +2756,7 @@ export default function VideoPanel() {
       setForensicRoiMode(false);
       setSelectedWorkspaceAnnotationId(payload.annotationId);
       setSelectedOverlayKey(overlayKey);
+      setActiveOverlayEditorKey(overlayKey);
     };
 
     eventBus.on("videoIndicationEditOpen", handler);
@@ -3068,6 +2859,7 @@ export default function VideoPanel() {
   useEffect(() => {
     const handler = () => {
       setSelectedOverlayKey(null);
+      setActiveOverlayEditorKey(null);
       setNativeSaveMessage(null);
       setForensicRoiMode(false);
       setLockedForensicRoiBox(null);
@@ -3118,6 +2910,7 @@ export default function VideoPanel() {
       }
       setForensicRoiMenu(null);
       setSelectedOverlayKey(null);
+      setActiveOverlayEditorKey(null);
       setDraftStartPoint(null);
       setForensicRoiDragOffset(null);
     };
@@ -3151,6 +2944,7 @@ export default function VideoPanel() {
       }
 
       setSelectedOverlayKey(null);
+      setActiveOverlayEditorKey(null);
       setForensicRoiMode(false);
       setLockedForensicRoiBox(null);
       setNativeAnnotationMode(true);
@@ -3524,12 +3318,36 @@ export default function VideoPanel() {
   }, [videoId]);
 
   useEffect(() => {
-    const handleResize = () => updateRenderedVideoRect();
+    const handleResize = () => scheduleRenderedVideoRectUpdate();
     window.addEventListener("resize", handleResize);
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => scheduleRenderedVideoRectUpdate())
+        : null;
+    if (resizeObserver) {
+      if (mediaFrameRef.current) {
+        resizeObserver.observe(mediaFrameRef.current);
+      }
+      if (videoRef.current) {
+        resizeObserver.observe(videoRef.current);
+      }
+    }
     return () => {
       window.removeEventListener("resize", handleResize);
+      resizeObserver?.disconnect();
     };
-  }, [updateRenderedVideoRect]);
+  }, [scheduleRenderedVideoRectUpdate, videoUrl, showCompareInPanel, compareSource]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setMediaFrameFullscreen(document.fullscreenElement === mediaFrameRef.current);
+      scheduleRenderedVideoRectUpdate();
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, [scheduleRenderedVideoRectUpdate]);
 
   useEffect(() => {
     frameReadyTimeRef.current = frameReadyTime;
@@ -3920,45 +3738,13 @@ export default function VideoPanel() {
   );
   const resolveManualGeometryAtTime = React.useCallback(
     (item: ManualVisualAnnotation, timestamp: number): DraftBox | null => {
-      const manualKeyframes = Array.isArray(item.geometry_keyframes)
-        ? item.geometry_keyframes
-        : [];
-      const trackKeyframes = buildTrackGeometryKeyframes(manualObjectTargetId(item));
-      const merged = [...trackKeyframes, ...manualKeyframes]
-        .filter(
-          (keyframe): keyframe is ManualGeometryKeyframe =>
-            typeof keyframe?.time === "number" &&
-            Number.isFinite(keyframe.time) &&
-            Boolean(keyframe.coordinates),
-        )
-        .sort((left, right) => left.time - right.time);
-
-      if (merged.length === 0) {
-        const fallbackBox = resolveManualOverlayBBox(item.coordinates, videoWidth, videoHeight);
-        return fallbackBox
-          ? normalizeDraftBox({
-              x: fallbackBox.x / Math.max(1, videoWidth),
-              y: fallbackBox.y / Math.max(1, videoHeight),
-              w: fallbackBox.w / Math.max(1, videoWidth),
-              h: fallbackBox.h / Math.max(1, videoHeight),
-            })
-          : null;
-      }
-
-      const before = [...merged].reverse().find((keyframe) => keyframe.time <= timestamp);
-      const after = merged.find((keyframe) => keyframe.time >= timestamp);
-      if (before && after && before !== after) {
-        const span = Math.max(0.001, after.time - before.time);
-        if (span <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS) {
-          return interpolateBoxes(
-            normalizeDraftBox(before.coordinates),
-            normalizeDraftBox(after.coordinates),
-            (timestamp - before.time) / span,
-          );
-        }
-      }
-      const nearest = before || after || merged[0];
-      return normalizeDraftBox(nearest.coordinates);
+      return resolveAuthoritativeManualGeometryAtTime({
+        item,
+        timestamp,
+        trackKeyframes: buildTrackGeometryKeyframes(manualObjectTargetId(item)),
+        videoWidth,
+        videoHeight,
+      });
     },
     [buildTrackGeometryKeyframes, videoHeight, videoWidth],
   );
@@ -4025,7 +3811,7 @@ export default function VideoPanel() {
     const manualOverridesByObjectTrack = new Map<string, ManualVisualAnnotation[]>();
     const manualOverridesBySourceLabel = new Map<string, ManualVisualAnnotation>();
     allManualVisualAnnotations.forEach((item) => {
-      const targetId = manualObjectTargetId(item);
+      const targetId = manualObjectCorrectionTargetId(item);
       if (targetId) {
         const existing = manualOverridesByObjectTrack.get(targetId) || [];
         manualOverridesByObjectTrack.set(targetId, [...existing, item]);
@@ -4073,6 +3859,37 @@ export default function VideoPanel() {
         return box ? { item, box } : null;
       })
       .filter(Boolean) as Array<{ item: ManualVisualAnnotation; box: DraftBox }>;
+    const meaningNetworkPresenceManualOverlays = (
+      analysisData?.annotationCorrections?.master_schema_presence_intervals || []
+    )
+      .filter((interval) => {
+        const start = Number(interval.start_seconds);
+        const end = Number(interval.end_seconds ?? start);
+        return (
+          interval.source_panel === "MeaningNetwork" &&
+          Number.isFinite(start) &&
+          currentTime >= Math.min(start, end) &&
+          currentTime <= Math.max(start, end)
+        );
+      })
+      .map((interval) => {
+        const sourceIds = new Set(
+          (interval.source_evidence_refs || [])
+            .map((ref) => String(ref.evidence_id || "").trim())
+            .filter(Boolean),
+        );
+        const manual = allManualVisualAnnotations.find((item) => item.id && sourceIds.has(item.id));
+        if (!manual || manual.geometry_type !== "box") {
+          return null;
+        }
+        const box = resolveManualGeometryAtTime(manual, currentTime);
+        return box ? { interval, item: manual, box } : null;
+      })
+      .filter(Boolean) as Array<{
+        interval: NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
+        item: ManualVisualAnnotation;
+        box: DraftBox;
+      }>;
     const matureProliferationByObjectTrack = new Map<
       string,
       { candidate: EvidenceProliferationCandidate; updatedAt: number }
@@ -4618,6 +4435,7 @@ export default function VideoPanel() {
           manualOverlaySource.push(selectedManual);
         }
       }
+      const manualOverlayIds = new Set(manualOverlaySource.map((item) => item.id).filter(Boolean));
       manualOverlaySource.forEach((item: ManualVisualAnnotation, index: number) => {
         if (item.geometry_type !== "box") {
           return;
@@ -4635,6 +4453,43 @@ export default function VideoPanel() {
           w: resolvedBox.w * videoWidth,
           h: resolvedBox.h * videoHeight,
           sourceItem: item,
+        });
+      });
+      meaningNetworkPresenceManualOverlays.forEach(({ interval, item, box }, index) => {
+        if (item.id && manualOverlayIds.has(item.id)) {
+          return;
+        }
+        const label = interval.label || resolveManualVisualDisplayLabel(item);
+        overlays.push({
+          key: `meaning-network-presence-${interval.id || index}`,
+          modality: "manual",
+          label,
+          color: "border-teal-300/90 bg-teal-300/10",
+          x: box.x * videoWidth,
+          y: box.y * videoHeight,
+          w: box.w * videoWidth,
+          h: box.h * videoHeight,
+          sourceItem: {
+            ...item,
+            meaning_network_presence_interval: interval,
+            master_schema_mature_label: {
+              label,
+              authority: interval.authority_level || "manual_correction",
+              sourcePanel: "MeaningNetwork",
+              source: "meaning_network_presence_interval",
+              sourceItem: interval,
+              traceback: interval.source_traceback_refs,
+              evidence_refs: interval.source_evidence_refs,
+            },
+            bbox_mature_authority: {
+              label,
+              authority: interval.authority_level || "manual_correction",
+              source: "master_schema",
+              sourceItem: interval,
+              traceback: interval.source_traceback_refs,
+              evidence_refs: interval.source_evidence_refs,
+            },
+          },
         });
       });
     }
@@ -4674,6 +4529,7 @@ export default function VideoPanel() {
     activeExpressions,
     activeOCR,
     activeRawObjects,
+    analysisData?.annotationCorrections?.master_schema_presence_intervals,
     analysisData?.masterSchemaResolvedEvidence?.records,
     analysisData?.metadata?.sourceAnnotations,
     allManualVisualAnnotations,
@@ -4782,12 +4638,28 @@ export default function VideoPanel() {
 
   const getRenderedVideoPoint = React.useCallback(
     (clientX: number, clientY: number) => {
-      if (!renderedVideoRect || renderedVideoRect.width <= 0 || renderedVideoRect.height <= 0) {
+      const videoElementRect = videoRef.current?.getBoundingClientRect();
+      if (
+        !renderedVideoRect ||
+        !videoElementRect ||
+        renderedVideoRect.width <= 0 ||
+        renderedVideoRect.height <= 0
+      ) {
         return null;
       }
       return {
-        x: clamp((clientX - renderedVideoRect.x) / renderedVideoRect.width, 0, 1),
-        y: clamp((clientY - renderedVideoRect.y) / renderedVideoRect.height, 0, 1),
+        x: clamp(
+          (clientX - videoElementRect.left - renderedVideoRect.x) /
+            renderedVideoRect.width,
+          0,
+          1,
+        ),
+        y: clamp(
+          (clientY - videoElementRect.top - renderedVideoRect.y) /
+            renderedVideoRect.height,
+          0,
+          1,
+        ),
       };
     },
     [renderedVideoRect],
@@ -4805,6 +4677,7 @@ export default function VideoPanel() {
       }
       event.preventDefault();
       event.stopPropagation();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
       videoRef.current?.pause();
       setSelectedOverlayKey(overlay.key);
       setOverlayGeometryDrag({
@@ -5326,6 +5199,50 @@ export default function VideoPanel() {
     [updateSelectedIndicationEdit],
   );
 
+  const resolveEditWithTimeInputDrafts = React.useCallback(
+    (
+      overlayKey: string,
+      edit: SelectedIndicationEdit,
+    ): SelectedIndicationEdit => {
+      const startDraft = selectedTimeInputDrafts[`${overlayKey}:start`];
+      const endDraft = selectedTimeInputDrafts[`${overlayKey}:end`];
+      const parsedStart =
+        startDraft !== undefined ? parsePreciseTimeInput(startDraft) : null;
+      const parsedEnd =
+        endDraft !== undefined ? parsePreciseTimeInput(endDraft) : null;
+      const start = clamp(
+        parsedStart ?? edit.start,
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const end = clamp(
+        Math.max(parsedEnd ?? edit.end, start + 0.001),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      return {
+        ...edit,
+        start,
+        end,
+      };
+    },
+    [duration, selectedTimeInputDrafts],
+  );
+
+  const clearSelectedTimeInputDraftsForOverlay = React.useCallback((overlayKey: string) => {
+    setSelectedTimeInputDrafts((current) => {
+      const startKey = `${overlayKey}:start`;
+      const endKey = `${overlayKey}:end`;
+      if (current[startKey] === undefined && current[endKey] === undefined) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[startKey];
+      delete next[endKey];
+      return next;
+    });
+  }, []);
+
   const selectOverlayForEditing = React.useCallback(
     (overlay: OverlayBox) => {
       const source = overlay.sourceItem || {};
@@ -5394,6 +5311,7 @@ export default function VideoPanel() {
       },
     }));
     setSelectedOverlayKey(match.key);
+    setActiveOverlayEditorKey(match.key);
     setPendingObjectOverlayEdit(null);
   }, [buildIndicationEditForOverlay, overlayBoxes, pendingObjectOverlayEdit]);
 
@@ -5654,6 +5572,7 @@ export default function VideoPanel() {
     setNativeAnnotationMode(false);
     setSelectedWorkspaceAnnotationId(null);
     setSelectedOverlayKey(null);
+    setActiveOverlayEditorKey(null);
     setSelectedOverlaySnapshot(null);
     const savedDetail = (
       annotation.identity_affirmation ||
@@ -5666,6 +5585,13 @@ export default function VideoPanel() {
         ? `Saved native annotation: ${annotation.category} / ${annotation.label} / ${savedDetail}`
         : `Saved native annotation: ${annotation.category} / ${annotation.label}`,
     );
+    eventBus.emit("nativeVisualAnnotationSaved", {
+      videoId,
+      annotation,
+      source_panel: "VideoPanel",
+      propagation_required: true,
+      proliferates_to: ["master_schema", "meaning_network", "video_panel", "traceback"],
+    });
     resetNativeAnnotationDraft();
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [
@@ -5697,6 +5623,7 @@ export default function VideoPanel() {
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
+    setActiveOverlayEditorKey(null);
     setNativeSaveMessage("Removed native annotation.");
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [analysisData?.annotationCorrections, selectedOverlay, videoId]);
@@ -5795,6 +5722,16 @@ export default function VideoPanel() {
           source.track_id ??
           overlay.key,
       ).replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+      const targetCandidateId = String(
+        expressionPersonAnchor?.trackId ??
+          expressionOwnerTargetId ??
+          source.trackId ??
+          source.track_id ??
+          (overlay.modality === "manual"
+            ? manualObjectCorrectionTargetId(overlay.sourceItem as ManualVisualAnnotation)
+            : null) ??
+          "",
+      ).trim();
       const annotationId =
         overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)?.id ||
@@ -5806,6 +5743,23 @@ export default function VideoPanel() {
               : `${videoId}:indication:${overlay.modality}:${targetScope || "untracked"}:${intervalScope}:${bboxScope}`;
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
+        (targetCandidateId
+          ? allManualVisualAnnotations.find((item) => {
+              const targetId = manualObjectCorrectionTargetId(item);
+              if (targetId !== targetCandidateId) {
+                return false;
+              }
+              const itemStart = Number(item.start_seconds ?? item.timestamp_seconds);
+              const itemEnd = Number(item.end_seconds ?? item.timestamp_seconds ?? itemStart);
+              if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd)) {
+                return false;
+              }
+              return (
+                Math.max(Math.min(itemStart, itemEnd), start) <=
+                Math.min(Math.max(itemStart, itemEnd), end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
+              );
+            })
+          : undefined) ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
@@ -5816,8 +5770,9 @@ export default function VideoPanel() {
       );
       const trackKeyframes = buildTrackGeometryKeyframes(targetTrackId || null);
       const geometryKeyframes = mergeGeometryKeyframes([
-        ...(existingManual?.geometry_keyframes || []),
-        ...trackKeyframes,
+        ...(existingManual?.geometry_keyframes || []).filter(
+          (keyframe) => keyframe.source !== "track",
+        ),
         {
           time: Number(keyframeTime.toFixed(3)),
           coordinates: normalizeDraftBox(normalizedBox),
@@ -5827,7 +5782,7 @@ export default function VideoPanel() {
       ]);
       const annotation: ManualVisualAnnotation = {
         ...(existingManual || {}),
-        id: annotationId,
+        id: existingManual?.id || annotationId,
         category: edit.category,
         subcategory: edit.subcategory || getFirstSubcategoryForCategory(edit.category),
         label,
@@ -5854,14 +5809,13 @@ export default function VideoPanel() {
         metadata_correlation: {
           ...(existingManual?.metadata_correlation || {}),
           target_type:
-            expressionPersonAnchor || synthesizedExpressionOwnerBox ? "object" : overlay.modality,
-          target_id: String(
-            expressionPersonAnchor?.trackId ??
-              expressionOwnerTargetId ??
-              source.trackId ??
-              source.track_id ??
-              overlay.key,
-          ),
+            expressionPersonAnchor || synthesizedExpressionOwnerBox || targetCandidateId
+              ? "object"
+              : existingManual?.metadata_correlation?.target_type || overlay.modality,
+          target_id:
+            targetCandidateId ||
+            existingManual?.metadata_correlation?.target_id ||
+            String(overlay.key),
           target_label: expressionPersonAnchor || synthesizedExpressionOwnerBox
             ? String(
                 expressionPersonAnchor?.item.displayLabel ||
@@ -5869,7 +5823,7 @@ export default function VideoPanel() {
                   expressionPersonAnchor?.item.raw_class_name ||
                   "person",
               )
-            : overlay.label,
+            : existingManual?.metadata_correlation?.target_label || overlay.label,
           source_expression_key:
             overlay.modality === "expression" ? overlay.key : undefined,
           source_expression_label:
@@ -5882,6 +5836,13 @@ export default function VideoPanel() {
           synthesized_person_detection: Boolean(synthesizedExpressionOwnerBox),
           apply_scope: applyScope,
           quick_annotations: edit.quickAnnotations || [],
+          source_track_keyframes_retained_for_traceback:
+            trackKeyframes.length > 0
+              ? trackKeyframes.map((keyframe) => ({
+                  time: keyframe.time,
+                  source: keyframe.source,
+                }))
+              : undefined,
           manual_confirmation_event: {
             event_type: "manual_bbox_roi_confirmation",
             authority_level: "manual_correction",
@@ -5927,6 +5888,7 @@ export default function VideoPanel() {
       }));
       setSelectedWorkspaceAnnotationId(null);
       setSelectedOverlayKey(null);
+      setActiveOverlayEditorKey(null);
       setSelectedOverlaySnapshot(null);
       setNativeSaveMessage(`Saved indication: ${annotation.category} / ${label}`);
       if (synthesizedExpressionOwnerBox) {
@@ -6038,6 +6000,7 @@ export default function VideoPanel() {
         return;
       }
       setSelectedOverlayKey(null);
+      setActiveOverlayEditorKey(null);
       setDraftTimestamp(Number(getAuthoritativeVideoTime().toFixed(3)));
 
       const activeForensicBox = draftBox || visibleLockedForensicRoiBox;
@@ -6259,6 +6222,7 @@ export default function VideoPanel() {
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
+    setActiveOverlayEditorKey(null);
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [analysisData?.annotationCorrections, groupedDetectedObjects, selectedOverlay, videoId]);
 
@@ -6285,6 +6249,7 @@ export default function VideoPanel() {
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
+    setActiveOverlayEditorKey(null);
     broadcastAnalysisCorrectionRefresh(videoId);
   }, [analysisData?.annotationCorrections, selectedOverlay, videoId]);
 
@@ -7403,7 +7368,8 @@ export default function VideoPanel() {
                   key={videoUrl}
                   ref={videoRef}
                   src={videoUrl}
-                  controls
+                  controls={false}
+                  controlsList="nofullscreen"
                   className="h-full w-full object-contain"
                   onLoadedMetadata={() => {
                     if (!videoRef.current) {
@@ -7437,11 +7403,30 @@ export default function VideoPanel() {
                       return;
                     }
                     const nextTime = videoRef.current.currentTime;
+                    if (bboxNavigationPauseLockRef.current) {
+                      videoRef.current.pause();
+                      compareVideoRef.current?.pause();
+                    }
                     lastBroadcastTimeRef.current = nextTime;
                     setCurrentTime(nextTime);
                     overlayArmedRef.current = true;
                     setFrameReadyTime(nextTime);
                     eventBus.emit("videoTimeLineChanged", nextTime);
+                  }}
+                  onPlay={() => {
+                    if (bboxNavigationPauseLockRef.current) {
+                      videoRef.current?.pause();
+                      compareVideoRef.current?.pause();
+                      setPrimaryPlaying(false);
+                      return;
+                    }
+                    setPrimaryPlaying(true);
+                  }}
+                  onPause={() => {
+                    setPrimaryPlaying(false);
+                  }}
+                  onEnded={() => {
+                    setPrimaryPlaying(false);
                   }}
                   onCanPlay={updateRenderedVideoRect}
                   onError={() => {
@@ -7449,6 +7434,28 @@ export default function VideoPanel() {
                     setBlobMissing(true);
                   }}
                 />
+
+                <button
+                  type="button"
+                  data-vaa1-video-frame-fullscreen="true"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleMediaFrameFullscreen();
+                  }}
+                  className="absolute right-2 top-2 z-40 rounded border border-slate-600/80 bg-black/75 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-100 shadow hover:border-cyan-400 hover:text-cyan-100"
+                  title={
+                    mediaFrameFullscreen
+                      ? "Exit video workspace fullscreen"
+                      : "Enter video workspace fullscreen"
+                  }
+                  aria-label={
+                    mediaFrameFullscreen
+                      ? "Exit video workspace fullscreen"
+                      : "Enter video workspace fullscreen"
+                  }
+                >
+                  {mediaFrameFullscreen ? "Exit" : "Full"}
+                </button>
 
                 {renderedVideoRect && overlayBoxes.length > 0 && (
                   <div
@@ -7619,6 +7626,8 @@ export default function VideoPanel() {
                         }),
                       );
                       const visibleOverlayLabel = compactOverlayLabel;
+                      const selectedEditUsesNarrativeAgentPicker =
+                        edit.category === "Identification";
                       const proliferationLauncher = {
                         ...DEFAULT_PROLIFERATION_LAUNCHER,
                         ...(selectedOverlayProliferation[overlay.key] || {}),
@@ -7632,15 +7641,19 @@ export default function VideoPanel() {
                             if (!editableOverlay || isInteractiveElement(event.target)) {
                               return;
                             }
+                            setActiveOverlayEditorKey(null);
+                            selectOverlayForEditing(overlay);
                             beginOverlayGeometryDrag(event, overlay, "move");
                           }}
                           onClick={(event) => {
                             event.stopPropagation();
+                            setActiveOverlayEditorKey(null);
                             selectOverlayForEditing(overlay);
                           }}
                           onDoubleClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
+                            setActiveOverlayEditorKey(overlay.key);
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
                           }}
@@ -7653,6 +7666,7 @@ export default function VideoPanel() {
                             }
                             event.preventDefault();
                             event.stopPropagation();
+                            setActiveOverlayEditorKey(overlay.key);
                             openEvidencePanelForOverlay(overlay);
                             selectOverlayForEditing(overlay);
                           }}
@@ -7663,7 +7677,9 @@ export default function VideoPanel() {
                             openTracebackForOverlay(overlay, edit);
                           }}
                           className={`${
-                            overlapsVideoControls ? "pointer-events-none" : "pointer-events-auto"
+                            editableOverlay || !overlapsVideoControls
+                              ? "pointer-events-auto"
+                              : "pointer-events-none"
                           } absolute rounded border ${overlay.color} ${
                             selected ? "overflow-visible" : "overflow-hidden"
                           } ${
@@ -7697,7 +7713,11 @@ export default function VideoPanel() {
                             }
                             onPointerDown={
                               editableOverlay
-                                ? (event) => beginOverlayGeometryDrag(event, overlay, "move")
+                                ? (event) => {
+                                    setActiveOverlayEditorKey(null);
+                                    selectOverlayForEditing(overlay);
+                                    beginOverlayGeometryDrag(event, overlay, "move");
+                                  }
                                 : undefined
                             }
                           >
@@ -7754,7 +7774,7 @@ export default function VideoPanel() {
                               /
                             </button>
                           )}
-                          {selected && (
+                          {selected && activeOverlayEditorKey === overlay.key && (
                             <>
                       <div
                                 className="absolute z-50 overflow-y-auto rounded border border-slate-700 bg-[#111111]/95 px-2 py-1.5 shadow-lg"
@@ -7763,7 +7783,19 @@ export default function VideoPanel() {
                                 onMouseDown={(event) => event.stopPropagation()}
                                 onPointerDown={(event) => event.stopPropagation()}
                               >
-                                <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-300">
+                                <div
+                                  className="mb-1 flex cursor-move items-center justify-between gap-2 text-[10px] text-slate-300"
+                                  title="Drag to move indication box"
+                                  data-vaa1-bbox-roi-move-handle="true"
+                                  onPointerDown={(event) => {
+                                    if (isInteractiveElement(event.target)) {
+                                      return;
+                                    }
+                                    setActiveOverlayEditorKey(null);
+                                    selectOverlayForEditing(overlay);
+                                    beginOverlayGeometryDrag(event, overlay, "move");
+                                  }}
+                                >
                                   <span
                                     className="truncate font-medium text-cyan-100"
                                     title={compactOverlayLabel}
@@ -7797,9 +7829,13 @@ export default function VideoPanel() {
                                   step={0.001}
                                   value={scrubValue}
                                   onClick={(event) => event.stopPropagation()}
-                                  onMouseDown={(event) => event.stopPropagation()}
+                                  onMouseDown={(event) => {
+                                    event.stopPropagation();
+                                    holdVideoPausedForBBoxNavigation();
+                                  }}
                                   onPointerDown={(event) => {
                                     event.stopPropagation();
+                                    holdVideoPausedForBBoxNavigation();
                                     setSelectedOverlayScrub({
                                       overlayKey: overlay.key,
                                       value: scrubValue,
@@ -7809,7 +7845,6 @@ export default function VideoPanel() {
                                       overlayKey: overlay.key,
                                       start: scrubValue,
                                     });
-                                    videoRef.current?.pause();
                                   }}
                                   onPointerUp={(event) => {
                                     event.stopPropagation();
@@ -8206,57 +8241,56 @@ export default function VideoPanel() {
                                 </div>
                                 <div className="mb-1 flex flex-col gap-1">
                                 <div className="flex flex-col gap-1">
-                                  <select
-                                    value={
-                                      edit.label.toLowerCase() === "bystander"
-                                        ? "by-stander"
-                                        : NARRATIVE_AGENT_QUICK_CHOICES.includes(edit.label.toLowerCase())
-                                        ? edit.label.toLowerCase()
-                                        : knownCharacters.includes(edit.label)
-                                        ? edit.label
-                                        : "open tag"
-                                    }
-                                    onChange={(event) => {
-                                      const val = event.target.value;
-                                      if (val !== "open tag") {
-                                        const isKnownCharacter = knownCharacters.includes(val);
-                                        const isQuickAgentChoice =
-                                          NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
-                                        updateSelectedIndicationEdit(overlay.key, {
-                                          label: val,
-                                          ...(isKnownCharacter || isQuickAgentChoice
-                                            ? { category: "Identification" }
-                                            : {}),
-                                          identityAffirmation:
-                                            isKnownCharacter ||
-                                            isQuickAgentChoice ||
-                                            edit.category === "Identification"
-                                              ? val
-                                              : edit.identityAffirmation,
-                                        });
+                                  {selectedEditUsesNarrativeAgentPicker && (
+                                    <select
+                                      value={
+                                        edit.label.toLowerCase() === "bystander"
+                                          ? "by-stander"
+                                          : NARRATIVE_AGENT_QUICK_CHOICES.includes(edit.label.toLowerCase())
+                                          ? edit.label.toLowerCase()
+                                          : knownCharacters.includes(edit.label)
+                                          ? edit.label
+                                          : "open tag"
                                       }
-                                    }}
-                                    className="h-7 w-full rounded border border-cyan-700/70 bg-black/85 px-2 py-1 text-[11px] text-cyan-50"
-                                    aria-label="Narrative Agent choice"
-                                  >
-                                    <option value="open tag">open tag</option>
-                                    {knownCharacters.length > 0 && (
-                                      <optgroup label="Known Narrative Agents">
-                                        {knownCharacters.map((char: string) => (
-                                          <option key={char} value={char}>
-                                            {char}
+                                      onChange={(event) => {
+                                        const val = event.target.value;
+                                        if (val !== "open tag") {
+                                          const isKnownCharacter = knownCharacters.includes(val);
+                                          const isQuickAgentChoice =
+                                            NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
+                                          updateSelectedIndicationEdit(overlay.key, {
+                                            label: val,
+                                            category: "Identification",
+                                            identityAffirmation:
+                                              isKnownCharacter || isQuickAgentChoice
+                                                ? val
+                                                : edit.identityAffirmation,
+                                          });
+                                        }
+                                      }}
+                                      className="h-7 w-full rounded border border-cyan-700/70 bg-black/85 px-2 py-1 text-[11px] text-cyan-50"
+                                      aria-label="Narrative Agent choice"
+                                      data-vaa1-bbox-roi-narrative-agent-picker="true"
+                                    >
+                                      <option value="open tag">open tag</option>
+                                      {knownCharacters.length > 0 && (
+                                        <optgroup label="Known Narrative Agents">
+                                          {knownCharacters.map((char: string) => (
+                                            <option key={char} value={char}>
+                                              {char}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      <optgroup label="Additional choices">
+                                        {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
+                                          <option key={choice} value={choice}>
+                                            {choice}
                                           </option>
                                         ))}
                                       </optgroup>
-                                    )}
-                                    <optgroup label="Additional choices">
-                                      {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
-                                        <option key={choice} value={choice}>
-                                          {choice}
-                                        </option>
-                                      ))}
-                                    </optgroup>
-                                  </select>
+                                    </select>
+                                  )}
                                   <div className="grid grid-cols-[1fr_auto_auto] gap-1">
                                   <input
                                     type="text"
@@ -8276,8 +8310,13 @@ export default function VideoPanel() {
                                       event.stopPropagation();
                                       if (event.key === "Enter") {
                                         event.preventDefault();
+                                        const nextEdit = resolveEditWithTimeInputDrafts(
+                                          overlay.key,
+                                          edit,
+                                        );
+                                        clearSelectedTimeInputDraftsForOverlay(overlay.key);
                                         void saveSelectedIndication(overlay, {
-                                          ...edit,
+                                          ...nextEdit,
                                           label: event.currentTarget.value,
                                           identityAffirmation:
                                             edit.category === "Identification"
@@ -8287,8 +8326,17 @@ export default function VideoPanel() {
                                       }
                                     }}
                                     className="h-7 min-w-0 rounded border border-slate-700 bg-black/85 px-2 py-1 text-[11px] text-slate-100"
-                                    placeholder="Write new Narrative Agent / open tag"
-                                    aria-label="New Narrative Agent or open tag"
+                                    placeholder={
+                                      selectedEditUsesNarrativeAgentPicker
+                                        ? "Write new Narrative Agent / open tag"
+                                        : "Write object, text, action, or evidence label"
+                                    }
+                                    aria-label={
+                                      selectedEditUsesNarrativeAgentPicker
+                                        ? "New Narrative Agent or open tag"
+                                        : "New object or evidence label"
+                                    }
+                                    data-vaa1-bbox-roi-open-evidence-label="true"
                                   />
                                   <button
                                     type="button"
@@ -8336,7 +8384,12 @@ export default function VideoPanel() {
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      void saveSelectedIndication(overlay, edit);
+                                      const nextEdit = resolveEditWithTimeInputDrafts(
+                                        overlay.key,
+                                        edit,
+                                      );
+                                      clearSelectedTimeInputDraftsForOverlay(overlay.key);
+                                      void saveSelectedIndication(overlay, nextEdit);
                                     }}
                                     className="rounded bg-emerald-900/50 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/70"
                                   >
@@ -8348,9 +8401,14 @@ export default function VideoPanel() {
                                     aria-label="Stretch indication to current frame and save"
                                     onClick={(event) => {
                                       event.stopPropagation();
+                                      const nextEdit = resolveEditWithTimeInputDrafts(
+                                        overlay.key,
+                                        edit,
+                                      );
+                                      clearSelectedTimeInputDraftsForOverlay(overlay.key);
                                       void saveSelectedIndicationAtFrame(
                                         overlay,
-                                        edit,
+                                        nextEdit,
                                         workingFrameTime,
                                       );
                                     }}
@@ -8831,7 +8889,7 @@ export default function VideoPanel() {
                       key={videoUrl}
                       ref={videoRef}
                       src={videoUrl}
-                      controls
+                      controls={false}
                       className="h-full w-full object-contain"
                       onLoadedMetadata={() => {
                         if (!videoRef.current) {
@@ -8855,12 +8913,23 @@ export default function VideoPanel() {
                           return;
                         }
                         const nextTime = videoRef.current.currentTime;
+                        if (bboxNavigationPauseLockRef.current) {
+                          videoRef.current.pause();
+                          compareVideoRef.current?.pause();
+                        }
                         setCurrentTime(nextTime);
                         lastBroadcastTimeRef.current = nextTime;
                         eventBus.emit("videoTimeLineChanged", nextTime);
                         syncCompareSide("main");
                       }}
                       onPlay={() => {
+                        if (bboxNavigationPauseLockRef.current) {
+                          videoRef.current?.pause();
+                          compareVideoRef.current?.pause();
+                          setPrimaryPlaying(false);
+                          return;
+                        }
+                        setPrimaryPlaying(true);
                         if (
                           linkedComparePlayback &&
                           compareVideoRef.current &&
@@ -8870,6 +8939,7 @@ export default function VideoPanel() {
                         }
                       }}
                       onPause={() => {
+                        setPrimaryPlaying(false);
                         if (
                           linkedComparePlayback &&
                           compareVideoRef.current &&
@@ -8878,6 +8948,9 @@ export default function VideoPanel() {
                         ) {
                           compareVideoRef.current.pause();
                         }
+                      }}
+                      onEnded={() => {
+                        setPrimaryPlaying(false);
                       }}
                     />
                   </div>
@@ -8900,7 +8973,7 @@ export default function VideoPanel() {
                         key={compareSource.videoUrl}
                         ref={compareVideoRef}
                         src={compareSource.videoUrl}
-                        controls
+                        controls={false}
                         className="h-full w-full object-contain"
                         onLoadedMetadata={() => {
                           if (!compareVideoRef.current) {
@@ -8910,6 +8983,11 @@ export default function VideoPanel() {
                         }}
                         onSeeked={() => syncCompareSide("compare")}
                         onPlay={() => {
+                          if (bboxNavigationPauseLockRef.current) {
+                            videoRef.current?.pause();
+                            compareVideoRef.current?.pause();
+                            return;
+                          }
                           if (
                             linkedComparePlayback &&
                             videoRef.current &&
@@ -9036,6 +9114,7 @@ export default function VideoPanel() {
                       return;
                     }
                     setSelectedOverlayKey(null);
+                    setActiveOverlayEditorKey(null);
                     setNativeSaveMessage(null);
                     setForensicRoiMode(false);
                     setNativeAnnotationMode(true);
@@ -9282,72 +9361,23 @@ export default function VideoPanel() {
 	                      />
 	                    </div>
 	                  )}
-	                  <Input
-	                    value={nativeAnnotationDraft.identityAffirmation}
-                    onChange={(event) =>
-                      setNativeAnnotationDraft((current) => ({
-                        ...current,
-                        identityAffirmation: event.target.value,
-                      }))
-                    }
-                    placeholder="Narrative Agent label"
-                    className="border-amber-400/20 bg-[#111214] text-slate-100"
-                  />
+	                  {showNativeNarrativeAgentPicker && (
+	                    <Input
+	                      value={nativeAnnotationDraft.identityAffirmation}
+                      onChange={(event) =>
+                        setNativeAnnotationDraft((current) => ({
+                          ...current,
+                          identityAffirmation: event.target.value,
+                        }))
+                      }
+                      placeholder="Narrative Agent label"
+                      className="border-amber-400/20 bg-[#111214] text-slate-100"
+                      data-vaa1-native-narrative-agent-label="true"
+                    />
+                  )}
 	                  {nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE &&
 	                    !showNativeNarrativeAgentPicker && (
                     <div className="flex flex-col gap-1 md:col-span-2">
-	                      <select
-	                        value={
-	                          nativeAnnotationDraft.label.toLowerCase() === "bystander"
-	                            ? "by-stander"
-	                            : NARRATIVE_AGENT_QUICK_CHOICES.includes(nativeAnnotationDraft.label.toLowerCase())
-	                            ? nativeAnnotationDraft.label.toLowerCase()
-	                            : knownCharacters.includes(nativeAnnotationDraft.label)
-	                            ? nativeAnnotationDraft.label
-	                            : "open tag"
-                        }
-                        onChange={(event) => {
-	                          const val = event.target.value;
-	                          if (val !== "open tag") {
-	                            const isKnownCharacter = knownCharacters.includes(val);
-	                            const isQuickAgentChoice =
-	                              NARRATIVE_AGENT_QUICK_CHOICES.includes(val);
-	                            setNativeAnnotationDraft((current) => ({
-	                              ...current,
-	                              label: val,
-	                              ...(isKnownCharacter || isQuickAgentChoice
-	                                ? { category: "Identification", subcategory: "Character" }
-	                                : {}),
-	                              identityAffirmation:
-	                                isKnownCharacter ||
-	                                isQuickAgentChoice ||
-	                                current.category === "Identification"
-	                                  ? val
-	                                  : current.identityAffirmation,
-	                            }));
-                          }
-                        }}
-	                        className="w-full rounded border border-amber-400/20 bg-[#111214] px-3 py-2 text-sm text-slate-100"
-	                        aria-label="Narrative Agent choice"
-	                      >
-	                        <option value="open tag">open tag</option>
-	                        {knownCharacters.length > 0 && (
-	                          <optgroup label="Known Narrative Agents">
-	                            {knownCharacters.map((char: string) => (
-	                              <option key={char} value={char}>
-	                                {char}
-                              </option>
-	                            ))}
-	                          </optgroup>
-	                        )}
-	                        <optgroup label="Additional choices">
-	                          {NARRATIVE_AGENT_QUICK_CHOICES.map((choice) => (
-	                            <option key={choice} value={choice}>
-	                              {choice}
-	                            </option>
-	                          ))}
-	                        </optgroup>
-	                      </select>
                       <Input
                         value={nativeAnnotationDraft.label}
                         onChange={(event) =>
@@ -9356,8 +9386,10 @@ export default function VideoPanel() {
                             label: event.target.value,
                           }))
                         }
-	                        placeholder="Write new Narrative Agent / open tag"
+	                        placeholder="Write object, text, action, or evidence label"
                         className="border-amber-400/20 bg-[#111214] text-slate-100"
+                        aria-label="New object or evidence label"
+                        data-vaa1-native-open-evidence-label="true"
                       />
                     </div>
                   )}
@@ -9797,6 +9829,91 @@ export default function VideoPanel() {
 
             {videoUrl && duration > 0 && (
               <div className="mt-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-slate-950/70 px-2 py-2">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-400 hover:text-cyan-100"
+                      onClick={() => seekByAnalysisStep(-1)}
+                      title="Back 1 second"
+                      aria-label="Back 1 second"
+                    >
+                      <Rewind className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-400 hover:text-cyan-100"
+                      onClick={() => seekByAnalysisStep(-0.1)}
+                      title="Back 100 ms"
+                      aria-label="Back 100 ms"
+                    >
+                      <SkipBack className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded border border-cyan-500/70 bg-cyan-950/60 text-cyan-100 shadow hover:bg-cyan-900/80"
+                      onClick={() => togglePrimaryPlayback()}
+                      title={primaryPlaying ? "Pause" : "Play"}
+                      aria-label={primaryPlaying ? "Pause" : "Play"}
+                    >
+                      {primaryPlaying ? (
+                        <Pause className="h-5 w-5" />
+                      ) : (
+                        <Play className="h-5 w-5" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-400 hover:text-cyan-100"
+                      onClick={() => seekByAnalysisStep(0.1)}
+                      title="Forward 100 ms"
+                      aria-label="Forward 100 ms"
+                    >
+                      <SkipForward className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-400 hover:text-cyan-100"
+                      onClick={() => seekByAnalysisStep(1)}
+                      title="Forward 1 second"
+                      aria-label="Forward 1 second"
+                    >
+                      <FastForward className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1 text-[10px] text-[var(--ui-passive-text)]">
+                    {[
+                      { label: "-fr", delta: -ANALYSIS_FRAME_STEP_SECONDS },
+                      { label: "+fr", delta: ANALYSIS_FRAME_STEP_SECONDS },
+                    ].map((step) => (
+                      <button
+                        key={step.label}
+                        type="button"
+                        className="h-7 rounded border border-slate-800 px-2 hover:border-cyan-500/60 hover:text-cyan-100"
+                        onClick={() => seekByAnalysisStep(step.delta)}
+                      >
+                        {step.label}
+                      </button>
+                    ))}
+                    {[0.25, 0.5, 1, 2, 4].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        className={`h-7 rounded border px-2 ${
+                          primaryPlaybackRate === rate
+                            ? "border-cyan-500/70 bg-cyan-950/50 text-cyan-100"
+                            : "border-slate-800 hover:border-cyan-500/60 hover:text-cyan-100"
+                        }`}
+                        onClick={() => setAnalysisPlaybackRate(rate)}
+                        aria-pressed={primaryPlaybackRate === rate}
+                      >
+                        {rate}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="relative">
                   <input
                     type="range"
@@ -9868,7 +9985,7 @@ export default function VideoPanel() {
                       key={step.label}
                       type="button"
                       className="rounded border border-slate-800 px-2 py-1 hover:bg-slate-800/40 hover:text-slate-300"
-                      onClick={() => nudgeTime(step.delta)}
+                      onClick={() => seekByAnalysisStep(step.delta)}
                     >
                       {step.label}
                     </button>

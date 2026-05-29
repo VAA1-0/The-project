@@ -3,7 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
 import type { AudioProsodyCue, ExpressionSample, TranscriptSegment } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
-import { apiService, type AnnotationCorrections, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
+import { apiService, type AnnotationCorrections, type ManualVisualAnnotation, type ProliferationDecision, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
 import {
   matureSceneSegmentsFromAnalysis,
   matureSceneSegmentSourceLabel,
@@ -209,6 +209,14 @@ type MeaningNetworkTimeRange = {
   end: number;
 };
 
+type MeaningNetworkVerificationRange = MeaningNetworkTimeRange & {
+  range_source: "evidence_ref" | "presence_override";
+  source_verification_status: "source_time_resolved";
+  source_evidence_refs: MeaningNetworkEvidenceRef[];
+  source_traceback_refs: string[];
+  source_types: string[];
+};
+
 type MeaningNetworkPresenceDrag = {
   nodeId: string;
   handle: "start" | "end" | "move";
@@ -216,6 +224,25 @@ type MeaningNetworkPresenceDrag = {
   originSeconds: number;
   originalStart: number;
   originalEnd: number;
+};
+
+type MeaningNetworkCopiedContent = {
+  kind: "node" | "edge";
+  label?: string;
+  description?: string;
+  node_type?: string;
+  edge_type?: string;
+  attributes?: Record<string, any>;
+  maturity?: { level?: string; authority?: string; confidence?: number };
+  evidence_refs?: MeaningNetworkEvidenceRef[];
+};
+
+type MeaningNetworkContextMenuState = {
+  x: number;
+  y: number;
+  kind: "node" | "edge";
+  node?: MeaningNetworkNode;
+  edge?: MeaningNetworkEdge;
 };
 
 type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
@@ -761,7 +788,9 @@ function meaningNetworkEvidenceStart(refs?: MeaningNetworkEvidenceRef[]): number
   return meaningNetworkEvidenceTimeRange(refs)?.start ?? 0;
 }
 
-function meaningNetworkEvidenceTimeRange(refs?: MeaningNetworkEvidenceRef[]): { start: number; end: number } | null {
+function meaningNetworkTimedEvidenceRef(
+  refs?: MeaningNetworkEvidenceRef[],
+): { ref: MeaningNetworkEvidenceRef; range: MeaningNetworkTimeRange } | null {
   const ref = refs?.find((item) => item?.time_range?.start !== undefined || item?.time_range?.end !== undefined);
   if (!ref?.time_range) return null;
   const startRaw = Number(ref.time_range.start ?? ref.time_range.end);
@@ -769,9 +798,24 @@ function meaningNetworkEvidenceTimeRange(refs?: MeaningNetworkEvidenceRef[]): { 
   const endRaw = Number(ref.time_range.end ?? startRaw);
   const end = Number.isFinite(endRaw) ? endRaw : startRaw;
   return {
-    start: Math.min(startRaw, end),
-    end: Math.max(startRaw, end),
+    ref,
+    range: {
+      start: Math.min(startRaw, end),
+      end: Math.max(startRaw, end),
+    },
   };
+}
+
+function meaningNetworkEvidenceTimeRange(refs?: MeaningNetworkEvidenceRef[]): MeaningNetworkTimeRange | null {
+  return meaningNetworkTimedEvidenceRef(refs)?.range || null;
+}
+
+function meaningNetworkSourceTypes(refs?: MeaningNetworkEvidenceRef[]): string[] {
+  return Array.from(new Set((refs || []).map((ref) => ref.source_type).filter(Boolean) as string[]));
+}
+
+function meaningNetworkTracebackRefs(refs?: MeaningNetworkEvidenceRef[]): string[] {
+  return Array.from(new Set((refs || []).map((ref) => ref.traceback_record_id).filter(Boolean) as string[]));
 }
 
 function meaningNetworkSourceTimeLabel(refs?: MeaningNetworkEvidenceRef[]): string {
@@ -1938,9 +1982,13 @@ export default function MeaningPlotPanel({
   const [openCharacterSceneProfiles, setOpenCharacterSceneProfiles] = useState<Record<string, boolean>>({});
   const [governedSourceMetadata, setGovernedSourceMetadata] = useState<SourceMediaMetadata | null>(null);
   const [copiedMeaningNetworkNode, setCopiedMeaningNetworkNode] = useState<MeaningNetworkNode | null>(null);
+  const [copiedMeaningNetworkEdge, setCopiedMeaningNetworkEdge] = useState<MeaningNetworkEdge | null>(null);
+  const [copiedMeaningNetworkContent, setCopiedMeaningNetworkContent] = useState<MeaningNetworkCopiedContent | null>(null);
+  const [meaningNetworkContextMenu, setMeaningNetworkContextMenu] = useState<MeaningNetworkContextMenuState | null>(null);
   const [confirmedMeaningNetworkMarkers, setConfirmedMeaningNetworkMarkers] = useState<Record<string, boolean>>({});
   const [renamedMeaningNetworkMarkers, setRenamedMeaningNetworkMarkers] = useState<Record<string, string>>({});
   const [draftMeaningNetworkNodes, setDraftMeaningNetworkNodes] = useState<MeaningNetworkNode[]>([]);
+  const [draftMeaningNetworkEdges, setDraftMeaningNetworkEdges] = useState<MeaningNetworkEdge[]>([]);
   const [draftMeaningNetworkScenes, setDraftMeaningNetworkScenes] = useState<MeaningSceneSegment[]>([]);
   const [hiddenMeaningNetworkScenes, setHiddenMeaningNetworkScenes] = useState<Record<string, boolean>>({});
   const [draftMeaningNetworkLanes, setDraftMeaningNetworkLanes] = useState<MeaningNetworkLane[]>([]);
@@ -1975,6 +2023,24 @@ export default function MeaningPlotPanel({
     eventBus.on("videoIdChanged", handler);
     return () => eventBus.off("videoIdChanged", handler);
   }, []);
+
+  useEffect(() => {
+    if (!meaningNetworkContextMenu) {
+      return undefined;
+    }
+    const close = () => setMeaningNetworkContextMenu(null);
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [meaningNetworkContextMenu]);
 
   useEffect(() => {
     const handler = (time: number) => {
@@ -2061,6 +2127,71 @@ export default function MeaningPlotPanel({
     };
     eventBus.on("analysisCorrectionsChanged", correctionsHandler);
     return () => eventBus.off("analysisCorrectionsChanged", correctionsHandler);
+  }, [selectedVideoId]);
+
+  useEffect(() => {
+    const handler = (payload: { videoId?: string; annotation?: ManualVisualAnnotation }) => {
+      if (!selectedVideoId || payload.videoId !== selectedVideoId || !payload.annotation) {
+        return;
+      }
+      const annotation = payload.annotation;
+      const start = Number(annotation.start_seconds ?? annotation.timestamp_seconds ?? 0);
+      const end = Math.max(start + 0.05, Number(annotation.end_seconds ?? annotation.timestamp_seconds ?? start));
+      const node: MeaningNetworkNode = {
+        node_id: `master:manual_annotation:${annotation.id}`,
+        node_type:
+          annotation.category === "OBJ"
+            ? "object"
+            : annotation.category === "OCR" || annotation.category === "Transcription"
+              ? "spoken_word"
+              : annotation.category === "Audio"
+                ? "prosody"
+                : annotation.category === "Scene"
+                  ? "situation"
+                  : annotation.category === "Identification"
+                    ? "narrative_agent"
+                    : "manual_annotation",
+        label: annotation.custom_label || annotation.label || annotation.open_note || annotation.category,
+        description: `${annotation.category} / ${annotation.subcategory}`,
+        attributes: {
+          analyst_created: true,
+          manual_annotation_id: annotation.id,
+          master_schema_surface: "manual_visual_annotations",
+          lane_id:
+            annotation.category === "OBJ"
+              ? "objects"
+              : annotation.category === "OCR" || annotation.category === "Transcription"
+                ? "spoken_word"
+                : annotation.category === "Audio"
+                  ? "prosody"
+                  : undefined,
+        },
+        maturity: { level: "analyst_confirmed", authority: "manual_annotation", confidence: 1 },
+        evidence_refs: [
+          {
+            evidence_id: annotation.id,
+            source_type: "manual_visual_annotation",
+            time_range: { start, end },
+            traceback_record_id: `traceback:${annotation.id}`,
+            confidence: 1,
+          },
+        ],
+        ui: {
+          display_group: "analyst_added_nodes",
+          quick_confirm_enabled: true,
+          copy_paste_enabled: true,
+          update_enabled: true,
+          source_navigation_enabled: true,
+        },
+      };
+      setDraftMeaningNetworkNodes((current) => [
+        node,
+        ...current.filter((item) => item.node_id !== node.node_id),
+      ]);
+      setMeaningNetworkCursorSeconds(start);
+    };
+    eventBus.on("nativeVisualAnnotationSaved", handler);
+    return () => eventBus.off("nativeVisualAnnotationSaved", handler);
   }, [selectedVideoId]);
 
   const instructions = analysisData?.secondOrderLabelProliferation?.instructions || [];
@@ -2295,8 +2426,9 @@ export default function MeaningPlotPanel({
     () => [
       ...masterSchemaMeaningEdges,
       ...((datasceneMeaningNetwork?.meaning_network?.edges || []) as MeaningNetworkEdge[]),
+      ...draftMeaningNetworkEdges,
     ],
-    [datasceneMeaningNetwork, masterSchemaMeaningEdges],
+    [datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
   );
   const reviewableMeaningNetworkNodes = useMemo(
     () =>
@@ -2496,23 +2628,35 @@ export default function MeaningPlotPanel({
 
   const meaningNetworkVerificationRange = useCallback((
     item: Partial<MeaningNetworkNode> & { evidence_refs?: MeaningNetworkEvidenceRef[] },
-  ): { start: number; end: number } | null => {
-    const evidenceRange = meaningNetworkEvidenceTimeRange(item.evidence_refs);
-    if (evidenceRange) {
-      return evidenceRange;
+  ): MeaningNetworkVerificationRange | null => {
+    if (item.node_id && item.node_type && item.label && meaningNetworkPresenceOverrides[item.node_id]) {
+      const range = meaningNetworkPresenceRange(
+        item as MeaningNetworkNode,
+        meaningNetworkPresenceOverrides,
+        null,
+      );
+      return {
+        start: range.start,
+        end: range.end,
+        range_source: "presence_override",
+        source_verification_status: "source_time_resolved",
+        source_evidence_refs: item.evidence_refs || [],
+        source_traceback_refs: meaningNetworkTracebackRefs(item.evidence_refs),
+        source_types: meaningNetworkSourceTypes(item.evidence_refs),
+      };
     }
-    if (!item.node_id || !item.node_type || !item.label) {
-      return null;
+    const evidenceMatch = meaningNetworkTimedEvidenceRef(item.evidence_refs);
+    if (evidenceMatch) {
+      return {
+        ...evidenceMatch.range,
+        range_source: "evidence_ref",
+        source_verification_status: "source_time_resolved",
+        source_evidence_refs: item.evidence_refs || [evidenceMatch.ref],
+        source_traceback_refs: meaningNetworkTracebackRefs(item.evidence_refs),
+        source_types: meaningNetworkSourceTypes(item.evidence_refs),
+      };
     }
-    if (!meaningNetworkPresenceOverrides[item.node_id]) {
-      return null;
-    }
-    const range = meaningNetworkPresenceRange(
-      item as MeaningNetworkNode,
-      meaningNetworkPresenceOverrides,
-      null,
-    );
-    return { start: range.start, end: range.end };
+    return null;
   }, [meaningNetworkPresenceOverrides]);
 
   const navigateToMeaningNetworkEvidence = useCallback(
@@ -2528,6 +2672,12 @@ export default function MeaningPlotPanel({
           videoId: selectedVideoId,
           node_id: item.node_id,
           timestamp: range.start,
+          end_timestamp: range.end,
+          range_source: range.range_source,
+          source_verification_status: range.source_verification_status,
+          source_evidence_refs: range.source_evidence_refs,
+          source_traceback_refs: range.source_traceback_refs,
+          source_types: range.source_types,
           source: "meaning_network_node_verification",
         });
         return;
@@ -2561,6 +2711,66 @@ export default function MeaningPlotPanel({
     }
     navigateToMeaningNetworkEvidence(node);
   }, [navigateToMeaningNetworkEvidence, renamedMeaningNetworkMarkers, selectedVideoId]);
+
+  const openMeaningNetworkTraceback = useCallback((
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+    kind: "node" | "edge",
+  ) => {
+    const evidenceRefs = item.evidence_refs || [];
+    const payload = {
+      videoId: selectedVideoId,
+      sourcePanel: "MeaningNetwork",
+      claim_id: kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id,
+      claim_label: kind === "node"
+        ? renamedMeaningNetworkMarkers[(item as MeaningNetworkNode).node_id] || (item as MeaningNetworkNode).label
+        : (item as MeaningNetworkEdge).edge_type,
+      claim_type: kind === "node" ? (item as MeaningNetworkNode).node_type : "meaning_network_edge",
+      claim_status: String(item.maturity?.level || "reviewable"),
+      maturity_level: String(item.maturity?.level || "candidate"),
+      authority_level: String(item.maturity?.authority || "meaning_network"),
+      authority_source: "MeaningNetwork",
+      review_status: "reviewable",
+      source_refs: {
+        evidence_refs: evidenceRefs,
+        traceback_record_ids: meaningNetworkTracebackRefs(evidenceRefs),
+      },
+      sourceItem: item as Record<string, unknown>,
+    };
+    eventBus.emit("openPanelRequest", {
+      panelType: "TracebackDrawer",
+      panelProps: { payload },
+    });
+    eventBus.emit("tracebackOpenRequested", payload);
+  }, [renamedMeaningNetworkMarkers, selectedVideoId]);
+
+  const openMeaningNetworkNodeContextMenu = useCallback((
+    event: React.MouseEvent<SVGGElement | SVGRectElement | SVGCircleElement>,
+    node: MeaningNetworkNode,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedMeaningNetworkNodeId(node.node_id);
+    setMeaningNetworkContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      kind: "node",
+      node,
+    });
+  }, []);
+
+  const openMeaningNetworkEdgeContextMenu = useCallback((
+    event: React.MouseEvent<SVGGElement | SVGLineElement>,
+    edge: MeaningNetworkEdge,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMeaningNetworkContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      kind: "edge",
+      edge,
+    });
+  }, []);
 
   const changeMeaningNetworkZoom = useCallback((delta: number) => {
     setMeaningNetworkZoom((current) => {
@@ -2609,6 +2819,12 @@ export default function MeaningPlotPanel({
     const lane = meaningNetworkLaneForNode(node, meaningNetworkLanes);
     const narrativeAgentProfileId =
       String(node.attributes?.narrative_agent_profile_id || node.attributes?.profile_id || "").trim() || undefined;
+    const sourceVerification = meaningNetworkVerificationRange(node);
+    const sourceEvidenceRefs = sourceVerification?.source_evidence_refs || node.evidence_refs || [];
+    const sourceTracebackRefs =
+      sourceVerification?.source_traceback_refs?.length
+        ? sourceVerification.source_traceback_refs
+        : meaningNetworkTracebackRefs(sourceEvidenceRefs);
     const interval: MeaningNetworkPresenceInterval = {
       id: `meaning-network-presence:${node.node_id}`,
       node_id: node.node_id,
@@ -2626,6 +2842,10 @@ export default function MeaningPlotPanel({
       authority_level: "manual_correction",
       source_panel: "MeaningNetwork",
       source_profile_surface: "NarrativeAgentProfiles",
+      source_verification_status: sourceVerification?.source_verification_status || "source_time_resolved",
+      source_range_source: sourceVerification?.range_source || "manual_interval",
+      source_evidence_refs: sourceEvidenceRefs,
+      source_traceback_refs: sourceTracebackRefs,
       propagation_required: true,
       partial_propagation_allowed: false,
       proliferates_to: [
@@ -2669,6 +2889,10 @@ export default function MeaningPlotPanel({
       update_authority: "manual_correction",
       master_schema_surface: interval.master_schema_surface,
       narrative_agent_profile_id: interval.narrative_agent_profile_id,
+      source_verification_status: interval.source_verification_status,
+      source_range_source: interval.source_range_source,
+      source_evidence_refs: interval.source_evidence_refs,
+      source_traceback_refs: interval.source_traceback_refs,
       propagation_required: true,
       partial_propagation_allowed: false,
       affected_panels: ["meaning_network", "master_schema", "video_panel", "bbox_roi_panel", "scene_card_panel", "narrative_agent_panel"],
@@ -2679,9 +2903,11 @@ export default function MeaningPlotPanel({
       profile_id: interval.narrative_agent_profile_id,
       source_panel: "MeaningNetwork",
       master_schema_surface: interval.master_schema_surface,
+      source_verification_status: interval.source_verification_status,
+      source_evidence_refs: interval.source_evidence_refs,
     });
     eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
-  }, [analysisData?.annotationCorrections, meaningNetworkLanes, renamedMeaningNetworkMarkers, selectedVideoId]);
+  }, [analysisData?.annotationCorrections, meaningNetworkLanes, meaningNetworkVerificationRange, renamedMeaningNetworkMarkers, selectedVideoId]);
 
   const beginMeaningNetworkPresenceDrag = useCallback((
     bar: MeaningNetworkPresenceBar,
@@ -2768,17 +2994,110 @@ export default function MeaningPlotPanel({
     changeMeaningNetworkZoom(event.deltaY < 0 ? 0.12 : -0.12);
   }, [changeMeaningNetworkZoom, meaningNetworkViewMode]);
 
-  const quickConfirmMeaningNetworkNode = useCallback((node: MeaningNetworkNode) => {
+  const quickConfirmMeaningNetworkNode = useCallback(async (node: MeaningNetworkNode) => {
     setConfirmedMeaningNetworkMarkers((current) => ({ ...current, [node.node_id]: true }));
+    const sourceVerification = meaningNetworkVerificationRange(node);
+    const sourceEvidenceRefs = sourceVerification?.source_evidence_refs || node.evidence_refs || [];
+    const sourceTracebackRefs =
+      sourceVerification?.source_traceback_refs?.length
+        ? sourceVerification.source_traceback_refs
+        : meaningNetworkTracebackRefs(sourceEvidenceRefs);
+    const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
+    const projectionTargets = [
+      "master_schema",
+      "meaning_network",
+      "narrative_agent_cards",
+      "video_panel",
+      "bbox_roi_panel",
+      "scene_card_panel",
+      "traceback",
+    ];
+    const now = new Date().toISOString();
+    let decision: ProliferationDecision | null = null;
+    if (selectedVideoId) {
+      const existing = analysisData?.annotationCorrections || {};
+      decision = {
+        decision_id: `meaning-network-quick-confirm:${node.node_id}`,
+        candidate_id: node.node_id,
+        request_id: `meaning-network:${selectedVideoId}`,
+        decision: "confirmed",
+        authority_level: "manual_confirmation",
+        source_panel: "MeaningNetwork",
+        source_verification_status: sourceVerification?.source_verification_status || "source_anchor_missing",
+        source_range_source: sourceVerification?.range_source,
+        candidate_label: node.label,
+        applied_label: label,
+        target_evidence_id: sourceEvidenceRefs[0]?.evidence_id || node.node_id,
+        source_anchors: sourceVerification
+          ? [
+              {
+                start_seconds: Number(sourceVerification.start.toFixed(3)),
+                end_seconds: Number(sourceVerification.end.toFixed(3)),
+                range_source: sourceVerification.range_source,
+                source_types: sourceVerification.source_types,
+              },
+            ]
+          : [],
+        evidence_refs: sourceEvidenceRefs,
+        source_traceback_refs: sourceTracebackRefs,
+        projection_targets: projectionTargets,
+        proliferates_to: projectionTargets,
+        governance_status: {
+          maturity_result: "analyst_confirmed",
+          propagation_required: true,
+          partial_propagation_allowed: false,
+          source_verification_status: sourceVerification?.source_verification_status || "source_anchor_missing",
+          corrected_data_proliferates: true,
+          raw_detection_retained_as: "traceback_only",
+        },
+        proliferation_allowed: true,
+        decision_reason: "meaning_network_quick_confirm",
+        created_at: now,
+        created_by: "analyst",
+      };
+      const currentDecisions = existing.proliferation_decisions || [];
+      const nextCorrections: AnnotationCorrections = {
+        ...existing,
+        analysis_id: selectedVideoId,
+        version: 1,
+        updated_at: now,
+        updated_by: "analyst",
+        text_substitutions: existing.text_substitutions || [],
+        label_overrides: existing.label_overrides || [],
+        manual_transcript_entries: existing.manual_transcript_entries || [],
+        manual_visual_annotations: existing.manual_visual_annotations || [],
+        master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+        meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+        proliferation_decisions: [
+          ...currentDecisions.filter((item) => item.decision_id !== decision?.decision_id && item.candidate_id !== node.node_id),
+          decision,
+        ],
+      };
+      await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
+      const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
+      setAnalysisData(refreshed);
+    }
     eventBus.emit("meaningNetworkNodeQuickConfirmed", {
       videoId: selectedVideoId,
       node_id: node.node_id,
       node_type: node.node_type,
-      label: renamedMeaningNetworkMarkers[node.node_id] || node.label,
+      label,
       maturity_result: "analyst_confirmed",
-      evidence_refs: node.evidence_refs || [],
+      authority_level: "manual_confirmation",
+      event_type: "master_schema_updated",
+      update_source: "meaning_network_quick_confirm",
+      source_verification_status: sourceVerification?.source_verification_status || "source_anchor_missing",
+      source_range_source: sourceVerification?.range_source,
+      source_evidence_refs: sourceEvidenceRefs,
+      source_traceback_refs: sourceTracebackRefs,
+      proliferation_decision: decision,
+      evidence_refs: sourceEvidenceRefs,
+      affected_panels: projectionTargets,
     });
-  }, [renamedMeaningNetworkMarkers, selectedVideoId]);
+    if (selectedVideoId) {
+      eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
+    }
+  }, [analysisData?.annotationCorrections, meaningNetworkVerificationRange, renamedMeaningNetworkMarkers, selectedVideoId]);
 
   const copyMeaningNetworkNode = useCallback((node: MeaningNetworkNode) => {
     setCopiedMeaningNetworkNode(node);
@@ -2788,6 +3107,113 @@ export default function MeaningPlotPanel({
       label: renamedMeaningNetworkMarkers[node.node_id] || node.label,
     });
   }, [renamedMeaningNetworkMarkers, selectedVideoId]);
+
+  const copyMeaningNetworkEdge = useCallback((edge: MeaningNetworkEdge) => {
+    setCopiedMeaningNetworkEdge(edge);
+    eventBus.emit("meaningNetworkEdgeCopied", {
+      videoId: selectedVideoId,
+      edge_id: edge.edge_id,
+      edge_type: edge.edge_type,
+      source_node_id: edge.source_node_id,
+      target_node_id: edge.target_node_id,
+      evidence_refs: edge.evidence_refs || [],
+    });
+  }, [selectedVideoId]);
+
+  const copyMeaningNetworkItemContent = useCallback((item: MeaningNetworkNode | MeaningNetworkEdge, kind: "node" | "edge") => {
+    const content: MeaningNetworkCopiedContent = kind === "node"
+      ? {
+          kind,
+          label: renamedMeaningNetworkMarkers[(item as MeaningNetworkNode).node_id] || (item as MeaningNetworkNode).label,
+          description: (item as MeaningNetworkNode).description,
+          node_type: (item as MeaningNetworkNode).node_type,
+          attributes: (item as MeaningNetworkNode).attributes,
+          maturity: (item as MeaningNetworkNode).maturity,
+          evidence_refs: (item as MeaningNetworkNode).evidence_refs || [],
+        }
+      : {
+          kind,
+          edge_type: (item as MeaningNetworkEdge).edge_type,
+          maturity: (item as MeaningNetworkEdge).maturity,
+          evidence_refs: (item as MeaningNetworkEdge).evidence_refs || [],
+        };
+    setCopiedMeaningNetworkContent(content);
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(JSON.stringify(content, null, 2)).catch(() => undefined);
+    }
+    eventBus.emit("meaningNetworkContentCopied", {
+      videoId: selectedVideoId,
+      kind,
+      content,
+    });
+  }, [renamedMeaningNetworkMarkers, selectedVideoId]);
+
+  const pasteMeaningNetworkContentOntoNode = useCallback((targetNode: MeaningNetworkNode) => {
+    if (!copiedMeaningNetworkContent) return;
+    const label = copiedMeaningNetworkContent.label?.trim();
+    if (label) {
+      setRenamedMeaningNetworkMarkers((current) => ({ ...current, [targetNode.node_id]: label }));
+    }
+    const sourceRefs = copiedMeaningNetworkContent.evidence_refs || [];
+    if (sourceRefs.length) {
+      setDraftMeaningNetworkNodes((current) =>
+        current.map((node) =>
+          node.node_id === targetNode.node_id
+            ? {
+                ...node,
+                description: copiedMeaningNetworkContent.description || node.description,
+                attributes: {
+                  ...(node.attributes || {}),
+                  pasted_content_from: copiedMeaningNetworkContent.kind,
+                  ...(copiedMeaningNetworkContent.attributes || {}),
+                },
+                evidence_refs: [...sourceRefs, ...(node.evidence_refs || [])],
+              }
+            : node,
+        ),
+      );
+    }
+    eventBus.emit("meaningNetworkContentPasted", {
+      videoId: selectedVideoId,
+      target_node_id: targetNode.node_id,
+      copied_kind: copiedMeaningNetworkContent.kind,
+      applied_label: label,
+      evidence_refs: sourceRefs,
+    });
+  }, [copiedMeaningNetworkContent, selectedVideoId]);
+
+  const pasteMeaningNetworkEdgeDuplicate = useCallback(() => {
+    if (!copiedMeaningNetworkEdge) return;
+    const pasted: MeaningNetworkEdge = {
+      ...copiedMeaningNetworkEdge,
+      edge_id: `copy:${copiedMeaningNetworkEdge.edge_id}:${Date.now()}`,
+      edge_type: copiedMeaningNetworkEdge.edge_type || "copy_of_anchor",
+      maturity: { ...(copiedMeaningNetworkEdge.maturity || {}), level: "analyst_reviewed", authority: "analyst" },
+      evidence_refs: [
+        {
+          evidence_id: `copy:${copiedMeaningNetworkEdge.edge_id}`,
+          source_type: "manual_annotation",
+          time_range: meaningNetworkEvidenceTimeRange(copiedMeaningNetworkEdge.evidence_refs) || undefined,
+          traceback_record_id: `traceback:copy:${copiedMeaningNetworkEdge.edge_id}`,
+        },
+        ...(copiedMeaningNetworkEdge.evidence_refs || []),
+      ],
+      ui: {
+        ...(copiedMeaningNetworkEdge.ui || {}),
+        quick_confirm_enabled: true,
+        copy_paste_enabled: true,
+        update_enabled: true,
+        source_navigation_enabled: true,
+      },
+    };
+    setDraftMeaningNetworkEdges((current) => [pasted, ...current]);
+    eventBus.emit("meaningNetworkEdgePasted", {
+      videoId: selectedVideoId,
+      source_edge_id: copiedMeaningNetworkEdge.edge_id,
+      target_edge_id: pasted.edge_id,
+      edge_type: pasted.edge_type,
+    });
+  }, [copiedMeaningNetworkEdge, selectedVideoId]);
 
   const addMeaningNetworkNodeAtScene = useCallback((nodeType: string) => {
     const start = activeMeaningNetworkScene?.start ?? activeScene?.start ?? 0;
@@ -3740,6 +4166,7 @@ export default function MeaningPlotPanel({
                             event.stopPropagation();
                             openMeaningNetworkNodeInspector(bar.node);
                           }}
+                          onContextMenu={(event) => openMeaningNetworkNodeContextMenu(event, bar.node)}
                           onPointerDown={(event) => beginMeaningNetworkPresenceDrag(bar, "move", event)}
                           className="cursor-ew-resize"
                           data-vaa1-meaning-network-node-presence-bar="true"
@@ -3854,7 +4281,23 @@ export default function MeaningPlotPanel({
                       const to = meaningNetworkGraph.positions.get(edge.target_node_id);
                       if (!from || !to) return null;
                       return (
-                        <g key={`graph-edge:${edge.edge_id}`}>
+                        <g
+                          key={`graph-edge:${edge.edge_id}`}
+                          role="button"
+                          tabIndex={0}
+                          onContextMenu={(event) => openMeaningNetworkEdgeContextMenu(event, edge)}
+                          data-vaa1-meaning-network-graph-edge="true"
+                          data-vaa1-meaning-network-context-menu-target="edge"
+                        >
+                          <line
+                            x1={from.x}
+                            y1={from.y}
+                            x2={to.x}
+                            y2={to.y}
+                            stroke="transparent"
+                            strokeWidth={14}
+                            strokeLinecap="round"
+                          />
                           <line
                             x1={from.x}
                             y1={from.y}
@@ -3896,6 +4339,7 @@ export default function MeaningPlotPanel({
                             event.stopPropagation();
                             openMeaningNetworkNodeInspector(node);
                           }}
+                          onContextMenu={(event) => openMeaningNetworkNodeContextMenu(event, node)}
                           onPointerDown={(event) => {
                             if (meaningNetworkCanonicalNodeType(node.node_type) !== "scene") {
                               event.stopPropagation();
@@ -3905,6 +4349,7 @@ export default function MeaningPlotPanel({
                           data-vaa1-meaning-network-graph-node="true"
                           data-vaa1-meaning-network-single-click-selects="true"
                           data-vaa1-meaning-network-single-click-source-verifies="true"
+                          data-vaa1-meaning-network-context-menu-target="node"
                           data-vaa1-meaning-network-double-click-opens-agent={isNarrativeAgentMeaningNode(node) ? "true" : "false"}
                         >
                           <title>{label}</title>
@@ -3950,6 +4395,137 @@ export default function MeaningPlotPanel({
                       );
                     })}
                   </svg>
+                  </div>
+                ) : null}
+                {meaningNetworkContextMenu ? (
+                  <div
+                    className="fixed z-[80] min-w-[190px] rounded border border-teal-800/70 bg-[#101010] p-1 shadow-2xl shadow-black/70"
+                    style={{
+                      left: typeof window === "undefined"
+                        ? meaningNetworkContextMenu.x
+                        : Math.min(meaningNetworkContextMenu.x, Math.max(16, window.innerWidth - 220)),
+                      top: typeof window === "undefined"
+                        ? meaningNetworkContextMenu.y
+                        : Math.min(meaningNetworkContextMenu.y, Math.max(16, window.innerHeight - 260)),
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                    onContextMenu={(event) => event.preventDefault()}
+                    data-vaa1-meaning-network-context-menu="true"
+                    data-vaa1-meaning-network-context-kind={meaningNetworkContextMenu.kind}
+                  >
+                    <div className="border-b border-slate-800 px-2 py-1.5">
+                      <div className="truncate text-[10px] font-medium text-slate-100">
+                        {meaningNetworkContextMenu.kind === "node"
+                          ? renamedMeaningNetworkMarkers[meaningNetworkContextMenu.node?.node_id || ""] || meaningNetworkContextMenu.node?.label || "Node"
+                          : meaningNetworkContextMenu.edge?.edge_type || "Edge"}
+                      </div>
+                      <div className="mt-0.5 text-[9px] uppercase tracking-[0.1em] text-slate-500">
+                        Meaning Network {meaningNetworkContextMenu.kind}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (meaningNetworkContextMenu.node) copyMeaningNetworkNode(meaningNetworkContextMenu.node);
+                        if (meaningNetworkContextMenu.edge) copyMeaningNetworkEdge(meaningNetworkContextMenu.edge);
+                        setMeaningNetworkContextMenu(null);
+                      }}
+                      className="mt-1 block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40"
+                      data-vaa1-meaning-network-context-copy-item="true"
+                    >
+                      Copy {meaningNetworkContextMenu.kind}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const item = meaningNetworkContextMenu.node || meaningNetworkContextMenu.edge;
+                        if (item) copyMeaningNetworkItemContent(item, meaningNetworkContextMenu.kind);
+                        setMeaningNetworkContextMenu(null);
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40"
+                      data-vaa1-meaning-network-context-copy-content="true"
+                    >
+                      Copy content
+                    </button>
+                    {meaningNetworkContextMenu.node ? (
+                      <button
+                        type="button"
+                        disabled={!copiedMeaningNetworkContent}
+                        onClick={() => {
+                          if (meaningNetworkContextMenu.node) pasteMeaningNetworkContentOntoNode(meaningNetworkContextMenu.node);
+                          setMeaningNetworkContextMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-vaa1-meaning-network-context-paste-content="true"
+                      >
+                        Paste content onto node
+                      </button>
+                    ) : null}
+                    {meaningNetworkContextMenu.node ? (
+                      <button
+                        type="button"
+                        disabled={!copiedMeaningNetworkNode}
+                        onClick={() => {
+                          pasteMeaningNetworkNodeAtScene();
+                          setMeaningNetworkContextMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-vaa1-meaning-network-context-paste-node="true"
+                      >
+                        Paste copied node here
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!copiedMeaningNetworkEdge}
+                        onClick={() => {
+                          pasteMeaningNetworkEdgeDuplicate();
+                          setMeaningNetworkContextMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-vaa1-meaning-network-context-paste-edge="true"
+                      >
+                        Paste copied edge
+                      </button>
+                    )}
+                    <div className="my-1 border-t border-slate-800" />
+                    {meaningNetworkContextMenu.node ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (meaningNetworkContextMenu.node) void quickConfirmMeaningNetworkNode(meaningNetworkContextMenu.node);
+                          setMeaningNetworkContextMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-emerald-200 hover:bg-emerald-950/40"
+                        data-vaa1-meaning-network-context-quick-confirm="true"
+                      >
+                        Quick confirm
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const item = meaningNetworkContextMenu.node || meaningNetworkContextMenu.edge;
+                        if (item) navigateToMeaningNetworkEvidence(item);
+                        setMeaningNetworkContextMenu(null);
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-cyan-200 hover:bg-cyan-950/40"
+                      data-vaa1-meaning-network-context-jump-source="true"
+                    >
+                      Jump to source
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const item = meaningNetworkContextMenu.node || meaningNetworkContextMenu.edge;
+                        if (item) openMeaningNetworkTraceback(item, meaningNetworkContextMenu.kind);
+                        setMeaningNetworkContextMenu(null);
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-amber-200 hover:bg-amber-950/40"
+                      data-vaa1-meaning-network-context-traceback="true"
+                    >
+                      Open traceback
+                    </button>
                   </div>
                 ) : null}
                 {meaningNetworkViewMode === "whole_timeline" ? (
