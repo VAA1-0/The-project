@@ -32,6 +32,18 @@ It should support:
 
 The graph should remain subordinate to the Master Schema. It can propose, organize, and display meaning, but it should not become an isolated semantic authority.
 
+## Functional delivery rule
+
+The Meaning Network sprint must deliver actual analyst functions, not partial cosmetics.
+
+Controls, buttons, labels, and lens names only count as delivered when they change the analyst's usable analysis state. A Plot lens selector is not useful because it says "Freytag" or "Campbell". It is useful only when it surfaces an inspectable Datascene reading of narrative structure: what scenes, agents, edges, tensions, transitions, and evidence anchors support that reading, how mature the reading is, and what the analyst can confirm, correct, reject, or compare.
+
+The first priority is narrative structure support. Character meaning dimensions should follow after the narrative-structure readings are actually working, because character meaning needs the structure of scenes, transitions, conflicts, reversals, relations, and stakes to land in the right analytical place.
+
+Forensic render is also a real Meaning Network tool, not a future-facing label. A forensic render action should create or open an inspectable source-linked artifact: a BBox crop, zoom, evidence plate, node montage, edge montage, before/after comparison, traceback render, or report asset. It must preserve time, source media, coordinate basis, maturity state, analyst authority, and traceback. It may be delivered stepwise, but each step must produce a usable rendered artifact or a navigable render request with clear persistence state.
+
+Both Plot lens readings and forensic render can be subdivided into smaller deliveries. The acceptance bar for each slice is still functional: the analyst must gain a new way to inspect, compare, save, trace, or correct meaning, not merely see a new named affordance.
+
 ## Processual achievements so far
 
 The current sprint has moved the Meaning Network Graph from a mute button surface toward an operational workspace.
@@ -140,7 +152,8 @@ Correct behavior:
 
 ```text
 Click node/bar/edge -> seek or open source evidence
-Double-click Narrative Agent node -> open Narrative Agent profile / card context
+Double-click node/edge -> open its specific Meaning Sheet / evidence hub
+Narrative Agent node sheet -> expose Open this specific storyline leaf / panel
 Right-click or trace action -> open traceback
 ```
 
@@ -152,9 +165,15 @@ Click node -> open abstract Master Schema view while source evidence exists
 
 Master Schema inspection is important, but source verification should be the first operational gesture when source evidence exists.
 
+Double-clicking a Meaning Network node or edge should not open the general Narrative Agent(s) overview. It should open a navigation field for the selected node or edge. If the selected object is tied to a Narrative Agent or character path, that navigation field can include an explicit action to open the specific Narrative Agent storyline. That storyline may be hosted inside the general Narrative Agent surface, but it should open as a focused panel or leaf of its own rather than dropping the analyst into a broad agent list.
+
 ## Master Schema feedback loop
 
 Meaning Network edits must feed back into the Master Schema.
+
+The Master Schema is the canonical maturity anchor. BBox/ROI hubs, Meaning Network node/edge sheets, Narrative Agent leaves, scene cards, reports, traceback, and associated panels should behave as synchronized projections of the governed Master Schema state. They may collect corrections and propose candidates, but they must not become competing local sources of mature truth.
+
+User corrections stand across the whole loop. A user-corrected label, time interval, coordinate, dimension, node reading, edge reading, storyline, character-path leaf, or presence interval can only be replaced by another explicit user correction. Automated detections, plot-lens readings, graph inferences, mature-data candidates, and panel-local drafts can support the analyst, but they must not silently override the corrected bundle.
 
 At minimum, a persisted Meaning Network interval should update:
 
@@ -169,12 +188,49 @@ At minimum, a persisted Meaning Network interval should update:
 
 The graph should display the current mature state, not stale local guesses.
 
+Every feedback event that moves data toward maturity should carry enough governance metadata for associated panels to refresh coherently:
+
+- source anchors and evidence refs,
+- maturity state and authority level,
+- user-correction provenance when present,
+- affected panels and projection targets,
+- traceback ids,
+- stale/recomputed status when upstream evidence changes,
+- explicit candidate/confirmed/rejected state.
+
+## Narrative Agent and character-path feedback
+
+The Narrative Agent panel needs the same governed-data maturity as BBox/ROI and Meaning Network surfaces.
+
+Recognized character paths should surface as their own Narrative Agent leaves, not only as implied names or collapsed profile hints. Each leaf should carry:
+
+- a character/path label,
+- source-linked presence timeline,
+- scene-by-scene summary,
+- role and relation evidence,
+- character/path meaning readings when available,
+- maturity state and analyst authority,
+- source anchors and traceback,
+- links back to related BBox/ROI evidence hubs and Meaning Network node/edge sheets.
+
+The Character/Path Meaning schemas should be fed by proliferated mature data rather than remaining parallel abstractions. Mature BBox/ROI confirmations, manual annotations, transcript/speaker links, Meaning Network presence intervals, scene anchors, object relations, prosody, SFL/dependency cues, and analyst profile corrections should all be able to support character/path leaves when they carry source anchors and maturity state.
+
+BBox/ROI hubs, Meaning Network node/edge sheets, and Narrative Agent leaves should share a common interaction grammar. The analyst should not have to relearn confirmation behavior panel by panel:
+
+- single click verifies source or selects the working object,
+- double click opens the detailed sheet/hub for interpretation and confirmation,
+- Narrative Agent navigation from that sheet opens the specific storyline leaf, not the general Narrative Agent(s) overview,
+- right click exposes traceback, forensic render, confirm/correct/reject/drop, copy/paste anchor, and related navigation actions,
+- every mature proliferation step shows what source evidence and authority state will travel with it.
+
 ## Next steps
 
 Immediate next steps:
 
 - Fix lane routing so on-camera Narrative Agent nodes consistently appear in the on-camera lane.
 - Ensure every source-linked Narrative Agent node click seeks the video before opening schema/profile context.
+- Add Meaning Network node/edge sheets that preserve Narrative Agent profile access while keeping source verification first.
+- Surface recognized character paths as Narrative Agent leaves with timelines, summaries, maturity, source anchors, and traceback.
 - Make the timeline cursor drag reliably and keep graph/video time synchronized.
 - Harden presence handle dragging so live video scrub, final persistence, and panel refresh all agree.
 - Improve graph layout to prevent textual overlap.
@@ -189,6 +245,10 @@ Immediate next steps:
 Medium next steps:
 
 - Implement constellational handle proposals from transcript, diarization, visual detections, object tracks, sound/prosody, and scene boundaries.
+- Implement Plot lens projections as real candidate Datascene readings of narrative structure. Each reading should contain projected scene/node roles, projected edge meanings, evidence refs, maturity state, a readable summary, compare/delta support, and analyst accept/edit/reject actions.
+- Keep Plot lens readings candidate-only until analyst-confirmed. They may inform Meaning / Plot and report prose, but they must not become mature narrative truth without source anchors and confirmation.
+- Deliver forensic render as a working Meaning Network action: start with BBox/ROI crop or zoom renders and node/edge evidence plates, then expand to montages, before/after comparisons, and report assets.
+- Ensure every forensic render stores or exposes source media id, time range, coordinate basis, selected node/edge/BBox ids, maturity state, output type, and traceback link.
 - Add open weighting for proposal thresholds.
 - Surface near matches as `to_be_confirmed_or_canceled` candidates.
 - Add contradiction display, not only support display.

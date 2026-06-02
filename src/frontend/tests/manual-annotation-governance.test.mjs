@@ -1520,8 +1520,8 @@ test("Meaning Plot character paths expose scene-based narrative agent browsing",
 
   assert.match(
     meaningPlotPanel,
-    /min-h-0 flex-1 overflow-hidden p-3/,
-    "Meaning / Plot body must constrain height so child panels can scroll through full data arrays",
+    /data-vaa1-meaning-plot-panel-scroll="true"/,
+    "Meaning / Plot body must expose scrolling so child panels can reveal full data arrays",
   );
 });
 
@@ -2118,6 +2118,48 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
+    /data-vaa1-meaning-network-bounded-workbench="true"/,
+    "Embedded Meaning Network workbench must stay internally scrollable in crowded layouts",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-plot-panel-scroll="true"/,
+    "Meaning / Plot must expose panel-level scrolling so lower evidence surfaces remain reachable",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sticky-action-rail="true"/,
+    "Meaning Network lower action affordances must remain reachable when the graph is crowded",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-node-list-scroll="true"/,
+    "Meaning Network node marker lists must be independently scrollable when hundreds of detections surface",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /reviewableMeaningNetworkNodes\.map/,
+    "Meaning Network node marker lists must not be hard-capped before scrolling can reveal all reviewable nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-edge-list-scroll="true"/,
+    "Meaning Network edge marker lists must be independently scrollable when hundreds of detections surface",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /reviewableMeaningNetworkEdges\.map/,
+    "Meaning Network edge marker lists must not be hard-capped before scrolling can reveal all reviewable edges",
+  );
+
+  assert.match(
+    meaningPlotPanel,
     /data-vaa1-meaning-network-resizable-workspace=\{meaningNetworkExpanded \? "true" : "false"\}/,
     "Meaning Network expanded mode must behave as a resizable workspace, not a cramped embedded strip",
   );
@@ -2197,7 +2239,7 @@ test("Datascene Meaning Network remains available for mature scene presence prol
   assert.match(
     meaningPlotPanel,
     /meaningNetworkSourceVerified/,
-    "Meaning Network source verification must emit a traceable event before falling back to schema inspection",
+    "Meaning Network source verification must emit a traceable event before source-missing review",
   );
 
   assert.match(
@@ -2220,14 +2262,122 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
-    /data-vaa1-meaning-network-double-click-opens-agent=\{isNarrativeAgentMeaningNode\(node\) \? "true" : "false"\}/,
-    "Narrative Agent Meaning Network nodes must advertise double-click agent navigation",
+    /data-vaa1-meaning-network-double-click-opens-sheet="true"/,
+    "Meaning Network nodes and edges must advertise double-click sheet navigation",
   );
 
   assert.match(
     meaningPlotPanel,
-    /openMeaningNetworkNodeInspector[\s\S]*panelType:\s*"ManualIdentification"/,
-    "Double-clicking a Narrative Agent Meaning Network node must open the Narrative Agent path instead of Master Schema by default",
+    /generic_narrative_agent_view_opened:\s*false/,
+    "Double-clicking a Meaning Network node or edge must not open the general Narrative Agent overview",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sheet="true"/,
+    "Double-clicking a Meaning Network node or edge must open a specific Meaning Sheet",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sheet-specific-storyline="true"/,
+    "Narrative Agent node sheets must expose a specific storyline leaf action",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-edge-explanation="true"/,
+    "Meaning Network edge sheets must expose a plain-language edge explanation",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /persistMeaningNetworkEdgeDecision[\s\S]*proliferation_decisions/,
+    "Meaning Network edge confirm or reject actions must persist as governed correction decisions",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /plain_language_meaning/,
+    "Meaning Network edge decisions must preserve the analyst-facing edge reading",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-sheet="true"/,
+    "Meaning Network node and edge sheets must expose SFL reading confirmation controls",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-moral-select="true"/,
+    "Meaning Network SFL sheets must let analysts select moral polarity",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-confirmation-relation-select="true"/,
+    "Meaning Network SFL sheets must expose confirm/reject/alignment relations from the schema",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-judgement-group-select="true"/,
+    "Meaning Network SFL sheets must route interpersonal readings through judgement groups",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-virtue-family-select="true"/,
+    "Meaning Network SFL sheets must route virtue readings through virtue families",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-virtue-axis-select="true"/,
+    "Meaning Network SFL sheets must route virtue readings through virtue axes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-sfl-virtue-vice-select="true"/,
+    "Meaning Network SFL sheets must let analysts select virtues and vices",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /persistMeaningNetworkSflDecision[\s\S]*proliferation_decisions/,
+    "Meaning Network SFL confirmations must persist as governed correction decisions",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-proliferation-feedback="true"/,
+    "Meaning Network confirmations must show a visible saved/proliferation receipt",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /Data Maturity Proliferation/,
+    "Meaning Network save feedback must explicitly name the Data Maturity Proliferation regime",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /resetMeaningNetworkReviewFrame[\s\S]*setMeaningNetworkSheet\(null\)[\s\S]*setSelectedMeaningNetworkNodeId\(null\)[\s\S]*setMeaningNetworkViewMode\("graph"\)/,
+    "Meaning Network saves must clear the active node or sheet and return the workbench to the basic graph view",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /candidate_reading_contributes_to_plot_structure/,
+    "Confirmed SFL readings must be marked as contributing to Plot Structure",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /taxonomy_path/,
+    "Confirmed SFL readings must persist their full schema taxonomy path",
   );
 
   assert.match(
@@ -2437,7 +2587,19 @@ test("Datascene Meaning Network remains available for mature scene presence prol
   assert.match(
     meaningPlotPanel,
     /meaningNetworkSourceAnchorMissing/,
-    "Meaning Network must route source-missing nodes to governed schema/traceback handling instead of fake frame zero",
+    "Meaning Network must route source-missing nodes to governed review instead of fake frame zero",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /fallbackPanel:\s*"MeaningNetworkSheet"/,
+    "Source-missing Meaning Network nodes must stay in the node or edge sheet instead of opening a dead Master Schema view",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /generic_master_schema_view_opened:\s*false/,
+    "Source-missing Meaning Network navigation must not open the generic Master Schema panel",
   );
 
   assert.match(

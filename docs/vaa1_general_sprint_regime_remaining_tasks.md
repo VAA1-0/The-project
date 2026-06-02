@@ -7,6 +7,9 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 ## 1. Data maturity proliferation regime
 
 - Implement the Master Schema-first mature-data proliferation spine.
+- Keep the Master Schema as the canonical maturity anchor. BBox/ROI hubs, Meaning Network node/edge sheets, Narrative Agent leaves, scene cards, reports, and related panels should render synchronized projections from that anchor rather than competing local truth.
+- Treat explicit user corrections as the highest authority across the loop. A user-corrected time, label, coordinate, dimension, storyline, node meaning, edge meaning, or presence interval can only be superseded by another explicit user correction.
+- Every mature-data feedback event should carry source anchors, maturity state, authority level, correction provenance, affected panels, and traceback so panels can refresh coherently.
 - Surface near matches in BBox/ROI and relevant panels as `to_be_confirmed_or_canceled` candidates.
 - Keep probability thresholds openly weighted and configurable.
 - Allow proliferation only from manual confirmation/correction or very high probability with source anchors and traceback.
@@ -19,12 +22,18 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 - Keep Character Paths primarily in the Narrative Agent surface.
 - Make scene presence, character-by-scene, dramatic archetype, participant ranking, and Narrative Agent path views navigable.
 - Ensure every character-path claim points to source evidence, scene anchors, and maturity state.
+- Surface recognized character paths as their own Narrative Agent leaves with timelines, summaries, source anchors, maturity state, and traceback.
+- Feed Character/Path Meaning schemas from proliferated mature data, including analyst-confirmed BBox/ROI, Meaning Network presence intervals, transcript/speaker links, scene anchors, object relations, prosody, and manual annotations.
+- Treat the Narrative Agent panel as the home for character/path meaning once narrative-structure support is working, not merely as a list of recognized names.
+- Open specific Narrative Agent storylines as focused panels or leaves from node/edge sheets; do not use double-click on a graph node/edge to send the analyst to the general Narrative Agent(s) overview.
 - Propagate analyst renames, confirmations, merges, splits, rejections, and drops across video, audio, transcript, scene cards, reports, search, and evidence graph.
 
 ## 3. Meaning / Plot and interpretive lenses
 
 - Keep Meaning / Plot as the cross-agent plot map.
 - Treat Aristotelian, Freytagian, Campbellian, Fryean, Bookerian, Burkean, and related readings as interpretive lenses, not hard labels.
+- Deliver interpretive lenses as actual Datascene readings of narrative structure, not cosmetic buttons. Each lens reading should surface projected scene roles, node roles, edge meanings, evidence anchors, maturity state, compare/delta affordances, and analyst accept/edit/reject actions.
+- Prioritize narrative structure support first; surface character meaning dimensions after the narrative-structure readings are functioning and source-linked.
 - Require maturity gates before prose is surfaced.
 - Connect interpretive lens prose to scene cards, SFL/dependency evidence, transcript anchors, visual/audio evidence, and traceback.
 
@@ -36,8 +45,12 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 - Ensure meaning-network objects remain projections from governed evidence, not independent semantic truth.
 - Continue from the operating-principles note: `docs/vaa1_operating_principles_constellational_meaning_network_2026-05-26.md`.
 - Treat Narrative Agent presence handles as one feature inside the larger Meaning Network Graph regime.
+- Keep BBox/ROI evidence hubs and Meaning Network node/edge sheets behaviorally aligned: source verification first, double-click for the detailed sheet/hub, right-click for traceback/render/confirm/drop actions, and explicit analyst confirmation before mature proliferation.
+- Make node/edge sheet navigation specific: graph double-click opens the selected node/edge sheet, while any Narrative Agent action inside that sheet opens the relevant storyline leaf.
 - Harden graph layout, source navigation, edge management, expandable/dedicated panel behavior, timeline cursor sync, draggable presence handles, custom lanes, and whole/scene/character timeline views.
 - Add constellational triangulation for mature graph nodes and handles across visual, transcript, diarization, prosody, scene, object, relation, off-camera, music, location, and manual-confirmation evidence.
+- Deliver forensic render as a real graph action. Start with source-linked BBox/ROI crop or zoom renders and node/edge evidence plates, then expand to montages, before/after comparisons, traceback renders, and report assets.
+- Require forensic render outputs or render requests to preserve source media id, time range, coordinate basis, selected graph/BBox ids, maturity state, analyst authority, output type, persistence state, and traceback link.
 
 ## 5. Bojean antenarrative 5B layer
 

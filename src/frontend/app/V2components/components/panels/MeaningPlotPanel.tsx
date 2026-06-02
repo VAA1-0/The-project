@@ -248,6 +248,28 @@ type MeaningNetworkContextMenuState = {
   edge?: MeaningNetworkEdge;
 };
 
+type MeaningNetworkSheetState = {
+  kind: "node" | "edge";
+  node?: MeaningNetworkNode;
+  edge?: MeaningNetworkEdge;
+};
+
+type MeaningNetworkSflLayer = "ideational" | "interpersonal" | "textual" | "virtues_and_vices";
+type MeaningNetworkMoralPolarity = "virtue" | "vice" | "ambivalent" | "not_moralized";
+
+type MeaningNetworkSflDraft = {
+  sfl_layer: MeaningNetworkSflLayer;
+  sfl_category: string;
+  judgement_group: string;
+  judgement_axis: string;
+  moral_polarity: MeaningNetworkMoralPolarity;
+  virtue_family: string;
+  virtue_axis: string;
+  virtue_vice_value: string;
+  confirmation_relation: string;
+  applied_label: string;
+};
+
 type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
 
 const MEANING_NETWORK_DEFAULT_LANES: MeaningNetworkLane[] = [
@@ -278,6 +300,217 @@ const PLOT_LENSES: Array<{ id: PlotLens; label: string }> = [
   { id: "frye", label: "Frye" },
   { id: "booker", label: "Booker" },
 ];
+
+const MEANING_NETWORK_SFL_LAYERS: Array<{ value: MeaningNetworkSflLayer; label: string }> = [
+  { value: "ideational", label: "Ideational" },
+  { value: "interpersonal", label: "Interpersonal" },
+  { value: "textual", label: "Textual" },
+  { value: "virtues_and_vices", label: "Virtues / vices" },
+];
+
+const MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES = [
+  "actor",
+  "object",
+  "action",
+  "event",
+  "process",
+  "situation",
+  "location",
+  "time",
+  "causal_relation",
+  "material_relation",
+  "symbolic_object",
+];
+
+const MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES = [
+  "sequence",
+  "continuity",
+  "contrast",
+  "emphasis",
+  "framing",
+  "rhythm",
+  "transition",
+  "repetition",
+  "silence",
+  "editing_structure",
+];
+
+const MEANING_NETWORK_SFL_JUDGEMENT: Record<string, string[]> = {
+  alignment_positive: [
+    "acceptance",
+    "affirmation",
+    "confirmation",
+    "agreement",
+    "support",
+    "solidarity",
+    "trust",
+    "endorsement",
+    "legitimization",
+  ],
+  alignment_negative: [
+    "rejection",
+    "denial",
+    "contradiction",
+    "dismissal",
+    "hostility",
+    "delegitimization",
+    "distrust",
+    "opposition",
+    "alienation",
+  ],
+  authority_positive: [
+    "command",
+    "guidance",
+    "permission",
+    "advice",
+    "validation",
+    "authorization",
+  ],
+  authority_negative: [
+    "prohibition",
+    "suppression",
+    "silencing",
+    "humiliation",
+    "coercion",
+    "domination",
+  ],
+  relational_positive: [
+    "care",
+    "love",
+    "compassion",
+    "respect",
+    "admiration",
+    "reconciliation",
+  ],
+  relational_negative: [
+    "cruelty",
+    "contempt",
+    "ridicule",
+    "hatred",
+    "abandonment",
+    "exclusion",
+  ],
+};
+
+const MEANING_NETWORK_SFL_CONFIRMATION_RELATIONS = [
+  "confirms",
+  "rejects",
+  "aligns_with",
+  "opposes",
+  "morally_legitimizes",
+  "morally_delegitimizes",
+];
+
+const MEANING_NETWORK_SFL_VIRTUES: Record<string, Record<string, { positive: string[]; antithesis: string[] }>> = {
+  wisdom_and_knowledge: {
+    creativity: {
+      positive: ["creativity", "inventiveness", "adaptive_imagination", "innovation", "resourcefulness"],
+      antithesis: ["rigidity", "dogmatism", "mental_stagnation", "imitative_thinking", "destructive_chaos"],
+    },
+    curiosity: {
+      positive: ["exploration", "wonder", "interest", "discovery", "questioning"],
+      antithesis: ["apathy", "closedness", "avoidance", "fear_of_discovery", "intellectual_passivity"],
+    },
+    open_mindedness_judgment: {
+      positive: ["critical_thinking", "reflection", "balanced_reasoning", "fair_evaluation", "perspective_taking"],
+      antithesis: ["bias", "prejudice", "fanaticism", "impulsiveness", "delusion"],
+    },
+    love_of_learning: {
+      positive: ["study", "mastery", "growth", "deep_engagement", "discipline_of_learning"],
+      antithesis: ["anti_intellectualism", "shallowness", "willful_ignorance", "cynical_disengagement"],
+    },
+    perspective: {
+      positive: ["wisdom", "guidance", "counsel", "holistic_understanding", "maturity"],
+      antithesis: ["confusion", "naivety", "misguidance", "short_sightedness"],
+    },
+  },
+  courage: {
+    bravery: {
+      positive: ["bravery", "risk_taking", "moral_courage", "steadfastness", "resistance"],
+      antithesis: ["cowardice", "avoidance", "submission", "paralysis"],
+    },
+    persistence_perseverance: {
+      positive: ["perseverance", "discipline", "endurance", "commitment", "finishing_what_one_starts"],
+      antithesis: ["quitting", "collapse", "fickleness", "disintegration"],
+    },
+    integrity_honesty: {
+      positive: ["truthfulness", "authenticity", "transparency", "sincerity"],
+      antithesis: ["deception", "manipulation", "corruption", "duplicity"],
+    },
+    vitality_zest: {
+      positive: ["energy", "enthusiasm", "aliveness", "engagement"],
+      antithesis: ["apathy", "exhaustion", "nihilism", "emotional_deadness"],
+    },
+  },
+  humanity: {
+    love: {
+      positive: ["love", "attachment", "care", "devotion", "intimacy"],
+      antithesis: ["alienation", "detachment", "abandonment", "emotional_coldness"],
+    },
+    kindness: {
+      positive: ["kindness", "compassion", "generosity", "mercy", "helpfulness"],
+      antithesis: ["cruelty", "sadism", "selfishness", "indifference"],
+    },
+    social_intelligence: {
+      positive: ["empathy", "attunement", "diplomacy", "relational_awareness"],
+      antithesis: ["social_blindness", "manipulation", "emotional_stupidity", "callousness"],
+    },
+  },
+  justice: {
+    teamwork_citizenship: {
+      positive: ["cooperation", "solidarity", "loyalty", "shared_responsibility"],
+      antithesis: ["betrayal", "fragmentation", "self_interest", "tribal_sabotage"],
+    },
+    fairness: {
+      positive: ["equity", "impartiality", "justice", "reciprocity"],
+      antithesis: ["corruption", "bias", "favoritism", "oppression"],
+    },
+    leadership: {
+      positive: ["guidance", "organization", "protection", "collective_motivation"],
+      antithesis: ["tyranny", "chaos", "abdication", "manipulative_domination"],
+    },
+  },
+  temperance: {
+    forgiveness: {
+      positive: ["forgiveness", "reconciliation", "release", "mercy", "restoration"],
+      antithesis: ["vengefulness", "resentment", "obsession", "punitive_fixation"],
+    },
+    humility_modesty: {
+      positive: ["humility", "modesty", "balance", "self_awareness", "groundedness"],
+      antithesis: ["arrogance", "grandiosity", "narcissism", "hubris"],
+    },
+    prudence: {
+      positive: ["foresight", "restraint", "carefulness", "deliberation"],
+      antithesis: ["recklessness", "impulsiveness", "self_destruction"],
+    },
+    self_regulation: {
+      positive: ["discipline", "control", "stability", "consistency"],
+      antithesis: ["addiction", "compulsion", "loss_of_control", "chaotic_behavior"],
+    },
+  },
+  transcendence: {
+    appreciation_of_beauty_and_excellence: {
+      positive: ["awe", "elevation", "admiration", "reverence"],
+      antithesis: ["cynicism", "degradation", "vulgarization", "emptiness"],
+    },
+    gratitude: {
+      positive: ["thankfulness", "recognition", "reciprocity", "humble_appreciation"],
+      antithesis: ["entitlement", "bitterness", "ingratitude", "resentful_consumption"],
+    },
+    hope: {
+      positive: ["optimism", "future_orientation", "faith_in_possibility", "renewal"],
+      antithesis: ["despair", "fatalism", "hopelessness", "collapse"],
+    },
+    humor: {
+      positive: ["playfulness", "joy", "comic_relief", "bonding", "lightness"],
+      antithesis: ["cynical_ridicule", "humiliation", "mockery", "nihilistic_irony"],
+    },
+    spirituality: {
+      positive: ["meaning", "sacredness", "connectedness", "transcendent_orientation"],
+      antithesis: ["nihilism", "existential_emptiness", "alienation", "spiritual_collapse"],
+    },
+  },
+};
 
 const DRAMATIC_ARCHETYPE_LENSES: Array<{
   id: DramaticArchetypeLens;
@@ -835,6 +1068,149 @@ function meaningNetworkMaturityLabel(item: { maturity?: { level?: string; author
 
 function meaningNetworkNodeKindLabel(nodeType: string): string {
   return String(nodeType || "node").replaceAll("_", " ");
+}
+
+function meaningNetworkEdgeKindLabel(edgeType: string): string {
+  return String(edgeType || "meaning_network_edge").replaceAll("_", " ");
+}
+
+function meaningNetworkEdgePlainLanguage(edge: MeaningNetworkEdge, sourceLabel?: string, targetLabel?: string): string {
+  const source = sourceLabel || edge.source_node_id || "source node";
+  const target = targetLabel || edge.target_node_id || "target node";
+  const relation = meaningNetworkEdgeKindLabel(edge.edge_type);
+  const evidenceTypes = meaningNetworkSourceTypes(edge.evidence_refs);
+  const evidenceSummary = evidenceTypes.length
+    ? `Supported by ${evidenceTypes.join(", ")} evidence.`
+    : "No source evidence is attached yet.";
+  return `${source} ${relation} ${target}. ${evidenceSummary}`;
+}
+
+function meaningNetworkEdgeReason(edge: MeaningNetworkEdge): string {
+  const kind = meaningNetworkCanonicalNodeType(edge.edge_type);
+  if (kind.includes("co_occurs") || kind.includes("appears_with")) {
+    return "The linked items share a scene, time span, or source evidence constellation.";
+  }
+  if (kind.includes("spoken_by")) {
+    return "The edge links spoken language to a speaker or Narrative Agent candidate.";
+  }
+  if (kind.includes("supports")) {
+    return "The source node is being used as evidence support for the target claim.";
+  }
+  if (kind.includes("contradicts")) {
+    return "The source and target claims are in tension and require analyst review.";
+  }
+  if (kind.includes("precedes") || kind.includes("follows")) {
+    return "The edge carries a temporal reading of narrative sequence.";
+  }
+  if (kind.includes("copy_of_anchor")) {
+    return "The edge preserves a copied continuity anchor and should remain traceable.";
+  }
+  return "The edge is a reviewable relation between governed Meaning Network objects.";
+}
+
+function meaningNetworkSflDraftKey(kind: "node" | "edge", id: string): string {
+  return `${kind}:${id}`;
+}
+
+function meaningNetworkSflDefaultDraft(
+  kind: "node" | "edge",
+  item: MeaningNetworkNode | MeaningNetworkEdge,
+): MeaningNetworkSflDraft {
+  const canonical =
+    kind === "node"
+      ? meaningNetworkCanonicalNodeType((item as MeaningNetworkNode).node_type)
+      : meaningNetworkCanonicalNodeType((item as MeaningNetworkEdge).edge_type);
+  const attributes = kind === "node" ? ((item as MeaningNetworkNode).attributes || {}) : {};
+  const hintedLayer = String(attributes.sfl_layer || attributes.sflLayer || "").toLowerCase();
+  const sfl_layer: MeaningNetworkSflLayer =
+    hintedLayer === "ideational" ||
+    hintedLayer === "interpersonal" ||
+    hintedLayer === "textual" ||
+    hintedLayer === "virtues_and_vices"
+      ? hintedLayer
+      : canonical.includes("judgement") ||
+          canonical.includes("judgment") ||
+          canonical.includes("moral") ||
+          canonical.includes("virtue") ||
+          canonical.includes("vice")
+        ? "virtues_and_vices"
+        : canonical.includes("spoken") || canonical.includes("speaker") || canonical.includes("agent")
+          ? "interpersonal"
+          : canonical.includes("precedes") || canonical.includes("follows") || canonical.includes("scene")
+            ? "textual"
+          : "ideational";
+  const defaultJudgementGroup = canonical.includes("reject") ||
+    canonical.includes("dismiss") ||
+    canonical.includes("contradict") ||
+    canonical.includes("oppos") ||
+    canonical.includes("delegitimiz")
+    ? "alignment_negative"
+    : canonical.includes("authority")
+      ? "authority_positive"
+      : canonical.includes("care") || canonical.includes("relation")
+        ? "relational_positive"
+        : "alignment_positive";
+  const judgement_axis = String(
+    attributes.judgement_axis ||
+      attributes.judgment_axis ||
+      attributes.moral_axis ||
+      MEANING_NETWORK_SFL_JUDGEMENT[defaultJudgementGroup][0],
+  );
+  const virtue_family = String(attributes.virtue_family || "humanity");
+  const virtue_axis = String(attributes.virtue_axis || "kindness");
+  const moral_polarity: MeaningNetworkMoralPolarity = canonical.includes("vice")
+    ? "vice"
+    : canonical.includes("virtue")
+      ? "virtue"
+      : canonical.includes("contradict") || canonical.includes("harm")
+        ? "ambivalent"
+        : "not_moralized";
+  const virtue_vice_value = String(
+    attributes.virtue_vice_value ||
+      attributes.virtue ||
+      attributes.vice ||
+      (moral_polarity === "vice"
+        ? MEANING_NETWORK_SFL_VIRTUES[virtue_family]?.[virtue_axis]?.antithesis?.[0]
+        : MEANING_NETWORK_SFL_VIRTUES[virtue_family]?.[virtue_axis]?.positive?.[0]) ||
+      "kindness",
+  );
+  const sfl_category = String(
+    attributes.sfl_category ||
+      (sfl_layer === "textual" ? "sequence" : sfl_layer === "ideational" ? "situation" : judgement_axis),
+  );
+  const confirmation_relation = String(
+    attributes.confirmation_relation ||
+      (canonical.includes("reject") || canonical.includes("dismiss") || canonical.includes("oppos") ? "rejects" : "confirms"),
+  );
+  const applied_label = String(
+    attributes.sfl_reading_label ||
+      attributes.meaning_reading ||
+      `${sfl_layer.replaceAll("_", " ")} / ${sfl_layer === "virtues_and_vices" ? virtue_vice_value : sfl_category}`,
+  );
+  return {
+    sfl_layer,
+    sfl_category,
+    judgement_group: defaultJudgementGroup,
+    judgement_axis,
+    moral_polarity,
+    virtue_family,
+    virtue_axis,
+    virtue_vice_value,
+    confirmation_relation,
+    applied_label,
+  };
+}
+
+function meaningNetworkSflPlainLanguage(draft: MeaningNetworkSflDraft): string {
+  const layer = draft.sfl_layer.replaceAll("_", " ");
+  if (draft.sfl_layer === "virtues_and_vices") {
+    const polarity = draft.moral_polarity === "vice" ? "antithesis" : "positive";
+    return `${layer} reading: ${draft.virtue_family.replaceAll("_", " ")} / ${draft.virtue_axis.replaceAll("_", " ")} / ${polarity} / ${draft.virtue_vice_value.replaceAll("_", " ")}.`;
+  }
+  if (draft.sfl_layer === "interpersonal") {
+    return `${layer} judgement: ${draft.confirmation_relation.replaceAll("_", " ")} through ${draft.judgement_group.replaceAll("_", " ")} / ${draft.judgement_axis.replaceAll("_", " ")}.`;
+  }
+  return `${layer} reading: ${draft.sfl_category.replaceAll("_", " ")}.`;
 }
 
 function meaningNetworkCanonicalNodeType(nodeType: string): string {
@@ -1991,7 +2367,16 @@ export default function MeaningPlotPanel({
   const [copiedMeaningNetworkEdge, setCopiedMeaningNetworkEdge] = useState<MeaningNetworkEdge | null>(null);
   const [copiedMeaningNetworkContent, setCopiedMeaningNetworkContent] = useState<MeaningNetworkCopiedContent | null>(null);
   const [meaningNetworkContextMenu, setMeaningNetworkContextMenu] = useState<MeaningNetworkContextMenuState | null>(null);
+  const [meaningNetworkSheet, setMeaningNetworkSheet] = useState<MeaningNetworkSheetState | null>(null);
+  const [meaningNetworkSaveFeedback, setMeaningNetworkSaveFeedback] = useState<{
+    status: "saved" | "staged" | "error";
+    message: string;
+    detail: string;
+    updatedAt: string;
+  } | null>(null);
   const [confirmedMeaningNetworkMarkers, setConfirmedMeaningNetworkMarkers] = useState<Record<string, boolean>>({});
+  const [confirmedMeaningNetworkEdges, setConfirmedMeaningNetworkEdges] = useState<Record<string, "confirmed" | "rejected">>({});
+  const [meaningNetworkSflDrafts, setMeaningNetworkSflDrafts] = useState<Record<string, MeaningNetworkSflDraft>>({});
   const [renamedMeaningNetworkMarkers, setRenamedMeaningNetworkMarkers] = useState<Record<string, string>>({});
   const [draftMeaningNetworkNodes, setDraftMeaningNetworkNodes] = useState<MeaningNetworkNode[]>([]);
   const [draftMeaningNetworkEdges, setDraftMeaningNetworkEdges] = useState<MeaningNetworkEdge[]>([]);
@@ -2666,7 +3051,7 @@ export default function MeaningPlotPanel({
   }, [meaningNetworkPresenceOverrides]);
 
   const navigateToMeaningNetworkEvidence = useCallback(
-    (item: Partial<MeaningNetworkNode> & { evidence_refs?: MeaningNetworkEvidenceRef[] }) => {
+    (item: Partial<MeaningNetworkNode & MeaningNetworkEdge> & { evidence_refs?: MeaningNetworkEvidenceRef[] }) => {
       if (!selectedVideoId) {
         return;
       }
@@ -2690,33 +3075,74 @@ export default function MeaningPlotPanel({
       }
       eventBus.emit("meaningNetworkSourceAnchorMissing", {
         videoId: selectedVideoId,
+        node_id: item.node_id,
+        edge_id: item.edge_id,
         evidenceRefs: item.evidence_refs || [],
-        fallbackPanel: "MasterSchema",
+        fallbackPanel: "MeaningNetworkSheet",
+        generic_master_schema_view_opened: false,
       });
-      eventBus.emit("openPanelRequest", {
-        panelType: "MasterSchema",
-        panelProps: { videoId: selectedVideoId },
-      });
+      if (item.node_id) {
+        const node = meaningNetworkNodes.find((candidate) => candidate.node_id === item.node_id);
+        if (node) {
+          setSelectedMeaningNetworkNodeId(node.node_id);
+          setMeaningNetworkSheet({ kind: "node", node });
+        }
+      } else if (item.edge_id) {
+        const edge = meaningNetworkEdges.find((candidate) => candidate.edge_id === item.edge_id);
+        if (edge) {
+          setMeaningNetworkSheet({ kind: "edge", edge });
+        }
+      }
     },
-    [meaningNetworkVerificationRange, selectedVideoId],
+    [meaningNetworkEdges, meaningNetworkNodes, meaningNetworkVerificationRange, selectedVideoId],
   );
 
   const openMeaningNetworkNodeInspector = useCallback((node: MeaningNetworkNode) => {
-    if (isNarrativeAgentMeaningNode(node)) {
-      eventBus.emit("openPanelRequest", {
-        panelType: "ManualIdentification",
-        panelProps: selectedVideoId
-          ? {
-              videoId: selectedVideoId,
-              narrativeAgentNodeId: node.node_id,
-              narrativeAgentLabel: renamedMeaningNetworkMarkers[node.node_id] || node.label,
-            }
-          : {},
-      });
-      return;
-    }
-    navigateToMeaningNetworkEvidence(node);
-  }, [navigateToMeaningNetworkEvidence, renamedMeaningNetworkMarkers, selectedVideoId]);
+    setSelectedMeaningNetworkNodeId(node.node_id);
+    setMeaningNetworkSheet({ kind: "node", node });
+    eventBus.emit("meaningNetworkSheetOpened", {
+      videoId: selectedVideoId,
+      kind: "node",
+      node_id: node.node_id,
+      node_type: node.node_type,
+      source_navigation_first: true,
+      generic_narrative_agent_view_opened: false,
+    });
+  }, [selectedVideoId]);
+
+  const openMeaningNetworkEdgeInspector = useCallback((edge: MeaningNetworkEdge) => {
+    setMeaningNetworkSheet({ kind: "edge", edge });
+    eventBus.emit("meaningNetworkSheetOpened", {
+      videoId: selectedVideoId,
+      kind: "edge",
+      edge_id: edge.edge_id,
+      edge_type: edge.edge_type,
+      source_navigation_first: true,
+      generic_narrative_agent_view_opened: false,
+    });
+  }, [selectedVideoId]);
+
+  const openSpecificNarrativeAgentStoryline = useCallback((node: MeaningNetworkNode) => {
+    eventBus.emit("openPanelRequest", {
+      panelType: "ManualIdentification",
+      panelProps: selectedVideoId
+        ? {
+            videoId: selectedVideoId,
+            narrativeAgentNodeId: node.node_id,
+            narrativeAgentLabel: renamedMeaningNetworkMarkers[node.node_id] || node.label,
+            narrativeAgentStorylineLeaf: true,
+            openAsFocusedLeaf: true,
+          }
+        : {},
+    });
+    eventBus.emit("meaningNetworkSpecificStorylineOpened", {
+      videoId: selectedVideoId,
+      node_id: node.node_id,
+      label: renamedMeaningNetworkMarkers[node.node_id] || node.label,
+      opened_from: "meaning_network_node_sheet",
+      generic_narrative_agent_view_opened: false,
+    });
+  }, [renamedMeaningNetworkMarkers, selectedVideoId]);
 
   const openMeaningNetworkTraceback = useCallback((
     item: MeaningNetworkNode | MeaningNetworkEdge,
@@ -3005,6 +3431,22 @@ export default function MeaningPlotPanel({
     changeMeaningNetworkZoom(event.deltaY < 0 ? 0.12 : -0.12);
   }, [changeMeaningNetworkZoom, meaningNetworkViewMode]);
 
+  const resetMeaningNetworkReviewFrame = useCallback(() => {
+    setMeaningNetworkSheet(null);
+    setMeaningNetworkContextMenu(null);
+    setSelectedMeaningNetworkNodeId(null);
+    setMeaningNetworkViewMode("graph");
+  }, []);
+
+  const reportMeaningNetworkMaturitySave = useCallback((message: string, detail: string, status: "saved" | "staged" | "error" = "saved") => {
+    setMeaningNetworkSaveFeedback({
+      status,
+      message,
+      detail,
+      updatedAt: new Date().toISOString(),
+    });
+  }, []);
+
   const quickConfirmMeaningNetworkNode = useCallback(async (node: MeaningNetworkNode) => {
     setConfirmedMeaningNetworkMarkers((current) => ({ ...current, [node.node_id]: true }));
     const sourceVerification = meaningNetworkVerificationRange(node);
@@ -3087,6 +3529,17 @@ export default function MeaningPlotPanel({
       await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
       const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
       setAnalysisData(refreshed);
+      resetMeaningNetworkReviewFrame();
+      reportMeaningNetworkMaturitySave(
+        "Confirming node saved",
+        "Saved correction bundle was sent to the Data Maturity Proliferation regime with Master Schema as the anchor.",
+      );
+    } else {
+      reportMeaningNetworkMaturitySave(
+        "Confirming node staged locally",
+        "Open an analysis before saving if this correction should enter Data Maturity Proliferation.",
+        "staged",
+      );
     }
     eventBus.emit("meaningNetworkNodeQuickConfirmed", {
       videoId: selectedVideoId,
@@ -3108,7 +3561,605 @@ export default function MeaningPlotPanel({
     if (selectedVideoId) {
       eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
     }
-  }, [analysisData?.annotationCorrections, meaningNetworkVerificationRange, renamedMeaningNetworkMarkers, selectedVideoId]);
+  }, [
+    analysisData?.annotationCorrections,
+    meaningNetworkVerificationRange,
+    renamedMeaningNetworkMarkers,
+    reportMeaningNetworkMaturitySave,
+    resetMeaningNetworkReviewFrame,
+    selectedVideoId,
+  ]);
+
+  const persistMeaningNetworkEdgeDecision = useCallback(async (
+    edge: MeaningNetworkEdge,
+    decision: "confirmed" | "canceled" | "inspected",
+    options?: { editedMeaning?: string },
+  ) => {
+    const sourceNode = meaningNetworkNodes.find((node) => node.node_id === edge.source_node_id);
+    const targetNode = meaningNetworkNodes.find((node) => node.node_id === edge.target_node_id);
+    const sourceLabel = sourceNode ? renamedMeaningNetworkMarkers[sourceNode.node_id] || sourceNode.label : edge.source_node_id;
+    const targetLabel = targetNode ? renamedMeaningNetworkMarkers[targetNode.node_id] || targetNode.label : edge.target_node_id;
+    const plainMeaning = options?.editedMeaning?.trim() || meaningNetworkEdgePlainLanguage(edge, sourceLabel, targetLabel);
+    const evidenceRefs = edge.evidence_refs || [];
+    const tracebackRefs = meaningNetworkTracebackRefs(evidenceRefs);
+    const sourceRange = meaningNetworkEvidenceTimeRange(evidenceRefs);
+    const now = new Date().toISOString();
+    if (decision === "confirmed" || decision === "canceled") {
+      setConfirmedMeaningNetworkEdges((current) => ({
+        ...current,
+        [edge.edge_id]: decision === "confirmed" ? "confirmed" : "rejected",
+      }));
+    }
+    if (!selectedVideoId) {
+      reportMeaningNetworkMaturitySave(
+        "Edge decision staged locally",
+        "Open an analysis before saving if this edge decision should enter Data Maturity Proliferation.",
+        "staged",
+      );
+      return;
+    }
+    const existing = analysisData?.annotationCorrections || {};
+    const projectionTargets = [
+      "master_schema",
+      "meaning_network",
+      "narrative_agent_cards",
+      "video_panel",
+      "bbox_roi_panel",
+      "scene_card_panel",
+      "traceback",
+    ];
+    const proliferationDecision: ProliferationDecision = {
+      decision_id: `meaning-network-edge:${edge.edge_id}`,
+      candidate_id: edge.edge_id,
+      request_id: `meaning-network:${selectedVideoId}`,
+      decision,
+      authority_level: decision === "confirmed" ? "manual_confirmation" : decision === "canceled" ? "manual_rejection" : "manual_review",
+      source_panel: "MeaningNetwork",
+      source_verification_status: sourceRange ? "source_time_resolved" : "source_anchor_missing",
+      source_range_source: sourceRange ? "evidence_ref" : undefined,
+      candidate_label: meaningNetworkEdgeKindLabel(edge.edge_type),
+      applied_label: plainMeaning,
+      target_evidence_id: evidenceRefs[0]?.evidence_id || edge.edge_id,
+      source_anchors: sourceRange
+        ? [
+            {
+              start_seconds: Number(sourceRange.start.toFixed(3)),
+              end_seconds: Number(sourceRange.end.toFixed(3)),
+              range_source: "evidence_ref",
+              source_types: meaningNetworkSourceTypes(evidenceRefs),
+            },
+          ]
+        : [],
+      evidence_refs: evidenceRefs,
+      source_traceback_refs: tracebackRefs,
+      projection_targets: projectionTargets,
+      proliferates_to: projectionTargets,
+      governance_status: {
+        maturity_result:
+          decision === "confirmed"
+            ? "analyst_confirmed_edge_meaning"
+            : decision === "canceled"
+              ? "analyst_rejected_edge_meaning"
+              : "analyst_reviewed_edge_meaning",
+        edge_id: edge.edge_id,
+        edge_type: edge.edge_type,
+        source_node_id: edge.source_node_id,
+        target_node_id: edge.target_node_id,
+        plain_language_meaning: plainMeaning,
+        why_this_edge_exists: meaningNetworkEdgeReason(edge),
+        propagation_required: decision === "confirmed",
+        partial_propagation_allowed: false,
+        source_verification_status: sourceRange ? "source_time_resolved" : "source_anchor_missing",
+        corrected_data_proliferates: decision === "confirmed",
+        raw_detection_retained_as: "traceback_only",
+      },
+      proliferation_allowed: decision === "confirmed",
+      decision_reason: options?.editedMeaning ? "meaning_network_edge_meaning_edit" : "meaning_network_edge_sheet_decision",
+      created_at: now,
+      created_by: "analyst",
+    };
+    const currentDecisions = existing.proliferation_decisions || [];
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      analysis_id: selectedVideoId,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: existing.text_substitutions || [],
+      label_overrides: existing.label_overrides || [],
+      manual_transcript_entries: existing.manual_transcript_entries || [],
+      manual_visual_annotations: existing.manual_visual_annotations || [],
+      master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+      proliferation_decisions: [
+        ...currentDecisions.filter((item) => item.decision_id !== proliferationDecision.decision_id && item.candidate_id !== edge.edge_id),
+        proliferationDecision,
+      ],
+    };
+    await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
+    setAnalysisData(refreshed);
+    resetMeaningNetworkReviewFrame();
+    reportMeaningNetworkMaturitySave(
+      decision === "confirmed" ? "Confirming edge saved" : decision === "canceled" ? "Rejecting edge saved" : "Edge reading saved",
+      "Saved edge correction bundle was sent to the Data Maturity Proliferation regime with Master Schema as the anchor.",
+    );
+    eventBus.emit("meaningNetworkEdgeDecisionCommitted", {
+      videoId: selectedVideoId,
+      edge_id: edge.edge_id,
+      decision,
+      plain_language_meaning: plainMeaning,
+      event_type: "master_schema_updated",
+      update_source: "meaning_network_edge_sheet",
+      update_authority: proliferationDecision.authority_level,
+      source_verification_status: proliferationDecision.source_verification_status,
+      source_evidence_refs: evidenceRefs,
+      source_traceback_refs: tracebackRefs,
+      affected_panels: projectionTargets,
+    });
+    eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
+  }, [
+    analysisData?.annotationCorrections,
+    meaningNetworkNodes,
+    renamedMeaningNetworkMarkers,
+    reportMeaningNetworkMaturitySave,
+    resetMeaningNetworkReviewFrame,
+    selectedVideoId,
+  ]);
+
+  const getMeaningNetworkSflDraft = useCallback((
+    kind: "node" | "edge",
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+  ): MeaningNetworkSflDraft => {
+    const id = kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id;
+    return meaningNetworkSflDrafts[meaningNetworkSflDraftKey(kind, id)] || meaningNetworkSflDefaultDraft(kind, item);
+  }, [meaningNetworkSflDrafts]);
+
+  const updateMeaningNetworkSflDraft = useCallback((
+    kind: "node" | "edge",
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+    patch: Partial<MeaningNetworkSflDraft>,
+  ) => {
+    const id = kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id;
+    const key = meaningNetworkSflDraftKey(kind, id);
+    setMeaningNetworkSflDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] || meaningNetworkSflDefaultDraft(kind, item)),
+        ...patch,
+      },
+    }));
+  }, []);
+
+  const persistMeaningNetworkSflDecision = useCallback(async (
+    kind: "node" | "edge",
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+    decision: "confirmed" | "canceled",
+  ) => {
+    const id = kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id;
+    const refs = item.evidence_refs || [];
+    const range = meaningNetworkEvidenceTimeRange(refs);
+    const tracebackRefs = meaningNetworkTracebackRefs(refs);
+    const draft = getMeaningNetworkSflDraft(kind, item);
+    const now = new Date().toISOString();
+    if (!selectedVideoId) {
+      reportMeaningNetworkMaturitySave(
+        "SFL reading staged locally",
+        "Open an analysis before saving if this SFL reading should enter Data Maturity Proliferation.",
+        "staged",
+      );
+      return;
+    }
+    const existing = analysisData?.annotationCorrections || {};
+    const projectionTargets = [
+      "master_schema",
+      "meaning_network",
+      "plot_structure",
+      "narrative_lens_reading",
+      "narrative_agent_cards",
+      "scene_card_panel",
+      "bbox_roi_panel",
+      "video_panel",
+      "traceback",
+    ];
+    const proliferationDecision: ProliferationDecision = {
+      decision_id: `meaning-network-sfl:${kind}:${id}`,
+      candidate_id: `${kind}:${id}:sfl:${draft.sfl_layer}`,
+      request_id: `meaning-network-sfl:${selectedVideoId}`,
+      decision,
+      authority_level: decision === "confirmed" ? "manual_confirmation" : "manual_rejection",
+      source_panel: "MeaningNetwork",
+      source_verification_status: range ? "source_time_resolved" : "source_anchor_missing",
+      source_range_source: range ? "evidence_ref" : undefined,
+      candidate_label: `SFL ${draft.sfl_layer.replaceAll("_", " ")}`,
+      applied_label: meaningNetworkSflPlainLanguage(draft),
+      target_evidence_id: refs[0]?.evidence_id || id,
+      source_anchors: range
+        ? [
+            {
+              start_seconds: Number(range.start.toFixed(3)),
+              end_seconds: Number(range.end.toFixed(3)),
+              range_source: "evidence_ref",
+              source_types: meaningNetworkSourceTypes(refs),
+            },
+          ]
+        : [],
+      evidence_refs: refs,
+      source_traceback_refs: tracebackRefs,
+      projection_targets: projectionTargets,
+      proliferates_to: projectionTargets,
+      governance_status: {
+        schema: "vaa1.meaning_network_sfl_confirmation.v1",
+        maturity_result:
+          decision === "confirmed"
+            ? "analyst_confirmed_sfl_reading"
+            : "analyst_rejected_sfl_reading",
+        anchor: "master_schema",
+        user_correction_stands: true,
+        target_kind: kind,
+        target_id: id,
+        sfl_layer: draft.sfl_layer,
+        sfl_category: draft.sfl_category,
+        judgement_group: draft.judgement_group,
+        judgement_axis: draft.judgement_axis,
+        moral_polarity: draft.moral_polarity,
+        virtue_family: draft.virtue_family,
+        virtue_axis: draft.virtue_axis,
+        virtue_vice_value: draft.virtue_vice_value,
+        confirmation_relation: draft.confirmation_relation,
+        taxonomy_path:
+          draft.sfl_layer === "virtues_and_vices"
+            ? `virtues_and_vices.${draft.virtue_family}.${draft.virtue_axis}.${draft.moral_polarity === "vice" ? "antithesis" : "positive"}.${draft.virtue_vice_value}`
+            : draft.sfl_layer === "interpersonal"
+              ? `sfl.interpersonal.judgement_categories.${draft.judgement_group}.${draft.judgement_axis}`
+              : `sfl.${draft.sfl_layer}.${draft.sfl_category}`,
+        applied_label: draft.applied_label,
+        plain_language_meaning: meaningNetworkSflPlainLanguage(draft),
+        candidate_reading_contributes_to_plot_structure: decision === "confirmed",
+        character_meaning_surface_ready: kind === "node",
+        source_verification_status: range ? "source_time_resolved" : "source_anchor_missing",
+        propagation_required: decision === "confirmed",
+        partial_propagation_allowed: false,
+        corrected_data_proliferates: decision === "confirmed",
+        raw_parser_output_retained_as: "candidate_traceback_only",
+      },
+      proliferation_allowed: decision === "confirmed",
+      decision_reason: "meaning_network_sfl_sheet_decision",
+      created_at: now,
+      created_by: "analyst",
+    };
+    const currentDecisions = existing.proliferation_decisions || [];
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      analysis_id: selectedVideoId,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: existing.text_substitutions || [],
+      label_overrides: existing.label_overrides || [],
+      manual_transcript_entries: existing.manual_transcript_entries || [],
+      manual_visual_annotations: existing.manual_visual_annotations || [],
+      master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+      proliferation_decisions: [
+        ...currentDecisions.filter((entry) => entry.decision_id !== proliferationDecision.decision_id),
+        proliferationDecision,
+      ],
+    };
+    await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
+    setAnalysisData(refreshed);
+    resetMeaningNetworkReviewFrame();
+    reportMeaningNetworkMaturitySave(
+      decision === "confirmed" ? "Confirming SFL reading saved" : "Rejecting SFL reading saved",
+      "Saved SFL correction bundle was sent to the Data Maturity Proliferation regime and contributes through the Master Schema authority path.",
+    );
+    eventBus.emit("meaningNetworkSflDecisionCommitted", {
+      videoId: selectedVideoId,
+      target_kind: kind,
+      target_id: id,
+      decision,
+      event_type: "master_schema_updated",
+      update_source: "meaning_network_sfl_sheet",
+      update_authority: proliferationDecision.authority_level,
+      sfl_layer: draft.sfl_layer,
+      judgement_axis: draft.judgement_axis,
+      moral_polarity: draft.moral_polarity,
+      virtue_vice_value: draft.virtue_vice_value,
+      affected_panels: projectionTargets,
+      source_evidence_refs: refs,
+      source_traceback_refs: tracebackRefs,
+    });
+    eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
+  }, [
+    analysisData?.annotationCorrections,
+    getMeaningNetworkSflDraft,
+    reportMeaningNetworkMaturitySave,
+    resetMeaningNetworkReviewFrame,
+    selectedVideoId,
+  ]);
+
+  const renderMeaningNetworkSflControls = useCallback((
+    kind: "node" | "edge",
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+  ) => {
+    const draft = getMeaningNetworkSflDraft(kind, item);
+    const judgementGroups = Object.keys(MEANING_NETWORK_SFL_JUDGEMENT);
+    const judgementValues =
+      MEANING_NETWORK_SFL_JUDGEMENT[draft.judgement_group] ||
+      MEANING_NETWORK_SFL_JUDGEMENT[judgementGroups[0]] ||
+      [];
+    const virtueFamilies = Object.keys(MEANING_NETWORK_SFL_VIRTUES);
+    const virtueFamily = MEANING_NETWORK_SFL_VIRTUES[draft.virtue_family]
+      ? draft.virtue_family
+      : virtueFamilies[0];
+    const virtueAxes = Object.keys(MEANING_NETWORK_SFL_VIRTUES[virtueFamily] || {});
+    const virtueAxis = MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[draft.virtue_axis]
+      ? draft.virtue_axis
+      : virtueAxes[0];
+    const virtuePolarity = draft.moral_polarity === "vice" ? "antithesis" : "positive";
+    const virtueValues = MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.[virtuePolarity] || [];
+    const applyLayerDefaults = (nextLayer: MeaningNetworkSflLayer) => {
+      if (nextLayer === "interpersonal") {
+        const nextGroup = draft.judgement_group || "alignment_positive";
+        updateMeaningNetworkSflDraft(kind, item, {
+          sfl_layer: nextLayer,
+          judgement_group: nextGroup,
+          judgement_axis: MEANING_NETWORK_SFL_JUDGEMENT[nextGroup]?.[0] || "affirmation",
+          confirmation_relation: "confirms",
+        });
+        return;
+      }
+      if (nextLayer === "virtues_and_vices") {
+        const nextFamily = virtueFamily || "humanity";
+        const nextAxis = Object.keys(MEANING_NETWORK_SFL_VIRTUES[nextFamily] || {})[0] || "kindness";
+        updateMeaningNetworkSflDraft(kind, item, {
+          sfl_layer: nextLayer,
+          moral_polarity: "virtue",
+          virtue_family: nextFamily,
+          virtue_axis: nextAxis,
+          virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.positive?.[0] || "kindness",
+          confirmation_relation: "morally_legitimizes",
+        });
+        return;
+      }
+      updateMeaningNetworkSflDraft(kind, item, {
+        sfl_layer: nextLayer,
+        sfl_category:
+          nextLayer === "textual"
+            ? MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES[0]
+            : MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES[0],
+        confirmation_relation: "confirms",
+      });
+    };
+
+    return (
+      <div className="mt-2 rounded border border-slate-800 bg-[#050707] p-2" data-vaa1-meaning-network-sfl-sheet="true">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">SFL / moral reading</div>
+            <div className="mt-1 text-[10px] leading-relaxed text-slate-300" data-vaa1-meaning-network-sfl-plain-language="true">
+              {meaningNetworkSflPlainLanguage(draft)}
+            </div>
+          </div>
+          <span className="rounded border border-cyan-900/60 bg-cyan-950/10 px-1.5 py-0.5 text-[9px] text-cyan-100">
+            candidate
+          </span>
+        </div>
+        <div className="mt-2 grid gap-2 md:grid-cols-4">
+          <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+            Main category
+            <select
+              value={draft.sfl_layer}
+              onChange={(event) => applyLayerDefaults(event.target.value as MeaningNetworkSflLayer)}
+              className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+              data-vaa1-meaning-network-sfl-layer-select="true"
+            >
+              {MEANING_NETWORK_SFL_LAYERS.map((layer) => (
+                <option key={layer.value} value={layer.value}>{layer.label}</option>
+              ))}
+            </select>
+          </label>
+
+          {draft.sfl_layer === "ideational" ? (
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Ideational category
+              <select
+                value={draft.sfl_category}
+                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { sfl_category: event.target.value })}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-subcategory-select="true"
+              >
+                {MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {draft.sfl_layer === "textual" ? (
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Textual category
+              <select
+                value={draft.sfl_category}
+                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { sfl_category: event.target.value })}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-subcategory-select="true"
+              >
+                {MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {draft.sfl_layer === "interpersonal" ? (
+            <>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Relation
+                <select
+                  value={draft.confirmation_relation}
+                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { confirmation_relation: event.target.value })}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-confirmation-relation-select="true"
+                >
+                  {MEANING_NETWORK_SFL_CONFIRMATION_RELATIONS.map((relation) => (
+                    <option key={relation} value={relation}>{relation.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Judgement group
+                <select
+                  value={draft.judgement_group}
+                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                    judgement_group: event.target.value,
+                    judgement_axis: MEANING_NETWORK_SFL_JUDGEMENT[event.target.value]?.[0] || "",
+                  })}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-judgement-group-select="true"
+                >
+                  {judgementGroups.map((group) => (
+                    <option key={group} value={group}>{group.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Judgement value
+                <select
+                  value={draft.judgement_axis}
+                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { judgement_axis: event.target.value })}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-judgement-select="true"
+                >
+                  {judgementValues.map((axis) => (
+                    <option key={axis} value={axis}>{axis.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
+
+          {draft.sfl_layer === "virtues_and_vices" ? (
+            <>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Virtue family
+                <select
+                  value={virtueFamily}
+                  onChange={(event) => {
+                    const nextFamily = event.target.value;
+                    const nextAxis = Object.keys(MEANING_NETWORK_SFL_VIRTUES[nextFamily] || {})[0] || "";
+                    const nextPolarity = draft.moral_polarity === "vice" ? "antithesis" : "positive";
+                    updateMeaningNetworkSflDraft(kind, item, {
+                      virtue_family: nextFamily,
+                      virtue_axis: nextAxis,
+                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.[nextPolarity]?.[0] || "",
+                    });
+                  }}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-virtue-family-select="true"
+                >
+                  {virtueFamilies.map((family) => (
+                    <option key={family} value={family}>{family.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Virtue axis
+                <select
+                  value={virtueAxis}
+                  onChange={(event) => {
+                    const nextAxis = event.target.value;
+                    updateMeaningNetworkSflDraft(kind, item, {
+                      virtue_axis: nextAxis,
+                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[nextAxis]?.[virtuePolarity]?.[0] || "",
+                    });
+                  }}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-virtue-axis-select="true"
+                >
+                  {virtueAxes.map((axis) => (
+                    <option key={axis} value={axis}>{axis.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Polarity
+                <select
+                  value={draft.moral_polarity === "vice" ? "vice" : "virtue"}
+                  onChange={(event) => {
+                    const nextPolarity = event.target.value as MeaningNetworkMoralPolarity;
+                    const nextBucket = nextPolarity === "vice" ? "antithesis" : "positive";
+                    updateMeaningNetworkSflDraft(kind, item, {
+                      moral_polarity: nextPolarity,
+                      confirmation_relation: nextPolarity === "vice" ? "morally_delegitimizes" : "morally_legitimizes",
+                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.[nextBucket]?.[0] || "",
+                    });
+                  }}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-moral-select="true"
+                >
+                  <option value="virtue">Virtue / positive</option>
+                  <option value="vice">Vice / antithesis</option>
+                </select>
+              </label>
+              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                Schema value
+                <select
+                  value={draft.virtue_vice_value}
+                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { virtue_vice_value: event.target.value })}
+                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                  data-vaa1-meaning-network-sfl-virtue-vice-select="true"
+                >
+                  {virtueValues.map((value) => (
+                    <option key={value} value={value}>{value.replaceAll("_", " ")}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => void persistMeaningNetworkSflDecision(kind, item, "confirmed")}
+            className="rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-950/25"
+            data-vaa1-meaning-network-sfl-confirm="true"
+          >
+            Confirm SFL reading
+          </button>
+          <button
+            type="button"
+            onClick={() => void persistMeaningNetworkSflDecision(kind, item, "canceled")}
+            className="rounded border border-rose-900/70 bg-[#101010] px-2 py-1 text-[10px] text-rose-100 hover:bg-rose-950/25"
+            data-vaa1-meaning-network-sfl-reject="true"
+          >
+            Reject SFL reading
+          </button>
+        </div>
+      </div>
+    );
+  }, [
+    getMeaningNetworkSflDraft,
+    persistMeaningNetworkSflDecision,
+    updateMeaningNetworkSflDraft,
+  ]);
+
+  const editMeaningNetworkEdgeMeaning = useCallback((edge: MeaningNetworkEdge) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const sourceNode = meaningNetworkNodes.find((node) => node.node_id === edge.source_node_id);
+    const targetNode = meaningNetworkNodes.find((node) => node.node_id === edge.target_node_id);
+    const sourceLabel = sourceNode ? renamedMeaningNetworkMarkers[sourceNode.node_id] || sourceNode.label : edge.source_node_id;
+    const targetLabel = targetNode ? renamedMeaningNetworkMarkers[targetNode.node_id] || targetNode.label : edge.target_node_id;
+    const current = meaningNetworkEdgePlainLanguage(edge, sourceLabel, targetLabel);
+    const next = window.prompt("Edit Meaning Network edge reading", current);
+    if (!next || !next.trim()) {
+      return;
+    }
+    void persistMeaningNetworkEdgeDecision(edge, "inspected", { editedMeaning: next.trim() });
+  }, [meaningNetworkNodes, persistMeaningNetworkEdgeDecision, renamedMeaningNetworkMarkers]);
 
   const copyMeaningNetworkNode = useCallback((node: MeaningNetworkNode) => {
     setCopiedMeaningNetworkNode(node);
@@ -3749,7 +4800,7 @@ export default function MeaningPlotPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-3">
+      <div className="min-h-0 flex-1 overflow-auto p-3" data-vaa1-meaning-plot-panel-scroll="true">
         <MeaningPlotConfirmationStrip analysisData={analysisData} />
         {loading ? (
           <div className="grid h-full min-h-0 min-w-[980px] grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3">
@@ -3800,7 +4851,7 @@ export default function MeaningPlotPanel({
             No second-order meaning candidates surfaced for this analysis yet.
           </div>
         ) : (
-          <div className="flex h-full min-h-0 min-w-[980px] flex-col gap-3 overflow-hidden">
+          <div className="flex min-h-full min-w-[980px] flex-col gap-3">
             <section
               className="rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-2"
               data-vaa1-meaning-plot-operational-workbench="true"
@@ -3846,6 +4897,36 @@ export default function MeaningPlotPanel({
                   </button>
                 </div>
               </div>
+              {meaningNetworkSaveFeedback ? (
+                <div
+                  className={`mt-2 rounded border px-2.5 py-2 ${
+                    meaningNetworkSaveFeedback.status === "saved"
+                      ? "border-emerald-800/70 bg-emerald-950/20"
+                      : meaningNetworkSaveFeedback.status === "staged"
+                        ? "border-amber-800/70 bg-amber-950/20"
+                        : "border-rose-900/70 bg-rose-950/20"
+                  }`}
+                  data-vaa1-meaning-network-proliferation-feedback="true"
+                  data-vaa1-meaning-network-save-state={meaningNetworkSaveFeedback.status}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-emerald-100">
+                        {meaningNetworkSaveFeedback.message}
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-relaxed text-slate-300">
+                        {meaningNetworkSaveFeedback.detail}
+                      </div>
+                    </div>
+                    <div className="shrink-0 rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-emerald-200">
+                      Data Maturity Proliferation
+                    </div>
+                  </div>
+                  <div className="mt-1 text-[9px] text-slate-500">
+                    Saved correction bundle / {new Date(meaningNetworkSaveFeedback.updatedAt).toLocaleTimeString()}
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-2 grid gap-1.5 md:grid-cols-4">
                 <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
                   <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">current lens</div>
@@ -3878,9 +4959,10 @@ export default function MeaningPlotPanel({
                   ? "flex h-full min-h-[620px] resize flex-col overflow-auto rounded border border-teal-700/60 bg-[#080b0b] px-4 py-3"
                   : meaningNetworkExpanded
                   ? "fixed left-4 top-4 z-50 h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] resize overflow-auto rounded border border-teal-700/60 bg-[#080b0b] px-4 py-3 shadow-2xl shadow-black/70"
-                  : "rounded border border-teal-900/40 bg-teal-950/10 px-3 py-2"
+                  : "max-h-[calc(100vh-170px)] overflow-auto rounded border border-teal-900/40 bg-teal-950/10 px-3 py-2"
               }
               data-vaa1-meaning-network-panel-tools="true"
+              data-vaa1-meaning-network-bounded-workbench="true"
               data-vaa1-meaning-network-expanded={meaningNetworkExpanded ? "true" : "false"}
               data-vaa1-meaning-network-dedicated-panel={dedicatedMeaningNetworkPanel ? "true" : "false"}
             >
@@ -4063,7 +5145,7 @@ export default function MeaningPlotPanel({
                 )}
                 {meaningNetworkViewMode === "graph" && meaningNetworkGraph.nodes.length > 0 ? (
                   <div
-                    className={`${meaningNetworkExpanded ? "h-[calc(100vh-260px)] min-h-[520px]" : "max-h-[360px]"} overflow-auto rounded bg-[#050707]`}
+                    className={`${meaningNetworkExpanded ? "h-[calc(100vh-260px)] min-h-[520px]" : "h-[280px]"} overflow-auto rounded bg-[#050707]`}
                     onWheel={handleMeaningNetworkWheelZoom}
                     data-vaa1-meaning-network-scrollable-graph="true"
                     data-vaa1-meaning-network-wheel-zoom="true"
@@ -4296,8 +5378,18 @@ export default function MeaningPlotPanel({
                           key={`graph-edge:${edge.edge_id}`}
                           role="button"
                           tabIndex={0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            navigateToMeaningNetworkEvidence(edge);
+                          }}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            openMeaningNetworkEdgeInspector(edge);
+                          }}
                           onContextMenu={(event) => openMeaningNetworkEdgeContextMenu(event, edge)}
                           data-vaa1-meaning-network-graph-edge="true"
+                          data-vaa1-meaning-network-single-click-source-verifies="true"
+                          data-vaa1-meaning-network-double-click-opens-sheet="true"
                           data-vaa1-meaning-network-context-menu-target="edge"
                         >
                           <line
@@ -4361,7 +5453,8 @@ export default function MeaningPlotPanel({
                           data-vaa1-meaning-network-single-click-selects="true"
                           data-vaa1-meaning-network-single-click-source-verifies="true"
                           data-vaa1-meaning-network-context-menu-target="node"
-                          data-vaa1-meaning-network-double-click-opens-agent={isNarrativeAgentMeaningNode(node) ? "true" : "false"}
+                          data-vaa1-meaning-network-double-click-opens-sheet="true"
+                          data-vaa1-meaning-network-opens-general-agent-view="false"
                         >
                           <title>{label}</title>
                           <circle
@@ -4445,6 +5538,18 @@ export default function MeaningPlotPanel({
                       data-vaa1-meaning-network-context-copy-item="true"
                     >
                       Copy {meaningNetworkContextMenu.kind}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (meaningNetworkContextMenu.node) openMeaningNetworkNodeInspector(meaningNetworkContextMenu.node);
+                        if (meaningNetworkContextMenu.edge) openMeaningNetworkEdgeInspector(meaningNetworkContextMenu.edge);
+                        setMeaningNetworkContextMenu(null);
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-cyan-200 hover:bg-cyan-950/40"
+                      data-vaa1-meaning-network-context-open-sheet="true"
+                    >
+                      Open sheet
                     </button>
                     <button
                       type="button"
@@ -4537,6 +5642,218 @@ export default function MeaningPlotPanel({
                     >
                       Open traceback
                     </button>
+                  </div>
+                ) : null}
+                {meaningNetworkSheet ? (
+                  <div
+                    className="mt-2 max-h-[320px] overflow-auto rounded border border-cyan-900/70 bg-[#071011] p-3"
+                    data-vaa1-meaning-network-sheet="true"
+                    data-vaa1-meaning-network-sheet-kind={meaningNetworkSheet.kind}
+                    data-vaa1-meaning-network-opens-general-agent-view="false"
+                  >
+                    {meaningNetworkSheet.kind === "node" && meaningNetworkSheet.node ? (() => {
+                      const node = meaningNetworkSheet.node;
+                      const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
+                      const refs = node.evidence_refs || [];
+                      const range = meaningNetworkVerificationRange(node);
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-300">
+                                Meaning Sheet / node
+                              </div>
+                              <div className="mt-0.5 truncate text-[12px] font-medium text-slate-100">
+                                {label}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">
+                                {meaningNetworkNodeKindLabel(node.node_type)} / {meaningNetworkMaturityLabel(node)} / {node.maturity?.authority || "authority pending"}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={resetMeaningNetworkReviewFrame}
+                              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                              aria-label="Close Meaning Sheet"
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Source verification</div>
+                              <div className="mt-1 text-[10px] text-slate-300">
+                                {range
+                                  ? `${formatTime(range.start)}-${formatTime(range.end)} / ${range.range_source.replaceAll("_", " ")}`
+                                  : "Source time pending"}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                {meaningNetworkSourceTypes(refs).join(", ") || "No source types attached"}
+                              </div>
+                            </div>
+                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Traceback</div>
+                              <div className="mt-1 text-[10px] text-slate-300">
+                                {meaningNetworkTracebackRefs(refs).slice(0, 3).join(", ") || "Traceback pending"}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                Evidence refs: {refs.length}
+                              </div>
+                            </div>
+                          </div>
+                          {renderMeaningNetworkSflControls("node", node)}
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() => navigateToMeaningNetworkEvidence(node)}
+                              className="rounded border border-cyan-800/70 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
+                              data-vaa1-meaning-network-sheet-source-verify="true"
+                            >
+                              Jump to source
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openMeaningNetworkTraceback(node, "node")}
+                              className="rounded border border-amber-800/70 bg-[#101010] px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-950/25"
+                              data-vaa1-meaning-network-sheet-traceback="true"
+                            >
+                              Traceback
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void quickConfirmMeaningNetworkNode(node)}
+                              className="rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-950/25"
+                              data-vaa1-meaning-network-sheet-confirm="true"
+                            >
+                              Confirm node
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => renameMeaningNetworkNode(node)}
+                              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-teal-700 hover:text-teal-100"
+                              data-vaa1-meaning-network-sheet-edit="true"
+                            >
+                              Rename
+                            </button>
+                            {isNarrativeAgentMeaningNode(node) ? (
+                              <button
+                                type="button"
+                                onClick={() => openSpecificNarrativeAgentStoryline(node)}
+                                className="rounded border border-violet-800/70 bg-[#101010] px-2 py-1 text-[10px] text-violet-100 hover:bg-violet-950/25"
+                                data-vaa1-meaning-network-sheet-specific-storyline="true"
+                              >
+                                Open specific storyline
+                              </button>
+                            ) : null}
+                          </div>
+                        </>
+                      );
+                    })() : null}
+                    {meaningNetworkSheet.kind === "edge" && meaningNetworkSheet.edge ? (() => {
+                      const edge = meaningNetworkSheet.edge;
+                      const sourceNode = meaningNetworkNodes.find((node) => node.node_id === edge.source_node_id);
+                      const targetNode = meaningNetworkNodes.find((node) => node.node_id === edge.target_node_id);
+                      const sourceLabel = sourceNode ? renamedMeaningNetworkMarkers[sourceNode.node_id] || sourceNode.label : edge.source_node_id;
+                      const targetLabel = targetNode ? renamedMeaningNetworkMarkers[targetNode.node_id] || targetNode.label : edge.target_node_id;
+                      const refs = edge.evidence_refs || [];
+                      const range = meaningNetworkEvidenceTimeRange(refs);
+                      const edgeStatus = confirmedMeaningNetworkEdges[edge.edge_id];
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-300">
+                                Meaning Sheet / edge
+                              </div>
+                              <div className="mt-0.5 truncate text-[12px] font-medium text-slate-100">
+                                {meaningNetworkEdgeKindLabel(edge.edge_type)}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">
+                                {meaningNetworkMaturityLabel(edge)} / {edge.maturity?.authority || "authority pending"}{edgeStatus ? ` / ${edgeStatus}` : ""}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={resetMeaningNetworkReviewFrame}
+                              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                              aria-label="Close Meaning Sheet"
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div className="mt-2 rounded border border-slate-800 bg-[#050707] p-2" data-vaa1-meaning-network-edge-explanation="true">
+                            <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Plain-language edge reading</div>
+                            <div className="mt-1 text-[10px] leading-relaxed text-slate-200">
+                              {meaningNetworkEdgePlainLanguage(edge, sourceLabel, targetLabel)}
+                            </div>
+                            <div className="mt-2 text-[9px] uppercase tracking-[0.12em] text-slate-500">Why this edge exists</div>
+                            <div className="mt-1 text-[10px] leading-relaxed text-slate-300">
+                              {meaningNetworkEdgeReason(edge)}
+                            </div>
+                          </div>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Linked nodes</div>
+                              <div className="mt-1 text-[10px] text-slate-300">
+                                {sourceLabel} {"->"} {targetLabel}
+                              </div>
+                            </div>
+                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
+                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Source and traceback</div>
+                              <div className="mt-1 text-[10px] text-slate-300">
+                                {range ? `${formatTime(range.start)}-${formatTime(range.end)}` : "Source time pending"}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                {meaningNetworkTracebackRefs(refs).slice(0, 3).join(", ") || "Traceback pending"}
+                              </div>
+                            </div>
+                          </div>
+                          {renderMeaningNetworkSflControls("edge", edge)}
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() => navigateToMeaningNetworkEvidence(edge)}
+                              className="rounded border border-cyan-800/70 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
+                              data-vaa1-meaning-network-sheet-source-verify="true"
+                            >
+                              Jump to source
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openMeaningNetworkTraceback(edge, "edge")}
+                              className="rounded border border-amber-800/70 bg-[#101010] px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-950/25"
+                              data-vaa1-meaning-network-sheet-traceback="true"
+                            >
+                              Traceback
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void persistMeaningNetworkEdgeDecision(edge, "confirmed")}
+                              className="rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-950/25"
+                              data-vaa1-meaning-network-sheet-confirm-edge="true"
+                            >
+                              Confirm edge
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => editMeaningNetworkEdgeMeaning(edge)}
+                              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-teal-700 hover:text-teal-100"
+                              data-vaa1-meaning-network-sheet-edit-edge="true"
+                            >
+                              Edit reading
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void persistMeaningNetworkEdgeDecision(edge, "canceled")}
+                              className="rounded border border-rose-900/70 bg-[#101010] px-2 py-1 text-[10px] text-rose-100 hover:bg-rose-950/25"
+                              data-vaa1-meaning-network-sheet-reject-edge="true"
+                            >
+                              Reject edge
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })() : null}
                   </div>
                 ) : null}
                 {meaningNetworkViewMode === "whole_timeline" ? (
@@ -4718,7 +6035,7 @@ export default function MeaningPlotPanel({
                   </div>
                 ) : null}
                 <div className="mt-1.5 text-[9px] text-slate-500">
-                  Click a node/edge/timeline marker to jump to source; double-click a graph node to quick-confirm it.
+                  Click a node/edge/timeline marker to jump to source; double-click a graph node or edge to open its Meaning Sheet.
                 </div>
               </div>
               <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -4731,8 +6048,8 @@ export default function MeaningPlotPanel({
                       {reviewableMeaningNetworkNodes.length} navigable
                     </div>
                   </div>
-                  <div className="max-h-28 space-y-1 overflow-auto p-1.5">
-                    {reviewableMeaningNetworkNodes.slice(0, 8).map((node) => {
+                  <div className="max-h-56 space-y-1 overflow-auto p-1.5" data-vaa1-meaning-network-node-list-scroll="true">
+                    {reviewableMeaningNetworkNodes.map((node) => {
                       const confirmed = confirmedMeaningNetworkMarkers[node.node_id];
                       const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
                       return (
@@ -4804,8 +6121,8 @@ export default function MeaningPlotPanel({
                       {reviewableMeaningNetworkEdges.length} source linked
                     </div>
                   </div>
-                  <div className="max-h-28 space-y-1 overflow-auto p-1.5">
-                    {reviewableMeaningNetworkEdges.slice(0, 8).map((edge) => (
+                  <div className="max-h-56 space-y-1 overflow-auto p-1.5" data-vaa1-meaning-network-edge-list-scroll="true">
+                    {reviewableMeaningNetworkEdges.map((edge) => (
                       <button
                         key={edge.edge_id}
                         type="button"
@@ -4831,7 +6148,10 @@ export default function MeaningPlotPanel({
                   </div>
                 </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1 text-[9px] text-slate-500">
+              <div
+                className="sticky bottom-0 z-10 mt-2 flex flex-wrap gap-1 border-t border-slate-900 bg-[#080b0b]/95 pt-2 text-[9px] text-slate-500"
+                data-vaa1-meaning-network-sticky-action-rail="true"
+              >
                 {(meaningNetworkUiContract.required_affordances || [])
                   .filter((item: unknown) =>
                     ["add_node", "add_edge", "quick_confirm", "copy_anchor", "paste_anchor", "rename_node", "jump_to_video_time", "open_traceback_drawer"].includes(String(item)),
