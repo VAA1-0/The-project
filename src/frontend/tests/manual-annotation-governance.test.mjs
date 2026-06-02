@@ -44,6 +44,7 @@ const secondOrderAffirmations = read(
 const videoService = read("lib/video-service.ts");
 const evidenceAuthority = read("lib/evidence-authority.ts");
 const bboxAuthority = read("lib/bbox-authority.ts");
+const annotationCorrections = read("lib/annotation-corrections.ts");
 const sceneGovernance = read("lib/scene-governance.ts");
 
 function manualCategoryUnion() {
@@ -241,6 +242,12 @@ test("manual bbox geometry stays timestamp scoped", () => {
   );
 
   assert.match(
+    bboxAuthority,
+    /export function detectedObjectToNormalizedBox[\s\S]*const appearsNormalized =[\s\S]*Math\.max\(x1, y1, x2, y2\) <= 1\.5[\s\S]*const scaleX = appearsNormalized \? 1 : width[\s\S]*const scaleY = appearsNormalized \? 1 : height/,
+    "detected object normalization must preserve already-normalized manual bbox coordinates instead of scaling them twice",
+  );
+
+  assert.match(
     videoPanel,
     /allManualVisualAnnotations\.find\(\(item\) => item\.id === annotationId\)/,
     "saving an object-backed bbox must load existing manual keyframes before adding a new timestamp",
@@ -284,14 +291,32 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /type OverlayBox = \{[\s\S]*normalizedBox\?: DraftBox/,
+    "overlay boxes must be allowed to carry normalized source-video authority instead of only projected pixels",
+  );
+
+  assert.match(
+    videoPanel,
+    /const fallback = overlay\.normalizedBox[\s\S]*normalizeDraftBox\(overlay\.normalizedBox\)[\s\S]*overlay\.x \/ videoWidth/,
+    "video overlay rendering must prefer normalized source-video coordinates before falling back to pixel projection",
+  );
+
+  assert.match(
+    videoPanel,
+    /key: `manual-\$\{item\.id \|\| index\}`[\s\S]*normalizedBox: normalizeDraftBox\(resolvedBox\)/,
+    "manual BBox/ROI overlays must render directly from normalized analyst geometry",
+  );
+
+  assert.match(
+    videoPanel,
     /const manualOverridesByObjectTrack = new Map<string, ManualVisualAnnotation\[]>/,
     "manual object-track corrections must be tracked as time-aware sets, not a single override per track",
   );
 
   assert.match(
     videoPanel,
-    /trackMatches\.find\(\s*\(entry\)\s*=>\s*isManualAnnotationVisibleAtTime\(entry, currentTime\)\s*\|\|\s*isManualAnnotationVisibleInSelectedWorkspace\(entry\)/,
-    "video overlays must choose the active manual correction for a track by time/workspace",
+    /chooseLatestManualCorrection\(\s*trackMatches,[\s\S]*currentTime,[\s\S]*isManualAnnotationVisibleInSelectedWorkspace/,
+    "video overlays must choose the latest active manual correction for a track by time/workspace",
   );
 
   assert.match(
@@ -346,6 +371,36 @@ test("manual bbox geometry stays timestamp scoped", () => {
     videoPanel,
     /void saveSelectedIndication\(overlay, nextEdit\)/,
     "BBox/ROI Save must persist the resolved typed interval, not a stale edit object",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /export function buildManualCorrectionGeometryKeyframes[\s\S]*existingKeyframes[\s\S]*source: "manual" as const[\s\S]*safeAnchor/,
+    "Saved BBox/ROI corrections must preserve analyst keyframes and add each reshape as manual authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /const geometryKeyframes = mergeManualGeometryKeyframes\(\s*buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*anchorTime: keyframeTime/,
+    "Video BBox/ROI Save must replace drift-prone old geometry with governed interval geometry",
+  );
+
+  assert.match(
+    videoPanel,
+    /coordinates: governedBox,[\s\S]*geometry_keyframes: geometryKeyframes/,
+    "Video BBox/ROI Save must persist the same governed coordinates and dimensions used for rendering",
+  );
+
+  assert.match(
+    videoPanel,
+    /bbox_roi_governance_schema: "vaa1\.bbox_roi_governance\.v1"[\s\S]*interpolation_policy:[\s\S]*allowed: true[\s\S]*manual_confirmation_required_for_cross_boundary: true/,
+    "Saved BBox/ROI corrections may interpolate only between governed manual keyframes",
+  );
+
+  assert.match(
+    videoPanel,
+    /confirmed_fields:[\s\S]*time_interval: true,[\s\S]*geometry: true,[\s\S]*label: true/,
+    "Saved BBox/ROI confirmation events must explicitly confirm time, geometry, and label",
   );
 
   assert.match(
@@ -456,8 +511,8 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /videoRef\.current\?\.getBoundingClientRect\(\)[\s\S]*clientX - videoElementRect\.left - renderedVideoRect\.x[\s\S]*clientY - videoElementRect\.top - renderedVideoRect\.y/,
-    "bbox drag coordinates must subtract the rendered video element viewport position before normalizing",
+    /clientPointToNormalizedVideoPoint\(\{[\s\S]*clientX,[\s\S]*clientY,[\s\S]*elementRect: videoElementRect,[\s\S]*contentRect: renderedVideoRect/,
+    "bbox drag coordinates must normalize through the shared rendered video content projection",
   );
 
   assert.match(
@@ -524,6 +579,158 @@ test("manual bbox geometry stays timestamp scoped", () => {
     videoPanel,
     /source:\s*"indication_editor"/,
     "saving a video bbox indication should close locally without forcing a surprise panel focus jump",
+  );
+});
+
+test("bbox coordinate projection is centralized before rendered overlays", () => {
+  assert.match(
+    bboxAuthority,
+    /export function getTrueVideoContentRect\(/,
+    "bbox authority must expose the single video content rectangle projection utility",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /elementRatio > videoRatio[\s\S]*xOffset = \(elementWidth - renderWidth\) \/ 2[\s\S]*yOffset = \(elementHeight - renderHeight\) \/ 2/,
+    "projection utility must strip letterboxing and pillarboxing from the HTML video element",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /export function clientPointToNormalizedVideoPoint\(/,
+    "pointer-to-bbox coordinates must be normalized through bbox authority, not panel-local DOM math",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /export function projectNormalizedBoxToVideoContent\(/,
+    "visible overlay pixels must be projected from normalized canonical geometry through bbox authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /setRenderedVideoRect\(getTrueVideoContentRectForElement\(videoElement\)\)/,
+    "VideoPanel resize/fullscreen updates must use the shared true video content rect",
+  );
+
+  assert.match(
+    videoPanel,
+    /clientPointToNormalizedVideoPoint\(\{[\s\S]*contentRect: renderedVideoRect/,
+    "BBox drag coordinates must use the shared content-rect point projection",
+  );
+
+  assert.match(
+    videoPanel,
+    /projectNormalizedBoxToVideoContent\(\s*normalizedBox,\s*renderedVideoRect,\s*\)/,
+    "overlay pixel measurements must come from the shared normalized-box projection",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /function getRenderedVideoRect\(/,
+    "VideoPanel must not keep a duplicate video content rectangle calculator",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /function mergeGeometryKeyframes\(/,
+    "manual geometry keyframe merging must be owned by bbox authority",
+  );
+
+  for (const helper of [
+    "manualAnnotationBBoxFingerprint",
+    "manualAnnotationTimeScopeKey",
+    "calculateDraftBoxIoU",
+    "calculateDraftBoxCenterDistance",
+    "synthesizePersonBoxFromExpression",
+    "geometryToNormalizedBox",
+    "isSameSpaceBoxMatch",
+    "analystManualAuthoritySuppressesObjectBox",
+  ]) {
+    assert.match(
+      bboxAuthority,
+      new RegExp(`export function ${helper}\\(`),
+      `${helper} must be exported by bbox authority`,
+    );
+    assert.doesNotMatch(
+      videoPanel,
+      new RegExp(`function ${helper}\\(`),
+      `${helper} must not be reimplemented inside VideoPanel`,
+    );
+  }
+
+  assert.doesNotMatch(
+    objPanel,
+    /function normalizeObjectBox\(/,
+    "Objects panel must use bbox authority object-box normalization instead of panel-local geometry conversion",
+  );
+});
+
+test("bbox save paths install backend canonical corrections immediately", () => {
+  assert.match(
+    videoPanel,
+    /const applySavedAnnotationCorrections = React\.useCallback/,
+    "VideoPanel must have a canonical correction response installer",
+  );
+
+  assert.match(
+    videoPanel,
+    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);[\s\S]*?const refreshed = await VideoService\.refreshAnalysis/,
+    "VideoPanel saves must install returned backend corrections before broad analysis refresh",
+  );
+
+  assert.match(
+    objPanel,
+    /const applySavedAnnotationCorrections = React\.useCallback/,
+    "Objects panel must have a canonical correction response installer",
+  );
+
+  assert.match(
+    objPanel,
+    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);[\s\S]*?const refreshed = await VideoService\.refreshAnalysis/,
+    "Objects panel saves must install returned backend corrections before broad analysis refresh",
+  );
+
+  assert.match(
+    annotationCorrections,
+    /export function requireSavedManualVisualAnnotation/,
+    "manual visual saves must have a shared canonical-return validator",
+  );
+
+  assert.match(
+    videoPanel,
+    /requireSavedManualVisualAnnotation\([\s\S]*savedCorrections,[\s\S]*annotation\.id,[\s\S]*"BBox\/ROI indication"/,
+    "VideoPanel BBox/ROI Save must verify the backend returned the saved annotation before clearing UI state",
+  );
+
+  assert.match(
+    objPanel,
+    /requireSavedManualVisualAnnotation\([\s\S]*savedCorrections,[\s\S]*annotation\.id,[\s\S]*"Objects BBox\/ROI indication"/,
+    "Objects panel BBox/ROI Save must verify the backend returned the saved annotation before clearing UI state",
+  );
+
+  assert.match(
+    videoPanel,
+    /setNativeSaveMessage\(`Could not save BBox\/ROI indication: \$\{message\}`\)/,
+    "VideoPanel BBox/ROI Save must report the exact canonical-save failure path",
+  );
+
+  assert.match(
+    objPanel,
+    /setObjectActionMessage\(`Could not save indication: \$\{message\}`\)/,
+    "Objects panel BBox/ROI Save must report the exact canonical-save failure path",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /await VideoService\.saveAnnotationCorrections\(videoId, nextCorrections\);\s*const refreshed = await VideoService\.refreshAnalysis/,
+    "VideoPanel must not discard the canonical save response before refresh",
+  );
+
+  assert.doesNotMatch(
+    objPanel,
+    /await VideoService\.saveAnnotationCorrections\(videoId, nextCorrections\);\s*const refreshed = await VideoService\.refreshAnalysis/,
+    "Objects panel must not discard the canonical save response before refresh",
   );
 });
 
@@ -724,6 +931,24 @@ test("video bbox labels consume Master Schema maturity before raw detector label
   );
 
   assert.match(
+    bboxAuthority,
+    /export function analystManualAuthoritySuppressesObjectBox/,
+    "analyst manual BBox authority must have an explicit suppression boundary for raw object overlays",
+  );
+
+  assert.match(
+    videoPanel,
+    /item\.sourceType === "manual_visual" && overlayToggles\.manual[\s\S]*return;/,
+    "manual visual annotations must not re-enter the video surface as object detections while manual overlays are active",
+  );
+
+  assert.match(
+    videoPanel,
+    /const analystManualAuthorityActive =[\s\S]*activeManualSpatialOverrides\.some[\s\S]*analystManualAuthoritySuppressesObjectBox[\s\S]*if \(analystManualAuthorityActive && overlayToggles\.manual\) \{[\s\S]*return;/,
+    "raw object overlays must become traceback-only when an analyst correction governs the same visual space",
+  );
+
+  assert.match(
     videoPanel,
     /manualObjectCorrectionTargetId\(overlay\.sourceItem as ManualVisualAnnotation\)/,
     "editing an existing manual object correction must preserve its object target id",
@@ -763,6 +988,36 @@ test("manual OBJ corrections outrank stale narrative-agent labels on object bbox
 
   assert.match(
     videoPanel,
+    /function chooseLatestManualCorrection[\s\S]*manualAnnotationUpdatedAt\(right\)[\s\S]*manualAnnotationUpdatedAt\(left\)/,
+    "Video overlays must choose the latest visible manual correction when duplicate object corrections exist",
+  );
+
+  assert.match(
+    videoPanel,
+    /const activeTrackManual = chooseLatestManualCorrection\([\s\S]*trackMatches,[\s\S]*currentTime,[\s\S]*isManualAnnotationVisibleInSelectedWorkspace/,
+    "Object overlays must not pick the first stale manual correction for a corrected track",
+  );
+
+  assert.match(
+    videoPanel,
+    /const resolvedNormalizedBox =[\s\S]*resolveManualGeometryAtTime\(manualOverride, currentTime\)[\s\S]*: objectNormalizedBox/,
+    "object overlays governed by manual corrections must keep normalized analyst geometry through projection",
+  );
+
+  assert.match(
+    videoPanel,
+    /normalizedBox: resolvedNormalizedBox[\s\S]*normalizeDraftBox\(resolvedNormalizedBox\)/,
+    "object overlays must not lose normalized coordinates when displayed in the Video Panel",
+  );
+
+  assert.match(
+    videoPanel,
+    /const authoritativeObjectManualIds = new Set<string>\(\)[\s\S]*manualOverlaySource = manualVisualAnnotations\.filter/,
+    "Manual overlay rendering must suppress stale duplicate manual corrections for the same object target",
+  );
+
+  assert.match(
+    videoPanel,
     /displayLabel:\s*manualOverrideOverlayLabel \|\| unresolvedOverlayLabel/,
     "active manual object overrides must surface their label in sourceItem displayLabel",
   );
@@ -775,8 +1030,20 @@ test("manual OBJ corrections outrank stale narrative-agent labels on object bbox
 
   assert.match(
     objPanel,
-    /geometry_keyframes:\s*\[[\s\S]*source: "manual"/,
+    /geometry_keyframes: buildManualCorrectionGeometryKeyframes/,
     "Objects panel BBox saves must persist manual geometry keyframes as authority",
+  );
+
+  assert.match(
+    objPanel,
+    /buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*existingKeyframes/,
+    "Objects panel BBox saves must add governed manual keyframes without falling back to raw track geometry",
+  );
+
+  assert.match(
+    objPanel,
+    /coordinates: governedBox,[\s\S]*bbox_roi_governance_schema: "vaa1\.bbox_roi_governance\.v1"/,
+    "Objects panel BBox saves must persist governed geometry and schema metadata",
   );
 
   assert.match(
@@ -1367,14 +1634,14 @@ test("timestamped overlay geometry stays scoped to one analysis and timestamp", 
 
   assert.match(
     videoPanel,
-    /time: Number\(keyframeTime\.toFixed\(3\)\),[\s\S]*coordinates: normalizeDraftBox\(normalizedBox\),[\s\S]*source: "manual"/,
-    "saved bbox geometry must bind each analyst-adjusted coordinate set to its own timestamp",
+    /buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*anchorTime: keyframeTime,[\s\S]*existingKeyframes/,
+    "saved bbox geometry must bind each analyst reshape to its own manual correction keyframe",
   );
 
   assert.match(
     videoPanel,
     /allManualVisualAnnotations\.find\(\(item\) => item\.id === annotationId\)/,
-    "saving later geometry must load the existing annotation before adding a timestamped keyframe",
+    "saving later geometry must load the existing annotation before superseding its governed correction state",
   );
 
   assert.match(
@@ -2336,6 +2603,120 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
     /masterSchemaManualCorrectionCommitted[\s\S]*partial_propagation_allowed:\s*false/,
     "Manual BBox/ROI corrections must emit a Master Schema propagation event that disallows partial propagation",
   );
+
+  assert.match(
+    annotationCorrections,
+    /buildMasterSchemaPresenceIntervalForManualAnnotation/,
+    "Manual BBox/ROI corrections must be able to create the Master Schema presence anchor they feed",
+  );
+
+  assert.match(
+    annotationCorrections,
+    /manualVisualAnnotationPresenceNodeId/,
+    "Manual BBox/ROI and Meaning Network presence intervals must share a stable node id rhythm",
+  );
+
+  assert.match(
+    videoPanel,
+    /upsertMasterSchemaPresenceIntervalForManualAnnotation\([\s\S]*upsertManualVisualAnnotation\(/,
+    "BBox/ROI saves must update manual visual annotations and Master Schema presence intervals together",
+  );
+
+  assert.match(
+    videoPanel,
+    /interval\.source_evidence_refs\?\.some\([\s\S]*manual_visual_annotation/,
+    "Video BBox visibility must honor Master Schema presence anchors linked to manual annotations regardless of source panel",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /const sourceEvidenceRefs = interval\.source_evidence_refs\?\.length[\s\S]*interval\.source_evidence_refs/,
+    "Meaning Network nodes rebuilt from Master Schema intervals must keep the original BBox evidence refs",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /retimeManualVisualAnnotationsFromPresenceInterval\([\s\S]*nextCorrectionsBase,[\s\S]*interval/,
+    "Meaning Network handle edits must retime linked manual BBox annotations while persisting Master Schema intervals",
+  );
+
+  assert.match(
+    annotationCorrections,
+    /master_schema_presence_interval_id:[\s\S]*interval\.id/,
+    "Manual BBox annotations retimed from Master Schema must remember the governing presence interval",
+  );
+
+  assert.match(
+    annotationCorrections,
+    /removeManualVisualAnnotation[\s\S]*master_schema_presence_intervals:[\s\S]*manualVisualAnnotationPresenceIntervalId\(entryId\)[\s\S]*manual_visual_annotation/,
+    "Removing a manual BBox must remove its Master Schema presence anchor so Meaning Network cannot keep a ghost interval",
+  );
+
+  assert.match(
+    videoPanel,
+    /restoreEvidenceToAnalysis[\s\S]*upsertMasterSchemaPresenceIntervalForManualAnnotation\([\s\S]*upsertManualVisualAnnotation/,
+    "Restoring raw/provenance evidence must create a manual BBox and Master Schema presence anchor together",
+  );
+
+  assert.match(
+    videoPanel,
+    /DROP_CORRECTION_VALUE[\s\S]*filteredOverrides[\s\S]*timeOverlaps/,
+    "Restoring raw/provenance evidence must clear the matching drop suppression instead of leaving the source hidden",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-bbox-restore-to-analysis="true"/,
+    "BBox/ROI evidence operations must expose Restore to analysis next to raw detection Drop",
+  );
+
+  assert.match(
+    videoPanel,
+    /const droppedEvidenceRepository = useMemo<DroppedEvidenceRepositoryItem\[\]>/,
+    "VideoPanel must build an actual dropped evidence repository from suppression correction rules",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-dropped-evidence-repository="true"/,
+    "Dropped detections must be browsable from a dedicated repository surface",
+  );
+
+  assert.match(
+    videoPanel,
+    /id="vaa1-dropped-evidence-picker"[\s\S]*role="listbox"[\s\S]*data-vaa1-dropped-evidence-restore="true"/,
+    "Dropped evidence repository picker must expose a selected Restore action without expanding the video layout",
+  );
+
+  assert.match(
+    videoPanel,
+    /openTracebackForDroppedEvidence[\s\S]*sourcePanel: "DroppedEvidenceRepository"/,
+    "Dropped evidence repository rows must preserve traceback navigation for each source item",
+  );
+
+  assert.match(
+    videoPanel,
+    /restoreDroppedEvidence[\s\S]*sourcePanel: "DroppedEvidenceRepository"/,
+    "Dropped evidence repository restore actions must route through the governed restore writer",
+  );
+
+  assert.match(
+    videoPanel,
+    /restoreEvidenceToAnalysisRequested/,
+    "VideoPanel must accept restore requests from provenance surfaces such as Traceback",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /data-vaa1-action="restore-to-analysis"/,
+    "Traceback drawer must expose Restore to analysis for raw/provenance evidence",
+  );
+
+  assert.match(
+    tracebackDrawerPanel,
+    /restoreEvidenceToAnalysisRequested/,
+    "Traceback drawer restore must route through the VideoPanel correction authority writer",
+  );
 });
 
 test("Master Schema Narrative Agent authority surfaces are navigable evidence anchors", () => {
@@ -2490,8 +2871,8 @@ test("expression identity saves anchor to nearby person geometry", () => {
   );
 
   assert.match(
-    videoPanel,
-    /function synthesizePersonBoxFromExpression/,
+    bboxAuthority,
+    /export function synthesizePersonBoxFromExpression/,
     "orphan expression boxes must synthesize a person-sized owner bbox instead of becoming the person bbox themselves",
   );
 

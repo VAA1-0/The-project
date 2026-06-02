@@ -30,12 +30,15 @@ import {
 } from "@/lib/evidence-authority";
 import { getVideoBlob, saveVideoBlob } from "@/lib/blob-store";
 import {
+  DROP_CORRECTION_VALUE,
   broadcastAnalysisCorrectionRefresh,
   buildCorrectionRule,
   buildDropCorrectionRule,
   mergeCorrectionRule,
   pushCorrectionSnapshot,
   removeManualVisualAnnotation,
+  requireSavedManualVisualAnnotation,
+  upsertMasterSchemaPresenceIntervalForManualAnnotation,
   upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
 import { Button } from "@/components/ui/button";
@@ -72,19 +75,35 @@ import {
 import {
   MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS,
   MANUAL_POINT_VISIBILITY_SECONDS,
+  analystManualAuthoritySuppressesObjectBox,
+  buildBoxFromNormalizedPoints,
+  buildManualCorrectionGeometryKeyframes,
   buildManualTrackMatureAuthority,
+  calculateDraftBoxCenterDistance,
+  calculateDraftBoxIoU,
+  clientPointToNormalizedVideoPoint,
   clamp,
   detectedObjectToNormalizedBox,
+  geometryToNormalizedBox,
+  getManualAnnotationBounds,
+  getTrueVideoContentRectForElement,
   isManualAnnotationVisibleAtTime,
+  isSameSpaceBoxMatch,
+  manualAnnotationBBoxFingerprint,
+  manualAnnotationTimeScopeKey,
   manualObjectCorrectionTargetId,
   manualObjectTargetId,
+  mergeManualGeometryKeyframes,
   normalizeDraftBox,
+  projectNormalizedBoxToVideoContent,
   resolveManualGeometryAtTime as resolveAuthoritativeManualGeometryAtTime,
   resolveManualVisualDisplayLabel,
   resolveObjectOverlayBBox,
+  synthesizePersonBoxFromExpression,
   type BBoxMatureAuthority,
   type DraftBox,
   type ManualGeometryKeyframe,
+  type VideoContentRect,
 } from "@/lib/bbox-authority";
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
@@ -95,13 +114,6 @@ const VIDEO_CONTROL_CLEARANCE_PX = 52;
 const ANALYSIS_FRAME_STEP_SECONDS = 1 / 25;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
-
-type RenderedVideoRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
 
 type SingleSourceMarks = {
   a?: number;
@@ -128,11 +140,39 @@ type OverlayBox = {
   modality: "object" | "ocr" | "expression" | "manual";
   label: string;
   color: string;
+  normalizedBox?: DraftBox;
   x: number;
   y: number;
   w: number;
   h: number;
   sourceItem?: any;
+};
+
+type RestoreEvidenceToAnalysisRequest = {
+  videoId?: string;
+  sourcePanel?: string;
+  sourceItem?: Record<string, unknown>;
+  source_refs?: {
+    video_time?: number | string;
+    time_range?: { start?: number | string; end?: number | string };
+    bbox_id?: string | null;
+    annotation_id?: string | null;
+  };
+  claim_label?: string;
+  claim_type?: string;
+  authority_source?: string;
+  traceback?: unknown;
+};
+
+type DroppedEvidenceRepositoryItem = {
+  id: string;
+  label: string;
+  start: number;
+  end: number;
+  trackId?: string;
+  rule: NonNullable<AnnotationCorrections["label_overrides"]>[number];
+  sourceItem?: DetectedObject;
+  normalizedBox?: DraftBox;
 };
 
 type MatureObjectOverlayLabel = {
@@ -976,21 +1016,37 @@ function getAttachedManualAnnotation(source: any): ManualVisualAnnotation | null
     : null;
 }
 
-function manualAnnotationTimeScopeKey(start: number, end: number): string {
-  return `${Number(start).toFixed(3)}-${Number(end).toFixed(3)}`;
-}
-
-function manualAnnotationBBoxFingerprint(box: DraftBox): string {
-  return [
-    box.x,
-    box.y,
-    box.w,
-    box.h,
-  ].map((value) => Number(value).toFixed(4)).join("-");
-}
-
 function isObjectManualOverride(item: ManualVisualAnnotation | undefined | null): boolean {
   return Boolean(item && item.category === "OBJ");
+}
+
+function manualAnnotationUpdatedAt(item: ManualVisualAnnotation): number {
+  return Date.parse(item.updated_at || item.created_at || "") || 0;
+}
+
+function chooseLatestManualCorrection(
+  candidates: ManualVisualAnnotation[],
+  currentTime: number,
+  isVisibleInWorkspace: (item: ManualVisualAnnotation) => boolean,
+): ManualVisualAnnotation | undefined {
+  return candidates
+    .filter(
+      (item) =>
+        isManualAnnotationVisibleAtTime(item, currentTime) ||
+        isVisibleInWorkspace(item),
+    )
+    .sort((left, right) => {
+      const rightUpdated = manualAnnotationUpdatedAt(right);
+      const leftUpdated = manualAnnotationUpdatedAt(left);
+      if (rightUpdated !== leftUpdated) {
+        return rightUpdated - leftUpdated;
+      }
+      const rightBounds = getManualAnnotationBounds(right);
+      const leftBounds = getManualAnnotationBounds(left);
+      const rightStart = rightBounds?.start ?? right.timestamp_seconds ?? 0;
+      const leftStart = leftBounds?.start ?? left.timestamp_seconds ?? 0;
+      return rightStart - leftStart;
+    })[0];
 }
 
 function formatTime(value: number): string {
@@ -1231,142 +1287,6 @@ function getOverlayStackRank(
           : 1000;
   const smallBoxPriority = Math.round((1 - area) * 900);
   return specificity + smallBoxPriority;
-}
-
-function calculateDraftBoxIoU(left: DraftBox | null, right: DraftBox | null): number {
-  if (!left || !right) {
-    return 0;
-  }
-  const leftX2 = left.x + left.w;
-  const leftY2 = left.y + left.h;
-  const rightX2 = right.x + right.w;
-  const rightY2 = right.y + right.h;
-  const intersectionW = Math.max(0, Math.min(leftX2, rightX2) - Math.max(left.x, right.x));
-  const intersectionH = Math.max(0, Math.min(leftY2, rightY2) - Math.max(left.y, right.y));
-  const intersection = intersectionW * intersectionH;
-  if (intersection <= 0) {
-    return 0;
-  }
-  const union = (left.w * left.h) + (right.w * right.h) - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-function calculateDraftBoxCenterDistance(left: DraftBox | null, right: DraftBox | null): number {
-  if (!left || !right) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return Math.hypot(
-    left.x + left.w / 2 - (right.x + right.w / 2),
-    left.y + left.h / 2 - (right.y + right.h / 2),
-  );
-}
-
-function synthesizePersonBoxFromExpression(expressionBox: DraftBox): DraftBox {
-  const centerX = expressionBox.x + expressionBox.w / 2;
-  const width = clamp(Math.max(expressionBox.w * 2.35, 0.12), 0.002, 0.72);
-  const height = clamp(Math.max(expressionBox.h * 4.6, 0.28), 0.002, 0.9);
-  const x = clamp(centerX - width / 2, 0, Math.max(0, 1 - width));
-  const y = clamp(expressionBox.y - expressionBox.h * 0.65, 0, Math.max(0, 1 - height));
-  return normalizeDraftBox({ x, y, w: width, h: height });
-}
-
-function geometryToNormalizedBox(
-  geometry: unknown,
-  videoWidth: number,
-  videoHeight: number,
-): DraftBox | null {
-  const geometryRecord =
-    geometry && typeof geometry === "object" && !Array.isArray(geometry)
-      ? geometry as Record<string, unknown>
-      : null;
-  const rawBox =
-    geometryRecord?.bbox && typeof geometryRecord.bbox === "object"
-      ? geometryRecord.bbox as Record<string, unknown>
-      : geometryRecord;
-  if (!rawBox) {
-    return null;
-  }
-  const x = Number(rawBox.x ?? rawBox.left ?? rawBox.x1);
-  const y = Number(rawBox.y ?? rawBox.top ?? rawBox.y1);
-  const rawWidth = Number(rawBox.width ?? rawBox.w);
-  const rawHeight = Number(rawBox.height ?? rawBox.h);
-  const x2 = Number(rawBox.x2);
-  const y2 = Number(rawBox.y2);
-  let width = Number.isFinite(rawWidth) ? rawWidth : Number.NaN;
-  let height = Number.isFinite(rawHeight) ? rawHeight : Number.NaN;
-  if (!Number.isFinite(width) && Number.isFinite(x) && Number.isFinite(x2)) {
-    width = x2 - x;
-  }
-  if (!Number.isFinite(height) && Number.isFinite(y) && Number.isFinite(y2)) {
-    height = y2 - y;
-  }
-  if (![x, y, width, height].every(Number.isFinite) || width === 0 || height === 0) {
-    return null;
-  }
-  const values = [x, y, x + width, y + height].map(Math.abs);
-  const appearsNormalized = Math.max(...values) <= 1.5;
-  const scaleX = appearsNormalized ? 1 : Math.max(1, videoWidth);
-  const scaleY = appearsNormalized ? 1 : Math.max(1, videoHeight);
-  return normalizeDraftBox({
-    x: Math.min(x, x + width) / scaleX,
-    y: Math.min(y, y + height) / scaleY,
-    w: Math.abs(width) / scaleX,
-    h: Math.abs(height) / scaleY,
-  });
-}
-
-function isSameSpaceBoxMatch(left: DraftBox | null, right: DraftBox | null): boolean {
-  if (!left || !right) {
-    return false;
-  }
-  const iou = calculateDraftBoxIoU(left, right);
-  if (iou >= 0.45) {
-    return true;
-  }
-  const centerDistance = calculateDraftBoxCenterDistance(left, right);
-  const areaRatio =
-    Math.min(left.w * left.h, right.w * right.h) /
-    Math.max(left.w * left.h, right.w * right.h, 0.000001);
-  return iou >= 0.25 && centerDistance <= 0.06 && areaRatio >= 0.35;
-}
-
-function mergeGeometryKeyframes(
-  keyframes: ManualGeometryKeyframe[],
-): ManualGeometryKeyframe[] {
-  const byTime = new Map<number, ManualGeometryKeyframe>();
-  for (const keyframe of keyframes) {
-    if (!Number.isFinite(keyframe.time)) {
-      continue;
-    }
-    const time = Number(keyframe.time.toFixed(3));
-    const existing = byTime.get(time);
-    if (!existing || keyframe.source === "manual") {
-      byTime.set(time, {
-        ...keyframe,
-        time,
-        coordinates: normalizeDraftBox(keyframe.coordinates),
-      });
-    }
-  }
-  return Array.from(byTime.values()).sort((left, right) => left.time - right.time);
-}
-
-function buildBoxFromPoints(
-  startX: number,
-  startY: number,
-  endX: number,
-  endY: number,
-): DraftBox {
-  const left = Math.min(startX, endX);
-  const top = Math.min(startY, endY);
-  const right = Math.max(startX, endX);
-  const bottom = Math.max(startY, endY);
-  return {
-    x: left,
-    y: top,
-    w: right - left,
-    h: bottom - top,
-  };
 }
 
 function classifyShotSize(heightRatio: number, widthRatio: number): string {
@@ -1976,45 +1896,6 @@ function alignActiveObjectLabelsWithGroupedTracks(
   });
 }
 
-function getRenderedVideoRect(
-  containerWidth: number,
-  containerHeight: number,
-  intrinsicWidth: number,
-  intrinsicHeight: number,
-): RenderedVideoRect | null {
-  if (
-    !containerWidth ||
-    !containerHeight ||
-    !intrinsicWidth ||
-    !intrinsicHeight
-  ) {
-    return null;
-  }
-
-  const containerRatio = containerWidth / containerHeight;
-  const intrinsicRatio = intrinsicWidth / intrinsicHeight;
-
-  if (intrinsicRatio > containerRatio) {
-    const width = containerWidth;
-    const height = width / intrinsicRatio;
-    return {
-      x: 0,
-      y: (containerHeight - height) / 2,
-      width,
-      height,
-    };
-  }
-
-  const height = containerHeight;
-  const width = height * intrinsicRatio;
-  return {
-    x: (containerWidth - width) / 2,
-    y: 0,
-    width,
-    height,
-  };
-}
-
 function formatCompareSourceLabel(
   sourceName: string | undefined,
   fallback: string,
@@ -2034,7 +1915,7 @@ export default function VideoPanel() {
   const [duration, setDuration] = useState(0);
   const [frameReadyTime, setFrameReadyTime] = useState<number | null>(null);
   const [renderedVideoRect, setRenderedVideoRect] =
-    useState<RenderedVideoRect | null>(null);
+    useState<VideoContentRect | null>(null);
   const [overlayToggles, setOverlayToggles] = useState<
     Record<OverlayToggleKey, boolean>
   >({
@@ -2187,6 +2068,8 @@ export default function VideoPanel() {
       openNote: "",
     });
   const [nativeSaveMessage, setNativeSaveMessage] = useState<string | null>(null);
+  const [droppedEvidencePickerOpen, setDroppedEvidencePickerOpen] = useState(false);
+  const [selectedDroppedEvidenceId, setSelectedDroppedEvidenceId] = useState<string>("");
 
   const setLockedForensicRoiBox = React.useCallback(
     (value: DraftBox | LockedForensicRoi | null) => {
@@ -2325,20 +2208,27 @@ export default function VideoPanel() {
       return;
     }
 
-    setRenderedVideoRect(
-      getRenderedVideoRect(
-        videoElement.clientWidth,
-        videoElement.clientHeight,
-        videoElement.videoWidth,
-        videoElement.videoHeight,
-      ),
-    );
+    setRenderedVideoRect(getTrueVideoContentRectForElement(videoElement));
   }, []);
 
   const scheduleRenderedVideoRectUpdate = React.useCallback(() => {
     updateRenderedVideoRect();
     window.requestAnimationFrame(() => updateRenderedVideoRect());
   }, [updateRenderedVideoRect]);
+
+  const applySavedAnnotationCorrections = React.useCallback(
+    (savedCorrections: AnnotationCorrections) => {
+      setAnalysisData((current) =>
+        current
+          ? {
+              ...current,
+              annotationCorrections: savedCorrections,
+            }
+          : current,
+      );
+    },
+    [],
+  );
 
   const persistSingleSourceMarks = React.useCallback(
     (nextMarks: SingleSourceMarks) => {
@@ -2701,9 +2591,13 @@ export default function VideoPanel() {
           if (!current) return current;
           return {
             ...current,
-            annotationCorrections: upsertManualVisualAnnotation(
-              current.annotationCorrections,
+            annotationCorrections: upsertMasterSchemaPresenceIntervalForManualAnnotation(
+              upsertManualVisualAnnotation(
+                current.annotationCorrections,
+                payload.annotation as ManualVisualAnnotation,
+              ),
               payload.annotation as ManualVisualAnnotation,
+              { sourcePanel: "BBox/ROI" },
             ),
           };
         });
@@ -3591,6 +3485,113 @@ export default function VideoPanel() {
     }
     return samples;
   }, [detectedObjects, rawDetectedObjects, videoHeight, videoWidth]);
+  const droppedEvidenceRepository = useMemo<DroppedEvidenceRepositoryItem[]>(() => {
+    const dropRules = (analysisData?.annotationCorrections?.label_overrides || []).filter(
+      (rule) => rule.modality === "object" && rule.corrected_value === DROP_CORRECTION_VALUE,
+    );
+    if (dropRules.length === 0) {
+      return [];
+    }
+    const candidates = [...rawDetectedObjects, ...detectedObjects].filter((item) =>
+      Boolean(detectedObjectToNormalizedBox(item, videoWidth, videoHeight)),
+    );
+    const uniqueCandidates = new Map<string, DetectedObject>();
+    candidates.forEach((item, index) => {
+      const candidateTrackId = objectTrackTargetId(item) || "untracked";
+      const candidateTime = Number(item.timestamp ?? item.startTimestamp ?? 0);
+      const candidateLabel = normalizeEvidenceLabel(
+        item.raw_class_name || item.class_name || item.displayLabel,
+      );
+      const key = `${candidateTrackId}:${candidateTime.toFixed(3)}:${candidateLabel}:${index}`;
+      uniqueCandidates.set(key, item);
+    });
+    return dropRules
+      .map((rule) => {
+        const ruleLabel = normalizeEvidenceLabel(rule.raw_value);
+        const ruleTrack =
+          rule.target_track_id !== undefined && rule.target_track_id !== null
+            ? String(rule.target_track_id)
+            : "";
+        const ruleStart = Number(rule.target_start_timestamp ?? rule.target_timestamp ?? 0);
+        const ruleEnd = Number(rule.target_end_timestamp ?? rule.target_timestamp ?? ruleStart);
+        const start = Number.isFinite(ruleStart) ? Math.min(ruleStart, ruleEnd) : 0;
+        const end = Number.isFinite(ruleEnd) ? Math.max(ruleStart, ruleEnd, start + 0.001) : start + 0.001;
+        const matched = Array.from(uniqueCandidates.values())
+          .map((item) => {
+            const itemLabel = normalizeEvidenceLabel(
+              item.raw_class_name || item.class_name || item.displayLabel,
+            );
+            const labelMatches =
+              itemLabel === ruleLabel ||
+              Boolean(itemLabel && ruleLabel && (itemLabel.includes(ruleLabel) || ruleLabel.includes(itemLabel)));
+            if (!labelMatches) {
+              return null;
+            }
+            const itemTrack = objectTrackTargetId(item);
+            if (ruleTrack && itemTrack && String(itemTrack) !== ruleTrack) {
+              return null;
+            }
+            const itemStart = Number(item.startTimestamp ?? item.timestamp ?? start);
+            const itemEnd = Number(item.endTimestamp ?? item.timestamp ?? itemStart);
+            const timeOverlaps =
+              Math.max(Math.min(itemStart, itemEnd), start) <=
+              Math.min(Math.max(itemStart, itemEnd), end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS;
+            if (!timeOverlaps) {
+              return null;
+            }
+            const normalizedBox = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
+            if (!normalizedBox) {
+              return null;
+            }
+            const timeDistance = Math.abs(Number(item.timestamp ?? itemStart) - start);
+            const confidence = Number(item.confidence ?? 0);
+            return {
+              item,
+              normalizedBox,
+              score: confidence * 10 - timeDistance,
+            };
+          })
+          .filter(Boolean)
+          .sort((left, right) => (right?.score || 0) - (left?.score || 0))[0];
+        return {
+          id: rule.id || `dropped:${rule.raw_value}:${rule.target_timestamp ?? start}`,
+          label: String(rule.raw_value || "Dropped detection"),
+          start,
+          end,
+          trackId: ruleTrack || (matched?.item ? objectTrackTargetId(matched.item) || undefined : undefined),
+          rule,
+          sourceItem: matched?.item,
+          normalizedBox: matched?.normalizedBox,
+        };
+      })
+      .sort((left, right) => left.start - right.start || left.label.localeCompare(right.label));
+  }, [
+    analysisData?.annotationCorrections?.label_overrides,
+    detectedObjects,
+    rawDetectedObjects,
+    videoHeight,
+    videoWidth,
+  ]);
+  const selectedDroppedEvidence =
+    droppedEvidenceRepository.find((entry) => entry.id === selectedDroppedEvidenceId) ||
+    droppedEvidenceRepository[0] ||
+    null;
+
+  useEffect(() => {
+    if (droppedEvidenceRepository.length === 0) {
+      if (selectedDroppedEvidenceId) {
+        setSelectedDroppedEvidenceId("");
+      }
+      if (droppedEvidencePickerOpen) {
+        setDroppedEvidencePickerOpen(false);
+      }
+      return;
+    }
+    if (!selectedDroppedEvidenceId || !droppedEvidenceRepository.some((entry) => entry.id === selectedDroppedEvidenceId)) {
+      setSelectedDroppedEvidenceId(droppedEvidenceRepository[0].id);
+    }
+  }, [droppedEvidencePickerOpen, droppedEvidenceRepository, selectedDroppedEvidenceId]);
+
   const ocrResults = analysisData?.ocr ?? [];
   const expressionResults = analysisData?.expressionResults ?? [];
   const audioProsody = analysisData?.audioProsody ?? [];
@@ -3866,7 +3867,12 @@ export default function VideoPanel() {
         const start = Number(interval.start_seconds);
         const end = Number(interval.end_seconds ?? start);
         return (
-          interval.source_panel === "MeaningNetwork" &&
+          (
+            interval.source_panel === "MeaningNetwork" ||
+            interval.source_evidence_refs?.some(
+              (ref) => ref.source_type === "manual_visual_annotation",
+            )
+          ) &&
           Number.isFinite(start) &&
           currentTime >= Math.min(start, end) &&
           currentTime <= Math.max(start, end)
@@ -3986,6 +3992,9 @@ export default function VideoPanel() {
         const targetId = objectTrackTargetId(item);
         const targetIds = objectTrackTargetIds(item);
         const objectNormalizedBox = detectedObjectToNormalizedBox(item, videoWidth, videoHeight);
+        if (item.sourceType === "manual_visual" && overlayToggles.manual) {
+          return;
+        }
         const manualOverride = (() => {
           const trackMatches = targetIds.flatMap(
             (trackId) => manualOverridesByObjectTrack.get(trackId) || [],
@@ -3997,10 +4006,10 @@ export default function VideoPanel() {
           if (selectedTrackManual) {
             return selectedTrackManual;
           }
-          const activeTrackManual = trackMatches.find(
-            (entry) =>
-              isManualAnnotationVisibleAtTime(entry, currentTime) ||
-              isManualAnnotationVisibleInSelectedWorkspace(entry),
+          const activeTrackManual = chooseLatestManualCorrection(
+            trackMatches,
+            currentTime,
+            isManualAnnotationVisibleInSelectedWorkspace,
           );
           if (activeTrackManual) {
             return activeTrackManual;
@@ -4034,8 +4043,10 @@ export default function VideoPanel() {
               })
               .sort(
                 (left, right) =>
+                  manualAnnotationUpdatedAt(right.item) -
+                    manualAnnotationUpdatedAt(left.item) ||
                   calculateDraftBoxIoU(objectNormalizedBox, right.box) -
-                  calculateDraftBoxIoU(objectNormalizedBox, left.box),
+                    calculateDraftBoxIoU(objectNormalizedBox, left.box),
               );
             if (spatialMatches[0]) {
               return spatialMatches[0].item;
@@ -4043,6 +4054,16 @@ export default function VideoPanel() {
           }
           return undefined;
         })();
+        const analystManualAuthorityActive =
+          Boolean(manualOverride) ||
+          (objectNormalizedBox
+            ? activeManualSpatialOverrides.some(({ box }) =>
+                analystManualAuthoritySuppressesObjectBox(objectNormalizedBox, box),
+              )
+            : false);
+        if (analystManualAuthorityActive && overlayToggles.manual) {
+          return;
+        }
         const manualOverrideActive =
           !!manualOverride &&
           (isManualAnnotationVisibleAtTime(manualOverride, currentTime) ||
@@ -4179,19 +4200,18 @@ export default function VideoPanel() {
               return rightScore - leftScore;
             })[0]?.candidate;
         })();
-        const resolvedBox =
+        const resolvedNormalizedBox =
           manualOverrideActive && manualOverride?.geometry_type === "box"
-            ? (() => {
-                const normalized = resolveManualGeometryAtTime(manualOverride, currentTime);
-                if (!normalized) return null;
-                return {
-                  x: normalized.x * videoWidth,
-                  y: normalized.y * videoHeight,
-                  w: normalized.w * videoWidth,
-                  h: normalized.h * videoHeight,
-                };
-              })()
-            : resolveObjectOverlayBBox(item.bbox, videoWidth, videoHeight);
+            ? resolveManualGeometryAtTime(manualOverride, currentTime)
+            : objectNormalizedBox;
+        const resolvedBox = resolvedNormalizedBox
+          ? {
+              x: resolvedNormalizedBox.x * videoWidth,
+              y: resolvedNormalizedBox.y * videoHeight,
+              w: resolvedNormalizedBox.w * videoWidth,
+              h: resolvedNormalizedBox.h * videoHeight,
+            }
+          : resolveObjectOverlayBBox(item.bbox, videoWidth, videoHeight);
         if (!resolvedBox) {
           return;
         }
@@ -4254,6 +4274,9 @@ export default function VideoPanel() {
             : reviewProliferatedCandidate
             ? "border-cyan-300/85 bg-cyan-300/10"
             : "border-amber-300/80 bg-amber-300/10",
+          normalizedBox: resolvedNormalizedBox
+            ? normalizeDraftBox(resolvedNormalizedBox)
+            : undefined,
           x: resolvedBox.x,
           y: resolvedBox.y,
           w: resolvedBox.w,
@@ -4419,7 +4442,32 @@ export default function VideoPanel() {
       const selectedManualId = selectedOverlayKey?.startsWith("manual-")
         ? selectedOverlayKey.replace(/^manual-/, "")
         : null;
-      const manualOverlaySource = [...manualVisualAnnotations];
+      const authoritativeObjectManualIds = new Set<string>();
+      const objectManualGroups = new Map<string, ManualVisualAnnotation[]>();
+      allManualVisualAnnotations.forEach((item) => {
+        const targetId = manualObjectCorrectionTargetId(item);
+        if (!targetId) {
+          return;
+        }
+        objectManualGroups.set(targetId, [
+          ...(objectManualGroups.get(targetId) || []),
+          item,
+        ]);
+      });
+      objectManualGroups.forEach((items) => {
+        const chosen = chooseLatestManualCorrection(
+          items,
+          currentTime,
+          isManualAnnotationVisibleInSelectedWorkspace,
+        );
+        if (chosen?.id) {
+          authoritativeObjectManualIds.add(chosen.id);
+        }
+      });
+      const manualOverlaySource = manualVisualAnnotations.filter((item) => {
+        const targetId = manualObjectCorrectionTargetId(item);
+        return !targetId || authoritativeObjectManualIds.has(item.id);
+      });
       if (
         selectedManualId &&
         !manualOverlaySource.some((item) => item.id === selectedManualId)
@@ -4432,7 +4480,10 @@ export default function VideoPanel() {
           (isManualAnnotationVisibleAtTime(selectedManual, currentTime) ||
             isManualAnnotationVisibleInSelectedWorkspace(selectedManual))
         ) {
-          manualOverlaySource.push(selectedManual);
+          const targetId = manualObjectCorrectionTargetId(selectedManual);
+          if (!targetId || authoritativeObjectManualIds.has(selectedManual.id)) {
+            manualOverlaySource.push(selectedManual);
+          }
         }
       }
       const manualOverlayIds = new Set(manualOverlaySource.map((item) => item.id).filter(Boolean));
@@ -4448,6 +4499,7 @@ export default function VideoPanel() {
           modality: "manual",
           label: resolveManualVisualDisplayLabel(item),
           color: "border-amber-300/90 bg-amber-300/10",
+          normalizedBox: normalizeDraftBox(resolvedBox),
           x: resolvedBox.x * videoWidth,
           y: resolvedBox.y * videoHeight,
           w: resolvedBox.w * videoWidth,
@@ -4465,6 +4517,7 @@ export default function VideoPanel() {
           modality: "manual",
           label,
           color: "border-teal-300/90 bg-teal-300/10",
+          normalizedBox: normalizeDraftBox(box),
           x: box.x * videoWidth,
           y: box.y * videoHeight,
           w: box.w * videoWidth,
@@ -4562,12 +4615,14 @@ export default function VideoPanel() {
     (overlay: OverlayBox): DraftBox => {
       const videoWidth = Math.max(1, videoRef.current?.videoWidth || 1);
       const videoHeight = Math.max(1, videoRef.current?.videoHeight || 1);
-      const fallback = {
-        x: clamp(overlay.x / videoWidth, 0, 1),
-        y: clamp(overlay.y / videoHeight, 0, 1),
-        w: clamp(overlay.w / videoWidth, 0.002, 1),
-        h: clamp(overlay.h / videoHeight, 0.002, 1),
-      };
+      const fallback = overlay.normalizedBox
+        ? normalizeDraftBox(overlay.normalizedBox)
+        : {
+            x: clamp(overlay.x / videoWidth, 0, 1),
+            y: clamp(overlay.y / videoHeight, 0, 1),
+            w: clamp(overlay.w / videoWidth, 0.002, 1),
+            h: clamp(overlay.h / videoHeight, 0.002, 1),
+          };
       const draft = overlayGeometryDrafts[overlay.key];
       if (
         draft &&
@@ -4580,6 +4635,264 @@ export default function VideoPanel() {
     },
     [currentTime, overlayGeometryDrafts],
   );
+
+  const restoreEvidenceToAnalysis = React.useCallback(
+    async (request: RestoreEvidenceToAnalysisRequest) => {
+      const targetVideoId = request.videoId || videoId;
+      if (!targetVideoId) {
+        return;
+      }
+      if (request.videoId && request.videoId !== videoId) {
+        setVideoId(request.videoId);
+      }
+      const sourceItem =
+        request.sourceItem && typeof request.sourceItem === "object"
+          ? request.sourceItem
+          : {};
+      const intrinsicWidth = Math.max(1, videoRef.current?.videoWidth || videoWidth || 1);
+      const intrinsicHeight = Math.max(1, videoRef.current?.videoHeight || videoHeight || 1);
+      const geometrySource =
+        sourceItem.normalizedBox ||
+        sourceItem.normalized_box ||
+        sourceItem.coordinates ||
+        sourceItem.bbox ||
+        sourceItem;
+      const restoredBox = geometryToNormalizedBox(
+        geometrySource,
+        intrinsicWidth,
+        intrinsicHeight,
+      );
+      if (!restoredBox) {
+        setNativeSaveMessage("Could not restore detection: source geometry is missing.");
+        return;
+      }
+      const rawStart =
+        request.source_refs?.time_range?.start ??
+        sourceItem.start_seconds ??
+        sourceItem.startTimestamp ??
+        sourceItem.start_timestamp ??
+        request.source_refs?.video_time ??
+        sourceItem.timestamp_seconds ??
+        sourceItem.timestamp ??
+        currentTime;
+      const rawEnd =
+        request.source_refs?.time_range?.end ??
+        sourceItem.end_seconds ??
+        sourceItem.endTimestamp ??
+        sourceItem.end_timestamp ??
+        rawStart;
+      const start = clamp(
+        Number.isFinite(Number(rawStart)) ? Number(rawStart) : currentTime,
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const end = clamp(
+        Math.max(
+          start + 0.001,
+          Number.isFinite(Number(rawEnd)) ? Number(rawEnd) : start + 0.1,
+        ),
+        0,
+        duration || Number.MAX_SAFE_INTEGER,
+      );
+      const label = governedOverlayLabel(
+        String(
+          request.claim_label ||
+            sourceItem.displayLabel ||
+            sourceItem.label ||
+            sourceItem.class_name ||
+            sourceItem.raw_class_name ||
+            "Restored detection",
+        ),
+      ) || "Restored detection";
+      const targetTrackId = String(
+        sourceItem.trackId ??
+          sourceItem.track_id ??
+          request.source_refs?.bbox_id ??
+          request.source_refs?.annotation_id ??
+          "untracked",
+      ).trim();
+      const now = new Date().toISOString();
+      const safeBox = normalizeDraftBox(restoredBox);
+      const intervalScope = manualAnnotationTimeScopeKey(start, end);
+      const bboxScope = manualAnnotationBBoxFingerprint(safeBox);
+      const targetScope = targetTrackId.replace(/[^a-zA-Z0-9_.:-]+/g, "_") || "untracked";
+      const annotationId = `${targetVideoId}:restore:${targetScope}:${intervalScope}:${bboxScope}`;
+      const geometryTrackId = `${targetVideoId}:bbox-roi-geometry:${annotationId}`;
+      const annotation: ManualVisualAnnotation = {
+        id: annotationId,
+        category: "OBJ",
+        subcategory: "Object label",
+        label,
+        custom_label: label,
+        geometry_type: "box",
+        coordinates: safeBox,
+        geometry_keyframes: buildManualCorrectionGeometryKeyframes({
+          start,
+          end,
+          box: safeBox,
+          anchorTime: start,
+          existingKeyframes: [],
+          updatedAt: now,
+        }),
+        timestamp_seconds: Number(start.toFixed(3)),
+        start_seconds: Number(start.toFixed(3)),
+        end_seconds: Number(end.toFixed(3)),
+        open_note: "Restored from raw detection/provenance after analyst review.",
+        metadata_correlation: {
+          target_type: "restored_detection",
+          target_id: targetTrackId,
+          target_label: label,
+          apply_scope: "this_interval_only",
+          bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
+          authority_state: "manual_restored",
+          maturity_state: "manual_correction",
+          geometry_track_id: geometryTrackId,
+          coordinate_system: "normalized_video",
+          source_range_source: "restore_to_analysis",
+          quick_annotations: [],
+          manual_confirmation_event: {
+            event_type: "manual_bbox_roi_confirmation",
+            event_id: `${targetVideoId}:restore-to-analysis:${annotationId}:${Date.now()}`,
+            analysis_id: targetVideoId,
+            bbox_roi_id: annotationId,
+            authority_level: "manual_correction",
+            confirmed_fields: {
+              time_interval: true,
+              geometry: true,
+              label: true,
+              provenance_restore: true,
+            },
+            active_state_after_save: {
+              start_seconds: Number(start.toFixed(3)),
+              end_seconds: Number(end.toFixed(3)),
+              start_ms: Math.round(start * 1000),
+              end_ms: Math.round(end * 1000),
+              bbox: safeBox,
+              geometry_track_id: geometryTrackId,
+              label,
+            },
+            supersedes: targetTrackId ? [targetTrackId] : [],
+            old_states_retained_as: "traceback_provenance",
+            propagation_required: true,
+            partial_propagation_allowed: false,
+          },
+          source_track_keyframes_retained_for_traceback:
+            sourceItem.timestamp !== undefined
+              ? [
+                  {
+                    time: Number(sourceItem.timestamp),
+                    source: "track",
+                  },
+                ]
+              : undefined,
+          relation: "extends",
+          note: `Restored to analysis from ${request.sourcePanel || request.authority_source || "traceback"}.`,
+        },
+        teaches_regime: true,
+        created_at: now,
+        updated_at: now,
+        updated_by: "analyst",
+      };
+      const rawLabels = new Set(
+        [
+          sourceItem.raw_class_name,
+          sourceItem.class_name,
+          sourceItem.displayLabel,
+          sourceItem.label,
+          request.claim_label,
+        ]
+          .map((value) => normalizeEvidenceLabel(value))
+          .filter(Boolean),
+      );
+      const trackNumber = Number(targetTrackId);
+      const existingCorrections = analysisData?.annotationCorrections;
+      const filteredOverrides = (existingCorrections?.label_overrides || []).filter((rule) => {
+        if (rule.modality !== "object" || rule.corrected_value !== DROP_CORRECTION_VALUE) {
+          return true;
+        }
+        if (!rawLabels.has(normalizeEvidenceLabel(rule.raw_value))) {
+          return true;
+        }
+        const ruleTrack = Number(rule.target_track_id);
+        const trackMatches =
+          !Number.isFinite(trackNumber) ||
+          !Number.isFinite(ruleTrack) ||
+          ruleTrack === trackNumber;
+        const ruleStart = Number(rule.target_start_timestamp ?? rule.target_timestamp ?? start);
+        const ruleEnd = Number(rule.target_end_timestamp ?? rule.target_timestamp ?? ruleStart);
+        const timeOverlaps =
+          Math.max(Math.min(ruleStart, ruleEnd), start) <=
+          Math.min(Math.max(ruleStart, ruleEnd), end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS;
+        return !(trackMatches && timeOverlaps);
+      });
+      const nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
+        upsertManualVisualAnnotation(
+          {
+            ...(existingCorrections || {}),
+            label_overrides: filteredOverrides,
+          },
+          annotation,
+        ),
+        annotation,
+        { sourcePanel: "RestoreToAnalysis" },
+      );
+      pushCorrectionSnapshot(targetVideoId, existingCorrections);
+      try {
+        const savedCorrections = await VideoService.saveAnnotationCorrections(
+          targetVideoId,
+          nextCorrections,
+        );
+        requireSavedManualVisualAnnotation(
+          savedCorrections,
+          annotation.id,
+          "Restore to analysis",
+        );
+        applySavedAnnotationCorrections(savedCorrections);
+        const refreshed = await VideoService.refreshAnalysis(targetVideoId);
+        setAnalysisData(refreshed);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setNativeSaveMessage(`Could not restore detection: ${message}`);
+        return;
+      }
+      setSelectedWorkspaceAnnotationId(annotation.id);
+      setSelectedOverlayKey(`manual-${annotation.id}`);
+      setActiveOverlayEditorKey(null);
+      setNativeSaveMessage(`Restored to analysis: ${label}`);
+      eventBus.emit("nativeVisualAnnotationSaved", {
+        videoId: targetVideoId,
+        annotation,
+        source_panel: "RestoreToAnalysis",
+        propagation_required: true,
+        proliferates_to: ["master_schema", "meaning_network", "video_panel", "traceback"],
+      });
+      eventBus.emit("restoreEvidenceToAnalysisCommitted", {
+        videoId: targetVideoId,
+        annotation,
+        source_panel: request.sourcePanel || "TracebackDrawer",
+        event_type: "master_schema_updated",
+        affected_panels: ["video_panel", "bbox_roi_panel", "meaning_network", "master_schema", "traceback"],
+      });
+      broadcastAnalysisCorrectionRefresh(targetVideoId);
+    },
+    [
+      analysisData?.annotationCorrections,
+      applySavedAnnotationCorrections,
+      currentTime,
+      duration,
+      videoHeight,
+      videoId,
+      videoWidth,
+    ],
+  );
+
+  useEffect(() => {
+    const handler = (request: RestoreEvidenceToAnalysisRequest) => {
+      void restoreEvidenceToAnalysis(request);
+    };
+    eventBus.on("restoreEvidenceToAnalysisRequested", handler);
+    return () => eventBus.off("restoreEvidenceToAnalysisRequested", handler);
+  }, [restoreEvidenceToAnalysis]);
 
   const findExpressionPersonAnchor = React.useCallback(
     (overlay: OverlayBox): { item: DetectedObject; box: DraftBox; trackId: string | null } | null => {
@@ -4647,20 +4960,12 @@ export default function VideoPanel() {
       ) {
         return null;
       }
-      return {
-        x: clamp(
-          (clientX - videoElementRect.left - renderedVideoRect.x) /
-            renderedVideoRect.width,
-          0,
-          1,
-        ),
-        y: clamp(
-          (clientY - videoElementRect.top - renderedVideoRect.y) /
-            renderedVideoRect.height,
-          0,
-          1,
-        ),
-      };
+      return clientPointToNormalizedVideoPoint({
+        clientX,
+        clientY,
+        elementRect: videoElementRect,
+        contentRect: renderedVideoRect,
+      });
     },
     [renderedVideoRect],
   );
@@ -5411,6 +5716,7 @@ export default function VideoPanel() {
         sourceItem: {
           ...source,
           label: overlay.label,
+          normalizedBox: getOverlayNormalizedBox(overlay),
           evidence_refs: source.evidence_refs || matureAuthority?.evidence_refs,
           source_bbox_refs: source.source_bbox_refs || matureAuthority?.source_bbox_refs,
           source_frame_refs: source.source_frame_refs || matureAuthority?.source_frame_refs,
@@ -5420,7 +5726,81 @@ export default function VideoPanel() {
       openPanel("TracebackDrawer", { payload });
       eventBus.emit("tracebackOpenRequested", payload);
     },
-    [getOverlayInteractionTime, openPanel, videoId],
+    [getOverlayInteractionTime, getOverlayNormalizedBox, openPanel, videoId],
+  );
+
+  const openTracebackForDroppedEvidence = React.useCallback(
+    (entry: DroppedEvidenceRepositoryItem) => {
+      if (!videoId) {
+        return;
+      }
+      const normalizedBox = entry.normalizedBox;
+      const sourceItem = (entry.sourceItem || {}) as Partial<DetectedObject>;
+      const payload = {
+        videoId,
+        sourcePanel: "DroppedEvidenceRepository",
+        claim_id: entry.id,
+        claim_label: entry.label,
+        claim_type: "object",
+        claim_status: "dropped",
+        maturity_level: "raw_detection_retained_as_traceback",
+        confidence:
+          typeof sourceItem.confidence === "number" ? Number(sourceItem.confidence) : null,
+        authority_level: "detector",
+        authority_source: "raw_detection_repository",
+        review_status: normalizedBox ? "restore_available" : "source_geometry_missing",
+        source_refs: {
+          media_id: videoId,
+          video_time: entry.start,
+          time_range: {
+            start: entry.start,
+            end: entry.end,
+          },
+          bbox_id: entry.trackId || entry.id,
+        },
+        sourceItem: {
+          ...sourceItem,
+          label: entry.label,
+          displayLabel: entry.label,
+          normalizedBox,
+          traceback: `drop-rule:${entry.rule.id}`,
+        },
+      };
+      openPanel("TracebackDrawer", { payload });
+      eventBus.emit("tracebackOpenRequested", payload);
+    },
+    [openPanel, videoId],
+  );
+
+  const restoreDroppedEvidence = React.useCallback(
+    (entry: DroppedEvidenceRepositoryItem) => {
+      if (!videoId || !entry.sourceItem || !entry.normalizedBox) {
+        setNativeSaveMessage("Could not restore dropped evidence: source geometry is missing.");
+        return;
+      }
+      void restoreEvidenceToAnalysis({
+        videoId,
+        sourcePanel: "DroppedEvidenceRepository",
+        sourceItem: {
+          ...entry.sourceItem,
+          label: entry.label,
+          displayLabel: entry.label,
+          normalizedBox: entry.normalizedBox,
+        },
+        source_refs: {
+          video_time: entry.start,
+          time_range: {
+            start: entry.start,
+            end: entry.end,
+          },
+          bbox_id: entry.trackId || entry.id,
+        },
+        claim_label: entry.label,
+        claim_type: "object",
+        authority_source: "raw_detection_repository",
+      });
+    },
+    [restoreEvidenceToAnalysis, videoId],
   );
 
   const seedForensicRoiFromOverlay = React.useCallback(
@@ -5560,14 +5940,33 @@ export default function VideoPanel() {
     };
 
     const existingCorrections = analysisData?.annotationCorrections;
-    const nextCorrections = upsertManualVisualAnnotation(
-      existingCorrections,
+    const nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
+      upsertManualVisualAnnotation(
+        existingCorrections,
+        annotation,
+      ),
       annotation,
+      { sourcePanel: "BBox/ROI" },
     );
     pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    try {
+      const savedCorrections = await VideoService.saveAnnotationCorrections(
+        videoId,
+        nextCorrections,
+      );
+      requireSavedManualVisualAnnotation(
+        savedCorrections,
+        annotation.id,
+        "Native BBox/ROI annotation",
+      );
+      applySavedAnnotationCorrections(savedCorrections);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setNativeSaveMessage(`Could not save native annotation: ${message}`);
+      return;
+    }
     jumpToTime(annotationTimestamp);
     setNativeAnnotationMode(false);
     setSelectedWorkspaceAnnotationId(null);
@@ -5619,7 +6018,11 @@ export default function VideoPanel() {
       annotation.id,
     );
     pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
@@ -5769,17 +6172,19 @@ export default function VideoPanel() {
         end,
       );
       const trackKeyframes = buildTrackGeometryKeyframes(targetTrackId || null);
-      const geometryKeyframes = mergeGeometryKeyframes([
-        ...(existingManual?.geometry_keyframes || []).filter(
-          (keyframe) => keyframe.source !== "track",
-        ),
-        {
-          time: Number(keyframeTime.toFixed(3)),
-          coordinates: normalizeDraftBox(normalizedBox),
-          source: "manual",
-          updated_at: new Date().toISOString(),
-        },
-      ]);
+      const updatedAt = new Date().toISOString();
+      const governedBox = normalizeDraftBox(normalizedBox);
+      const geometryTrackId = `${videoId}:bbox-roi-geometry:${existingManual?.id || annotationId}`;
+      const geometryKeyframes = mergeManualGeometryKeyframes(
+        buildManualCorrectionGeometryKeyframes({
+          start,
+          end,
+          box: governedBox,
+          anchorTime: keyframeTime,
+          existingKeyframes: existingManual?.geometry_keyframes || [],
+          updatedAt,
+        }),
+      );
       const annotation: ManualVisualAnnotation = {
         ...(existingManual || {}),
         id: existingManual?.id || annotationId,
@@ -5788,12 +6193,7 @@ export default function VideoPanel() {
         label,
         custom_label: edit.label.trim() || undefined,
         geometry_type: "box",
-        coordinates: {
-          x: clamp(normalizedBox.x, 0, 1),
-          y: clamp(normalizedBox.y, 0, 1),
-          w: clamp(normalizedBox.w, 0.002, 1),
-          h: clamp(normalizedBox.h, 0.002, 1),
-        },
+        coordinates: governedBox,
         geometry_keyframes: geometryKeyframes,
         timestamp_seconds: Number(start.toFixed(3)),
         start_seconds: Number(start.toFixed(3)),
@@ -5836,6 +6236,18 @@ export default function VideoPanel() {
           synthesized_person_detection: Boolean(synthesizedExpressionOwnerBox),
           apply_scope: applyScope,
           quick_annotations: edit.quickAnnotations || [],
+          bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
+          authority_state: "manual_correction",
+          maturity_state: "manual_correction",
+          geometry_track_id: geometryTrackId,
+          coordinate_system: "normalized_video",
+          interpolation_policy: {
+            allowed: true,
+            max_gap_ms: 5000,
+            break_on_scene_boundary: true,
+            break_on_shot_cut: true,
+            manual_confirmation_required_for_cross_boundary: true,
+          },
           source_track_keyframes_retained_for_traceback:
             trackKeyframes.length > 0
               ? trackKeyframes.map((keyframe) => ({
@@ -5845,16 +6257,33 @@ export default function VideoPanel() {
               : undefined,
           manual_confirmation_event: {
             event_type: "manual_bbox_roi_confirmation",
+            event_id: `${videoId}:manual-bbox-roi-confirmation:${existingManual?.id || annotationId}:${Date.now()}`,
+            analysis_id: videoId,
+            bbox_roi_id: existingManual?.id || annotationId,
             authority_level: "manual_correction",
+            confirmed_fields: {
+              time_interval: true,
+              geometry: true,
+              label: true,
+              relation: Boolean(edit.quickAnnotations?.length),
+              narrative_agent: edit.category === "Identification",
+            },
             active_state_after_save: {
+              start_ms: Math.round(start * 1000),
+              end_ms: Math.round(end * 1000),
+              geometry_track_id: geometryTrackId,
               start_seconds: Number(start.toFixed(3)),
               end_seconds: Number(end.toFixed(3)),
+              bbox: governedBox,
+              geometry_keyframe_time: Number(keyframeTime.toFixed(3)),
               label,
               category: edit.category,
               quick_annotations: edit.quickAnnotations || [],
             },
+            supersedes: trackKeyframes.length > 0 ? [targetTrackId || overlay.key] : [],
             old_states_retained_as: "traceback_provenance",
             propagation_required: true,
+            partial_propagation_allowed: false,
           },
           maturity_policy:
             overlay.modality === "expression"
@@ -5867,19 +6296,38 @@ export default function VideoPanel() {
         },
         teaches_regime: true,
         created_at: existingManual?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        updated_at: updatedAt,
         updated_by: "analyst",
       };
 
       const existingCorrections = analysisData?.annotationCorrections;
-      const nextCorrections = upsertManualVisualAnnotation(
-        existingCorrections,
+      const nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
+        upsertManualVisualAnnotation(
+          existingCorrections,
+          annotation,
+        ),
         annotation,
+        { sourcePanel: "BBox/ROI" },
       );
       pushCorrectionSnapshot(videoId, existingCorrections);
-      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-      const refreshed = await VideoService.refreshAnalysis(videoId);
-      setAnalysisData(refreshed);
+      try {
+        const savedCorrections = await VideoService.saveAnnotationCorrections(
+          videoId,
+          nextCorrections,
+        );
+        requireSavedManualVisualAnnotation(
+          savedCorrections,
+          annotation.id,
+          "BBox/ROI indication",
+        );
+        applySavedAnnotationCorrections(savedCorrections);
+        const refreshed = await VideoService.refreshAnalysis(videoId);
+        setAnalysisData(refreshed);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setNativeSaveMessage(`Could not save BBox/ROI indication: ${message}`);
+        return;
+      }
       closeSelectedOverlayEditor(overlay.key);
       clearOverlayEditingWorkspace([overlay.key, `manual-${annotation.id}`]);
       setSelectedIndicationEdits((current) => ({
@@ -5980,9 +6428,17 @@ export default function VideoPanel() {
       if (rect.width <= 0 || rect.height <= 0) {
         return null;
       }
-      const x = clamp((clientX - rect.left) / rect.width, 0, 1);
-      const y = clamp((clientY - rect.top) / rect.height, 0, 1);
-      return { x, y };
+      return clientPointToNormalizedVideoPoint({
+        clientX,
+        clientY,
+        elementRect: rect,
+        contentRect: {
+          x: 0,
+          y: 0,
+          width: rect.width,
+          height: rect.height,
+        },
+      });
     },
     [],
   );
@@ -6060,7 +6516,7 @@ export default function VideoPanel() {
         return;
       }
       setDraftBox(
-        buildBoxFromPoints(
+        buildBoxFromNormalizedPoints(
           draftStartPoint.x,
           draftStartPoint.y,
           point.x,
@@ -6218,7 +6674,11 @@ export default function VideoPanel() {
       }),
     );
     pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
@@ -6245,7 +6705,11 @@ export default function VideoPanel() {
       }),
     );
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
@@ -6341,7 +6805,11 @@ export default function VideoPanel() {
       }
 
       pushCorrectionSnapshot(videoId, existingCorrections);
-      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      const savedCorrections = await VideoService.saveAnnotationCorrections(
+        videoId,
+        nextCorrections,
+      );
+      applySavedAnnotationCorrections(savedCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
       broadcastAnalysisCorrectionRefresh(videoId);
@@ -7539,10 +8007,14 @@ export default function VideoPanel() {
                           ? clamp(selectedOverlayScrub.value, scrubMin, scrubMax)
                           : workingFrameTime;
                       const stretchActionLabel = "Extend in";
-                      const overlayLeftPx = normalizedBox.x * renderedVideoRect.width;
-                      const overlayTopPx = normalizedBox.y * renderedVideoRect.height;
-                      const overlayWidthPx = normalizedBox.w * renderedVideoRect.width;
-                      const overlayHeightPx = normalizedBox.h * renderedVideoRect.height;
+                      const overlayProjection = projectNormalizedBoxToVideoContent(
+                        normalizedBox,
+                        renderedVideoRect,
+                      );
+                      const overlayLeftPx = overlayProjection.left;
+                      const overlayTopPx = overlayProjection.top;
+                      const overlayWidthPx = overlayProjection.width;
+                      const overlayHeightPx = overlayProjection.height;
                       const overlapsVideoControls =
                         overlayTopPx + overlayHeightPx >
                         renderedVideoRect.height - VIDEO_CONTROL_CLEARANCE_PX;
@@ -8438,6 +8910,39 @@ export default function VideoPanel() {
                                       >
                                         Drop
                                       </button>
+                                      <button
+                                        type="button"
+                                        data-vaa1-bbox-restore-to-analysis="true"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void restoreEvidenceToAnalysis({
+                                            videoId,
+                                            sourcePanel: "BBox/ROI",
+                                            sourceItem: {
+                                              ...(overlay.sourceItem || {}),
+                                              label: overlay.label,
+                                              normalizedBox: getOverlayNormalizedBox(overlay),
+                                            },
+                                            source_refs: {
+                                              video_time: workingFrameTime,
+                                              time_range: {
+                                                start: edit.start,
+                                                end: edit.end,
+                                              },
+                                              bbox_id: String(
+                                                overlay.sourceItem?.trackId ??
+                                                  overlay.sourceItem?.track_id ??
+                                                  overlay.key,
+                                              ),
+                                            },
+                                            claim_label: overlay.label,
+                                            claim_type: overlay.modality,
+                                          });
+                                        }}
+                                        className="rounded bg-emerald-900/40 px-1.5 py-0.5 text-[10px] text-emerald-100 hover:bg-emerald-800/60 hover:text-emerald-50"
+                                      >
+                                        Restore
+                                      </button>
                                     </>
                                   ) : overlay.modality === "manual" ? (
                                     <button
@@ -9122,6 +9627,89 @@ export default function VideoPanel() {
                 >
                   {nativeAnnotationMode ? "Cancel native" : "Native annotate"}
                 </button>
+                {droppedEvidenceRepository.length > 0 && selectedDroppedEvidence && (
+                  <div
+                    data-vaa1-dropped-evidence-repository="true"
+                    className="relative"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setDroppedEvidencePickerOpen((open) => !open)}
+                      className={`rounded border px-2 py-1 text-[10px] transition ${
+                        droppedEvidencePickerOpen
+                          ? "border-amber-700/70 bg-amber-950/30 text-amber-100"
+                          : "border-slate-800 text-[var(--ui-passive-text)] hover:bg-slate-800/40 hover:text-slate-300"
+                      }`}
+                      aria-expanded={droppedEvidencePickerOpen}
+                      aria-controls="vaa1-dropped-evidence-picker"
+                    >
+                      Dropped {droppedEvidenceRepository.length}
+                    </button>
+                    {droppedEvidencePickerOpen && (
+                      <div
+                        id="vaa1-dropped-evidence-picker"
+                        className="absolute right-0 top-full z-30 mt-1 w-[360px] max-w-[calc(100vw-32px)] rounded border border-slate-800 bg-[#111214]/95 p-2 shadow-2xl backdrop-blur"
+                      >
+                        <div
+                          className="max-h-32 overflow-y-auto rounded border border-slate-800 bg-slate-950/70 p-1"
+                          role="listbox"
+                          aria-label="Select dropped evidence"
+                        >
+                          {droppedEvidenceRepository.map((entry) => (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              role="option"
+                              aria-selected={entry.id === selectedDroppedEvidence.id}
+                              onClick={() => setSelectedDroppedEvidenceId(entry.id)}
+                              className={`block w-full rounded px-2 py-1 text-left text-[10px] ${
+                                entry.id === selectedDroppedEvidence.id
+                                  ? "bg-cyan-950/50 text-cyan-100"
+                                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"
+                              }`}
+                            >
+                              <span className="font-mono">{formatTime(entry.start)}</span>
+                              <span className="mx-1 text-slate-600">·</span>
+                              <span>{entry.label}</span>
+                              {entry.trackId && (
+                                <span className="ml-1 text-slate-500">track {entry.trackId}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => jumpToTime(selectedDroppedEvidence.start)}
+                            className="rounded border border-slate-700 bg-black/20 px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/40"
+                          >
+                            Go
+                          </button>
+                          <button
+                            type="button"
+                            data-vaa1-dropped-evidence-traceback="true"
+                            onClick={() => openTracebackForDroppedEvidence(selectedDroppedEvidence)}
+                            className="rounded border border-cyan-900/70 bg-cyan-950/10 px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-900/30"
+                          >
+                            Traceback
+                          </button>
+                          <button
+                            type="button"
+                            data-vaa1-dropped-evidence-restore="true"
+                            disabled={
+                              !selectedDroppedEvidence.sourceItem ||
+                              !selectedDroppedEvidence.normalizedBox
+                            }
+                            onClick={() => restoreDroppedEvidence(selectedDroppedEvidence)}
+                            className="rounded border border-emerald-900 bg-emerald-950/10 px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-900/30 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-transparent disabled:text-slate-600"
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

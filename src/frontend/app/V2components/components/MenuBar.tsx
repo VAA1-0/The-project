@@ -568,6 +568,9 @@ export function MenuBar() {
   const buildProjectBundleFilename = (baseName?: string) =>
     `${slugifyFilename(baseName || "vaa1_project")}_project_bundle.zip`;
 
+  const formatSaveError = (error: unknown) =>
+    error instanceof Error ? error.message : String(error || "Unknown save error");
+
   const buildProjectPayload = async (projectName?: string) => {
     const analyses = await VideoService.list(200);
     const completedAnalyses = analyses
@@ -672,7 +675,7 @@ export function MenuBar() {
       );
     } catch (error) {
       console.error("Save failed:", error);
-      alert("Could not save the current analysis bundle.");
+      alert(`Could not save the current analysis bundle:\n${formatSaveError(error)}`);
     }
   };
 
@@ -694,7 +697,7 @@ export function MenuBar() {
       await VideoService.exportBundle(selectedVideoId, finalName);
     } catch (error) {
       console.error("Save As failed:", error);
-      alert("Could not save the analysis bundle with that name.");
+      alert(`Could not save the analysis bundle with that name:\n${formatSaveError(error)}`);
     }
   };
 
@@ -711,7 +714,7 @@ export function MenuBar() {
       );
     } catch (error) {
       console.error("Save Project failed:", error);
-      alert("Could not save the current project bundle.");
+      alert(`Could not save the current project bundle:\n${formatSaveError(error)}`);
     }
   };
 
@@ -735,7 +738,7 @@ export function MenuBar() {
       await VideoService.exportProjectBundle(payload, finalName);
     } catch (error) {
       console.error("Save Project As failed:", error);
-      alert("Could not save the project bundle with that name.");
+      alert(`Could not save the project bundle with that name:\n${formatSaveError(error)}`);
     }
   };
 

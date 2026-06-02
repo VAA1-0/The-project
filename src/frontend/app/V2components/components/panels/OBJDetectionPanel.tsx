@@ -11,11 +11,12 @@ import {
   createEmptyCorrections,
   mergeCorrectionRule,
   pushCorrectionSnapshot,
+  requireSavedManualVisualAnnotation,
   removeCorrectionRule,
   undoLastCorrectionSnapshot,
   upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
-import type { ManualVisualAnnotation } from "@/lib/api-service";
+import type { AnnotationCorrections, ManualVisualAnnotation } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
 
 import { Download, Search, MoreHorizontal, RotateCcw } from "lucide-react";
@@ -31,6 +32,12 @@ import {
   openManualAnnotationInVideo,
   openObjectIndicationInVideo,
 } from "@/lib/video-navigation";
+import {
+  buildManualCorrectionGeometryKeyframes,
+  detectedObjectToNormalizedBox,
+  manualAnnotationBBoxFingerprint,
+  normalizeDraftBox,
+} from "@/lib/bbox-authority";
 import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
 
 const OBJECT_INDICATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
@@ -142,17 +149,6 @@ function manualObjectTargetId(item: ManualVisualAnnotation): string | null {
   return targetId === undefined || targetId === null ? null : String(targetId);
 }
 
-function manualAnnotationBBoxFingerprint(
-  box: ManualVisualAnnotation["coordinates"],
-): string {
-  return [
-    box.x.toFixed(4),
-    box.y.toFixed(4),
-    box.w.toFixed(4),
-    box.h.toFixed(4),
-  ].join("-");
-}
-
 function getObjectTrackId(obj: any): string | null {
   const trackId = obj?.trackId ?? obj?.track_id;
   return trackId === undefined || trackId === null ? null : String(trackId);
@@ -233,45 +229,6 @@ function buildObjectIndicationDraft(
     start,
     end: Math.max(end, start + 0.001),
     note: manualOverride?.open_note || "",
-  };
-}
-
-function normalizeObjectBox(
-  obj: any,
-  width: number,
-  height: number,
-): ManualVisualAnnotation["coordinates"] | null {
-  const bbox = obj?.bbox;
-  if (
-    !bbox ||
-    bbox.x1 === undefined ||
-    bbox.y1 === undefined ||
-    bbox.x2 === undefined ||
-    bbox.y2 === undefined
-  ) {
-    return null;
-  }
-  const values = [bbox.x1, bbox.y1, bbox.x2, bbox.y2].map(Number);
-  if (values.some((value) => !Number.isFinite(value))) {
-    return null;
-  }
-  const [x1Raw, y1Raw, x2Raw, y2Raw] = values;
-  const appearsNormalized = Math.max(...values.map(Math.abs)) <= 1.5;
-  const safeWidth = width > 1 ? width : 1920;
-  const safeHeight = height > 1 ? height : 1080;
-  const x1 = appearsNormalized ? x1Raw : x1Raw / safeWidth;
-  const y1 = appearsNormalized ? y1Raw : y1Raw / safeHeight;
-  const x2 = appearsNormalized ? x2Raw : x2Raw / safeWidth;
-  const y2 = appearsNormalized ? y2Raw : y2Raw / safeHeight;
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const right = Math.max(x1, x2);
-  const bottom = Math.max(y1, y2);
-  return {
-    x: Math.min(Math.max(left, 0), 1),
-    y: Math.min(Math.max(top, 0), 1),
-    w: Math.min(Math.max(right - left, 0.002), 1),
-    h: Math.min(Math.max(bottom - top, 0.002), 1),
   };
 }
 
@@ -381,6 +338,19 @@ export default function OBJDetectionPanel() {
   }, [videoId, refreshNonce]);
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
+  const applySavedAnnotationCorrections = React.useCallback(
+    (savedCorrections: AnnotationCorrections) => {
+      setAnalysisData((current: any) =>
+        current
+          ? {
+              ...current,
+              annotationCorrections: savedCorrections,
+            }
+          : current,
+      );
+    },
+    [],
+  );
   const groupedObjects = [...groupDetectedObjectsForDisplay(detectedObjects)].sort(
     (left: any, right: any) => {
       const leftStart = left.startTimestamp ?? left.timestamp ?? 0;
@@ -555,7 +525,7 @@ export default function OBJDetectionPanel() {
         analysisData?.metadata?.height ??
         0,
     );
-    const coordinates = normalizeObjectBox(obj, width, height);
+    const coordinates = detectedObjectToNormalizedBox(obj, width, height);
     if (!coordinates) {
       setObjectActionMessage("Could not save indication: object has no usable box.");
       return;
@@ -565,27 +535,28 @@ export default function OBJDetectionPanel() {
     const label = resolvedDraft.label.trim() || latestLabel || obj.displayLabel || obj.class_name || "Object present";
     const existingManual = getManualOverrideForObject(obj);
     const targetId = String(obj.trackId ?? key);
+    const governedBox = normalizeDraftBox(coordinates);
+    const updatedAt = new Date().toISOString();
+    const annotationId =
+      existingManual?.id ||
+      `${videoId}:object-indication:${targetId}:${Number(start).toFixed(3)}-${Number(end).toFixed(3)}:${manualAnnotationBBoxFingerprint(governedBox)}`;
+    const geometryTrackId = `${videoId}:bbox-roi-geometry:${annotationId}`;
     const annotation: ManualVisualAnnotation = {
-      id:
-        existingManual?.id ||
-        `${videoId}:object-indication:${targetId}:${Number(start).toFixed(3)}-${Number(end).toFixed(3)}:${manualAnnotationBBoxFingerprint(coordinates)}`,
+      id: annotationId,
       category: resolvedDraft.category,
       subcategory: resolvedDraft.subcategory || firstSubcategory(resolvedDraft.category),
       label,
       custom_label: resolvedDraft.label.trim() || undefined,
       geometry_type: "box",
-      coordinates,
-      geometry_keyframes: [
-        ...((existingManual?.geometry_keyframes || []).filter(
-          (keyframe) => keyframe.source !== "track",
-        )),
-        {
-          time: Number(start.toFixed(3)),
-          coordinates,
-          source: "manual",
-          updated_at: new Date().toISOString(),
-        },
-      ],
+      coordinates: governedBox,
+      geometry_keyframes: buildManualCorrectionGeometryKeyframes({
+        start,
+        end,
+        box: governedBox,
+        anchorTime: start,
+        existingKeyframes: existingManual?.geometry_keyframes || [],
+        updatedAt,
+      }),
       timestamp_seconds: Number(start.toFixed(3)),
       start_seconds: Number(start.toFixed(3)),
       end_seconds: Number(end.toFixed(3)),
@@ -599,24 +570,51 @@ export default function OBJDetectionPanel() {
         target_id: targetId,
         target_label: existingManual?.metadata_correlation?.target_label || getObjectSourceLabel(obj),
         apply_scope: "this_interval_only",
+        bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
+        authority_state: "manual_correction",
+        maturity_state: "manual_correction",
+        geometry_track_id: geometryTrackId,
+        coordinate_system: "normalized_video",
+        interpolation_policy: {
+          allowed: true,
+          max_gap_ms: 5000,
+          break_on_scene_boundary: true,
+          break_on_shot_cut: true,
+          manual_confirmation_required_for_cross_boundary: true,
+        },
         manual_confirmation_event: {
           event_type: "manual_bbox_roi_confirmation",
+          event_id: `${videoId}:manual-bbox-roi-confirmation:${annotationId}:${Date.now()}`,
+          analysis_id: videoId,
+          bbox_roi_id: annotationId,
           authority_level: "manual_correction",
+          confirmed_fields: {
+            time_interval: true,
+            geometry: true,
+            label: true,
+          },
           active_state_after_save: {
+            start_ms: Math.round(start * 1000),
+            end_ms: Math.round(end * 1000),
+            geometry_track_id: geometryTrackId,
             start_seconds: Number(start.toFixed(3)),
             end_seconds: Number(end.toFixed(3)),
+            bbox: governedBox,
+            geometry_keyframe_time: Number(start.toFixed(3)),
             label,
             category: resolvedDraft.category,
           },
+          supersedes: [targetId],
           old_states_retained_as: "traceback_provenance",
           propagation_required: true,
+          partial_propagation_allowed: false,
         },
         relation: "extends",
         note: "Adopted from Objects leaf panel indication editor.",
       },
       teaches_regime: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: existingManual?.created_at || updatedAt,
+      updated_at: updatedAt,
       updated_by: "analyst",
     };
 
@@ -626,8 +624,24 @@ export default function OBJDetectionPanel() {
       annotation,
     );
     pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
+    let refreshed;
+    try {
+      const savedCorrections = await VideoService.saveAnnotationCorrections(
+        videoId,
+        nextCorrections,
+      );
+      requireSavedManualVisualAnnotation(
+        savedCorrections,
+        annotation.id,
+        "Objects BBox/ROI indication",
+      );
+      applySavedAnnotationCorrections(savedCorrections);
+      refreshed = await VideoService.refreshAnalysis(videoId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setObjectActionMessage(`Could not save indication: ${message}`);
+      return;
+    }
     setAnalysisData(refreshed);
     clearObjectTimeInputDrafts(key);
     setSelectedObjectKey(null);
@@ -713,7 +727,11 @@ export default function OBJDetectionPanel() {
       }),
     );
     pushCorrectionSnapshot(videoId, existingCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -746,7 +764,11 @@ export default function OBJDetectionPanel() {
       }
     }
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -767,7 +789,11 @@ export default function OBJDetectionPanel() {
       }),
     );
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -783,7 +809,11 @@ export default function OBJDetectionPanel() {
     }
     const nextCorrections =
       restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(
+      videoId,
+      nextCorrections,
+    );
+    applySavedAnnotationCorrections(savedCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
     broadcastAnalysisCorrectionRefresh(videoId);

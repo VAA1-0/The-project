@@ -6074,12 +6074,22 @@ def build_saved_work_manifest(status: Dict[str, Any]) -> Dict[str, Any]:
     source_video_path = status.get("source_video_path") or status.get("file_path")
     source_video_exists = bool(source_video_path and Path(source_video_path).exists())
     output_files = status.get("output_files", {})
-    return {
+    annotation_corrections = build_annotation_corrections_payload(status)
+    return make_json_safe({
         "analysis_id": status.get("analysis_id"),
         "original_filename": status.get("original_filename"),
         "source_video_path": source_video_path,
         "source_video_exists_at_save_time": source_video_exists,
         "source_media_metadata": status.get("source_media_metadata", {}),
+        "annotation_corrections": annotation_corrections,
+        "annotation_corrections_counts": {
+            "text_substitutions": len(annotation_corrections.get("text_substitutions", []) or []),
+            "label_overrides": len(annotation_corrections.get("label_overrides", []) or []),
+            "manual_transcript_entries": len(annotation_corrections.get("manual_transcript_entries", []) or []),
+            "manual_visual_annotations": len(annotation_corrections.get("manual_visual_annotations", []) or []),
+            "master_schema_presence_intervals": len(annotation_corrections.get("master_schema_presence_intervals", []) or []),
+            "meaning_network_custom_lanes": len(annotation_corrections.get("meaning_network_custom_lanes", []) or []),
+        },
         "analysis_completed_at": status.get("analysis_completed_at"),
         "pipeline_type": status.get("pipeline_type", "full"),
         "analysis_tier": status.get("analysis_tier", "science_scan"),
@@ -6087,7 +6097,51 @@ def build_saved_work_manifest(status: Dict[str, Any]) -> Dict[str, Any]:
         "matrix_files": [
             file_type for file_type in output_files.keys() if file_type.endswith("_matrix")
         ],
-    }
+    })
+
+
+def add_available_output_files_to_archive(
+    archive: zipfile.ZipFile,
+    output_files: Dict[str, Any],
+    file_mapping: Dict[str, str],
+    *,
+    archive_prefix: str,
+) -> List[Dict[str, str]]:
+    skipped: List[Dict[str, str]] = []
+    for file_type, file_path in output_files.items():
+        if not file_path:
+            skipped.append({"file_type": str(file_type), "reason": "empty_path"})
+            continue
+        try:
+            path_obj = Path(str(file_path))
+        except TypeError as exc:
+            skipped.append({
+                "file_type": str(file_type),
+                "reason": f"invalid_path:{exc}",
+            })
+            continue
+        if not path_obj.exists() or not path_obj.is_file():
+            skipped.append({
+                "file_type": str(file_type),
+                "reason": "missing_or_not_file",
+            })
+            continue
+        archive_name = file_mapping.get(str(file_type), path_obj.name)
+        try:
+            archive.write(path_obj, arcname=f"{archive_prefix}{archive_name}")
+        except Exception as exc:
+            skipped.append({
+                "file_type": str(file_type),
+                "reason": f"archive_write_failed:{exc}",
+            })
+    return skipped
+
+
+def refresh_mutable_saved_outputs(status: Dict[str, Any]) -> None:
+    """Ensure analyst-editable outputs are written before export bundling."""
+    write_source_media_metadata_files(status)
+    write_annotation_corrections_file(status)
+    persist_analysis_record_for_status(status)
 
 
 def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[str, str]:
@@ -8153,6 +8207,7 @@ async def download_bundle(analysis_id: str):
     if status["status"] != "completed":
         raise HTTPException(status_code=400, detail="Analysis not completed")
 
+    refresh_mutable_saved_outputs(status)
     output_files = status.get("output_files", {})
     if not output_files:
         raise HTTPException(status_code=404, detail="No output files available")
@@ -8192,6 +8247,7 @@ async def download_bundle(analysis_id: str):
         "quan_analysis": "quan_analysis.json",
         "source_media_metadata_json": "source_media_metadata.json",
         "source_media_metadata_csv": "source_media_metadata.csv",
+        "annotation_corrections": "annotation_corrections.json",
         "pos_matrix": "pos_matrix.json",
         "quant_matrix": "quant_matrix.json",
         "face_anonymization_manifest": "face_anonymization_manifest.json",
@@ -8202,16 +8258,24 @@ async def download_bundle(analysis_id: str):
     archive_buffer = io.BytesIO()
 
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for file_type, file_path in output_files.items():
-            path_obj = Path(file_path)
-            if not path_obj.exists():
-                continue
-            archive_name = file_mapping.get(file_type, path_obj.name)
-            archive.write(path_obj, arcname=f"{base_name}_{archive_name}")
+        skipped_files = add_available_output_files_to_archive(
+            archive,
+            output_files,
+            file_mapping,
+            archive_prefix=f"{base_name}_",
+        )
         manifest_name = f"{base_name}_saved_work_manifest.json"
         archive.writestr(
             manifest_name,
-            json.dumps(build_saved_work_manifest(status), indent=2, ensure_ascii=False),
+            json.dumps(
+                {
+                    **build_saved_work_manifest(status),
+                    "skipped_output_files": skipped_files,
+                },
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
         )
 
     archive_buffer.seek(0)
@@ -8225,9 +8289,8 @@ async def download_bundle(analysis_id: str):
     )
 
 
-@app.post("/api/download-project-bundle")
-async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
-    """Download a whole project bundle containing multiple completed analyses and project state."""
+def build_project_bundle_file(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a project bundle file and return download metadata."""
     analysis_ids = payload.get("analysis_ids") or []
     if not analysis_ids:
         raise HTTPException(status_code=400, detail="No analyses were provided for the project bundle")
@@ -8270,6 +8333,7 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
         "quan_analysis": "quan_analysis.json",
         "source_media_metadata_json": "source_media_metadata.json",
         "source_media_metadata_csv": "source_media_metadata.csv",
+        "annotation_corrections": "annotation_corrections.json",
         "quant_matrix": "quant_matrix.json",
         "face_anonymization_manifest": "face_anonymization_manifest.json",
     }
@@ -8290,6 +8354,7 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
                 )
                 continue
 
+            refresh_mutable_saved_outputs(status)
             output_files = status.get("output_files", {})
             if not output_files:
                 skipped_analyses.append(
@@ -8302,19 +8367,23 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
 
             base_name = Path(status["original_filename"]).stem
             folder_name = f"analyses/{slugify_name(base_name)}_{analysis_id[:8]}"
-            for file_type, file_path in output_files.items():
-                path_obj = Path(file_path)
-                if not path_obj.exists():
-                    continue
-                archive_name = file_mapping.get(file_type, path_obj.name)
-                archive.write(path_obj, arcname=f"{folder_name}/{archive_name}")
+            skipped_files = add_available_output_files_to_archive(
+                archive,
+                output_files,
+                file_mapping,
+                archive_prefix=f"{folder_name}/",
+            )
 
             archive.writestr(
                 f"{folder_name}/saved_work_manifest.json",
                 json.dumps(
-                    build_saved_work_manifest(status),
+                    {
+                        **build_saved_work_manifest(status),
+                        "skipped_output_files": skipped_files,
+                    },
                     indent=2,
                     ensure_ascii=False,
+                    default=str,
                 ),
             )
             included_analyses.append(
@@ -8344,6 +8413,48 @@ async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
     bundle_path = RESULTS_DIR / bundle_name
     bundle_path.write_bytes(archive_buffer.getvalue())
 
+    return {
+        "bundle_name": bundle_name,
+        "bundle_path": bundle_path,
+        "project_manifest": project_manifest,
+    }
+
+
+@app.post("/api/prepare-project-bundle", response_model=dict)
+async def prepare_project_bundle(payload: Dict[str, Any] = Body(...)):
+    """Create a project bundle and return a direct browser-download URL."""
+    result = build_project_bundle_file(payload)
+    bundle_name = result["bundle_name"]
+    return {
+        "status": "ready",
+        "filename": bundle_name,
+        "download_url": f"/api/project-bundles/{bundle_name}",
+        "project_manifest": result["project_manifest"],
+    }
+
+
+@app.get("/api/project-bundles/{bundle_name}")
+async def download_prepared_project_bundle(bundle_name: str):
+    """Download a project bundle that has already been prepared server-side."""
+    safe_name = Path(bundle_name).name
+    if safe_name != bundle_name or not safe_name.endswith("_project_bundle.zip"):
+        raise HTTPException(status_code=400, detail="Invalid project bundle name")
+    bundle_path = RESULTS_DIR / safe_name
+    if not bundle_path.exists() or not bundle_path.is_file():
+        raise HTTPException(status_code=404, detail="Project bundle not found")
+    return FileResponse(
+        path=bundle_path,
+        media_type="application/zip",
+        filename=safe_name,
+    )
+
+
+@app.post("/api/download-project-bundle")
+async def download_project_bundle(payload: Dict[str, Any] = Body(...)):
+    """Download a whole project bundle containing multiple completed analyses and project state."""
+    result = build_project_bundle_file(payload)
+    bundle_name = result["bundle_name"]
+    bundle_path = result["bundle_path"]
     return FileResponse(
         path=bundle_path,
         media_type="application/zip",

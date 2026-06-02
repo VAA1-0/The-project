@@ -5,6 +5,9 @@ import type { AudioProsodyCue, ExpressionSample, TranscriptSegment } from "@/lib
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { apiService, type AnnotationCorrections, type ManualVisualAnnotation, type ProliferationDecision, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
 import {
+  retimeManualVisualAnnotationsFromPresenceInterval,
+} from "@/lib/annotation-corrections";
+import {
   matureSceneSegmentsFromAnalysis,
   matureSceneSegmentSourceLabel,
 } from "@/lib/scene-governance";
@@ -623,6 +626,16 @@ function sceneSegmentToMeaningNode(scene: MeaningSceneSegment, index: number): M
 }
 
 function presenceIntervalToMeaningNode(interval: MeaningNetworkPresenceInterval): MeaningNetworkNode {
+  const sourceEvidenceRefs = interval.source_evidence_refs?.length
+    ? interval.source_evidence_refs
+    : [
+        {
+          evidence_id: interval.id,
+          source_type: "manual_presence_interval",
+          time_range: { start: interval.start_seconds, end: interval.end_seconds },
+          traceback_record_id: `traceback:${interval.id}`,
+        },
+      ];
   return {
     node_id: interval.node_id,
     node_type: interval.node_type || "off_camera_presence",
@@ -638,14 +651,7 @@ function presenceIntervalToMeaningNode(interval: MeaningNetworkPresenceInterval)
       authority: interval.authority_level,
       confidence: interval.authority_level === "manual_correction" ? 0.95 : 0.55,
     },
-    evidence_refs: [
-      {
-        evidence_id: interval.id,
-        source_type: "manual_presence_interval",
-        time_range: { start: interval.start_seconds, end: interval.end_seconds },
-        traceback_record_id: `traceback:${interval.id}`,
-      },
-    ],
+    evidence_refs: sourceEvidenceRefs,
     ui: {
       display_group: interval.lane_id || "meaning_network_presence",
       quick_confirm_enabled: true,
@@ -2864,7 +2870,7 @@ export default function MeaningPlotPanel({
       ...currentIntervals.filter((item) => item.id !== interval.id && item.node_id !== interval.node_id),
       interval,
     ];
-    const nextCorrections: AnnotationCorrections = {
+    const nextCorrectionsBase: AnnotationCorrections = {
       ...existing,
       analysis_id: selectedVideoId,
       version: 1,
@@ -2878,6 +2884,11 @@ export default function MeaningPlotPanel({
       meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
       master_schema_presence_intervals: nextIntervals,
     };
+    const nextCorrections = retimeManualVisualAnnotationsFromPresenceInterval(
+      nextCorrectionsBase,
+      interval,
+      { now },
+    );
     await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
     setAnalysisData(refreshed);

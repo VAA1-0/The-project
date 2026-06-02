@@ -3,13 +3,26 @@ import type { DetectedObject, MatureEvidenceAuthority } from "./video-service";
 
 export const MANUAL_POINT_VISIBILITY_SECONDS = 0.08;
 export const MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS = 0.03;
-export const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 0.5;
+export const MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS = 5;
+export const MANUAL_GEOMETRY_KEYFRAME_REPLACE_TOLERANCE_SECONDS = 0.075;
 
 export type DraftBox = {
   x: number;
   y: number;
   w: number;
   h: number;
+};
+
+export type VideoContentRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type ClientPoint = {
+  x: number;
+  y: number;
 };
 
 export type ManualGeometryKeyframe = NonNullable<
@@ -37,12 +50,364 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 export function normalizeDraftBox(box: DraftBox): DraftBox {
+  const x = clamp(box.x, 0, 1);
+  const y = clamp(box.y, 0, 1);
   return {
-    x: clamp(box.x, 0, 1),
-    y: clamp(box.y, 0, 1),
-    w: clamp(box.w, 0.002, 1),
-    h: clamp(box.h, 0.002, 1),
+    x,
+    y,
+    w: clamp(box.w, 0.002, Math.max(0.002, 1 - x)),
+    h: clamp(box.h, 0.002, Math.max(0.002, 1 - y)),
   };
+}
+
+export function getTrueVideoContentRect({
+  elementWidth,
+  elementHeight,
+  intrinsicWidth,
+  intrinsicHeight,
+}: {
+  elementWidth: number;
+  elementHeight: number;
+  intrinsicWidth: number;
+  intrinsicHeight: number;
+}): VideoContentRect | null {
+  if (
+    elementWidth <= 0 ||
+    elementHeight <= 0 ||
+    intrinsicWidth <= 0 ||
+    intrinsicHeight <= 0
+  ) {
+    return null;
+  }
+
+  const videoRatio = intrinsicWidth / intrinsicHeight;
+  const elementRatio = elementWidth / elementHeight;
+
+  let renderWidth = elementWidth;
+  let renderHeight = elementHeight;
+  let xOffset = 0;
+  let yOffset = 0;
+
+  if (elementRatio > videoRatio) {
+    renderWidth = elementHeight * videoRatio;
+    xOffset = (elementWidth - renderWidth) / 2;
+  } else {
+    renderHeight = elementWidth / videoRatio;
+    yOffset = (elementHeight - renderHeight) / 2;
+  }
+
+  return {
+    x: xOffset,
+    y: yOffset,
+    width: renderWidth,
+    height: renderHeight,
+  };
+}
+
+export function getTrueVideoContentRectForElement(
+  videoEl: HTMLVideoElement | null | undefined,
+): VideoContentRect | null {
+  if (!videoEl) {
+    return null;
+  }
+  return getTrueVideoContentRect({
+    elementWidth: videoEl.clientWidth,
+    elementHeight: videoEl.clientHeight,
+    intrinsicWidth: videoEl.videoWidth,
+    intrinsicHeight: videoEl.videoHeight,
+  });
+}
+
+export function clientPointToNormalizedVideoPoint({
+  clientX,
+  clientY,
+  elementRect,
+  contentRect,
+}: {
+  clientX: number;
+  clientY: number;
+  elementRect: Pick<DOMRect, "left" | "top">;
+  contentRect: VideoContentRect;
+}): ClientPoint | null {
+  if (contentRect.width <= 0 || contentRect.height <= 0) {
+    return null;
+  }
+  return {
+    x: clamp(
+      (clientX - elementRect.left - contentRect.x) / contentRect.width,
+      0,
+      1,
+    ),
+    y: clamp(
+      (clientY - elementRect.top - contentRect.y) / contentRect.height,
+      0,
+      1,
+    ),
+  };
+}
+
+export function projectNormalizedBoxToVideoContent(
+  box: DraftBox,
+  contentRect: VideoContentRect,
+): { left: number; top: number; width: number; height: number } {
+  const normalized = normalizeDraftBox(box);
+  return {
+    left: normalized.x * contentRect.width,
+    top: normalized.y * contentRect.height,
+    width: normalized.w * contentRect.width,
+    height: normalized.h * contentRect.height,
+  };
+}
+
+export function mergeManualGeometryKeyframes(
+  keyframes: ManualGeometryKeyframe[],
+): ManualGeometryKeyframe[] {
+  const byTime = new Map<number, ManualGeometryKeyframe>();
+  for (const keyframe of keyframes) {
+    if (!Number.isFinite(keyframe.time)) {
+      continue;
+    }
+    const time = Number(keyframe.time.toFixed(3));
+    const existing = byTime.get(time);
+    if (!existing || keyframe.source === "manual") {
+      byTime.set(time, {
+        ...keyframe,
+        time,
+        coordinates: normalizeDraftBox(keyframe.coordinates),
+      });
+    }
+  }
+  return Array.from(byTime.values()).sort((left, right) => left.time - right.time);
+}
+
+export function buildBoxFromNormalizedPoints(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): DraftBox {
+  const left = Math.min(startX, endX);
+  const top = Math.min(startY, endY);
+  const right = Math.max(startX, endX);
+  const bottom = Math.max(startY, endY);
+  return normalizeDraftBox({
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
+  });
+}
+
+export function manualAnnotationTimeScopeKey(start: number, end: number): string {
+  return `${Number(start).toFixed(3)}-${Number(end).toFixed(3)}`;
+}
+
+export function manualAnnotationBBoxFingerprint(box: DraftBox): string {
+  return [box.x, box.y, box.w, box.h]
+    .map((value) => Number(value).toFixed(4))
+    .join("-");
+}
+
+export function calculateDraftBoxIoU(
+  left: DraftBox | null,
+  right: DraftBox | null,
+): number {
+  if (!left || !right) {
+    return 0;
+  }
+  const leftX2 = left.x + left.w;
+  const leftY2 = left.y + left.h;
+  const rightX2 = right.x + right.w;
+  const rightY2 = right.y + right.h;
+  const intersectionW = Math.max(
+    0,
+    Math.min(leftX2, rightX2) - Math.max(left.x, right.x),
+  );
+  const intersectionH = Math.max(
+    0,
+    Math.min(leftY2, rightY2) - Math.max(left.y, right.y),
+  );
+  const intersection = intersectionW * intersectionH;
+  if (intersection <= 0) {
+    return 0;
+  }
+  const union = left.w * left.h + right.w * right.h - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+export function calculateDraftBoxCenterDistance(
+  left: DraftBox | null,
+  right: DraftBox | null,
+): number {
+  if (!left || !right) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.hypot(
+    left.x + left.w / 2 - (right.x + right.w / 2),
+    left.y + left.h / 2 - (right.y + right.h / 2),
+  );
+}
+
+export function synthesizePersonBoxFromExpression(expressionBox: DraftBox): DraftBox {
+  const centerX = expressionBox.x + expressionBox.w / 2;
+  const width = clamp(Math.max(expressionBox.w * 2.35, 0.12), 0.002, 0.72);
+  const height = clamp(Math.max(expressionBox.h * 4.6, 0.28), 0.002, 0.9);
+  const x = clamp(centerX - width / 2, 0, Math.max(0, 1 - width));
+  const y = clamp(
+    expressionBox.y - expressionBox.h * 0.65,
+    0,
+    Math.max(0, 1 - height),
+  );
+  return normalizeDraftBox({ x, y, w: width, h: height });
+}
+
+export function geometryToNormalizedBox(
+  geometry: unknown,
+  videoWidth: number,
+  videoHeight: number,
+): DraftBox | null {
+  const geometryRecord =
+    geometry && typeof geometry === "object" && !Array.isArray(geometry)
+      ? (geometry as Record<string, unknown>)
+      : null;
+  const rawBox =
+    geometryRecord?.bbox && typeof geometryRecord.bbox === "object"
+      ? (geometryRecord.bbox as Record<string, unknown>)
+      : geometryRecord;
+  if (!rawBox) {
+    return null;
+  }
+  const x = Number(rawBox.x ?? rawBox.left ?? rawBox.x1);
+  const y = Number(rawBox.y ?? rawBox.top ?? rawBox.y1);
+  const rawWidth = Number(rawBox.width ?? rawBox.w);
+  const rawHeight = Number(rawBox.height ?? rawBox.h);
+  const x2 = Number(rawBox.x2);
+  const y2 = Number(rawBox.y2);
+  let width = Number.isFinite(rawWidth) ? rawWidth : Number.NaN;
+  let height = Number.isFinite(rawHeight) ? rawHeight : Number.NaN;
+  if (!Number.isFinite(width) && Number.isFinite(x) && Number.isFinite(x2)) {
+    width = x2 - x;
+  }
+  if (!Number.isFinite(height) && Number.isFinite(y) && Number.isFinite(y2)) {
+    height = y2 - y;
+  }
+  if (![x, y, width, height].every(Number.isFinite) || width === 0 || height === 0) {
+    return null;
+  }
+  const values = [x, y, x + width, y + height].map(Math.abs);
+  const appearsNormalized = Math.max(...values) <= 1.5;
+  const scaleX = appearsNormalized ? 1 : Math.max(1, videoWidth);
+  const scaleY = appearsNormalized ? 1 : Math.max(1, videoHeight);
+  return normalizeDraftBox({
+    x: Math.min(x, x + width) / scaleX,
+    y: Math.min(y, y + height) / scaleY,
+    w: Math.abs(width) / scaleX,
+    h: Math.abs(height) / scaleY,
+  });
+}
+
+export function isSameSpaceBoxMatch(
+  left: DraftBox | null,
+  right: DraftBox | null,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  const iou = calculateDraftBoxIoU(left, right);
+  if (iou >= 0.45) {
+    return true;
+  }
+  const centerDistance = calculateDraftBoxCenterDistance(left, right);
+  const areaRatio =
+    Math.min(left.w * left.h, right.w * right.h) /
+    Math.max(left.w * left.h, right.w * right.h, 0.000001);
+  return iou >= 0.25 && centerDistance <= 0.06 && areaRatio >= 0.35;
+}
+
+export function analystManualAuthoritySuppressesObjectBox(
+  objectBox: DraftBox | null,
+  manualBox: DraftBox | null,
+): boolean {
+  if (!objectBox || !manualBox) {
+    return false;
+  }
+  const iou = calculateDraftBoxIoU(objectBox, manualBox);
+  if (iou >= 0.08) {
+    return true;
+  }
+  const centerDistance = calculateDraftBoxCenterDistance(objectBox, manualBox);
+  const areaRatio =
+    Math.min(objectBox.w * objectBox.h, manualBox.w * manualBox.h) /
+    Math.max(objectBox.w * objectBox.h, manualBox.w * manualBox.h, 0.000001);
+  return centerDistance <= 0.18 && areaRatio >= 0.08;
+}
+
+export function buildManualCorrectionGeometryKeyframes({
+  start,
+  end,
+  box,
+  anchorTime,
+  existingKeyframes = [],
+  updatedAt = new Date().toISOString(),
+}: {
+  start: number;
+  end: number;
+  box: DraftBox;
+  anchorTime?: number;
+  existingKeyframes?: ManualGeometryKeyframe[];
+  updatedAt?: string;
+}): ManualGeometryKeyframe[] {
+  const normalizedBox = normalizeDraftBox(box);
+  const intervalStart = Number(Math.min(start, end).toFixed(3));
+  const intervalEnd = Number(Math.max(start, end, intervalStart + 0.001).toFixed(3));
+  const safeAnchor =
+    typeof anchorTime === "number" && Number.isFinite(anchorTime)
+      ? Number(clamp(anchorTime, intervalStart, intervalEnd).toFixed(3))
+      : intervalStart;
+  const governedExisting = existingKeyframes
+    .filter(
+      (keyframe): keyframe is ManualGeometryKeyframe =>
+        keyframe?.source !== "track" &&
+        typeof keyframe?.time === "number" &&
+        Number.isFinite(keyframe.time) &&
+        keyframe.time >= intervalStart - MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS &&
+        keyframe.time <= intervalEnd + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS &&
+        Boolean(keyframe.coordinates),
+    )
+    .map((keyframe) => ({
+      ...keyframe,
+      time: Number(clamp(keyframe.time, intervalStart, intervalEnd).toFixed(3)),
+      coordinates: normalizeDraftBox(keyframe.coordinates),
+      source: "manual" as const,
+    }))
+    .filter(
+      (keyframe) =>
+        Math.abs(keyframe.time - safeAnchor) >
+        MANUAL_GEOMETRY_KEYFRAME_REPLACE_TOLERANCE_SECONDS,
+    );
+  const nextKeyframes = [
+    ...governedExisting,
+    {
+      time: safeAnchor,
+      coordinates: normalizedBox,
+      source: "manual" as const,
+      updated_at: updatedAt,
+    },
+  ].sort((left, right) => left.time - right.time);
+
+  if (nextKeyframes.length === 1) {
+    return [intervalStart, safeAnchor, intervalEnd]
+      .filter((time, index, times) => times.indexOf(time) === index)
+      .sort((left, right) => left - right)
+      .map((time) => ({
+        time,
+        coordinates: normalizedBox,
+        source: "manual" as const,
+        updated_at: updatedAt,
+      }));
+  }
+
+  return nextKeyframes;
 }
 
 export function interpolateBoxes(left: DraftBox, right: DraftBox, t: number): DraftBox {
@@ -281,11 +646,20 @@ export function detectedObjectToNormalizedBox(
   const x2 = Number(item.bbox.x2);
   const y2 = Number(item.bbox.y2);
   if (![x1, y1, x2, y2].some((value) => !Number.isFinite(value))) {
+    const appearsNormalized =
+      x1 >= 0 &&
+      y1 >= 0 &&
+      x2 >= 0 &&
+      y2 >= 0 &&
+      Math.max(x1, y1, x2, y2) <= 1.5;
+    const scaleX = appearsNormalized ? 1 : width;
+    const scaleY = appearsNormalized ? 1 : height;
+
     return normalizeDraftBox({
-      x: Math.min(x1, x2) / width,
-      y: Math.min(y1, y2) / height,
-      w: Math.abs(x2 - x1) / width,
-      h: Math.abs(y2 - y1) / height,
+      x: Math.min(x1, x2) / scaleX,
+      y: Math.min(y1, y2) / scaleY,
+      w: Math.abs(x2 - x1) / scaleX,
+      h: Math.abs(y2 - y1) / scaleY,
     });
   }
   return null;

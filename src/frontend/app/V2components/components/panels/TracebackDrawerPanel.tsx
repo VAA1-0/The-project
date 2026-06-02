@@ -128,6 +128,27 @@ function hasManualAuthority(payload: TracebackDrawerPayload, sourceItem: Record<
   );
 }
 
+function canRestoreToAnalysis(payload: TracebackDrawerPayload): boolean {
+  const sourceItem = asRecord(payload.sourceItem);
+  if (!payload.videoId || hasManualAuthority(payload, sourceItem)) {
+    return false;
+  }
+  const hasSourceGeometry = Boolean(
+    sourceItem.bbox ||
+      sourceItem.coordinates ||
+      sourceItem.normalizedBox ||
+      sourceItem.normalized_box,
+  );
+  const hasSourceTime = Boolean(
+    payload.source_refs?.video_time !== undefined ||
+      payload.source_refs?.time_range?.start !== undefined ||
+      sourceItem.timestamp !== undefined ||
+      sourceItem.startTimestamp !== undefined ||
+      sourceItem.start_seconds !== undefined,
+  );
+  return hasSourceGeometry && hasSourceTime;
+}
+
 function normalizeTreeNodes(tree?: ForensicTracebackTree | null): TracebackNode[] {
   return (tree?.nodes || []).map((node, index) => {
     const payload = asRecord(node.payload);
@@ -513,6 +534,26 @@ export default function TracebackDrawerPanel({ payload: initialPayload }: Traceb
     });
   };
 
+  const restoreToAnalysis = () => {
+    if (!canRestoreToAnalysis(normalized)) {
+      return;
+    }
+    eventBus.emit("restoreEvidenceToAnalysisRequested", {
+      videoId: normalized.videoId,
+      sourcePanel: "TracebackDrawer",
+      sourceItem: normalized.sourceItem,
+      source_refs: normalized.source_refs,
+      claim_label: normalized.claim_label,
+      claim_type: normalized.claim_type,
+      authority_source: normalized.authority_source,
+      traceback: normalized.traceback,
+    });
+    eventBus.emit("openPanelRequest", {
+      panelType: "VideoPanel",
+      panelProps: normalized.videoId ? { videoId: normalized.videoId } : {},
+    });
+  };
+
   return (
     <aside
       data-vaa1-panel="traceback-drawer"
@@ -797,6 +838,15 @@ export default function TracebackDrawerPanel({ payload: initialPayload }: Traceb
               className="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"
             >
               Open metadata
+            </button>
+            <button
+              type="button"
+              data-vaa1-action="restore-to-analysis"
+              disabled={!canRestoreToAnalysis(normalized)}
+              onClick={restoreToAnalysis}
+              className="rounded border border-emerald-800 bg-emerald-950/20 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-900/35 disabled:cursor-not-allowed disabled:border-slate-800 disabled:bg-transparent disabled:text-slate-600"
+            >
+              Restore to analysis
             </button>
           </div>
         </section>

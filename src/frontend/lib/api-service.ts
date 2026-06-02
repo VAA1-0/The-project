@@ -1150,17 +1150,37 @@ export interface ManualVisualAnnotation {
       | "linked_candidates"
       | "track_family"
       | "narrative_agent_family";
+    bbox_roi_governance_schema?: "vaa1.bbox_roi_governance.v1" | string;
+    authority_state?: string;
+    maturity_state?: string;
+    geometry_track_id?: string;
+    coordinate_system?: "normalized_video" | "pixel_video" | "frame_region" | string;
+    interpolation_policy?: {
+      allowed?: boolean;
+      max_gap_ms?: number;
+      break_on_scene_boundary?: boolean;
+      break_on_shot_cut?: boolean;
+      manual_confirmation_required_for_cross_boundary?: boolean;
+    };
     manual_confirmation_event?: {
       event_type?: "manual_bbox_roi_confirmation" | string;
+      event_id?: string;
+      analysis_id?: string;
+      bbox_roi_id?: string;
       authority_level?: string;
+      confirmed_fields?: Record<string, boolean>;
       active_state_after_save?: Record<string, unknown>;
+      supersedes?: string[];
       old_states_retained_as?: string;
       propagation_required?: boolean;
+      partial_propagation_allowed?: boolean;
     };
     source_track_keyframes_retained_for_traceback?: Array<{
       time: number;
       source?: "manual" | "track" | "interpolated";
     }>;
+    master_schema_presence_interval_id?: string;
+    source_range_source?: string;
     quick_annotations?: string[];
     maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
@@ -1265,7 +1285,7 @@ class ApiService {
   constructor() {
     this.useMock = process.env.NEXT_PUBLIC_USE_MOCK === "true" || false;
     // Direct connection to FastAPI backend
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    this.baseURL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
   }
 
   /**
@@ -1794,6 +1814,10 @@ class ApiService {
     return response.blob();
   }
 
+  getBundleDownloadUrl(analysisId: string): string {
+    return `${this.baseURL}/api/download-bundle/${analysisId}`;
+  }
+
   async getAnnotationCorrections(analysisId: string): Promise<AnnotationCorrections> {
     const response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`);
     if (!response.ok) {
@@ -1897,6 +1921,18 @@ class ApiService {
     window.URL.revokeObjectURL(url);
   }
 
+  downloadUrl(url: string, filename?: string): void {
+    const a = document.createElement("a");
+    a.href = url;
+    if (filename) {
+      a.download = filename;
+    }
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   /**
    * Download and save a file from analysis results
    */
@@ -1922,6 +1958,10 @@ class ApiService {
     filename?: string,
   ): Promise<void> {
     try {
+      if (!analysisId.startsWith("mock-")) {
+        this.downloadUrl(this.getBundleDownloadUrl(analysisId), filename);
+        return;
+      }
       const blob = await this.downloadBundle(analysisId);
       this.downloadBlob(blob, filename || `${analysisId}_analysis_bundle.zip`);
     } catch (error) {
@@ -1949,13 +1989,44 @@ class ApiService {
     return response.blob();
   }
 
+  async prepareProjectBundle(
+    payload: Record<string, unknown>,
+  ): Promise<{ filename: string; download_url: string }> {
+    const response = await fetch(`${this.baseURL}/api/prepare-project-bundle`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Project bundle preparation failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    const result = await response.json();
+    if (!result?.download_url) {
+      throw new Error("Project bundle preparation did not return a download URL");
+    }
+    return {
+      filename: String(result.filename || "vaa1_project_bundle.zip"),
+      download_url: String(result.download_url),
+    };
+  }
+
   async downloadAndSaveProjectBundle(
     payload: Record<string, unknown>,
     filename?: string,
   ): Promise<void> {
     try {
-      const blob = await this.downloadProjectBundle(payload);
-      this.downloadBlob(blob, filename || "vaa1_project_bundle.zip");
+      const prepared = await this.prepareProjectBundle(payload);
+      const downloadUrl = prepared.download_url.startsWith("http")
+        ? prepared.download_url
+        : `${this.baseURL}${prepared.download_url}`;
+      this.downloadUrl(downloadUrl, filename || prepared.filename);
     } catch (error) {
       console.error("Failed to download project bundle:", error);
       throw error;
