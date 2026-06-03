@@ -21,8 +21,9 @@ function createWindow() {
   });
 
   if (isDev) {
-    // In development mode, open localhost (Next.js dev server)
-    mainWindow.loadURL('http://localhost:3000');
+    // In development mode, open the current VAA1 frontend launcher URL.
+    const frontendPort = process.env.VAA1_FRONTEND_PORT || process.env.PORT || '3001';
+    mainWindow.loadURL(`http://127.0.0.1:${frontendPort}/dashboard`);
     mainWindow.webContents.openDevTools(); // optional
 
   } else {

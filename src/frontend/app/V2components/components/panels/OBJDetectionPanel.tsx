@@ -33,7 +33,7 @@ import {
   openObjectIndicationInVideo,
 } from "@/lib/video-navigation";
 import {
-  buildManualCorrectionGeometryKeyframes,
+  buildManualBBoxRoiAnnotation,
   detectedObjectToNormalizedBox,
   manualAnnotationBBoxFingerprint,
   normalizeDraftBox,
@@ -540,83 +540,30 @@ export default function OBJDetectionPanel() {
     const annotationId =
       existingManual?.id ||
       `${videoId}:object-indication:${targetId}:${Number(start).toFixed(3)}-${Number(end).toFixed(3)}:${manualAnnotationBBoxFingerprint(governedBox)}`;
-    const geometryTrackId = `${videoId}:bbox-roi-geometry:${annotationId}`;
-    const annotation: ManualVisualAnnotation = {
-      id: annotationId,
+    const annotation = buildManualBBoxRoiAnnotation({
+      analysisId: videoId,
+      annotationId,
+      existingManual,
       category: resolvedDraft.category,
       subcategory: resolvedDraft.subcategory || firstSubcategory(resolvedDraft.category),
       label,
-      custom_label: resolvedDraft.label.trim() || undefined,
-      geometry_type: "box",
-      coordinates: governedBox,
-      geometry_keyframes: buildManualCorrectionGeometryKeyframes({
-        start,
-        end,
-        box: governedBox,
-        anchorTime: start,
-        existingKeyframes: existingManual?.geometry_keyframes || [],
-        updatedAt,
-      }),
-      timestamp_seconds: Number(start.toFixed(3)),
-      start_seconds: Number(start.toFixed(3)),
-      end_seconds: Number(end.toFixed(3)),
-      identity_affirmation:
+      customLabel: resolvedDraft.label.trim() || undefined,
+      box: governedBox,
+      start,
+      end,
+      anchorTime: start,
+      targetType: "object",
+      targetId,
+      targetLabel: existingManual?.metadata_correlation?.target_label || getObjectSourceLabel(obj),
+      applyScope: "this_interval_only",
+      identityAffirmation:
         resolvedDraft.category === "Identification" ? label : undefined,
-      role_affirmation: resolvedDraft.category === "Role" ? label : undefined,
-      open_note: resolvedDraft.note.trim() || undefined,
-      metadata_correlation: {
-        ...(existingManual?.metadata_correlation || {}),
-        target_type: "object",
-        target_id: targetId,
-        target_label: existingManual?.metadata_correlation?.target_label || getObjectSourceLabel(obj),
-        apply_scope: "this_interval_only",
-        bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
-        authority_state: "manual_correction",
-        maturity_state: "manual_correction",
-        geometry_track_id: geometryTrackId,
-        coordinate_system: "normalized_video",
-        interpolation_policy: {
-          allowed: true,
-          max_gap_ms: 5000,
-          break_on_scene_boundary: true,
-          break_on_shot_cut: true,
-          manual_confirmation_required_for_cross_boundary: true,
-        },
-        manual_confirmation_event: {
-          event_type: "manual_bbox_roi_confirmation",
-          event_id: `${videoId}:manual-bbox-roi-confirmation:${annotationId}:${Date.now()}`,
-          analysis_id: videoId,
-          bbox_roi_id: annotationId,
-          authority_level: "manual_correction",
-          confirmed_fields: {
-            time_interval: true,
-            geometry: true,
-            label: true,
-          },
-          active_state_after_save: {
-            start_ms: Math.round(start * 1000),
-            end_ms: Math.round(end * 1000),
-            geometry_track_id: geometryTrackId,
-            start_seconds: Number(start.toFixed(3)),
-            end_seconds: Number(end.toFixed(3)),
-            bbox: governedBox,
-            geometry_keyframe_time: Number(start.toFixed(3)),
-            label,
-            category: resolvedDraft.category,
-          },
-          supersedes: [targetId],
-          old_states_retained_as: "traceback_provenance",
-          propagation_required: true,
-          partial_propagation_allowed: false,
-        },
-        relation: "extends",
-        note: "Adopted from Objects leaf panel indication editor.",
-      },
-      teaches_regime: true,
-      created_at: existingManual?.created_at || updatedAt,
-      updated_at: updatedAt,
-      updated_by: "analyst",
-    };
+      roleAffirmation: resolvedDraft.category === "Role" ? label : undefined,
+      openNote: resolvedDraft.note.trim() || undefined,
+      supersedes: [targetId],
+      sourceNote: "Adopted from Objects leaf panel indication editor.",
+      updatedAt,
+    });
 
     const existingCorrections = analysisData?.annotationCorrections;
     const nextCorrections = upsertManualVisualAnnotation(

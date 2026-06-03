@@ -1030,26 +1030,26 @@ test("manual OBJ corrections outrank stale narrative-agent labels on object bbox
 
   assert.match(
     objPanel,
-    /geometry_keyframes: buildManualCorrectionGeometryKeyframes/,
-    "Objects panel BBox saves must persist manual geometry keyframes as authority",
+    /buildManualBBoxRoiAnnotation\(\{[\s\S]*analysisId:\s*videoId,[\s\S]*annotationId,[\s\S]*box:\s*governedBox/,
+    "Objects panel BBox saves must delegate governed manual geometry to the shared authority builder",
   );
 
   assert.match(
-    objPanel,
-    /buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*existingKeyframes/,
-    "Objects panel BBox saves must add governed manual keyframes without falling back to raw track geometry",
+    bboxAuthority,
+    /export function buildManualBBoxRoiAnnotation[\s\S]*geometry_keyframes:\s*geometryKeyframes/,
+    "Shared BBox/ROI authority builder must persist manual geometry keyframes as authority",
   );
 
   assert.match(
-    objPanel,
-    /coordinates: governedBox,[\s\S]*bbox_roi_governance_schema: "vaa1\.bbox_roi_governance\.v1"/,
-    "Objects panel BBox saves must persist governed geometry and schema metadata",
+    bboxAuthority,
+    /coordinates:\s*governedBox,[\s\S]*bbox_roi_governance_schema:\s*"vaa1\.bbox_roi_governance\.v1"/,
+    "Shared BBox/ROI authority builder must persist governed geometry and schema metadata",
   );
 
   assert.match(
-    objPanel,
+    bboxAuthority,
     /manual_confirmation_event:[\s\S]*authority_level: "manual_correction"/,
-    "Objects panel BBox saves must persist manual correction confirmation metadata",
+    "Shared BBox/ROI authority builder must persist manual correction confirmation metadata",
   );
 
   assert.match(
@@ -2310,8 +2310,80 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
-    /data-vaa1-meaning-network-sfl-moral-select="true"/,
-    "Meaning Network SFL sheets must let analysts select moral polarity",
+    /type MeaningNetworkInterpretiveReadingRecord = \{[\s\S]*schema:\s*"vaa1\.meaning_network_interpretive_reading\.v1"[\s\S]*reading_id:\s*string;[\s\S]*target_kind:[\s\S]*taxonomy_path:\s*string;[\s\S]*plain_language_meaning:\s*string;[\s\S]*source_traceback_refs:\s*string\[\];[\s\S]*user_correction_stands:\s*true/,
+    "Meaning Network readings must persist as complete governed reading schemas, not partial SFL fragments",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-reading-ledger="true"/,
+    "Meaning Network sheets must render a ledger of multiple saved readings for the same node or edge",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-reading-add-candidate="true"/,
+    "Meaning Network sheets must let analysts add candidate readings without excluding other reading categories",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-reading-row="ideational"[\s\S]*data-vaa1-meaning-network-reading-row="interpersonal"[\s\S]*data-vaa1-meaning-network-reading-row="textual"[\s\S]*data-vaa1-meaning-network-reading-row="virtues"[\s\S]*data-vaa1-meaning-network-reading-row="vices"/,
+    "Meaning Network sheets must expose every main reading category as its own operational row",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-reading-row="interpersonal"[\s\S]*Relation[\s\S]*Judgement group[\s\S]*Judgement value/,
+    "Meaning Network interpersonal readings must align relation, judgement group, and judgement value subcategory controls",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-compact-source="true"[\s\S]*data-vaa1-meaning-network-compact-traceback="true"/,
+    "Meaning Network source verification and traceback must stay compact metadata, not large widgets",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /decision_id:\s*`meaning-network-reading:\$\{readingRecord\.reading_id\}`[\s\S]*candidate_id:\s*readingRecord\.reading_id/,
+    "Meaning Network reading decisions must be keyed by a complete reading id so one node can hold several readings",
+  );
+
+  assert.doesNotMatch(
+    meaningPlotPanel,
+    /decision_id:\s*`meaning-network-sfl:\$\{kind\}:\$\{id\}`/,
+    "Meaning Network readings must not use one overwrite-prone SFL decision id per node",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /type MeaningNetworkReadingDecision = "confirmed" \| "canceled" \| "deferred" \| "inspected"/,
+    "Meaning Network reading saves must distinguish candidate, confirmed, rejected, and deferred schema states",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /maturity_result:\s*meaningNetworkReadingMaturityResult\(decision\)/,
+    "Meaning Network reading maturity results must be derived from the reading decision, not a binary SFL category",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /const isConfirmedReading = decision === "confirmed"[\s\S]*proliferation_allowed:\s*isConfirmedReading/,
+    "Meaning Network candidate readings must stay complete but must not proliferate until confirmed",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-reading-row="vices"[\s\S]*Vice family[\s\S]*Vice axis[\s\S]*Vice value/,
+    "Meaning Network sheets must expose vices as a main category with aligned subcategory controls",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /MEANING_NETWORK_SFL_VICE_FAMILY_LABELS[\s\S]*meaningNetworkViceAxisLabel[\s\S]*data-vaa1-meaning-network-sfl-vice-family-select/,
+    "Meaning Network vice rows must surface vice-facing family and axis attributes, not virtue-facing labels",
   );
 
   assert.match(
@@ -2340,8 +2412,8 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
-    /data-vaa1-meaning-network-sfl-virtue-vice-select="true"/,
-    "Meaning Network SFL sheets must let analysts select virtues and vices",
+    /data-vaa1-meaning-network-sfl-virtue-vice-select="true"[\s\S]*data-vaa1-meaning-network-sfl-vice-value-select="true"/,
+    "Meaning Network SFL sheets must let analysts select virtue and vice values separately",
   );
 
   assert.match(

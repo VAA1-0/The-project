@@ -256,6 +256,9 @@ type MeaningNetworkSheetState = {
 
 type MeaningNetworkSflLayer = "ideational" | "interpersonal" | "textual" | "virtues_and_vices";
 type MeaningNetworkMoralPolarity = "virtue" | "vice" | "ambivalent" | "not_moralized";
+type MeaningNetworkReadingLens = "sfl_ideational" | "sfl_interpersonal" | "sfl_textual" | "moral_virtue";
+type MeaningNetworkReadingStatus = "candidate" | "confirmed" | "rejected" | "deferred";
+type MeaningNetworkReadingDecision = "confirmed" | "canceled" | "deferred" | "inspected";
 
 type MeaningNetworkSflDraft = {
   sfl_layer: MeaningNetworkSflLayer;
@@ -268,6 +271,39 @@ type MeaningNetworkSflDraft = {
   virtue_vice_value: string;
   confirmation_relation: string;
   applied_label: string;
+};
+
+type MeaningNetworkInterpretiveReadingRecord = {
+  schema: "vaa1.meaning_network_interpretive_reading.v1";
+  reading_id: string;
+  target_kind: "node" | "edge";
+  target_id: string;
+  reading_lens: MeaningNetworkReadingLens;
+  status: MeaningNetworkReadingStatus;
+  sfl_layer: MeaningNetworkSflLayer;
+  sfl_category: string;
+  judgement_group: string;
+  judgement_axis: string;
+  moral_polarity: MeaningNetworkMoralPolarity;
+  virtue_family: string;
+  virtue_axis: string;
+  virtue_vice_value: string;
+  confirmation_relation: string;
+  taxonomy_path: string;
+  applied_label: string;
+  plain_language_meaning: string;
+  source_verification_status: "source_time_resolved" | "source_anchor_missing";
+  source_range_source?: "evidence_ref" | "presence_override" | "manual_interval";
+  source_anchors: Array<Record<string, unknown>>;
+  evidence_refs: MeaningNetworkEvidenceRef[];
+  source_traceback_refs: string[];
+  authority_level: "manual_confirmation" | "manual_rejection" | "analyst_candidate";
+  maturity_state: string;
+  user_correction_stands: true;
+  propagation_required: boolean;
+  partial_propagation_allowed: false;
+  created_at: string;
+  created_by: "analyst";
 };
 
 type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
@@ -511,6 +547,27 @@ const MEANING_NETWORK_SFL_VIRTUES: Record<string, Record<string, { positive: str
     },
   },
 };
+
+const MEANING_NETWORK_SFL_VICE_FAMILY_LABELS: Record<string, string> = {
+  wisdom_and_knowledge: "Intellectual closure",
+  courage: "Cowardice / deception",
+  humanity: "Cruelty / alienation",
+  justice: "Corruption / oppression",
+  temperance: "Arrogance / compulsion",
+  transcendence: "Nihilism / despair",
+};
+
+function meaningNetworkViceFamilyLabel(family: string): string {
+  return MEANING_NETWORK_SFL_VICE_FAMILY_LABELS[family] || family.replaceAll("_", " ");
+}
+
+function meaningNetworkViceAxisLabel(family: string, axis: string): string {
+  const values = MEANING_NETWORK_SFL_VIRTUES[family]?.[axis]?.antithesis || [];
+  if (values.length > 0) {
+    return values.slice(0, 2).map((value) => value.replaceAll("_", " ")).join(" / ");
+  }
+  return axis.replaceAll("_", " ");
+}
 
 const DRAMATIC_ARCHETYPE_LENSES: Array<{
   id: DramaticArchetypeLens;
@@ -1211,6 +1268,176 @@ function meaningNetworkSflPlainLanguage(draft: MeaningNetworkSflDraft): string {
     return `${layer} judgement: ${draft.confirmation_relation.replaceAll("_", " ")} through ${draft.judgement_group.replaceAll("_", " ")} / ${draft.judgement_axis.replaceAll("_", " ")}.`;
   }
   return `${layer} reading: ${draft.sfl_category.replaceAll("_", " ")}.`;
+}
+
+function meaningNetworkReadingLensForDraft(
+  draft: MeaningNetworkSflDraft,
+): MeaningNetworkReadingLens {
+  if (draft.sfl_layer === "virtues_and_vices") {
+    return "moral_virtue";
+  }
+  return `sfl_${draft.sfl_layer}` as MeaningNetworkReadingLens;
+}
+
+function meaningNetworkReadingLensLabel(lens: MeaningNetworkReadingLens): string {
+  if (lens === "moral_virtue") {
+    return "Moral / virtue";
+  }
+  return lens.replace("sfl_", "SFL: ").replaceAll("_", " ");
+}
+
+function meaningNetworkSflTaxonomyPath(draft: MeaningNetworkSflDraft): string {
+  if (draft.sfl_layer === "virtues_and_vices") {
+    return `virtues_and_vices.${draft.virtue_family}.${draft.virtue_axis}.${draft.moral_polarity === "vice" ? "antithesis" : "positive"}.${draft.virtue_vice_value}`;
+  }
+  if (draft.sfl_layer === "interpersonal") {
+    return `sfl.interpersonal.judgement_categories.${draft.judgement_group}.${draft.judgement_axis}`;
+  }
+  return `sfl.${draft.sfl_layer}.${draft.sfl_category}`;
+}
+
+function meaningNetworkReadingId({
+  kind,
+  id,
+  taxonomyPath,
+}: {
+  kind: "node" | "edge";
+  id: string;
+  taxonomyPath: string;
+}): string {
+  const target = String(id || "target").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+  const taxonomy = String(taxonomyPath || "reading").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+  return `${kind}:${target}:reading:${taxonomy}`;
+}
+
+function meaningNetworkReadingStatusForDecision(
+  decision: MeaningNetworkReadingDecision | string,
+): MeaningNetworkReadingStatus {
+  if (decision === "confirmed") {
+    return "confirmed";
+  }
+  if (decision === "canceled") {
+    return "rejected";
+  }
+  if (decision === "deferred") {
+    return "deferred";
+  }
+  return "candidate";
+}
+
+function buildMeaningNetworkInterpretiveReadingRecord({
+  kind,
+  id,
+  draft,
+  decision,
+  refs,
+  range,
+  tracebackRefs,
+  now,
+}: {
+  kind: "node" | "edge";
+  id: string;
+  draft: MeaningNetworkSflDraft;
+  decision: MeaningNetworkReadingDecision | string;
+  refs: MeaningNetworkEvidenceRef[];
+  range: MeaningNetworkTimeRange | null;
+  tracebackRefs: string[];
+  now: string;
+}): MeaningNetworkInterpretiveReadingRecord {
+  const taxonomyPath = meaningNetworkSflTaxonomyPath(draft);
+  const plainLanguageMeaning = meaningNetworkSflPlainLanguage(draft);
+  const status = meaningNetworkReadingStatusForDecision(decision);
+  const authorityLevel =
+    status === "confirmed"
+      ? "manual_confirmation"
+      : status === "rejected"
+        ? "manual_rejection"
+        : "analyst_candidate";
+
+  return {
+    schema: "vaa1.meaning_network_interpretive_reading.v1",
+    reading_id: meaningNetworkReadingId({ kind, id, taxonomyPath }),
+    target_kind: kind,
+    target_id: id,
+    reading_lens: meaningNetworkReadingLensForDraft(draft),
+    status,
+    sfl_layer: draft.sfl_layer,
+    sfl_category: draft.sfl_category,
+    judgement_group: draft.judgement_group,
+    judgement_axis: draft.judgement_axis,
+    moral_polarity: draft.moral_polarity,
+    virtue_family: draft.virtue_family,
+    virtue_axis: draft.virtue_axis,
+    virtue_vice_value: draft.virtue_vice_value,
+    confirmation_relation: draft.confirmation_relation,
+    taxonomy_path: taxonomyPath,
+    applied_label: draft.applied_label || plainLanguageMeaning,
+    plain_language_meaning: plainLanguageMeaning,
+    source_verification_status: range ? "source_time_resolved" : "source_anchor_missing",
+    source_range_source: range ? "evidence_ref" : undefined,
+    source_anchors: range
+      ? [
+          {
+            start_seconds: Number(range.start.toFixed(3)),
+            end_seconds: Number(range.end.toFixed(3)),
+            range_source: "evidence_ref",
+            source_types: meaningNetworkSourceTypes(refs),
+          },
+        ]
+      : [],
+    evidence_refs: refs,
+    source_traceback_refs: tracebackRefs,
+    authority_level: authorityLevel,
+    maturity_state:
+      status === "confirmed"
+        ? "analyst_confirmed_interpretive_reading"
+        : status === "rejected"
+          ? "analyst_rejected_interpretive_reading"
+          : "analyst_candidate_interpretive_reading",
+    user_correction_stands: true,
+    propagation_required: status === "confirmed",
+    partial_propagation_allowed: false,
+    created_at: now,
+    created_by: "analyst",
+  };
+}
+
+function meaningNetworkReadingMaturityResult(decision: MeaningNetworkReadingDecision | string): string {
+  if (decision === "confirmed") {
+    return "analyst_confirmed_interpretive_reading";
+  }
+  if (decision === "canceled") {
+    return "analyst_rejected_interpretive_reading";
+  }
+  if (decision === "deferred") {
+    return "analyst_deferred_interpretive_reading";
+  }
+  return "analyst_candidate_interpretive_reading";
+}
+
+function meaningNetworkReadingSaveTitle(decision: MeaningNetworkReadingDecision | string): string {
+  if (decision === "confirmed") {
+    return "Interpretive reading confirmed";
+  }
+  if (decision === "canceled") {
+    return "Interpretive reading rejected";
+  }
+  if (decision === "deferred") {
+    return "Interpretive reading deferred";
+  }
+  return "Candidate reading added";
+}
+
+function isMeaningNetworkInterpretiveReadingRecord(
+  value: unknown,
+): value is MeaningNetworkInterpretiveReadingRecord {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as MeaningNetworkInterpretiveReadingRecord).schema ===
+        "vaa1.meaning_network_interpretive_reading.v1" &&
+      typeof (value as MeaningNetworkInterpretiveReadingRecord).reading_id === "string",
+  );
 }
 
 function meaningNetworkCanonicalNodeType(nodeType: string): string {
@@ -2611,6 +2838,13 @@ export default function MeaningPlotPanel({
       })),
     [analysisData?.annotationCorrections?.meaning_network_custom_lanes],
   );
+  const meaningNetworkInterpretiveReadings = useMemo(
+    () =>
+      (analysisData?.annotationCorrections?.proliferation_decisions || [])
+        .map((decision) => decision.governance_status)
+        .filter(isMeaningNetworkInterpretiveReadingRecord),
+    [analysisData?.annotationCorrections?.proliferation_decisions],
+  );
   const meaningNetworkLanes = useMemo(
     () => [...MEANING_NETWORK_DEFAULT_LANES, ...persistedMeaningNetworkLanes, ...draftMeaningNetworkLanes],
     [draftMeaningNetworkLanes, persistedMeaningNetworkLanes],
@@ -3734,13 +3968,14 @@ export default function MeaningPlotPanel({
   const persistMeaningNetworkSflDecision = useCallback(async (
     kind: "node" | "edge",
     item: MeaningNetworkNode | MeaningNetworkEdge,
-    decision: "confirmed" | "canceled",
+    decision: MeaningNetworkReadingDecision,
+    draftOverride?: MeaningNetworkSflDraft,
   ) => {
     const id = kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id;
     const refs = item.evidence_refs || [];
     const range = meaningNetworkEvidenceTimeRange(refs);
     const tracebackRefs = meaningNetworkTracebackRefs(refs);
-    const draft = getMeaningNetworkSflDraft(kind, item);
+    const draft = draftOverride || getMeaningNetworkSflDraft(kind, item);
     const now = new Date().toISOString();
     if (!selectedVideoId) {
       reportMeaningNetworkMaturitySave(
@@ -3762,68 +3997,64 @@ export default function MeaningPlotPanel({
       "video_panel",
       "traceback",
     ];
+    const readingRecord = buildMeaningNetworkInterpretiveReadingRecord({
+      kind,
+      id,
+      draft,
+      decision,
+      refs,
+      range,
+      tracebackRefs,
+      now,
+    });
+    const isConfirmedReading = decision === "confirmed";
     const proliferationDecision: ProliferationDecision = {
-      decision_id: `meaning-network-sfl:${kind}:${id}`,
-      candidate_id: `${kind}:${id}:sfl:${draft.sfl_layer}`,
+      decision_id: `meaning-network-reading:${readingRecord.reading_id}`,
+      candidate_id: readingRecord.reading_id,
       request_id: `meaning-network-sfl:${selectedVideoId}`,
       decision,
-      authority_level: decision === "confirmed" ? "manual_confirmation" : "manual_rejection",
+      authority_level: readingRecord.authority_level,
       source_panel: "MeaningNetwork",
-      source_verification_status: range ? "source_time_resolved" : "source_anchor_missing",
-      source_range_source: range ? "evidence_ref" : undefined,
-      candidate_label: `SFL ${draft.sfl_layer.replaceAll("_", " ")}`,
-      applied_label: meaningNetworkSflPlainLanguage(draft),
+      source_verification_status: readingRecord.source_verification_status,
+      source_range_source: readingRecord.source_range_source,
+      candidate_label: meaningNetworkReadingLensLabel(readingRecord.reading_lens),
+      applied_label: readingRecord.plain_language_meaning,
       target_evidence_id: refs[0]?.evidence_id || id,
-      source_anchors: range
-        ? [
-            {
-              start_seconds: Number(range.start.toFixed(3)),
-              end_seconds: Number(range.end.toFixed(3)),
-              range_source: "evidence_ref",
-              source_types: meaningNetworkSourceTypes(refs),
-            },
-          ]
-        : [],
+      source_anchors: readingRecord.source_anchors,
       evidence_refs: refs,
       source_traceback_refs: tracebackRefs,
       projection_targets: projectionTargets,
       proliferates_to: projectionTargets,
       governance_status: {
-        schema: "vaa1.meaning_network_sfl_confirmation.v1",
-        maturity_result:
-          decision === "confirmed"
-            ? "analyst_confirmed_sfl_reading"
-            : "analyst_rejected_sfl_reading",
+        ...readingRecord,
+        schema: "vaa1.meaning_network_interpretive_reading.v1",
+        legacy_confirmation_schema: "vaa1.meaning_network_sfl_confirmation.v1",
+        maturity_result: meaningNetworkReadingMaturityResult(decision),
         anchor: "master_schema",
         user_correction_stands: true,
         target_kind: kind,
         target_id: id,
-        sfl_layer: draft.sfl_layer,
-        sfl_category: draft.sfl_category,
-        judgement_group: draft.judgement_group,
-        judgement_axis: draft.judgement_axis,
-        moral_polarity: draft.moral_polarity,
-        virtue_family: draft.virtue_family,
-        virtue_axis: draft.virtue_axis,
-        virtue_vice_value: draft.virtue_vice_value,
-        confirmation_relation: draft.confirmation_relation,
-        taxonomy_path:
-          draft.sfl_layer === "virtues_and_vices"
-            ? `virtues_and_vices.${draft.virtue_family}.${draft.virtue_axis}.${draft.moral_polarity === "vice" ? "antithesis" : "positive"}.${draft.virtue_vice_value}`
-            : draft.sfl_layer === "interpersonal"
-              ? `sfl.interpersonal.judgement_categories.${draft.judgement_group}.${draft.judgement_axis}`
-              : `sfl.${draft.sfl_layer}.${draft.sfl_category}`,
-        applied_label: draft.applied_label,
-        plain_language_meaning: meaningNetworkSflPlainLanguage(draft),
-        candidate_reading_contributes_to_plot_structure: decision === "confirmed",
+        sfl_layer: readingRecord.sfl_layer,
+        sfl_category: readingRecord.sfl_category,
+        judgement_group: readingRecord.judgement_group,
+        judgement_axis: readingRecord.judgement_axis,
+        moral_polarity: readingRecord.moral_polarity,
+        virtue_family: readingRecord.virtue_family,
+        virtue_axis: readingRecord.virtue_axis,
+        virtue_vice_value: readingRecord.virtue_vice_value,
+        confirmation_relation: readingRecord.confirmation_relation,
+        taxonomy_path: readingRecord.taxonomy_path,
+        applied_label: readingRecord.applied_label,
+        plain_language_meaning: readingRecord.plain_language_meaning,
+        candidate_reading_contributes_to_plot_structure: isConfirmedReading,
         character_meaning_surface_ready: kind === "node",
-        source_verification_status: range ? "source_time_resolved" : "source_anchor_missing",
-        propagation_required: decision === "confirmed",
+        source_verification_status: readingRecord.source_verification_status,
+        propagation_required: isConfirmedReading,
         partial_propagation_allowed: false,
-        corrected_data_proliferates: decision === "confirmed",
+        corrected_data_proliferates: isConfirmedReading,
         raw_parser_output_retained_as: "candidate_traceback_only",
       },
-      proliferation_allowed: decision === "confirmed",
+      proliferation_allowed: isConfirmedReading,
       decision_reason: "meaning_network_sfl_sheet_decision",
       created_at: now,
       created_by: "analyst",
@@ -3849,10 +4080,11 @@ export default function MeaningPlotPanel({
     await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
     setAnalysisData(refreshed);
-    resetMeaningNetworkReviewFrame();
     reportMeaningNetworkMaturitySave(
-      decision === "confirmed" ? "Confirming SFL reading saved" : "Rejecting SFL reading saved",
-      "Saved SFL correction bundle was sent to the Data Maturity Proliferation regime and contributes through the Master Schema authority path.",
+      meaningNetworkReadingSaveTitle(decision),
+      isConfirmedReading
+        ? "Saved reading was sent to the Data Maturity Proliferation regime through the Master Schema authority path."
+        : "Saved reading remains a complete governed schema on this node and does not proliferate until confirmed.",
     );
     eventBus.emit("meaningNetworkSflDecisionCommitted", {
       videoId: selectedVideoId,
@@ -3875,7 +4107,6 @@ export default function MeaningPlotPanel({
     analysisData?.annotationCorrections,
     getMeaningNetworkSflDraft,
     reportMeaningNetworkMaturitySave,
-    resetMeaningNetworkReviewFrame,
     selectedVideoId,
   ]);
 
@@ -3883,7 +4114,15 @@ export default function MeaningPlotPanel({
     kind: "node" | "edge",
     item: MeaningNetworkNode | MeaningNetworkEdge,
   ) => {
+    const id = kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id;
     const draft = getMeaningNetworkSflDraft(kind, item);
+    const existingReadings = meaningNetworkInterpretiveReadings
+      .filter((record) => record.target_kind === kind && record.target_id === id)
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.created_at || "") || 0;
+        const rightTime = Date.parse(right.created_at || "") || 0;
+        return rightTime - leftTime;
+      });
     const judgementGroups = Object.keys(MEANING_NETWORK_SFL_JUDGEMENT);
     const judgementValues =
       MEANING_NETWORK_SFL_JUDGEMENT[draft.judgement_group] ||
@@ -3897,163 +4136,216 @@ export default function MeaningPlotPanel({
     const virtueAxis = MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[draft.virtue_axis]
       ? draft.virtue_axis
       : virtueAxes[0];
-    const virtuePolarity = draft.moral_polarity === "vice" ? "antithesis" : "positive";
-    const virtueValues = MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.[virtuePolarity] || [];
-    const applyLayerDefaults = (nextLayer: MeaningNetworkSflLayer) => {
-      if (nextLayer === "interpersonal") {
-        const nextGroup = draft.judgement_group || "alignment_positive";
-        updateMeaningNetworkSflDraft(kind, item, {
-          sfl_layer: nextLayer,
-          judgement_group: nextGroup,
-          judgement_axis: MEANING_NETWORK_SFL_JUDGEMENT[nextGroup]?.[0] || "affirmation",
-          confirmation_relation: "confirms",
-        });
-        return;
-      }
-      if (nextLayer === "virtues_and_vices") {
-        const nextFamily = virtueFamily || "humanity";
-        const nextAxis = Object.keys(MEANING_NETWORK_SFL_VIRTUES[nextFamily] || {})[0] || "kindness";
-        updateMeaningNetworkSflDraft(kind, item, {
-          sfl_layer: nextLayer,
-          moral_polarity: "virtue",
-          virtue_family: nextFamily,
-          virtue_axis: nextAxis,
-          virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.positive?.[0] || "kindness",
-          confirmation_relation: "morally_legitimizes",
-        });
-        return;
-      }
-      updateMeaningNetworkSflDraft(kind, item, {
-        sfl_layer: nextLayer,
-        sfl_category:
-          nextLayer === "textual"
-            ? MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES[0]
-            : MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES[0],
-        confirmation_relation: "confirms",
-      });
+    const virtueValues = MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.positive || [];
+    const ideationalDraft: MeaningNetworkSflDraft = {
+      ...draft,
+      sfl_layer: "ideational",
+      sfl_category: draft.sfl_layer === "ideational" ? draft.sfl_category : MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES[0],
+      confirmation_relation: "confirms",
     };
+    const textualDraft: MeaningNetworkSflDraft = {
+      ...draft,
+      sfl_layer: "textual",
+      sfl_category: draft.sfl_layer === "textual" ? draft.sfl_category : MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES[0],
+      confirmation_relation: "confirms",
+    };
+    const interpersonalGroup = draft.sfl_layer === "interpersonal" ? draft.judgement_group : "alignment_positive";
+    const interpersonalAxis =
+      draft.sfl_layer === "interpersonal"
+        ? draft.judgement_axis
+        : MEANING_NETWORK_SFL_JUDGEMENT[interpersonalGroup]?.[0] || "acceptance";
+    const interpersonalDraft: MeaningNetworkSflDraft = {
+      ...draft,
+      sfl_layer: "interpersonal",
+      sfl_category: interpersonalAxis,
+      judgement_group: interpersonalGroup,
+      judgement_axis: interpersonalAxis,
+      confirmation_relation: draft.sfl_layer === "interpersonal" ? draft.confirmation_relation : "confirms",
+    };
+    const virtueDraft: MeaningNetworkSflDraft = {
+      ...draft,
+      sfl_layer: "virtues_and_vices",
+      sfl_category: virtueAxis,
+      moral_polarity: "virtue",
+      virtue_family: virtueFamily,
+      virtue_axis: virtueAxis,
+      virtue_vice_value: draft.sfl_layer === "virtues_and_vices" && draft.moral_polarity !== "vice"
+        ? draft.virtue_vice_value
+        : MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.positive?.[0] || "kindness",
+      confirmation_relation: "morally_legitimizes",
+    };
+    const viceDraft: MeaningNetworkSflDraft = {
+      ...draft,
+      sfl_layer: "virtues_and_vices",
+      sfl_category: virtueAxis,
+      moral_polarity: "vice",
+      virtue_family: virtueFamily,
+      virtue_axis: virtueAxis,
+      virtue_vice_value: draft.sfl_layer === "virtues_and_vices" && draft.moral_polarity === "vice"
+        ? draft.virtue_vice_value
+        : MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.antithesis?.[0] || "cruelty",
+      confirmation_relation: "morally_delegitimizes",
+    };
+    const renderRowActions = (rowDraft: MeaningNetworkSflDraft) => (
+      <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          onClick={() => void persistMeaningNetworkSflDecision(kind, item, "inspected", rowDraft)}
+          className="rounded border border-cyan-800/70 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
+          data-vaa1-meaning-network-reading-add-candidate="true"
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          onClick={() => void persistMeaningNetworkSflDecision(kind, item, "confirmed", rowDraft)}
+          className="rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-950/25"
+          data-vaa1-meaning-network-sfl-confirm="true"
+        >
+          Confirm
+        </button>
+        <button
+          type="button"
+          onClick={() => void persistMeaningNetworkSflDecision(kind, item, "canceled", rowDraft)}
+          className="rounded border border-rose-900/70 bg-[#101010] px-2 py-1 text-[10px] text-rose-100 hover:bg-rose-950/25"
+          data-vaa1-meaning-network-sfl-reject="true"
+        >
+          Reject
+        </button>
+      </div>
+    );
 
     return (
-      <div className="mt-2 rounded border border-slate-800 bg-[#050707] p-2" data-vaa1-meaning-network-sfl-sheet="true">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">SFL / moral reading</div>
-            <div className="mt-1 text-[10px] leading-relaxed text-slate-300" data-vaa1-meaning-network-sfl-plain-language="true">
-              {meaningNetworkSflPlainLanguage(draft)}
-            </div>
+      <div className="mt-2 space-y-1" data-vaa1-meaning-network-sfl-sheet="true">
+        {existingReadings.length > 0 ? (
+          <div className="truncate text-[9px] text-slate-500" data-vaa1-meaning-network-reading-ledger="true">
+            Saved readings: {existingReadings.length}
           </div>
-          <span className="rounded border border-cyan-900/60 bg-cyan-950/10 px-1.5 py-0.5 text-[9px] text-cyan-100">
-            candidate
-          </span>
-        </div>
-        <div className="mt-2 grid gap-2 md:grid-cols-4">
+        ) : (
+          <div className="truncate text-[9px] text-slate-500" data-vaa1-meaning-network-reading-ledger="true">
+            Saved readings: 0
+          </div>
+        )}
+
+        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto] items-end gap-2" data-vaa1-meaning-network-reading-row="ideational">
+          <div className="pb-1 text-[9px] uppercase tracking-[0.12em] text-slate-400">Ideational</div>
           <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-            Main category
+            Subcategory
             <select
-              value={draft.sfl_layer}
-              onChange={(event) => applyLayerDefaults(event.target.value as MeaningNetworkSflLayer)}
+              value={ideationalDraft.sfl_category}
+              onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                ...ideationalDraft,
+                sfl_category: event.target.value,
+              })}
               className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-              data-vaa1-meaning-network-sfl-layer-select="true"
+              data-vaa1-meaning-network-sfl-subcategory-select="true"
             >
-              {MEANING_NETWORK_SFL_LAYERS.map((layer) => (
-                <option key={layer.value} value={layer.value}>{layer.label}</option>
+              {MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES.map((category) => (
+                <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
               ))}
             </select>
           </label>
+          {renderRowActions(ideationalDraft)}
+        </div>
 
-          {draft.sfl_layer === "ideational" ? (
+        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto] items-end gap-2" data-vaa1-meaning-network-reading-row="interpersonal">
+          <div className="pb-1 text-[9px] uppercase tracking-[0.12em] text-slate-400">Interpersonal</div>
+          <div className="grid gap-2 md:grid-cols-3">
             <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-              Ideational category
+              Relation
               <select
-                value={draft.sfl_category}
-                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { sfl_category: event.target.value })}
+                value={interpersonalDraft.confirmation_relation}
+                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                  ...interpersonalDraft,
+                  confirmation_relation: event.target.value,
+                })}
                 className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                data-vaa1-meaning-network-sfl-subcategory-select="true"
+                data-vaa1-meaning-network-sfl-confirmation-relation-select="true"
               >
-                {MEANING_NETWORK_SFL_IDEATIONAL_CATEGORIES.map((category) => (
-                  <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
+                {MEANING_NETWORK_SFL_CONFIRMATION_RELATIONS.map((relation) => (
+                  <option key={relation} value={relation}>{relation.replaceAll("_", " ")}</option>
                 ))}
               </select>
             </label>
-          ) : null}
-
-          {draft.sfl_layer === "textual" ? (
             <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-              Textual category
+              Judgement group
               <select
-                value={draft.sfl_category}
-                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { sfl_category: event.target.value })}
-                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                data-vaa1-meaning-network-sfl-subcategory-select="true"
-              >
-                {MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES.map((category) => (
-                  <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {draft.sfl_layer === "interpersonal" ? (
-            <>
-              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                Relation
-                <select
-                  value={draft.confirmation_relation}
-                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { confirmation_relation: event.target.value })}
-                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                  data-vaa1-meaning-network-sfl-confirmation-relation-select="true"
-                >
-                  {MEANING_NETWORK_SFL_CONFIRMATION_RELATIONS.map((relation) => (
-                    <option key={relation} value={relation}>{relation.replaceAll("_", " ")}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                Judgement group
-                <select
-                  value={draft.judgement_group}
-                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                value={interpersonalDraft.judgement_group}
+                onChange={(event) => {
+                  const nextAxis = MEANING_NETWORK_SFL_JUDGEMENT[event.target.value]?.[0] || "";
+                  updateMeaningNetworkSflDraft(kind, item, {
+                    ...interpersonalDraft,
                     judgement_group: event.target.value,
-                    judgement_axis: MEANING_NETWORK_SFL_JUDGEMENT[event.target.value]?.[0] || "",
-                  })}
-                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                  data-vaa1-meaning-network-sfl-judgement-group-select="true"
-                >
-                  {judgementGroups.map((group) => (
-                    <option key={group} value={group}>{group.replaceAll("_", " ")}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                Judgement value
-                <select
-                  value={draft.judgement_axis}
-                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { judgement_axis: event.target.value })}
-                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                  data-vaa1-meaning-network-sfl-judgement-select="true"
-                >
-                  {judgementValues.map((axis) => (
-                    <option key={axis} value={axis}>{axis.replaceAll("_", " ")}</option>
-                  ))}
-                </select>
-              </label>
-            </>
-          ) : null}
+                    judgement_axis: nextAxis,
+                    sfl_category: nextAxis,
+                  });
+                }}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-judgement-group-select="true"
+              >
+                {judgementGroups.map((group) => (
+                  <option key={group} value={group}>{group.replaceAll("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Judgement value
+              <select
+                value={interpersonalDraft.judgement_axis}
+                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                  ...interpersonalDraft,
+                  judgement_axis: event.target.value,
+                  sfl_category: event.target.value,
+                })}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-judgement-select="true"
+              >
+                {judgementValues.map((axis) => (
+                  <option key={axis} value={axis}>{axis.replaceAll("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {renderRowActions(interpersonalDraft)}
+        </div>
 
-          {draft.sfl_layer === "virtues_and_vices" ? (
-            <>
+        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto] items-end gap-2" data-vaa1-meaning-network-reading-row="textual">
+          <div className="pb-1 text-[9px] uppercase tracking-[0.12em] text-slate-400">Textual</div>
+          <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+            Subcategory
+            <select
+              value={textualDraft.sfl_category}
+              onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                ...textualDraft,
+                sfl_category: event.target.value,
+              })}
+              className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+              data-vaa1-meaning-network-sfl-subcategory-select="true"
+            >
+              {MEANING_NETWORK_SFL_TEXTUAL_CATEGORIES.map((category) => (
+                <option key={category} value={category}>{category.replaceAll("_", " ")}</option>
+              ))}
+            </select>
+          </label>
+          {renderRowActions(textualDraft)}
+        </div>
+
+        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto] items-end gap-2" data-vaa1-meaning-network-reading-row="virtues">
+          <div className="pb-1 text-[9px] uppercase tracking-[0.12em] text-slate-400">Virtues</div>
+          <div className="grid gap-2 md:grid-cols-3">
               <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
                 Virtue family
                 <select
-                  value={virtueFamily}
+                  value={virtueDraft.virtue_family}
                   onChange={(event) => {
                     const nextFamily = event.target.value;
                     const nextAxis = Object.keys(MEANING_NETWORK_SFL_VIRTUES[nextFamily] || {})[0] || "";
-                    const nextPolarity = draft.moral_polarity === "vice" ? "antithesis" : "positive";
                     updateMeaningNetworkSflDraft(kind, item, {
+                      ...virtueDraft,
+                      sfl_category: nextAxis,
                       virtue_family: nextFamily,
                       virtue_axis: nextAxis,
-                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.[nextPolarity]?.[0] || "",
+                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.positive?.[0] || "",
                     });
                   }}
                   className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
@@ -4067,12 +4359,14 @@ export default function MeaningPlotPanel({
               <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
                 Virtue axis
                 <select
-                  value={virtueAxis}
+                  value={virtueDraft.virtue_axis}
                   onChange={(event) => {
                     const nextAxis = event.target.value;
                     updateMeaningNetworkSflDraft(kind, item, {
+                      ...virtueDraft,
+                      sfl_category: nextAxis,
                       virtue_axis: nextAxis,
-                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[nextAxis]?.[virtuePolarity]?.[0] || "",
+                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[nextAxis]?.positive?.[0] || "",
                     });
                   }}
                   className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
@@ -4084,30 +4378,13 @@ export default function MeaningPlotPanel({
                 </select>
               </label>
               <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                Polarity
+                Virtue value
                 <select
-                  value={draft.moral_polarity === "vice" ? "vice" : "virtue"}
-                  onChange={(event) => {
-                    const nextPolarity = event.target.value as MeaningNetworkMoralPolarity;
-                    const nextBucket = nextPolarity === "vice" ? "antithesis" : "positive";
-                    updateMeaningNetworkSflDraft(kind, item, {
-                      moral_polarity: nextPolarity,
-                      confirmation_relation: nextPolarity === "vice" ? "morally_delegitimizes" : "morally_legitimizes",
-                      virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[virtueFamily]?.[virtueAxis]?.[nextBucket]?.[0] || "",
-                    });
-                  }}
-                  className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
-                  data-vaa1-meaning-network-sfl-moral-select="true"
-                >
-                  <option value="virtue">Virtue / positive</option>
-                  <option value="vice">Vice / antithesis</option>
-                </select>
-              </label>
-              <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
-                Schema value
-                <select
-                  value={draft.virtue_vice_value}
-                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, { virtue_vice_value: event.target.value })}
+                  value={virtueDraft.virtue_vice_value}
+                  onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                    ...virtueDraft,
+                    virtue_vice_value: event.target.value,
+                  })}
                   className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
                   data-vaa1-meaning-network-sfl-virtue-vice-select="true"
                 >
@@ -4116,31 +4393,81 @@ export default function MeaningPlotPanel({
                   ))}
                 </select>
               </label>
-            </>
-          ) : null}
+          </div>
+          {renderRowActions(virtueDraft)}
         </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          <button
-            type="button"
-            onClick={() => void persistMeaningNetworkSflDecision(kind, item, "confirmed")}
-            className="rounded border border-emerald-800/70 bg-[#101010] px-2 py-1 text-[10px] text-emerald-100 hover:bg-emerald-950/25"
-            data-vaa1-meaning-network-sfl-confirm="true"
-          >
-            Confirm SFL reading
-          </button>
-          <button
-            type="button"
-            onClick={() => void persistMeaningNetworkSflDecision(kind, item, "canceled")}
-            className="rounded border border-rose-900/70 bg-[#101010] px-2 py-1 text-[10px] text-rose-100 hover:bg-rose-950/25"
-            data-vaa1-meaning-network-sfl-reject="true"
-          >
-            Reject SFL reading
-          </button>
+
+        <div className="grid grid-cols-[96px_minmax(0,1fr)_auto] items-end gap-2" data-vaa1-meaning-network-reading-row="vices">
+          <div className="pb-1 text-[9px] uppercase tracking-[0.12em] text-slate-400">Vices</div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Vice family
+              <select
+                value={viceDraft.virtue_family}
+                onChange={(event) => {
+                  const nextFamily = event.target.value;
+                  const nextAxis = Object.keys(MEANING_NETWORK_SFL_VIRTUES[nextFamily] || {})[0] || "";
+                  updateMeaningNetworkSflDraft(kind, item, {
+                    ...viceDraft,
+                    sfl_category: nextAxis,
+                    virtue_family: nextFamily,
+                    virtue_axis: nextAxis,
+                    virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[nextFamily]?.[nextAxis]?.antithesis?.[0] || "",
+                  });
+                }}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-vice-family-select="true"
+              >
+                {virtueFamilies.map((family) => (
+                  <option key={family} value={family}>{meaningNetworkViceFamilyLabel(family)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Vice axis
+              <select
+                value={viceDraft.virtue_axis}
+                onChange={(event) => {
+                  const nextAxis = event.target.value;
+                  updateMeaningNetworkSflDraft(kind, item, {
+                    ...viceDraft,
+                    sfl_category: nextAxis,
+                    virtue_axis: nextAxis,
+                    virtue_vice_value: MEANING_NETWORK_SFL_VIRTUES[viceDraft.virtue_family]?.[nextAxis]?.antithesis?.[0] || "",
+                  });
+                }}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-vice-axis-select="true"
+              >
+                {Object.keys(MEANING_NETWORK_SFL_VIRTUES[viceDraft.virtue_family] || {}).map((axis) => (
+                  <option key={axis} value={axis}>{meaningNetworkViceAxisLabel(viceDraft.virtue_family, axis)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+              Vice value
+              <select
+                value={viceDraft.virtue_vice_value}
+                onChange={(event) => updateMeaningNetworkSflDraft(kind, item, {
+                  ...viceDraft,
+                  virtue_vice_value: event.target.value,
+                })}
+                className="mt-1 w-full rounded border border-slate-800 bg-[#101010] px-1.5 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                data-vaa1-meaning-network-sfl-vice-value-select="true"
+              >
+                {(MEANING_NETWORK_SFL_VIRTUES[viceDraft.virtue_family]?.[viceDraft.virtue_axis]?.antithesis || []).map((value) => (
+                  <option key={value} value={value}>{value.replaceAll("_", " ")}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {renderRowActions(viceDraft)}
         </div>
       </div>
     );
   }, [
     getMeaningNetworkSflDraft,
+    meaningNetworkInterpretiveReadings,
     persistMeaningNetworkSflDecision,
     updateMeaningNetworkSflDraft,
   ]);
@@ -5679,26 +6006,12 @@ export default function MeaningPlotPanel({
                               Close
                             </button>
                           </div>
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
-                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
-                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Source verification</div>
-                              <div className="mt-1 text-[10px] text-slate-300">
-                                {range
-                                  ? `${formatTime(range.start)}-${formatTime(range.end)} / ${range.range_source.replaceAll("_", " ")}`
-                                  : "Source time pending"}
-                              </div>
-                              <div className="mt-1 text-[10px] text-slate-500">
-                                {meaningNetworkSourceTypes(refs).join(", ") || "No source types attached"}
-                              </div>
+                          <div className="mt-2 grid gap-1 md:grid-cols-2">
+                            <div className="truncate border-b border-slate-900 pb-1 text-[9px] text-slate-500" data-vaa1-meaning-network-compact-source="true">
+                              Source: {range ? `${formatTime(range.start)}-${formatTime(range.end)}` : "time pending"} / {meaningNetworkSourceTypes(refs).join(", ") || "no source types"}
                             </div>
-                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
-                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Traceback</div>
-                              <div className="mt-1 text-[10px] text-slate-300">
-                                {meaningNetworkTracebackRefs(refs).slice(0, 3).join(", ") || "Traceback pending"}
-                              </div>
-                              <div className="mt-1 text-[10px] text-slate-500">
-                                Evidence refs: {refs.length}
-                              </div>
+                            <div className="truncate border-b border-slate-900 pb-1 text-[9px] text-slate-500" data-vaa1-meaning-network-compact-traceback="true">
+                              Traceback: {meaningNetworkTracebackRefs(refs).slice(0, 1).join(", ") || "pending"} / refs {refs.length}
                             </div>
                           </div>
                           {renderMeaningNetworkSflControls("node", node)}
@@ -5791,21 +6104,15 @@ export default function MeaningPlotPanel({
                               {meaningNetworkEdgeReason(edge)}
                             </div>
                           </div>
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          <div className="mt-2 grid gap-1 md:grid-cols-2">
                             <div className="rounded border border-slate-800 bg-[#050707] p-2">
                               <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Linked nodes</div>
                               <div className="mt-1 text-[10px] text-slate-300">
                                 {sourceLabel} {"->"} {targetLabel}
                               </div>
                             </div>
-                            <div className="rounded border border-slate-800 bg-[#050707] p-2">
-                              <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Source and traceback</div>
-                              <div className="mt-1 text-[10px] text-slate-300">
-                                {range ? `${formatTime(range.start)}-${formatTime(range.end)}` : "Source time pending"}
-                              </div>
-                              <div className="mt-1 text-[10px] text-slate-500">
-                                {meaningNetworkTracebackRefs(refs).slice(0, 3).join(", ") || "Traceback pending"}
-                              </div>
+                            <div className="truncate border-b border-slate-900 pb-1 text-[9px] text-slate-500" data-vaa1-meaning-network-compact-traceback="true">
+                              Source: {range ? `${formatTime(range.start)}-${formatTime(range.end)}` : "time pending"} / Traceback: {meaningNetworkTracebackRefs(refs).slice(0, 1).join(", ") || "pending"}
                             </div>
                           </div>
                           {renderMeaningNetworkSflControls("edge", edge)}

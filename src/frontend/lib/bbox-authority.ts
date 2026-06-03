@@ -45,6 +45,42 @@ export type BBoxMatureAuthority = {
   source_frame_refs?: unknown;
 };
 
+export type ManualBBoxRoiAnnotationInput = {
+  analysisId: string;
+  annotationId: string;
+  category: ManualVisualAnnotation["category"];
+  subcategory?: string;
+  label: string;
+  customLabel?: string;
+  box: DraftBox;
+  start: number;
+  end: number;
+  anchorTime?: number;
+  existingManual?: ManualVisualAnnotation;
+  targetType: string;
+  targetId: string;
+  targetLabel?: string;
+  applyScope?: NonNullable<
+    NonNullable<ManualVisualAnnotation["metadata_correlation"]>["apply_scope"]
+  >;
+  quickAnnotations?: string[];
+  identityAffirmation?: string;
+  roleAffirmation?: string;
+  audioFoleyNote?: string;
+  openNote?: string;
+  sourceTrackKeyframes?: ManualGeometryKeyframe[];
+  supersedes?: string[];
+  relation?: NonNullable<
+    NonNullable<ManualVisualAnnotation["metadata_correlation"]>["relation"]
+  >;
+  metadataPatch?: NonNullable<ManualVisualAnnotation["metadata_correlation"]>;
+  confirmationFields?: Record<string, boolean>;
+  confirmationActiveState?: Record<string, unknown>;
+  confirmationEventId?: string;
+  sourceNote?: string;
+  updatedAt?: string;
+};
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -410,6 +446,145 @@ export function buildManualCorrectionGeometryKeyframes({
   return nextKeyframes;
 }
 
+export function buildManualBBoxRoiAnnotation({
+  analysisId,
+  annotationId,
+  category,
+  subcategory,
+  label,
+  customLabel,
+  box,
+  start,
+  end,
+  anchorTime,
+  existingManual,
+  targetType,
+  targetId,
+  targetLabel,
+  applyScope = "this_interval_only",
+  quickAnnotations = [],
+  identityAffirmation,
+  roleAffirmation,
+  audioFoleyNote,
+  openNote,
+  sourceTrackKeyframes = [],
+  supersedes,
+  relation = "extends",
+  metadataPatch,
+  confirmationFields,
+  confirmationActiveState,
+  confirmationEventId,
+  sourceNote,
+  updatedAt = new Date().toISOString(),
+}: ManualBBoxRoiAnnotationInput): ManualVisualAnnotation {
+  const intervalStart = Number(Math.min(start, end).toFixed(3));
+  const intervalEnd = Number(Math.max(start, end, intervalStart + 0.001).toFixed(3));
+  const safeAnchor =
+    typeof anchorTime === "number" && Number.isFinite(anchorTime)
+      ? Number(clamp(anchorTime, intervalStart, intervalEnd).toFixed(3))
+      : intervalStart;
+  const governedBox = normalizeDraftBox(box);
+  const geometryTrackId = `${analysisId}:bbox-roi-geometry:${annotationId}`;
+  const geometryKeyframes = mergeManualGeometryKeyframes(
+    buildManualCorrectionGeometryKeyframes({
+      start: intervalStart,
+      end: intervalEnd,
+      box: governedBox,
+      anchorTime: safeAnchor,
+      existingKeyframes: existingManual?.geometry_keyframes || [],
+      updatedAt,
+    }),
+  );
+  const metadata = existingManual?.metadata_correlation || {};
+  const confirmedFields = {
+    time_interval: true,
+    geometry: true,
+    label: true,
+    ...(confirmationFields || {}),
+  };
+
+  return {
+    ...(existingManual || {}),
+    id: existingManual?.id || annotationId,
+    category,
+    subcategory,
+    label,
+    custom_label: customLabel,
+    geometry_type: "box",
+    coordinates: governedBox,
+    geometry_keyframes: geometryKeyframes,
+    timestamp_seconds: intervalStart,
+    start_seconds: intervalStart,
+    end_seconds: intervalEnd,
+    identity_affirmation: identityAffirmation,
+    role_affirmation: roleAffirmation,
+    audio_foley_note: audioFoleyNote,
+    open_note: openNote,
+    metadata_correlation: {
+      ...metadata,
+      ...(metadataPatch || {}),
+      target_type: targetType,
+      target_id: targetId,
+      target_label: targetLabel || metadata.target_label,
+      apply_scope: applyScope,
+      quick_annotations: quickAnnotations,
+      bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
+      authority_state: "manual_correction",
+      maturity_state: "manual_correction",
+      geometry_track_id: geometryTrackId,
+      coordinate_system: "normalized_video",
+      interpolation_policy: {
+        ...(metadata.interpolation_policy || {}),
+        allowed: true,
+        max_gap_ms: 5000,
+        break_on_scene_boundary: true,
+        break_on_shot_cut: true,
+        manual_confirmation_required_for_cross_boundary: true,
+      },
+      source_track_keyframes_retained_for_traceback:
+        sourceTrackKeyframes.length > 0
+          ? sourceTrackKeyframes.map((keyframe) => ({
+              time: keyframe.time,
+              source: keyframe.source,
+            }))
+          : metadata.source_track_keyframes_retained_for_traceback,
+      manual_confirmation_event: {
+        event_type: "manual_bbox_roi_confirmation",
+        event_id:
+          confirmationEventId ||
+          `${analysisId}:manual-bbox-roi-confirmation:${annotationId}:${Date.now()}`,
+        analysis_id: analysisId,
+        bbox_roi_id: annotationId,
+        authority_level: "manual_correction",
+        confirmed_fields: confirmedFields,
+        active_state_after_save: {
+          start_ms: Math.round(intervalStart * 1000),
+          end_ms: Math.round(intervalEnd * 1000),
+          geometry_track_id: geometryTrackId,
+          start_seconds: intervalStart,
+          end_seconds: intervalEnd,
+          bbox: governedBox,
+          geometry_keyframe_time: safeAnchor,
+          label,
+          category,
+          quick_annotations: quickAnnotations,
+          ...(confirmationActiveState || {}),
+        },
+        supersedes: supersedes || (targetId ? [targetId] : []),
+        old_states_retained_as: "traceback_provenance",
+        propagation_required: true,
+        partial_propagation_allowed: false,
+      },
+      relation,
+      note: sourceNote || metadata.note,
+    },
+    teaches_regime: true,
+    created_at: existingManual?.created_at || updatedAt,
+    updated_at: updatedAt,
+    updated_by: "analyst",
+  };
+}
+
 export function interpolateBoxes(left: DraftBox, right: DraftBox, t: number): DraftBox {
   const safeT = clamp(t, 0, 1);
   return normalizeDraftBox({
@@ -737,9 +912,15 @@ export function buildManualTrackMatureAuthority(
       return;
     }
     const existing = byTrack.get(targetId);
+    const existingManual =
+      existing?.sourceItem &&
+      typeof existing.sourceItem === "object" &&
+      !Array.isArray(existing.sourceItem)
+        ? (existing.sourceItem as Partial<ManualVisualAnnotation>)
+        : null;
     const existingStart =
-      typeof (existing?.sourceItem as any)?.start_seconds === "number"
-        ? Number((existing?.sourceItem as any).start_seconds)
+      typeof existingManual?.start_seconds === "number"
+        ? Number(existingManual.start_seconds)
         : Number.NEGATIVE_INFINITY;
     const itemStart =
       typeof item.start_seconds === "number"
