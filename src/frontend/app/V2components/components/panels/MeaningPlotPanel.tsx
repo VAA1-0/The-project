@@ -174,6 +174,55 @@ type MeaningNetworkEdge = {
   };
 };
 
+function meaningNetworkEvidenceRefKey(ref: MeaningNetworkEvidenceRef): string {
+  return [
+    ref.evidence_id || "",
+    ref.source_type || "",
+    ref.traceback_record_id || "",
+    ref.time_range?.start ?? "",
+    ref.time_range?.end ?? "",
+  ].join(":");
+}
+
+function dedupeMeaningNetworkEvidenceRefs(
+  refs: MeaningNetworkEvidenceRef[],
+): MeaningNetworkEvidenceRef[] {
+  const byKey = new Map<string, MeaningNetworkEvidenceRef>();
+  refs.forEach((ref) => {
+    byKey.set(meaningNetworkEvidenceRefKey(ref), ref);
+  });
+  return [...byKey.values()];
+}
+
+function dedupeMeaningNetworkEdges(edges: MeaningNetworkEdge[]): MeaningNetworkEdge[] {
+  const byId = new Map<string, MeaningNetworkEdge>();
+  edges.forEach((edge) => {
+    const edgeId =
+      String(edge.edge_id || "").trim() ||
+      `edge:${edge.source_node_id}:${edge.edge_type}:${edge.target_node_id}`;
+    const normalizedEdge = { ...edge, edge_id: edgeId };
+    const existing = byId.get(edgeId);
+    if (!existing) {
+      byId.set(edgeId, normalizedEdge);
+      return;
+    }
+    byId.set(edgeId, {
+      ...existing,
+      weight: Math.max(Number(existing.weight || 0), Number(normalizedEdge.weight || 0)),
+      maturity: existing.maturity || normalizedEdge.maturity,
+      evidence_refs: dedupeMeaningNetworkEvidenceRefs([
+        ...(existing.evidence_refs || []),
+        ...(normalizedEdge.evidence_refs || []),
+      ]),
+      ui: {
+        ...(existing.ui || {}),
+        ...(normalizedEdge.ui || {}),
+      },
+    });
+  });
+  return [...byId.values()];
+}
+
 type MeaningNetworkArtifact = {
   schema?: string;
   meaning_network?: {
@@ -3048,11 +3097,12 @@ export default function MeaningPlotPanel({
     [masterSchemaMeaningNodes, sceneMeaningNodes, meaningNetworkSceneSegments],
   );
   const meaningNetworkEdges = useMemo(
-    () => [
-      ...masterSchemaMeaningEdges,
-      ...((datasceneMeaningNetwork?.meaning_network?.edges || []) as MeaningNetworkEdge[]),
-      ...draftMeaningNetworkEdges,
-    ],
+    () =>
+      dedupeMeaningNetworkEdges([
+        ...masterSchemaMeaningEdges,
+        ...((datasceneMeaningNetwork?.meaning_network?.edges || []) as MeaningNetworkEdge[]),
+        ...draftMeaningNetworkEdges,
+      ]),
     [datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
   );
   const reviewableMeaningNetworkNodes = useMemo(

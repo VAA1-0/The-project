@@ -70,6 +70,7 @@ export type ManualBBoxRoiAnnotationInput = {
   openNote?: string;
   sourceTrackKeyframes?: ManualGeometryKeyframe[];
   supersedes?: string[];
+  authorityState?: string;
   relation?: NonNullable<
     NonNullable<ManualVisualAnnotation["metadata_correlation"]>["relation"]
   >;
@@ -469,6 +470,7 @@ export function buildManualBBoxRoiAnnotation({
   openNote,
   sourceTrackKeyframes = [],
   supersedes,
+  authorityState = "manual_correction",
   relation = "extends",
   metadataPatch,
   confirmationFields,
@@ -529,7 +531,7 @@ export function buildManualBBoxRoiAnnotation({
       apply_scope: applyScope,
       quick_annotations: quickAnnotations,
       bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
-      authority_state: "manual_correction",
+      authority_state: authorityState,
       maturity_state: "manual_correction",
       geometry_track_id: geometryTrackId,
       coordinate_system: "normalized_video",
@@ -879,6 +881,16 @@ export function resolveManualGeometryAtTime({
           h: fallbackBox.h / Math.max(1, videoHeight),
         })
       : null;
+  }
+
+  const exactManualKeyframe = merged.find(
+    (keyframe) =>
+      keyframe.source !== "track" &&
+      Math.abs(keyframe.time - timestamp) <=
+        MANUAL_GEOMETRY_KEYFRAME_REPLACE_TOLERANCE_SECONDS,
+  );
+  if (exactManualKeyframe) {
+    return normalizeDraftBox(exactManualKeyframe.coordinates);
   }
 
   const before = [...merged].reverse().find((keyframe) => keyframe.time <= timestamp);

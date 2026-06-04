@@ -225,6 +225,42 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /const getOverlayGeometryDraftForEditing = React\.useCallback[\s\S]*selectedOverlayKey === overlayKey[\s\S]*activeOverlayEditorKey === overlayKey[\s\S]*overlayGeometryDrag\?\.overlayKey === overlayKey/,
+    "selected or actively dragged bbox drafts must remain visible long enough to be saved",
+  );
+
+  assert.match(
+    videoPanel,
+    /setPendingOverlayGeometryAutoSave\(\{[\s\S]*overlayKey: overlayGeometryDrag\.overlayKey[\s\S]*box: draft\.box[\s\S]*time: draft\.time/,
+    "bbox drag release must queue the analyst's resized geometry for automatic save",
+  );
+
+  assert.match(
+    videoPanel,
+    /const geometryDraft = getOverlayGeometryDraftForEditing\(overlay\.key\);[\s\S]*const expressionBox = geometryDraft\?\.box \|\| getOverlayNormalizedBox\(overlay\);[\s\S]*geometryDraft\?\.time \?\? getOverlayInteractionTime\(overlay\)/,
+    "BBox/ROI save must use the manual drag geometry and keyframe time when a draft exists",
+  );
+
+  assert.match(
+    videoPanel,
+    /void saveSelectedIndication\(overlay, \{[\s\S]*\.\.\.edit,[\s\S]*start: Number\(autoSaveStart\.toFixed\(3\)\),[\s\S]*end: Number\(autoSaveEnd\.toFixed\(3\)\),/,
+    "automatic bbox geometry save must reuse the shared manual BBox/ROI save path",
+  );
+
+  assert.match(
+    videoPanel,
+    /BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = ANALYSIS_FRAME_STEP_SECONDS \* 6/,
+    "automatic bbox geometry saves need a small frame window so scrub/playback quantization does not drop the correction",
+  );
+
+  assert.match(
+    videoPanel,
+    /pendingOverlayGeometryAutoSave\.time - BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS \/ 2[\s\S]*pendingOverlayGeometryAutoSave\.time \+ BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS \/ 2[\s\S]*void saveSelectedIndication\(overlay, \{[\s\S]*start: Number\(autoSaveStart\.toFixed\(3\)\),[\s\S]*end: Number\(autoSaveEnd\.toFixed\(3\)\),/,
+    "automatic bbox geometry saves must persist a bounded frame-window interval around the dragged timestamp",
+  );
+
+  assert.match(
+    videoPanel,
     /resolveAuthoritativeManualGeometryAtTime/,
     "VideoPanel must delegate manual bbox geometry resolution to the shared authority boundary",
   );
@@ -233,6 +269,42 @@ test("manual bbox geometry stays timestamp scoped", () => {
     bboxAuthority,
     /MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS/,
     "manual bbox geometry must not interpolate freely across distant timestamps or cuts",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /const exactManualKeyframe = merged\.find\([\s\S]*Math\.abs\(keyframe\.time - timestamp\) <=[\s\S]*MANUAL_GEOMETRY_KEYFRAME_REPLACE_TOLERANCE_SECONDS[\s\S]*return normalizeDraftBox\(exactManualKeyframe\.coordinates\);/,
+    "manual geometry resolution must snap to exact analyst keyframes instead of drifting through interpolation near the saved frame",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /const exactManualKeyframe = merged\.find\([\s\S]*if \(exactManualKeyframe\) \{[\s\S]*return normalizeDraftBox\(exactManualKeyframe\.coordinates\);[\s\S]*const before = \[\.\.\.merged\]\.reverse\(\)\.find/,
+    "manual geometry resolution must prefer exact analyst keyframes before any scaling/interpolation is considered",
+  );
+
+  assert.match(
+    videoPanel,
+    /const nearbyTrackManual = trackManualCandidates[\s\S]*gap <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS[\s\S]*nearbyTrackManual[\s\S]*const existingBounds = existingManual \? getManualAnnotationBounds\(existingManual\) : null/,
+    "nearby same-track bbox corrections must append to the same manual keyframe sequence instead of becoming disconnected tiny intervals",
+  );
+
+  assert.match(
+    videoPanel,
+    /const trackManualCandidates =[\s\S]*manualObjectCorrectionTargetId\(item\) === targetCandidateId/,
+    "manual bbox keyframe sequence merging must be limited to the same object correction target",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /nearbyTrackManual[\s\S]*applyScope:\s*"track_family"/,
+    "automatic bbox geometry scaling must not silently promote this-interval analyst corrections into whole-track authority",
+  );
+
+  assert.match(
+    videoPanel,
+    /start: persistenceStart,[\s\S]*end: persistenceEnd,[\s\S]*anchorTime:\s*keyframeTime/,
+    "saved bbox corrections must expand their persisted interval while keeping the analyst drag timestamp as the manual keyframe",
   );
 
   assert.match(
@@ -255,6 +327,18 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
+    /saveNativeVisualAnnotation[\s\S]*const annotation = buildManualBBoxRoiAnnotation\(\{[\s\S]*targetType:\s*"native_annotation"[\s\S]*source_range_source:\s*"native_video_annotation"[\s\S]*native_annotation:\s*true/,
+    "native BBox saves must use the shared BBox/ROI authority builder instead of a panel-local schema",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /metadata_correlation:\s*null/,
+    "native BBox saves must not bypass governance metadata with a null metadata correlation",
+  );
+
+  assert.match(
+    bboxAuthority,
     /source_track_keyframes_retained_for_traceback/,
     "object-backed bbox saves must retain raw track keyframes as traceback metadata, not authoritative manual geometry",
   );
@@ -381,25 +465,25 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /const geometryKeyframes = mergeManualGeometryKeyframes\(\s*buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*anchorTime: keyframeTime/,
-    "Video BBox/ROI Save must replace drift-prone old geometry with governed interval geometry",
+    /const annotation = buildManualBBoxRoiAnnotation\(\{[\s\S]*analysisId:\s*videoId,[\s\S]*annotationId,[\s\S]*existingManual,[\s\S]*box:\s*governedBox,[\s\S]*start:\s*persistenceStart,[\s\S]*end:\s*persistenceEnd,[\s\S]*anchorTime:\s*keyframeTime/,
+    "Video BBox/ROI Save must delegate governed interval geometry to the shared authority builder",
   );
 
   assert.match(
     videoPanel,
-    /coordinates: governedBox,[\s\S]*geometry_keyframes: geometryKeyframes/,
-    "Video BBox/ROI Save must persist the same governed coordinates and dimensions used for rendering",
+    /buildManualBBoxRoiAnnotation\(\{[\s\S]*applyScope,[\s\S]*sourceTrackKeyframes:\s*trackKeyframes,[\s\S]*confirmationFields:/,
+    "Video BBox/ROI Save must pass scope, traceback track keyframes, and confirmation metadata through the shared authority builder",
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /bbox_roi_governance_schema: "vaa1\.bbox_roi_governance\.v1"[\s\S]*interpolation_policy:[\s\S]*allowed: true[\s\S]*manual_confirmation_required_for_cross_boundary: true/,
     "Saved BBox/ROI corrections may interpolate only between governed manual keyframes",
   );
 
   assert.match(
-    videoPanel,
-    /confirmed_fields:[\s\S]*time_interval: true,[\s\S]*geometry: true,[\s\S]*label: true/,
+    bboxAuthority,
+    /const confirmedFields = \{[\s\S]*time_interval: true,[\s\S]*geometry: true,[\s\S]*label: true,[\s\S]*confirmed_fields: confirmedFields/,
     "Saved BBox/ROI confirmation events must explicitly confirm time, geometry, and label",
   );
 
@@ -956,7 +1040,7 @@ test("video bbox labels consume Master Schema maturity before raw detector label
 
   assert.match(
     videoPanel,
-    /id: existingManual\?\.id \|\| annotationId/,
+    /buildManualBBoxRoiAnnotation\(\{[\s\S]*annotationId,[\s\S]*existingManual,/,
     "saving a revised interval-scoped object correction must update the existing manual annotation instead of creating duplicate track corrections",
   );
 
@@ -1633,8 +1717,8 @@ test("timestamped overlay geometry stays scoped to one analysis and timestamp", 
   );
 
   assert.match(
-    videoPanel,
-    /buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start,[\s\S]*end,[\s\S]*box: governedBox,[\s\S]*anchorTime: keyframeTime,[\s\S]*existingKeyframes/,
+    bboxAuthority,
+    /buildManualCorrectionGeometryKeyframes\(\{[\s\S]*start:\s*intervalStart,[\s\S]*end:\s*intervalEnd,[\s\S]*box:\s*governedBox,[\s\S]*anchorTime:\s*safeAnchor,[\s\S]*existingKeyframes/,
     "saved bbox geometry must bind each analyst reshape to its own manual correction keyframe",
   );
 
@@ -2084,6 +2168,24 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /tracks_same_entity_as/,
     "Meaning Network must expose probable object-agent continuity relations",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /function dedupeMeaningNetworkEdges\(edges: MeaningNetworkEdge\[\]\): MeaningNetworkEdge\[\][\s\S]*const byId = new Map<string, MeaningNetworkEdge>/,
+    "Meaning Network edges must be deduped before rendering so duplicate edge ids do not flood React with key warnings",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /dedupeMeaningNetworkEdges\(\[[\s\S]*\.\.\.masterSchemaMeaningEdges,[\s\S]*\.\.\.\(\(datasceneMeaningNetwork\?\.meaning_network\?\.edges \|\| \[\]\) as MeaningNetworkEdge\[\]\),[\s\S]*\.\.\.draftMeaningNetworkEdges/,
+    "Meaning Network must dedupe merged Master Schema, Datascene, and draft edge sources through one shared edge list",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /dedupeMeaningNetworkEvidenceRefs\(\[[\s\S]*\.\.\.\(existing\.evidence_refs \|\| \[\]\),[\s\S]*\.\.\.\(normalizedEdge\.evidence_refs \|\| \[\]\),/,
+    "Meaning Network edge dedupe must preserve evidence and traceback refs instead of dropping duplicate-edge provenance",
   );
 
   assert.match(
@@ -2750,8 +2852,14 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
 
   assert.match(
     videoPanel,
-    /quick_annotations:\s*edit\.quickAnnotations/,
+    /quickAnnotations:\s*edit\.quickAnnotations/,
     "Saved BBox/ROI manual confirmation must persist additive quick annotations",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /quick_annotations:\s*quickAnnotations/,
+    "Shared BBox/ROI authority builder must persist additive quick annotations",
   );
 
   assert.match(
@@ -2761,7 +2869,7 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /apply_scope:\s*applyScope/,
     "Saved BBox/ROI manual confirmation must persist the selected apply scope",
   );
@@ -2773,7 +2881,7 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
   );
 
   assert.match(
-    videoPanel,
+    bboxAuthority,
     /manual_confirmation_event[\s\S]*manual_bbox_roi_confirmation[\s\S]*old_states_retained_as:\s*"traceback_provenance"/,
     "BBox/ROI saves must record manual confirmation events and retain old history as traceback provenance",
   );
@@ -2890,6 +2998,12 @@ test("BBox/ROI editor behaves as an evidence navigation hub", () => {
     videoPanel,
     /restoreEvidenceToAnalysis[\s\S]*upsertMasterSchemaPresenceIntervalForManualAnnotation\([\s\S]*upsertManualVisualAnnotation/,
     "Restoring raw/provenance evidence must create a manual BBox and Master Schema presence anchor together",
+  );
+
+  assert.match(
+    videoPanel,
+    /restoreEvidenceToAnalysis[\s\S]*const annotation = buildManualBBoxRoiAnnotation\(\{[\s\S]*analysisId:\s*targetVideoId,[\s\S]*authorityState:\s*"manual_restored"[\s\S]*source_range_source:\s*"restore_to_analysis"[\s\S]*provenance_restore:\s*true/,
+    "Restoring raw/provenance evidence must use the shared BBox/ROI authority builder while preserving restore provenance",
   );
 
   assert.match(

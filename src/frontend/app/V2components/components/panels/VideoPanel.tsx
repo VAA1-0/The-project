@@ -73,11 +73,12 @@ import {
   type ProliferationDecision,
 } from "@/lib/api-service";
 import {
+  MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS,
   MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS,
   MANUAL_POINT_VISIBILITY_SECONDS,
   analystManualAuthoritySuppressesObjectBox,
   buildBoxFromNormalizedPoints,
-  buildManualCorrectionGeometryKeyframes,
+  buildManualBBoxRoiAnnotation,
   buildManualTrackMatureAuthority,
   calculateDraftBoxCenterDistance,
   calculateDraftBoxIoU,
@@ -93,7 +94,6 @@ import {
   manualAnnotationTimeScopeKey,
   manualObjectCorrectionTargetId,
   manualObjectTargetId,
-  mergeManualGeometryKeyframes,
   normalizeDraftBox,
   projectNormalizedBoxToVideoContent,
   resolveManualGeometryAtTime as resolveAuthoritativeManualGeometryAtTime,
@@ -112,6 +112,7 @@ const EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS = 1.5;
 const SELECTED_OVERLAY_STACK_RANK = 50000;
 const VIDEO_CONTROL_CLEARANCE_PX = 52;
 const ANALYSIS_FRAME_STEP_SECONDS = 1 / 25;
+const BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = ANALYSIS_FRAME_STEP_SECONDS * 6;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -231,6 +232,13 @@ type OverlayGeometryDrag = {
   mode: "move" | "resize-se";
   startPoint: { x: number; y: number };
   startBox: DraftBox;
+};
+
+type PendingOverlayGeometryAutoSave = {
+  overlayKey: string;
+  box: DraftBox;
+  time: number;
+  requestId: number;
 };
 
 type BBoxRoiApplyScope =
@@ -2021,8 +2029,11 @@ export default function VideoPanel() {
   const [overlayGeometryDrafts, setOverlayGeometryDrafts] = useState<
     Record<string, OverlayGeometryDraft>
   >({});
+  const overlayGeometryDraftsRef = React.useRef<Record<string, OverlayGeometryDraft>>({});
   const [overlayGeometryDrag, setOverlayGeometryDrag] =
     useState<OverlayGeometryDrag | null>(null);
+  const [pendingOverlayGeometryAutoSave, setPendingOverlayGeometryAutoSave] =
+    useState<PendingOverlayGeometryAutoSave | null>(null);
   const [selectedOverlayProliferation, setSelectedOverlayProliferation] = useState<
     Record<string, ProliferationLauncherState>
   >({});
@@ -4611,6 +4622,32 @@ export default function VideoPanel() {
     [overlayBoxes, selectedOverlayKey],
   );
 
+  useEffect(() => {
+    overlayGeometryDraftsRef.current = overlayGeometryDrafts;
+  }, [overlayGeometryDrafts]);
+
+  const getOverlayGeometryDraftForEditing = React.useCallback(
+    (overlayKey: string): OverlayGeometryDraft | null => {
+      const draft = overlayGeometryDrafts[overlayKey];
+      if (!draft || !Number.isFinite(draft.time)) {
+        return null;
+      }
+      const selectedOrEditing =
+        selectedOverlayKey === overlayKey ||
+        activeOverlayEditorKey === overlayKey ||
+        overlayGeometryDrag?.overlayKey === overlayKey;
+      const atDraftTimestamp = Math.abs(draft.time - currentTime) <= 0.075;
+      return selectedOrEditing || atDraftTimestamp ? draft : null;
+    },
+    [
+      activeOverlayEditorKey,
+      currentTime,
+      overlayGeometryDrafts,
+      overlayGeometryDrag?.overlayKey,
+      selectedOverlayKey,
+    ],
+  );
+
   const getOverlayNormalizedBox = React.useCallback(
     (overlay: OverlayBox): DraftBox => {
       const videoWidth = Math.max(1, videoRef.current?.videoWidth || 1);
@@ -4623,17 +4660,13 @@ export default function VideoPanel() {
             w: clamp(overlay.w / videoWidth, 0.002, 1),
             h: clamp(overlay.h / videoHeight, 0.002, 1),
           };
-      const draft = overlayGeometryDrafts[overlay.key];
-      if (
-        draft &&
-        Number.isFinite(draft.time) &&
-        Math.abs(draft.time - currentTime) <= 0.075
-      ) {
+      const draft = getOverlayGeometryDraftForEditing(overlay.key);
+      if (draft) {
         return draft.box;
       }
       return fallback;
     },
-    [currentTime, overlayGeometryDrafts],
+    [getOverlayGeometryDraftForEditing],
   );
 
   const restoreEvidenceToAnalysis = React.useCallback(
@@ -4717,82 +4750,46 @@ export default function VideoPanel() {
       const bboxScope = manualAnnotationBBoxFingerprint(safeBox);
       const targetScope = targetTrackId.replace(/[^a-zA-Z0-9_.:-]+/g, "_") || "untracked";
       const annotationId = `${targetVideoId}:restore:${targetScope}:${intervalScope}:${bboxScope}`;
-      const geometryTrackId = `${targetVideoId}:bbox-roi-geometry:${annotationId}`;
-      const annotation: ManualVisualAnnotation = {
-        id: annotationId,
+      const sourceTrackKeyframes =
+        sourceItem.timestamp !== undefined
+          ? [
+            {
+              time: Number(sourceItem.timestamp),
+              coordinates: safeBox,
+              source: "track" as const,
+            },
+            ].filter((keyframe) => Number.isFinite(keyframe.time))
+          : [];
+      const annotation = buildManualBBoxRoiAnnotation({
+        analysisId: targetVideoId,
+        annotationId,
         category: "OBJ",
         subcategory: "Object label",
         label,
-        custom_label: label,
-        geometry_type: "box",
-        coordinates: safeBox,
-        geometry_keyframes: buildManualCorrectionGeometryKeyframes({
-          start,
-          end,
-          box: safeBox,
-          anchorTime: start,
-          existingKeyframes: [],
-          updatedAt: now,
-        }),
-        timestamp_seconds: Number(start.toFixed(3)),
-        start_seconds: Number(start.toFixed(3)),
-        end_seconds: Number(end.toFixed(3)),
-        open_note: "Restored from raw detection/provenance after analyst review.",
-        metadata_correlation: {
-          target_type: "restored_detection",
-          target_id: targetTrackId,
-          target_label: label,
-          apply_scope: "this_interval_only",
-          bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
-          authority_state: "manual_restored",
-          maturity_state: "manual_correction",
-          geometry_track_id: geometryTrackId,
-          coordinate_system: "normalized_video",
+        customLabel: label,
+        box: safeBox,
+        start,
+        end,
+        anchorTime: start,
+        targetType: "restored_detection",
+        targetId: targetTrackId,
+        targetLabel: label,
+        applyScope: "this_interval_only",
+        openNote: "Restored from raw detection/provenance after analyst review.",
+        sourceTrackKeyframes,
+        supersedes: targetTrackId ? [targetTrackId] : [],
+        authorityState: "manual_restored",
+        relation: "extends",
+        metadataPatch: {
           source_range_source: "restore_to_analysis",
-          quick_annotations: [],
-          manual_confirmation_event: {
-            event_type: "manual_bbox_roi_confirmation",
-            event_id: `${targetVideoId}:restore-to-analysis:${annotationId}:${Date.now()}`,
-            analysis_id: targetVideoId,
-            bbox_roi_id: annotationId,
-            authority_level: "manual_correction",
-            confirmed_fields: {
-              time_interval: true,
-              geometry: true,
-              label: true,
-              provenance_restore: true,
-            },
-            active_state_after_save: {
-              start_seconds: Number(start.toFixed(3)),
-              end_seconds: Number(end.toFixed(3)),
-              start_ms: Math.round(start * 1000),
-              end_ms: Math.round(end * 1000),
-              bbox: safeBox,
-              geometry_track_id: geometryTrackId,
-              label,
-            },
-            supersedes: targetTrackId ? [targetTrackId] : [],
-            old_states_retained_as: "traceback_provenance",
-            propagation_required: true,
-            partial_propagation_allowed: false,
-          },
-          source_track_keyframes_retained_for_traceback:
-            sourceItem.timestamp !== undefined
-              ? [
-                  {
-                    time: Number(sourceItem.timestamp),
-                    source: "track",
-                  },
-                ]
-              : undefined,
-          relation: "extends",
-          note: `Restored to analysis from ${request.sourcePanel || request.authority_source || "traceback"}.`,
         },
-        teaches_regime: true,
-        created_at: now,
-        updated_at: now,
-        updated_by: "analyst",
-      };
+        confirmationFields: {
+          provenance_restore: true,
+        },
+        confirmationEventId: `${targetVideoId}:restore-to-analysis:${annotationId}:${Date.now()}`,
+        sourceNote: `Restored to analysis from ${request.sourcePanel || request.authority_source || "traceback"}.`,
+        updatedAt: now,
+      });
       const rawLabels = new Set(
         [
           sourceItem.raw_class_name,
@@ -5053,16 +5050,30 @@ export default function VideoPanel() {
               h: nextH,
             };
 
-      setOverlayGeometryDrafts((current) => ({
-        ...current,
-        [overlayGeometryDrag.overlayKey]: {
+      setOverlayGeometryDrafts((current) => {
+        const nextDraft = {
           box: normalizeDraftBox(nextBox),
           time: currentTime,
-        },
-      }));
+        };
+        const nextDrafts = {
+          ...current,
+          [overlayGeometryDrag.overlayKey]: nextDraft,
+        };
+        overlayGeometryDraftsRef.current = nextDrafts;
+        return nextDrafts;
+      });
     };
 
     const handlePointerUp = () => {
+      const draft = overlayGeometryDraftsRef.current[overlayGeometryDrag.overlayKey];
+      if (draft) {
+        setPendingOverlayGeometryAutoSave({
+          overlayKey: overlayGeometryDrag.overlayKey,
+          box: draft.box,
+          time: draft.time,
+          requestId: Date.now(),
+        });
+      }
       setOverlayGeometryDrag(null);
     };
 
@@ -5906,38 +5917,41 @@ export default function VideoPanel() {
     const annotationTimestamp = Number(
       (draftTimestamp ?? getAuthoritativeVideoTime()).toFixed(3),
     );
-    const annotation: ManualVisualAnnotation = {
-      id: `${videoId}:${Date.now()}`,
+    const updatedAt = new Date().toISOString();
+    const annotationId = `${videoId}:${Date.now()}`;
+    const governedBox = normalizeDraftBox(draftBox);
+    const annotation = buildManualBBoxRoiAnnotation({
+      analysisId: videoId,
+      annotationId,
       category: nativeAnnotationDraft.category,
       subcategory: nativeAnnotationDraft.subcategory,
       label: resolvedLabel.trim(),
-      custom_label:
+      customLabel:
         nativeAnnotationDraft.readyLabel === CUSTOM_LABEL_VALUE
           ? nativeAnnotationDraft.label.trim()
           : undefined,
-      geometry_type: "box",
-      coordinates: draftBox,
-      geometry_keyframes: [
-        {
-          time: annotationTimestamp,
-          coordinates: normalizeDraftBox(draftBox),
-          source: "manual",
-          updated_at: new Date().toISOString(),
-        },
-      ],
-      timestamp_seconds: annotationTimestamp,
-      start_seconds: annotationTimestamp,
-      end_seconds: annotationTimestamp,
-      identity_affirmation: nativeAnnotationDraft.identityAffirmation.trim() || undefined,
-      role_affirmation: nativeAnnotationDraft.roleAffirmation.trim() || undefined,
-      audio_foley_note: nativeAnnotationDraft.audioFoleyNote.trim() || undefined,
-      open_note: nativeAnnotationDraft.openNote.trim() || undefined,
-      metadata_correlation: null,
-      teaches_regime: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      updated_by: "analyst",
-    };
+      box: governedBox,
+      start: annotationTimestamp,
+      end: annotationTimestamp,
+      anchorTime: annotationTimestamp,
+      targetType: "native_annotation",
+      targetId: annotationId,
+      targetLabel: resolvedLabel.trim(),
+      applyScope: "this_interval_only",
+      identityAffirmation: nativeAnnotationDraft.identityAffirmation.trim() || undefined,
+      roleAffirmation: nativeAnnotationDraft.roleAffirmation.trim() || undefined,
+      audioFoleyNote: nativeAnnotationDraft.audioFoleyNote.trim() || undefined,
+      openNote: nativeAnnotationDraft.openNote.trim() || undefined,
+      relation: "extends",
+      metadataPatch: {
+        source_range_source: "native_video_annotation",
+      },
+      confirmationFields: {
+        native_annotation: true,
+      },
+      sourceNote: "Drawn directly in the Video Panel native BBox/ROI annotator.",
+      updatedAt,
+    });
 
     const existingCorrections = analysisData?.annotationCorrections;
     const nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
@@ -6053,7 +6067,8 @@ export default function VideoPanel() {
       const expressionPersonAnchor =
         edit.category === "Identification" ? findExpressionPersonAnchor(overlay) : null;
       const expressionTimestamp = getOverlayTimestamp(overlay);
-      const expressionBox = getOverlayNormalizedBox(overlay);
+      const geometryDraft = getOverlayGeometryDraftForEditing(overlay.key);
+      const expressionBox = geometryDraft?.box || getOverlayNormalizedBox(overlay);
       const synthesizedExpressionOwnerBox =
         overlay.modality === "expression" &&
         edit.category === "Identification" &&
@@ -6144,14 +6159,34 @@ export default function VideoPanel() {
             : expressionOwnerTargetId
               ? `${videoId}:indication:${expressionOwnerTargetId}:${intervalScope}:${bboxScope}`
               : `${videoId}:indication:${overlay.modality}:${targetScope || "untracked"}:${intervalScope}:${bboxScope}`;
+      const trackManualCandidates =
+        targetCandidateId && targetCandidateId.length > 0
+          ? allManualVisualAnnotations.filter(
+              (item) => manualObjectCorrectionTargetId(item) === targetCandidateId,
+            )
+          : [];
+      const nearbyTrackManual = trackManualCandidates
+        .filter((item) => {
+          const itemStart = Number(item.start_seconds ?? item.timestamp_seconds);
+          const itemEnd = Number(item.end_seconds ?? item.timestamp_seconds ?? itemStart);
+          if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd)) {
+            return false;
+          }
+          const gap = Math.max(
+            0,
+            Math.max(Math.min(itemStart, itemEnd), start) -
+              Math.min(Math.max(itemStart, itemEnd), end),
+          );
+          return gap <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS;
+        })
+        .sort(
+          (left, right) =>
+            manualAnnotationUpdatedAt(right) - manualAnnotationUpdatedAt(left),
+        )[0];
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
         (targetCandidateId
-          ? allManualVisualAnnotations.find((item) => {
-              const targetId = manualObjectCorrectionTargetId(item);
-              if (targetId !== targetCandidateId) {
-                return false;
-              }
+          ? trackManualCandidates.find((item) => {
               const itemStart = Number(item.start_seconds ?? item.timestamp_seconds);
               const itemEnd = Number(item.end_seconds ?? item.timestamp_seconds ?? itemStart);
               if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd)) {
@@ -6163,67 +6198,79 @@ export default function VideoPanel() {
               );
             })
           : undefined) ||
+        nearbyTrackManual ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
+      const existingBounds = existingManual ? getManualAnnotationBounds(existingManual) : null;
+      const persistenceStart = existingBounds
+        ? clamp(
+            Math.min(start, existingBounds.start),
+            0,
+            duration || Number.MAX_SAFE_INTEGER,
+          )
+        : start;
+      const persistenceEnd = existingBounds
+        ? clamp(
+            Math.max(end, existingBounds.end, persistenceStart + 0.001),
+            0,
+            duration || Number.MAX_SAFE_INTEGER,
+          )
+        : end;
       const keyframeTime = clamp(
-        getOverlayInteractionTime(overlay),
-        start,
-        end,
+        geometryDraft?.time ?? getOverlayInteractionTime(overlay),
+        persistenceStart,
+        persistenceEnd,
       );
       const trackKeyframes = buildTrackGeometryKeyframes(targetTrackId || null);
       const updatedAt = new Date().toISOString();
       const governedBox = normalizeDraftBox(normalizedBox);
-      const geometryTrackId = `${videoId}:bbox-roi-geometry:${existingManual?.id || annotationId}`;
-      const geometryKeyframes = mergeManualGeometryKeyframes(
-        buildManualCorrectionGeometryKeyframes({
-          start,
-          end,
-          box: governedBox,
-          anchorTime: keyframeTime,
-          existingKeyframes: existingManual?.geometry_keyframes || [],
-          updatedAt,
-        }),
-      );
-      const annotation: ManualVisualAnnotation = {
-        ...(existingManual || {}),
-        id: existingManual?.id || annotationId,
+      const targetType =
+        expressionPersonAnchor || synthesizedExpressionOwnerBox || targetCandidateId
+          ? "object"
+          : existingManual?.metadata_correlation?.target_type || overlay.modality;
+      const targetId =
+        targetCandidateId ||
+        existingManual?.metadata_correlation?.target_id ||
+        String(overlay.key);
+      const targetLabel =
+        expressionPersonAnchor || synthesizedExpressionOwnerBox
+          ? String(
+              expressionPersonAnchor?.item.displayLabel ||
+                expressionPersonAnchor?.item.class_name ||
+                expressionPersonAnchor?.item.raw_class_name ||
+                "person",
+            )
+          : existingManual?.metadata_correlation?.target_label || overlay.label;
+      const annotation = buildManualBBoxRoiAnnotation({
+        analysisId: videoId,
+        annotationId,
+        existingManual,
         category: edit.category,
         subcategory: edit.subcategory || getFirstSubcategoryForCategory(edit.category),
         label,
-        custom_label: edit.label.trim() || undefined,
-        geometry_type: "box",
-        coordinates: governedBox,
-        geometry_keyframes: geometryKeyframes,
-        timestamp_seconds: Number(start.toFixed(3)),
-        start_seconds: Number(start.toFixed(3)),
-        end_seconds: Number(end.toFixed(3)),
-        identity_affirmation:
+        customLabel: edit.label.trim() || undefined,
+        box: governedBox,
+        start: persistenceStart,
+        end: persistenceEnd,
+        anchorTime: keyframeTime,
+        targetType,
+        targetId,
+        targetLabel,
+        applyScope,
+        quickAnnotations: edit.quickAnnotations || [],
+        identityAffirmation:
           edit.category === "Identification"
             ? (edit.identityAffirmation.trim() || label)
             : edit.identityAffirmation.trim() || undefined,
-        role_affirmation:
+        roleAffirmation:
           edit.category === "Role" ? edit.label.trim() || undefined : undefined,
-        audio_foley_note: existingManual?.audio_foley_note,
-        open_note: edit.note.trim() || existingManual?.open_note,
-        metadata_correlation: {
-          ...(existingManual?.metadata_correlation || {}),
-          target_type:
-            expressionPersonAnchor || synthesizedExpressionOwnerBox || targetCandidateId
-              ? "object"
-              : existingManual?.metadata_correlation?.target_type || overlay.modality,
-          target_id:
-            targetCandidateId ||
-            existingManual?.metadata_correlation?.target_id ||
-            String(overlay.key),
-          target_label: expressionPersonAnchor || synthesizedExpressionOwnerBox
-            ? String(
-                expressionPersonAnchor?.item.displayLabel ||
-                  expressionPersonAnchor?.item.class_name ||
-                  expressionPersonAnchor?.item.raw_class_name ||
-                  "person",
-              )
-            : existingManual?.metadata_correlation?.target_label || overlay.label,
+        audioFoleyNote: existingManual?.audio_foley_note,
+        openNote: edit.note.trim() || existingManual?.open_note,
+        sourceTrackKeyframes: trackKeyframes,
+        supersedes: trackKeyframes.length > 0 ? [targetTrackId || overlay.key] : [],
+        relation: "extends",
+        metadataPatch: {
           source_expression_key:
             overlay.modality === "expression" ? overlay.key : undefined,
           source_expression_label:
@@ -6234,71 +6281,20 @@ export default function VideoPanel() {
               : undefined,
           source_expression_owner_request: Boolean(synthesizedExpressionOwnerBox),
           synthesized_person_detection: Boolean(synthesizedExpressionOwnerBox),
-          apply_scope: applyScope,
-          quick_annotations: edit.quickAnnotations || [],
-          bbox_roi_governance_schema: "vaa1.bbox_roi_governance.v1",
-          authority_state: "manual_correction",
-          maturity_state: "manual_correction",
-          geometry_track_id: geometryTrackId,
-          coordinate_system: "normalized_video",
-          interpolation_policy: {
-            allowed: true,
-            max_gap_ms: 5000,
-            break_on_scene_boundary: true,
-            break_on_shot_cut: true,
-            manual_confirmation_required_for_cross_boundary: true,
-          },
-          source_track_keyframes_retained_for_traceback:
-            trackKeyframes.length > 0
-              ? trackKeyframes.map((keyframe) => ({
-                  time: keyframe.time,
-                  source: keyframe.source,
-                }))
-              : undefined,
-          manual_confirmation_event: {
-            event_type: "manual_bbox_roi_confirmation",
-            event_id: `${videoId}:manual-bbox-roi-confirmation:${existingManual?.id || annotationId}:${Date.now()}`,
-            analysis_id: videoId,
-            bbox_roi_id: existingManual?.id || annotationId,
-            authority_level: "manual_correction",
-            confirmed_fields: {
-              time_interval: true,
-              geometry: true,
-              label: true,
-              relation: Boolean(edit.quickAnnotations?.length),
-              narrative_agent: edit.category === "Identification",
-            },
-            active_state_after_save: {
-              start_ms: Math.round(start * 1000),
-              end_ms: Math.round(end * 1000),
-              geometry_track_id: geometryTrackId,
-              start_seconds: Number(start.toFixed(3)),
-              end_seconds: Number(end.toFixed(3)),
-              bbox: governedBox,
-              geometry_keyframe_time: Number(keyframeTime.toFixed(3)),
-              label,
-              category: edit.category,
-              quick_annotations: edit.quickAnnotations || [],
-            },
-            supersedes: trackKeyframes.length > 0 ? [targetTrackId || overlay.key] : [],
-            old_states_retained_as: "traceback_provenance",
-            propagation_required: true,
-            partial_propagation_allowed: false,
-          },
           maturity_policy:
             overlay.modality === "expression"
               ? "narrative_agent_maturity.expression_owner_person_request"
               : undefined,
-          relation: "extends",
-          note: synthesizedExpressionOwnerBox
-            ? "Expression had no mature person bbox; initiated an expression-owner person detection request."
-            : "Adopted from video overlay indication editor.",
         },
-        teaches_regime: true,
-        created_at: existingManual?.created_at || new Date().toISOString(),
-        updated_at: updatedAt,
-        updated_by: "analyst",
-      };
+        confirmationFields: {
+          relation: Boolean(edit.quickAnnotations?.length),
+          narrative_agent: edit.category === "Identification",
+        },
+        sourceNote: synthesizedExpressionOwnerBox
+          ? "Expression had no mature person bbox; initiated an expression-owner person detection request."
+          : "Adopted from video overlay indication editor.",
+        updatedAt,
+      });
 
       const existingCorrections = analysisData?.annotationCorrections;
       const nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
@@ -6390,12 +6386,72 @@ export default function VideoPanel() {
       closeSelectedOverlayEditor,
       duration,
       findExpressionPersonAnchor,
+      getOverlayGeometryDraftForEditing,
       getOverlayInteractionTime,
       getOverlayNormalizedBox,
       getOverlayTimestamp,
       videoId,
     ],
   );
+
+  useEffect(() => {
+    if (!pendingOverlayGeometryAutoSave) {
+      return;
+    }
+    const overlay =
+      overlayBoxes.find(
+        (candidate) => candidate.key === pendingOverlayGeometryAutoSave.overlayKey,
+      ) ||
+      (selectedOverlaySnapshot?.key === pendingOverlayGeometryAutoSave.overlayKey
+        ? selectedOverlaySnapshot
+        : null);
+    if (!overlay) {
+      return;
+    }
+
+    setPendingOverlayGeometryAutoSave(null);
+    setOverlayGeometryDrafts((current) => {
+      const nextDrafts = {
+        ...current,
+        [pendingOverlayGeometryAutoSave.overlayKey]: {
+          box: pendingOverlayGeometryAutoSave.box,
+          time: pendingOverlayGeometryAutoSave.time,
+        },
+      };
+      overlayGeometryDraftsRef.current = nextDrafts;
+      return nextDrafts;
+    });
+    const edit = getSelectedIndicationEdit(overlay);
+    const autoSaveStart = clamp(
+      Math.min(
+        edit.start,
+        pendingOverlayGeometryAutoSave.time - BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS / 2,
+      ),
+      0,
+      duration || Number.MAX_SAFE_INTEGER,
+    );
+    const autoSaveEnd = clamp(
+      Math.max(
+        edit.end,
+        pendingOverlayGeometryAutoSave.time + BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS / 2,
+        autoSaveStart + ANALYSIS_FRAME_STEP_SECONDS,
+      ),
+      0,
+      duration || Number.MAX_SAFE_INTEGER,
+    );
+    void saveSelectedIndication(overlay, {
+      ...edit,
+      start: Number(autoSaveStart.toFixed(3)),
+      end: Number(autoSaveEnd.toFixed(3)),
+    });
+  }, [
+    duration,
+    getSelectedIndicationEdit,
+    overlayBoxes,
+    pendingOverlayGeometryAutoSave,
+    saveSelectedIndication,
+    selectedOverlaySnapshot,
+  ]);
 
   const saveSelectedIndicationAtFrame = React.useCallback(
     async (
