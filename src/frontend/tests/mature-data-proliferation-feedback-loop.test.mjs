@@ -15,6 +15,7 @@ const meaningPlotPanel = read("app/V2components/components/panels/MeaningPlotPan
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const secondOrderAffirmations = read("app/V2components/components/panels/SecondOrderLabelAffirmations.tsx");
 const sceneGovernance = read("lib/scene-governance.ts");
+const annotationCorrections = read("lib/annotation-corrections.ts");
 
 test("VideoService builds a single mature evidence view from corrected and Master Schema data", () => {
   assert.match(
@@ -201,5 +202,49 @@ test("BBox/ROI overlays consume mature Master Schema and persistence indicators 
     videoPanel,
     /manualTrackMatureAuthority[\s\S]*targetIds[\s\S]*manualTrackAuthority/,
     "manual mature identity authority must be checked across all grouped object track ids",
+  );
+});
+
+test("proliferation candidate decisions are canonical, source-linked, and gated", () => {
+  assert.match(
+    annotationCorrections,
+    /export function requireSavedProliferationDecision\(/,
+    "proliferation candidate decisions must have a canonical-save guard",
+  );
+
+  assert.match(
+    videoPanel,
+    /const sourceTracebackRefs = \[[\s\S]*candidate\.evidence_refs[\s\S]*sourceEvidence\.traceback/,
+    "proliferation decisions must retain source evidence traceback references",
+  );
+
+  assert.match(
+    videoPanel,
+    /projectionTargets = candidate\.projection_targets\?\.length[\s\S]*\["master_schema", "video_panel", "bbox_roi_overlay", "meaning_network"\]/,
+    "proliferation decisions must carry default governed projection targets",
+  );
+
+  assert.match(
+    videoPanel,
+    /proliferates_to:[\s\S]*decision === "confirmed"[\s\S]*\? projectionTargets[\s\S]*: \[\]/,
+    "only confirmed proliferation candidates may proliferate to mature surfaces",
+  );
+
+  assert.match(
+    videoPanel,
+    /source_verification_status:[\s\S]*source_time_resolved[\s\S]*source_anchor_missing/,
+    "proliferation decisions must disclose whether source anchors were resolved",
+  );
+
+  assert.match(
+    videoPanel,
+    /requireSavedProliferationDecision\([\s\S]*savedCorrections,[\s\S]*nextDecision\.decision_id/,
+    "VideoPanel must verify the backend returned the saved proliferation decision before updating local projections",
+  );
+
+  assert.match(
+    videoPanel,
+    /if \(decision === "confirmed" && appliedLabel\)[\s\S]*buildCorrectionRule/,
+    "label override creation must remain gated to confirmed proliferation candidates only",
   );
 });

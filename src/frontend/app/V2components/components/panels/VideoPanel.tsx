@@ -38,6 +38,7 @@ import {
   pushCorrectionSnapshot,
   removeManualVisualAnnotation,
   requireSavedManualVisualAnnotation,
+  requireSavedProliferationDecision,
   upsertMasterSchemaPresenceIntervalForManualAnnotation,
   upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
@@ -6791,6 +6792,17 @@ export default function VideoPanel() {
       const requestId = String(candidate.provenance?.request_id || "");
       const appliedLabel = governedOverlayLabel(resolveProliferatedDisplayLabel(candidate));
       const now = new Date().toISOString();
+      const sourceTracebackRefs = [
+        ...(candidate.evidence_refs || [])
+          .map((ref) => String(ref.traceback_record_id || "").trim())
+          .filter(Boolean),
+        String(candidate.provenance?.source_traceback || "").trim(),
+        String(sourceEvidence.traceback || "").trim(),
+      ].filter(Boolean);
+      const uniqueSourceTracebackRefs = [...new Set(sourceTracebackRefs)];
+      const projectionTargets = candidate.projection_targets?.length
+        ? candidate.projection_targets
+        : ["master_schema", "video_panel", "bbox_roi_overlay", "meaning_network"];
       const rawTrackId = candidate.raw?.track_id ?? candidate.raw?.trackId;
       const targetTrackId =
         typeof rawTrackId === "number" || typeof rawTrackId === "string"
@@ -6811,7 +6823,23 @@ export default function VideoPanel() {
         target_track_id: targetTrackId,
         source_anchors: candidate.source_anchors,
         evidence_refs: candidate.evidence_refs,
-        projection_targets: candidate.projection_targets,
+        source_traceback_refs: uniqueSourceTracebackRefs,
+        projection_targets: projectionTargets,
+        proliferates_to:
+          decision === "confirmed"
+            ? projectionTargets
+            : [],
+        source_panel: formatCandidateSource(candidate.source_panel),
+        source_verification_status:
+          candidate.evidence_refs?.length || candidate.source_anchors?.length
+            ? "source_time_resolved"
+            : "source_anchor_missing",
+        source_range_source:
+          candidate.evidence_refs?.length
+            ? "evidence_ref"
+            : candidate.time
+              ? "manual_interval"
+              : "candidate_payload",
         governance_status: candidate.master_object_projection?.governance_status,
         proliferation_allowed: decision === "confirmed",
         decision_reason:
@@ -6864,6 +6892,11 @@ export default function VideoPanel() {
       const savedCorrections = await VideoService.saveAnnotationCorrections(
         videoId,
         nextCorrections,
+      );
+      requireSavedProliferationDecision(
+        savedCorrections,
+        nextDecision.decision_id,
+        "proliferation candidate decision",
       );
       applySavedAnnotationCorrections(savedCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);

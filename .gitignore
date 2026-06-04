@@ -1,27 +1,35 @@
-# Ignore virtual environment directory
+# Python
+.venv/
+venv/
 virtenvir/
-
-src/cvat/backend/node_modules/
-node_modules/
-src/frontend/node_modules/
-src/frontend/.next/
-.next/
-.cache/
-
-outputs/*
-
-src/cvat/src/
-wheels/
-Dockerfile
-
-# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
 
-# macOS / local OS noise
+# Node / frontend build artifacts
+node_modules/
+src/frontend/node_modules/
+src/cvat/backend/node_modules/
+.next/
+src/frontend/.next/
+dist/
+build/
+.cache/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# OS/editor
 .DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
 
 # Logs
 logs/
@@ -33,16 +41,39 @@ uploads/
 tmp/
 *.tmp
 
+# Large local media/data
+data/
+datasets/
+media/
+videos/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.mp3
+
+# Model weights and generated ML artifacts
+models/
+weights/
+wheels/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# CVAT / Docker local state
+src/cvat/src/
+cvat_data/
+docker-volumes/
+
 # Local archives / bundles
 *.zip
 *.tar.gz
+*.exe
 
 # Local runtime manifests
 docs/current_progress_diffstat_*.txt
 docs/current_progress_status_*.txt
 docs/current_progress_file_list_*.txt
-
-# VS Code
-.vscode/
-# Heavy files:
-*.exe

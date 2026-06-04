@@ -239,6 +239,7 @@ mkdir VAA1
 cd VAA1
 git clone <repository-url> The-project
 cd The-project
+git checkout petteri
 ```
 
 Then open the folder in VS Code:
@@ -269,6 +270,19 @@ You should see files such as:
 - `scripts`,
 - `run_vaa1.bat`,
 - `run_vaa1_lite.bat`.
+
+For the current development/testing branch, the recommended quick path is also documented in:
+
+```text
+WINDOWS_DEV_QUICKSTART.md
+```
+
+The two main helper scripts are:
+
+```powershell
+.\scripts\windows_env_check.ps1
+.\scripts\windows_first_run.ps1
+```
 
 ## 9. First Run: Use The Launcher If Available
 
@@ -397,6 +411,19 @@ For release governance:
 Run these in PowerShell or Anaconda Prompt and copy the output into a message if asking for help:
 
 ```powershell
+.\scripts\windows_env_check.ps1
+.\scripts\windows_env_check.ps1 -Json > windows-env-report.json
+```
+
+If PowerShell blocks the script because of execution policy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_env_check.ps1
+```
+
+Manual command list:
+
+```powershell
 git --version
 node --version
 npm --version
@@ -432,6 +459,25 @@ Send:
 - The command that was run.
 - The full terminal output.
 - Whether Docker Desktop is open and says it is running.
+- The output of:
+
+```powershell
+git branch
+git status -sb
+python --version
+pip --version
+node --version
+npm --version
+ffmpeg -version
+docker --version
+docker compose version
+pip list
+```
+
+- The `npm install` error log if frontend install failed.
+- The backend terminal output.
+- The frontend terminal output.
+- A screenshot of the browser error if the dashboard opens but fails.
 - The contents of:
 
 ```text

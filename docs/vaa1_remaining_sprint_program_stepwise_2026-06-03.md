@@ -505,6 +505,24 @@ Protection follow-up:
 - Add a saved-bundle inspection check that proves the persisted annotation contains the exact normalized analyst boxes as manual `geometry_keyframes`.
 - Keep raw detector keyframes retained only as traceback/provenance unless explicitly surfaced as candidate support.
 
+Mature Data Proliferation next-stage slice:
+
+- Proliferation candidate decisions now have a canonical-save guard through `requireSavedProliferationDecision`.
+- Video Panel candidate decisions now retain source traceback refs, source anchors/evidence refs, projection targets, source panel, source verification status, and source-range provenance on the `proliferation_decisions` ledger.
+- Only confirmed candidates receive `proliferates_to` targets and can create a mature label correction rule.
+- Canceled, deferred, and inspected candidates remain ledgered review decisions with no mature propagation target.
+- The UI now verifies the backend returned the saved proliferation decision before installing local projections and refreshing analysis data.
+- Regression coverage was added in `mature-data-proliferation-feedback-loop.test.mjs` for canonical decision persistence, source-linked traceback, projection targets, confirmation-only propagation, and confirmation-only label override creation.
+- Verified after this slice: `cd src/frontend && npx tsc --noEmit`, `node --test src/frontend/tests/mature-data-proliferation-feedback-loop.test.mjs`, `cd src/frontend && npm test`, and `git diff --check`.
+
+Windows Development Environment Kit slice:
+
+- Added `WINDOWS_DEV_QUICKSTART.md` as the short branch-clone and first-run path for a Windows development/testing machine.
+- Added `scripts/windows_env_check.ps1` to report Git, Conda, Python, Node/npm, Docker, FFmpeg/ffprobe, selected Python modules, backend health, and frontend dashboard status.
+- Added `scripts/windows_first_run.ps1` to start backend and frontend in visible PowerShell windows, optionally install frontend dependencies, open the dashboard, and write `logs/windows-backend.log` and `logs/windows-frontend.log`.
+- Updated `docs/vaa1_new_developer_windows_setup_handout_2026-06-04.md` to point non-coders to the quickstart and diagnostics scripts.
+- This remains a development/test environment kit, not a packaged `.exe` release.
+
 ## Bottom Line
 
 VAA1 already has a large amount of functioning analysis and annotation machinery. The remaining sprint is mainly about making that machinery governed, synchronized, traceable, and release-safe.

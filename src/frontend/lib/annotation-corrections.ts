@@ -4,6 +4,7 @@ import type {
   AnnotationCorrections,
   ManualVisualAnnotation,
   ManualTranscriptEntry,
+  ProliferationDecision,
 } from "./api-service";
 
 const POS_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
@@ -527,6 +528,27 @@ export function requireSavedManualVisualAnnotation(
   ) {
     throw new Error(
       `${context} save returned entry ${entryId} without canonical box coordinates`,
+    );
+  }
+  return saved;
+}
+
+export function requireSavedProliferationDecision(
+  corrections: AnnotationCorrections | null | undefined,
+  decisionId: string,
+  context = "proliferation candidate decision",
+): ProliferationDecision {
+  const saved = (corrections?.proliferation_decisions || []).find(
+    (entry) => entry.decision_id === decisionId,
+  );
+  if (!saved) {
+    throw new Error(
+      `${context} save returned without canonical proliferation_decisions entry ${decisionId}`,
+    );
+  }
+  if (!saved.candidate_id || !saved.decision) {
+    throw new Error(
+      `${context} save returned entry ${decisionId} without candidate id and decision`,
     );
   }
   return saved;
