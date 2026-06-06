@@ -3,6 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
+import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { openVideoAtTime } from "@/lib/video-navigation";
 
 const MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
@@ -339,7 +340,7 @@ export default function QuantMatrixPanel({
     analysisData: AnalysisData | null,
     needle?: string,
   ) => {
-    const segments = analysisData?.transcript || [];
+    const segments = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     const normalizedNeedle = String(needle || "").trim().toLowerCase();
     if (!normalizedNeedle) {
       return segments[0]?.start ?? 0;
@@ -354,7 +355,7 @@ export default function QuantMatrixPanel({
     analysisData: AnalysisData | null,
     terms: string[],
   ) => {
-    const segments = analysisData?.transcript || [];
+    const segments = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     if (!terms.length) {
       return segments[0]?.start ?? 0;
     }
@@ -364,12 +365,22 @@ export default function QuantMatrixPanel({
     });
     return matched?.start ?? findTranscriptTimeForText(analysisData, terms[0]);
   };
+  const segmentNavigationTime = (
+    analysisData: AnalysisData | null,
+    segment?: { text?: string; start?: number; end?: number; start_ms?: number; end_ms?: number },
+  ) => {
+    const timing = normalizeTranscriptSegmentTiming(segment || {});
+    if (timing.start > 0 || segment?.start !== undefined || segment?.start_ms !== undefined) {
+      return timing.start;
+    }
+    return findTranscriptTimeForText(analysisData, segment?.text);
+  };
   const deriveTranscriptContext = (
     analysisData: AnalysisData | null,
     segment?: { text?: string; start?: number; end?: number },
     windowSize = 2,
   ) => {
-    const segments = analysisData?.transcript || [];
+    const segments = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     if (!segment || segments.length === 0) {
       return segment?.text || "";
     }
@@ -563,7 +574,7 @@ export default function QuantMatrixPanel({
                     onClick={() =>
                       jumpToAnalysisTime(
                         analysisId,
-                        segment.start ?? findTranscriptTimeForText(analysisData, segment.text),
+                        segmentNavigationTime(analysisData, segment),
                       )
                     }
                     className="block w-full border-l border-slate-800/80 px-2 py-1 text-left text-[11px] text-slate-300 hover:border-slate-600 hover:bg-slate-900/25 hover:text-slate-100"

@@ -65,6 +65,10 @@ from src.backend.analysis.language_pack_policy import (
 )
 from src.backend.analysis.morphology_catalog import list_morphology_catalog
 from src.backend.analysis.language_utils import build_language_profile
+from src.backend.analysis.transcript_timing_guard import (
+    build_transcript_quality_report,
+    transcript_timing_repair_needed,
+)
 from src.backend.analysis.evidence_linker import link_transcript_to_trace
 from src.backend.analysis.evidence_linker import (
     link_audio_prosody_json_to_trace,
@@ -421,58 +425,6 @@ def get_wav_duration_seconds(audio_path: str | Path) -> Optional[float]:
             return handle.getnframes() / float(frame_rate)
     except Exception:
         return None
-
-
-def build_transcript_quality_report(
-    transcript: Dict[str, Any],
-    *,
-    media_duration_seconds: Any = None,
-    audio_duration_seconds: Any = None,
-    trailing_gap_warn_seconds: float = 8.0,
-    trailing_gap_warn_ratio: float = 0.08,
-) -> Dict[str, Any]:
-    segments = transcript.get("segments") or []
-    last_end_seconds = max(
-        (safe_float(segment.get("end")) or 0.0 for segment in segments),
-        default=0.0,
-    )
-    media_duration = safe_float(media_duration_seconds)
-    audio_duration = safe_float(audio_duration_seconds)
-
-    target_duration = media_duration or audio_duration or last_end_seconds
-    trailing_uncovered_seconds = max(0.0, (target_duration or 0.0) - last_end_seconds)
-    coverage_ratio = (
-        min(1.0, max(0.0, last_end_seconds / target_duration))
-        if target_duration and target_duration > 0
-        else 1.0
-    )
-
-    coverage_shortfall = trailing_uncovered_seconds > max(
-        trailing_gap_warn_seconds,
-        (target_duration or 0.0) * trailing_gap_warn_ratio,
-    )
-
-    reasons: List[str] = []
-    if not segments:
-        reasons.append("no_transcript_segments")
-    if coverage_shortfall:
-        reasons.append("trailing_coverage_shortfall")
-
-    return {
-        "status": "degraded" if reasons else "ok",
-        "segment_count": len(segments),
-        "last_segment_end_seconds": round(last_end_seconds, 3),
-        "media_duration_seconds": round(media_duration, 3) if media_duration is not None else None,
-        "audio_duration_seconds": round(audio_duration, 3) if audio_duration is not None else None,
-        "coverage_target_seconds": round(target_duration, 3) if target_duration is not None else None,
-        "coverage_ratio": round(coverage_ratio, 4),
-        "trailing_uncovered_seconds": round(trailing_uncovered_seconds, 3),
-        "thresholds": {
-            "warn_gap_seconds": trailing_gap_warn_seconds,
-            "warn_gap_ratio": trailing_gap_warn_ratio,
-        },
-        "reasons": reasons,
-    }
 
 
 def build_transcript_timeline_segments(
@@ -3117,6 +3069,9 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
         ),
         "meaning_network_custom_lanes": corrections.get(
             "meaning_network_custom_lanes", []
+        ),
+        "transcript_clock_offset_seconds": corrections.get(
+            "transcript_clock_offset_seconds"
         ),
     }
 
@@ -5965,6 +5920,261 @@ def regenerate_audio_prosody_if_needed(status: Dict[str, Any]) -> bool:
     return True
 
 
+def normalize_analysis_json_for_write(value: Any) -> Any:
+    try:
+        import pandas as pd
+
+        if isinstance(value, pd.DataFrame):
+            return value.to_dict(orient="records")
+    except Exception:
+        pass
+    return make_json_safe(value)
+
+
+def rewrite_pos_quant_from_transcript(
+    status: Dict[str, Any],
+    transcript: Dict[str, Any],
+    transcript_path: Path,
+) -> List[str]:
+    output_files = status.setdefault("output_files", {})
+    language_code = (
+        transcript.get("language")
+        or (transcript.get("language_info") or {}).get("code")
+        or "en"
+    )
+    transcript_text = " ".join(
+        str(segment.get("text", "")).strip()
+        for segment in transcript.get("segments", [])
+        if str(segment.get("text", "")).strip()
+    ).strip()
+    if not transcript_text:
+        return []
+
+    rewritten: List[str] = []
+    pos_path = (
+        Path(output_files["pos_analysis"])
+        if output_files.get("pos_analysis")
+        else transcript_path.with_name(
+            f"{transcript_path.stem.replace('_transcript', '')}_pos.json"
+        )
+    )
+    pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
+    pos_path.parent.mkdir(parents=True, exist_ok=True)
+    pos_path.write_text(
+        json.dumps(normalize_analysis_json_for_write(pos_result), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["pos_analysis"] = str(pos_path)
+    rewritten.append("pos_analysis")
+
+    quant_path = (
+        Path(output_files["quan_analysis"])
+        if output_files.get("quan_analysis")
+        else transcript_path.with_name(
+            f"{transcript_path.stem.replace('_transcript', '')}_quan.json"
+        )
+    )
+    qa = QuantitativeAnalysis(
+        docs=[transcript_text],
+        file_paths=[transcript_path],
+        document_labels=[Path(status.get("original_filename") or transcript_path.name).stem],
+        language_code=language_code,
+    )
+    quant_result = qa.run()
+    quant_result = attach_quant_evidence_to_transcript(
+        quant_result,
+        transcript.get("segments", []),
+    )
+    quant_path.parent.mkdir(parents=True, exist_ok=True)
+    quant_path.write_text(
+        json.dumps(normalize_analysis_json_for_write(quant_result), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["quan_analysis"] = str(quant_path)
+    rewritten.append("quan_analysis")
+    return rewritten
+
+
+def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
+    output_files = status.setdefault("output_files", {})
+    transcript_path_raw = output_files.get("transcript")
+    audio_path_raw = output_files.get("audio")
+    if not transcript_path_raw or not audio_path_raw:
+        return False
+
+    transcript_path = Path(str(transcript_path_raw))
+    audio_path = Path(str(audio_path_raw))
+    if not transcript_path.exists() or not audio_path.exists():
+        return False
+
+    try:
+        transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        status["transcript_timing_repair"] = {
+            "status": "skipped",
+            "reason": f"transcript_unreadable:{exc}",
+        }
+        return False
+
+    source_metadata = (
+        status.get("source_media_metadata")
+        if isinstance(status.get("source_media_metadata"), dict)
+        else {}
+    )
+    media_duration_seconds = (
+        status.get("duration_seconds")
+        or source_metadata.get("duration_seconds")
+        or source_metadata.get("duration")
+    )
+    audio_duration_seconds = get_wav_duration_seconds(audio_path)
+    quality_report = build_transcript_quality_report(
+        transcript,
+        media_duration_seconds=media_duration_seconds,
+        audio_duration_seconds=audio_duration_seconds,
+    )
+    status.setdefault("results", {}).setdefault("audio_analysis", {})[
+        "transcript_quality"
+    ] = quality_report
+
+    if not transcript_timing_repair_needed(transcript, quality_report):
+        status["transcript_timing_repair"] = {
+            "status": "not_needed",
+            "quality": quality_report,
+        }
+        return False
+
+    previous_repair = status.get("transcript_timing_repair")
+    previous_reason = str((previous_repair or {}).get("reason") or "")
+    if (
+        isinstance(previous_repair, dict)
+        and previous_repair.get("status") == "failed"
+        and "ffmpeg" not in previous_reason.lower()
+    ):
+        return False
+
+    backup_path = transcript_path.with_name(f"{transcript_path.stem}_degraded_backup.json")
+    if not backup_path.exists():
+        backup_path.write_text(
+            json.dumps(transcript, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    try:
+        repaired = AudioTranscriptionPipeline(str(audio_path)).rerun_with_chunked_fallback(
+            primary_transcript=transcript,
+        )
+    except Exception as exc:
+        logger.warning("Transcript timing repair failed for %s: %s", status.get("analysis_id"), exc)
+        status["transcript_timing_repair"] = {
+            "status": "failed",
+            "reason": str(exc),
+            "quality_before": quality_report,
+        }
+        return False
+
+    repaired_quality = build_transcript_quality_report(
+        repaired,
+        media_duration_seconds=media_duration_seconds,
+        audio_duration_seconds=audio_duration_seconds,
+    )
+    before_end = safe_float(quality_report.get("last_segment_end_seconds")) or 0.0
+    after_end = safe_float(repaired_quality.get("last_segment_end_seconds")) or 0.0
+    if repaired_quality.get("status") != "ok" and after_end < before_end + 6.0:
+        logger.warning(
+            "Transcript timing repair did not improve coverage for %s: before_end=%s after_end=%s",
+            status.get("analysis_id"),
+            before_end,
+            after_end,
+        )
+        status["transcript_timing_repair"] = {
+            "status": "failed",
+            "reason": "fallback_did_not_improve_timeline_coverage",
+            "quality_before": quality_report,
+            "quality_after": repaired_quality,
+            "backup_path": str(backup_path),
+        }
+        return False
+
+    transcript_text = " ".join(
+        str(segment.get("text", "")).strip()
+        for segment in repaired.get("segments", [])
+        if str(segment.get("text", "")).strip()
+    )
+    repaired["language_info"] = build_language_profile(
+        repaired.get("language", "unknown"),
+        transcript_text,
+    )
+    repaired["timeline_segments"] = build_transcript_timeline_segments(
+        repaired,
+        coverage_target_seconds=media_duration_seconds or audio_duration_seconds,
+    )
+    repaired["timing_repair"] = {
+        "status": "repaired",
+        "reason": "degraded_transcript_coverage",
+        "quality_before": quality_report,
+        "quality_after": repaired_quality,
+        "backup_path": str(backup_path),
+    }
+
+    transcript_path.write_text(
+        json.dumps(repaired, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["transcript"] = str(transcript_path)
+
+    write_linked_transcript_artifact(status, repaired, output_files)
+    audio_prosody = analyze_audio_prosody(audio_path, repaired.get("segments", []))
+    prosody_path = (
+        Path(output_files["audio_prosody"])
+        if output_files.get("audio_prosody")
+        else transcript_path.with_name(
+            f"{transcript_path.stem.replace('_transcript', '')}_audio_prosody.json"
+        )
+    )
+    prosody_path.write_text(
+        json.dumps(audio_prosody, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["audio_prosody"] = str(prosody_path)
+    write_time_bank_artifact(
+        status,
+        output_files,
+        source_key="audio_prosody",
+        artifact_key="time_bank_audio",
+        suffix="time_bank_audio",
+        linker=link_audio_prosody_json_to_trace,
+    )
+    rewritten = rewrite_pos_quant_from_transcript(status, repaired, transcript_path)
+
+    status["output_files"] = output_files
+    status.setdefault("results", {}).setdefault("audio_analysis", {}).update(
+        {
+            "transcript": repaired,
+            "transcript_quality": repaired_quality,
+            "audio_prosody": audio_prosody,
+        }
+    )
+    status["transcript_timing_repair"] = {
+        "status": "repaired",
+        "quality_before": quality_report,
+        "quality_after": repaired_quality,
+        "backup_path": str(backup_path),
+        "rewritten_artifacts": [
+            "transcript",
+            "linked_transcript",
+            "audio_prosody",
+            "time_bank_audio",
+            *rewritten,
+        ],
+    }
+    append_analysis_event(
+        status,
+        "transcript_timing_repaired",
+        details=status["transcript_timing_repair"],
+    )
+    return True
+
+
 def regenerate_time_bank_visual_artifacts_if_needed(status: Dict[str, Any]) -> bool:
     output_files = status.get("output_files", {})
     changed = False
@@ -7621,11 +7831,22 @@ async def get_analysis_status(analysis_id: str) -> dict:
     if status["status"] == "completed":
         results = status.get("results") or {}
         output_files = status.get("output_files", {})
+        transcript_timing_repair_before = status.get("transcript_timing_repair")
+        transcript_timing_repaired = repair_transcript_timing_if_needed(status)
+        transcript_timing_repair_state = status.get("transcript_timing_repair")
+        transcript_timing_repair_changed = (
+            transcript_timing_repair_state != transcript_timing_repair_before
+        )
+        if transcript_timing_repair_state:
+            response_data["transcript_timing_repair"] = transcript_timing_repair_state
         linked_transcript_regenerated = regenerate_linked_transcript_if_needed(status)
         audio_prosody_regenerated = regenerate_audio_prosody_if_needed(status)
         visual_time_bank_regenerated = regenerate_time_bank_visual_artifacts_if_needed(status)
         iterative_artifacts_created = write_iterative_derived_artifacts_for_status(status)
         if (
+            transcript_timing_repaired
+            or transcript_timing_repair_changed
+            or
             linked_transcript_regenerated
             or audio_prosody_regenerated
             or visual_time_bank_regenerated
@@ -9460,6 +9681,13 @@ async def update_annotation_corrections(
         )
     else:
         corrections.setdefault("meaning_network_custom_lanes", [])
+
+    if "transcript_clock_offset_seconds" in payload:
+        corrections["transcript_clock_offset_seconds"] = payload.get(
+            "transcript_clock_offset_seconds"
+        )
+    else:
+        corrections.setdefault("transcript_clock_offset_seconds", None)
 
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)

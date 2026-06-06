@@ -3,6 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
+import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { openVideoAtTime } from "@/lib/video-navigation";
 
 const MATRIX_STORAGE_KEY = "vaa1.pos.matrix.sections";
@@ -398,7 +399,7 @@ export default function POSMatrixPanel({
     analysisData: AnalysisData | null,
     needle?: string,
   ) => {
-    const segments = analysisData?.transcript || [];
+    const segments = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     const normalizedNeedle = String(needle || "").trim().toLowerCase();
     if (!normalizedNeedle) {
       return segments[0]?.start ?? 0;
@@ -470,7 +471,7 @@ export default function POSMatrixPanel({
     analysisData: AnalysisData | null,
     words: string[],
   ) => {
-    const transcript = analysisData?.transcript || [];
+    const transcript = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     let searchStartIndex = 0;
 
     return words
@@ -494,7 +495,7 @@ export default function POSMatrixPanel({
           segmentIndex,
           time:
             segmentIndex !== Number.MAX_SAFE_INTEGER
-              ? Number(transcript[segmentIndex]?.start ?? 0)
+              ? normalizeTranscriptSegmentTiming(transcript[segmentIndex] || {}).start
               : findTranscriptTimeForText(analysisData, word),
         };
       });

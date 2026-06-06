@@ -12,6 +12,7 @@ import {
   mergeCorrectionRule,
   pushCorrectionSnapshot,
   removeManualTranscriptEntry,
+  setTranscriptClockOffset,
   undoLastCorrectionSnapshot,
   upsertManualTranscriptEntry,
 } from "@/lib/annotation-corrections";
@@ -166,6 +167,9 @@ export default function SpeechToTextPanel({
 
   // Use analysisData (fallback to empty arrays if not available)
   const transcript = analysisData?.transcriptTimeline ?? analysisData?.transcript ?? [];
+  const transcriptClockOffset = Number(
+    analysisData?.annotationCorrections?.transcript_clock_offset_seconds || 0,
+  );
   const audioProsody = analysisData?.audioProsody ?? [];
   const manualAudioAnnotations =
     analysisData?.manualAnnotationsByCategory?.Audio ?? [];
@@ -555,6 +559,31 @@ export default function SpeechToTextPanel({
     });
   };
 
+  const syncTranscriptClockToRow = async (row: any) => {
+    if (!videoId) {
+      return;
+    }
+    const sourceStart = Number(row?.sourceStart ?? row?.start ?? 0);
+    if (!Number.isFinite(sourceStart)) {
+      setEditorMessage("Transcript row does not have a usable source timestamp.");
+      return;
+    }
+    const currentVideoTime = Math.max(0, Number(videoTimeLine || 0));
+    const nextOffset = currentVideoTime - sourceStart;
+    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
+    const nextCorrections = setTranscriptClockOffset(
+      analysisData?.annotationCorrections,
+      nextOffset,
+    );
+    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(videoId);
+    setAnalysisData(refreshed);
+    setEditorMessage(
+      `Transcript clock synced: ${nextOffset.toFixed(3)}s offset from transcript source time.`,
+    );
+    broadcastAnalysisCorrectionRefresh(videoId);
+  };
+
   const saveTranscriptEditor = async () => {
     if (!videoId || !editorDraft) {
       return;
@@ -729,6 +758,10 @@ export default function SpeechToTextPanel({
                   </div>
                   <div className="mt-1 text-xs text-slate-300">
                     Keep transcript corrections, unresolved marks, and manual timestamp entries inside this panel.
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Clock offset {formatSpeechSeconds(transcriptClockOffset)}.
+                    To correct drift, pause video at the spoken line and use Sync clock on that transcript row.
                   </div>
                 </div>
                 <button
@@ -1177,6 +1210,16 @@ export default function SpeechToTextPanel({
                           <div className="rounded border border-white/8 bg-[#121212] px-2 py-1 text-[10px] text-slate-400">
                             {row.status === "unconfirmed" ? "Unconfirmed" : "Confirmed"}
                           </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              syncTranscriptClockToRow(row);
+                            }}
+                            className="rounded border border-sky-500/20 bg-sky-950/20 px-2 py-1 text-[10px] text-sky-100 hover:bg-sky-900/30"
+                          >
+                            Sync clock
+                          </button>
                           <button
                             type="button"
                             onClick={(event) => {

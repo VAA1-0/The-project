@@ -377,7 +377,8 @@ export default function POSAnalyzePanel() {
   const posAnalysisMode = analysisData?.posAnalysis[0]?.analysis_mode;
   const posTokenCount = analysisData?.posAnalysis[0]?.token_count;
   const posConfidence = analysisData?.posAnalysis[0]?.confidence_profile;
-  const transcriptSegments = analysisData?.transcript || [];
+  const transcriptSegments =
+    analysisData?.transcriptTimeline || analysisData?.transcript || [];
   const languageSupport = analysisData?.metadata?.languageSupport;
   const posError = analysisData?.metadata?.posError;
   const hasPosContent =

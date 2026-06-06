@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { useLayoutHost } from "../LayoutHost";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
@@ -177,7 +178,8 @@ export default function QuantitativeAnalysisPanel() {
   // Use analysisData (fallback to mock data if not available)
 
   const analysisDataquantAnalysis = analysisData?.quantAnalysis?.[0] ?? {}
-  const transcriptSegments = analysisData?.transcript || [];
+  const transcriptSegments =
+    analysisData?.transcriptTimeline || analysisData?.transcript || [];
   const sourceName = analysisData?.metadata?.sourceName;
   const compactLabel = (value?: string, maxLength = 26) => {
     if (!value) {
@@ -324,6 +326,13 @@ export default function QuantitativeAnalysisPanel() {
   const jumpToTime = (time: number) => {
     if (!videoId) return;
     openVideoAtTime(videoId, time);
+  };
+  const segmentNavigationTime = (segment: any) => {
+    const timing = normalizeTranscriptSegmentTiming(segment || {});
+    if (timing.start > 0 || segment?.start !== undefined || segment?.start_ms !== undefined) {
+      return timing.start;
+    }
+    return findTranscriptTimeForText(segment?.text);
   };
   const findTranscriptTimeForText = (needle?: string) => {
     const normalizedNeedle = String(needle || "")
@@ -492,7 +501,7 @@ export default function QuantitativeAnalysisPanel() {
                   <button
                     key={`${key}-segment-${index}`}
                     type="button"
-                    onClick={() => jumpToTime(segment.start ?? findTranscriptTimeForText(segment.text))}
+                    onClick={() => jumpToTime(segmentNavigationTime(segment))}
                     className="block w-full rounded-md bg-slate-900/35 px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-slate-900/60 hover:text-slate-50"
                   >
                     <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-slate-400">

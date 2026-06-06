@@ -4,18 +4,40 @@ Date: 2026-05-25
 
 This is the consolidated remaining sprint map. It keeps the interpretive features, maturity regime, governance, packaging, and release-readiness work in one place so no major track quietly falls off the board.
 
+## Non-Droppable Release Tracks
+
+Two tracks must remain visible in every sprint review and release-readiness discussion:
+
+1. **Mature Data Proliferation Regime.** Confirmed analyst work may proliferate as mature data only through governed source anchors, authority state, maturity state, projection targets, traceback, and canonical saved decisions. Candidates, near matches, raw detections, model suggestions, and inferred graph matches must remain reviewable until confirmed.
+2. **Licensed software optionality and user activation.** FFmpeg, YOLOv8/Ultralytics, licensed scripts, optional APIs, remote providers, premium tools, and external services must be detected, explained, activated by explicit user choice, and recorded in traceback. Release must include alternatives, disabled-state workflows, or explicit deferrals for license-sensitive dependencies.
+
+These tracks are not polish. They are release gates.
+
 ## 1. Data maturity proliferation regime
 
 - Implement the Master Schema-first mature-data proliferation spine.
 - Keep the Master Schema as the canonical maturity anchor. BBox/ROI hubs, Meaning Network node/edge sheets, Narrative Agent leaves, scene cards, reports, and related panels should render synchronized projections from that anchor rather than competing local truth.
 - Treat explicit user corrections as the highest authority across the loop. A user-corrected time, label, coordinate, dimension, storyline, node meaning, edge meaning, or presence interval can only be superseded by another explicit user correction.
 - Every mature-data feedback event should carry source anchors, maturity state, authority level, correction provenance, affected panels, and traceback so panels can refresh coherently.
+- Persist every proliferation decision in a canonical ledger before any local panel installs a projection or label override.
+- Require confirmed decisions to carry source traceback refs, source anchors/evidence refs, projection targets, source panel, source verification status, and source-range provenance.
+- Allow only confirmed decisions to create mature propagation targets such as `proliferates_to` or mature label correction rules.
+- Ledger canceled, deferred, inspected, weak, or unresolved candidates without mature propagation targets.
 - Surface near matches in BBox/ROI and relevant panels as `to_be_confirmed_or_canceled` candidates.
 - Keep probability thresholds openly weighted and configurable.
 - Allow proliferation only from manual confirmation/correction or very high probability with source anchors and traceback.
 - Add situational mirror candidates for similar situations, but keep them review-only until confirmed.
 - Prevent raw or unknown detections from overriding mature Narrative Agent, object, scene, or report claims.
 - Add governance objects with source anchors, evidence refs, maturity state, authority level, projection targets, and audit status.
+- Add regression coverage proving confirmation-only propagation, source-linked traceback, projection targets, and canonical-save persistence.
+
+Acceptance:
+
+- Corrected data appears corrected everywhere except traceback.
+- Candidates remain candidates until confirmed.
+- Raw substrate remains inspectable but cannot become active semantic truth.
+- Every mature claim can explain source, time, maturity, authority, projection target, and traceback.
+- The UI does not install local mature projections until the backend has returned a saved proliferation decision.
 
 ## 2. Narrative Agent and character-path operationalization
 
@@ -86,11 +108,24 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 - Store agreement state locally and make it inspectable/resettable.
 - Disclose data retention, generated derivative artifacts, exports, reports, and optional services.
 
-## 10. Optional APIs, model governance, and runtime configuration
+## 10. Licensed software optionality, model governance, and runtime configuration
 
 - Add or document settings for YOLO/model choice, FFmpeg path, detector/runtime alternatives, API keys, LLM providers/models, and optional browser automation.
 - Keep core VAA1 usable without LLM/API keys, premium add-ons, or external services.
 - Record runtime/model choice, version, path, parameters, provider boundary, and fallback reason in traceback.
+- Isolate licensed scripts, paid tools, remote services, GPL/AGPL components, premium tools, and otherwise restricted capabilities behind explicit user choice.
+- Add user-activation controls for optional or license-sensitive capabilities. The user should be able to see what is disabled, what is available locally, what requires external installation, and what requires a license or API/provider boundary.
+- Add FFmpeg workarounds and alternatives before release. VAA1 should detect installed FFmpeg/ffprobe path, version, and license boundary; allow the user to choose or replace the binary; explain unavailable codec/workflow consequences; and provide a local/basic fallback or disabled-state workflow where feasible.
+- Add YOLOv8/Ultralytics workarounds and alternatives before release. VAA1 should detect whether Ultralytics/YOLOv8 is available; expose user choice of detector/runtime; support a basic local detector fallback or disabled-state workflow; and prevent release-critical analysis from silently depending on YOLOv8 if the user has not activated it.
+- Record every FFmpeg, YOLOv8, Ultralytics, detector, transcription, LLM, remote API, licensed script, or optional-provider use in traceback with provider/tool name, version, executable or model path, license/activation state, parameters, fallback decision, and produced evidence ids.
+- Label report/export evidence that depends on optional licensed, paid, or remote features.
+
+Acceptance:
+
+- Optional capabilities are user-requested and traceable, not hidden defaults.
+- FFmpeg and YOLOv8 alternatives, fallback paths, or disabled-state workflows are in place before release.
+- VAA1 can explain and survive missing, unactivated, incompatible, or license-restricted FFmpeg/YOLOv8 components without corrupting the analysis ledger.
+- FFmpeg, YOLOv8/Ultralytics, model paths, API providers, and licensed scripts flow through one runtime/activation registry rather than scattered checks.
 
 ## 11. CVAT and annotation round trip
 
@@ -108,6 +143,14 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 ## 13. Packaging and `.exe` readiness
 
 - Complete pre-`.exe` manual test checklist.
-- Verify startup, restart, saved-state recovery, source-media reopen, export, rollback/restore, consent display, optional API-key handling, and data-location disclosure.
+- Verify startup, restart, saved-state recovery, source-media reopen, export, rollback/restore, consent display, optional API-key handling, licensed add-on configuration, and data-location disclosure.
+- Verify licensed-script workarounds and user activation by choice, including FFmpeg binary/path selection and YOLOv8/Ultralytics detector alternatives or disabled-state fallback.
+- Confirm the packaged app can run the core local pipeline with optional APIs disabled.
+- Confirm the packaged app does not silently require FFmpeg or YOLOv8 in a license-sensitive way without user-visible activation, configuration, fallback, or explicit release deferral.
+- Confirm Mature Data Proliferation remains governed in the package: saved proliferation decisions, candidate-only states, mature label projection, traceback, and rollback/reopen behavior must survive packaged runtime tests.
 - Run backend contracts, frontend tests, typecheck, Playwright checks, and at least one representative full-analysis smoke test.
 - Build the first `#0.1 .exe` only after core governance and release-readiness gates pass or are explicitly deferred.
+
+Release gate:
+
+- Do not package by assuming mature proliferation and licensed optionality are "later" tasks. If either is incomplete, the deferral must be explicit, visible, and risk-labeled.

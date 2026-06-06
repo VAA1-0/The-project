@@ -4,6 +4,14 @@ Purpose: get a Windows development/testing machine from a fresh clone to a visib
 
 This is not the `.exe` release path. It is the developer/tester setup path for the `petteri` branch.
 
+If the Windows clone appears much more limited than the Mac development machine, do not treat this quickstart as enough. Use the full parity handout:
+
+```text
+docs/datascene_vaa1_windows_full_operation_handoff_2026-06-06.md
+```
+
+That handout covers local Mac materials that may not be present in GitHub, including uncommitted changes, sample media, generated analysis bundles, model files, optional runtimes, and branch/commit parity checks.
+
 ## 1. Install Required Tools
 
 Install these first:

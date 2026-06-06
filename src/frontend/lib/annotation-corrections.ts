@@ -22,10 +22,32 @@ export function createEmptyCorrections(
     updated_by: "analyst",
     text_substitutions: [],
     label_overrides: [],
+    transcript_clock_offset_seconds: existing?.transcript_clock_offset_seconds,
     manual_transcript_entries: [],
     manual_visual_annotations: [],
     proliferation_decisions: [],
     master_schema_presence_intervals: [],
+  };
+}
+
+export function setTranscriptClockOffset(
+  existing: AnnotationCorrections | null | undefined,
+  offsetSeconds: number,
+): AnnotationCorrections {
+  return {
+    ...(existing || {}),
+    version: 1,
+    updated_at: new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    transcript_clock_offset_seconds: Number(offsetSeconds.toFixed(3)),
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
+    proliferation_decisions: [...(existing?.proliferation_decisions || [])],
+    master_schema_presence_intervals: [
+      ...(existing?.master_schema_presence_intervals || []),
+    ],
   };
 }
 

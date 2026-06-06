@@ -35,6 +35,12 @@ Thumbs.db
 logs/
 *.log
 
+# Playwright local test artifacts
+src/frontend/playwright-report/
+src/frontend/test-results/
+playwright-report/
+test-results/
+
 # Generated outputs / temp
 outputs/
 uploads/

@@ -1210,6 +1210,7 @@ export interface AnnotationCorrections {
   updated_by?: string;
   text_substitutions?: AnnotationCorrectionRule[];
   label_overrides?: AnnotationCorrectionRule[];
+  transcript_clock_offset_seconds?: number;
   manual_transcript_entries?: ManualTranscriptEntry[];
   manual_visual_annotations?: ManualVisualAnnotation[];
   proliferation_decisions?: ProliferationDecision[];

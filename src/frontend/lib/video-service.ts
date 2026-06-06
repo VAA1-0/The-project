@@ -36,6 +36,10 @@ import type {
   SourceSample,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
+import {
+  applyTranscriptClockOffset,
+  normalizeTranscriptSegmentTiming,
+} from "./transcript-time";
 import { readFileSync } from "fs";
 import { parse } from "csv-parse/sync";
 
@@ -105,6 +109,8 @@ export interface TranscriptSegment {
   speaker: string;
   start: number; // Raw start time in seconds
   end: number; // Raw end time in seconds
+  sourceStart?: number;
+  sourceEnd?: number;
   segmentType?: string;
   synthetic?: boolean;
   status?: "confirmed" | "unconfirmed";
@@ -633,12 +639,15 @@ function applyAnnotationCorrectionsToTranscript(
   corrections?: AnnotationCorrections | null,
 ): TranscriptSegment[] {
   const textRules = corrections?.text_substitutions || [];
+  const transcriptClockOffset = Number(corrections?.transcript_clock_offset_seconds || 0);
   const correctedBase = transcript.map((segment) => {
     const baseText = String(segment.text || "").trim();
     const normalizedEmpty =
       baseText.length > 0 ? baseText : segment.status === "unconfirmed" ? "Unconfirmed" : "";
+    const shiftedSegment = applyTranscriptClockOffset(segment, transcriptClockOffset);
     return {
       ...segment,
+      ...shiftedSegment,
       rawText: segment.rawText || segment.text,
       text: applyTextSubstitutions(normalizedEmpty, textRules),
       status: segment.status || (normalizedEmpty ? "confirmed" : "unconfirmed"),
@@ -3933,16 +3942,19 @@ export class VideoService {
       const transcriptBlob = await apiService.downloadFile(id, "transcript");
       const transcriptText = await transcriptBlob.text();
       const transcriptData = JSON.parse(transcriptText);
-      const normalizeSegment = (seg: any): TranscriptSegment => ({
-        t: `${Number(seg.start).toFixed(1)}s`,
-        text: seg.text || "",
-        rawText: seg.raw_text || seg.rawText || seg.text || "",
-        speaker: "Speaker 1",
-        start: seg.start || 0,
-        end: seg.end || 0,
-        segmentType: seg.segment_type || "utterance",
-        synthetic: Boolean(seg.synthetic),
-      });
+      const normalizeSegment = (seg: any): TranscriptSegment => {
+        const timing = normalizeTranscriptSegmentTiming(seg || {});
+        return {
+          ...timing,
+          text: seg.text || "",
+          rawText: seg.raw_text || seg.rawText || seg.text || "",
+          speaker: seg.speaker || seg.speaker_label || "Speaker 1",
+          sourceStart: timing.start,
+          sourceEnd: timing.end,
+          segmentType: seg.segment_type || "utterance",
+          synthetic: Boolean(seg.synthetic),
+        };
+      };
 
       return {
         segments: (transcriptData.segments || []).map(normalizeSegment),

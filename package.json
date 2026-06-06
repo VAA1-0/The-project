@@ -1,1 +1,8 @@
-{}
+{
+  "scripts": {
+    "build:investor-deck": "node scripts/generate_datascene_investor_deck.js"
+  },
+  "devDependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}
