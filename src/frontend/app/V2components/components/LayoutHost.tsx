@@ -26,6 +26,7 @@ import TimeBankPanel from "./panels/TimeBankPanel";
 import MeaningPlotPanel from "./panels/MeaningPlotPanel";
 import SceneCardPanel from "./panels/SceneCardPanel";
 import MasterSchemaPanel from "./panels/MasterSchemaPanel";
+import DataMaturationPanel from "./panels/DataMaturationPanel";
 import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -44,6 +45,7 @@ const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
 const RIGHT_STACK_ANCHOR_TYPES = [
   "TracebackDrawer",
   "MasterSchema",
+  "DataMaturation",
   "ManualScene",
   "ManualAction",
   "ManualIdentification",
@@ -413,6 +415,7 @@ export default function LayoutHost({
     MeaningPlot: "Meaning / Plot",
     SceneCards: "Scene Cards",
     MasterSchema: "Master Schema",
+    DataMaturation: "Maturation",
     TracebackDrawer: "Traceback",
     ...Object.fromEntries(
       MANUAL_LEAF_PANEL_CONFIGS.map((item) => [item.componentType, item.title]),
@@ -774,6 +777,18 @@ export default function LayoutHost({
           container,
           MasterSchemaPanel,
           {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "DataMaturation",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          DataMaturationPanel,
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },

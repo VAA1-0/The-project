@@ -50,6 +50,14 @@ export interface AnalysisStatus {
   source_video_exists?: boolean;
   source_video_message?: string;
   source_media_metadata?: SourceMediaMetadata;
+  transcript_timing_repair?: {
+    status?: string;
+    reason?: string;
+    quality?: Record<string, unknown>;
+    quality_before?: Record<string, unknown>;
+    quality_after?: Record<string, unknown>;
+    backup_path?: string;
+  };
   summary?: {
     yolo_detections: number;
     ocr_detections: number;

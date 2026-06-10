@@ -106,6 +106,12 @@ from src.backend.analysis.agent_persistence_manager import AgentPersistenceManag
 from src.backend.analysis.evidence_proliferation_matcher import (
     write_evidence_proliferation_match,
 )
+from src.backend.analysis.saved_analysis_hydration_loader import (
+    hydrate_saved_analysis_status,
+)
+from src.backend.analysis.live_mature_data_proliferation_bus import (
+    write_live_mature_data_proliferation_audit,
+)
 from src.backend.analysis.mise_en_scene_scene_card import (
     write_mise_en_scene_scene_cards,
     write_source_extraction_metadata_summary,
@@ -5714,6 +5720,38 @@ def write_time_bank_artifact(
     return artifact_path
 
 
+def ensure_live_mature_data_proliferation_audit_for_status(
+    status: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    analysis_id = status.get("analysis_id")
+    if not analysis_id:
+        return None
+
+    analysis_dir = RESULTS_DIR / str(analysis_id)
+    audit_path = analysis_dir / "live_mature_data_proliferation_audit.json"
+    output_files = status.setdefault("output_files", {})
+    internal_artifacts = status.setdefault("internal_artifacts", {})
+
+    summary = status.get("live_mature_data_proliferation_audit")
+    if summary and audit_path.exists():
+        output_files.setdefault("live_mature_data_proliferation_audit", str(audit_path))
+        internal_artifacts.setdefault("live_mature_data_proliferation_audit", str(audit_path))
+        return summary
+
+    payload = write_live_mature_data_proliferation_audit(status, audit_path)
+    output_files["live_mature_data_proliferation_audit"] = str(audit_path)
+    internal_artifacts["live_mature_data_proliferation_audit"] = str(audit_path)
+    status["live_mature_data_proliferation_audit"] = {
+        "schema": payload.get("schema"),
+        "status": payload.get("status"),
+        "summary": payload.get("summary"),
+        "next_required_stage": payload.get("next_required_stage"),
+        "output_json_path": str(audit_path),
+        "updated_at": utc_now_iso(),
+    }
+    return payload
+
+
 def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
     record_path = get_analysis_record_path(analysis_id)
     if not record_path.exists():
@@ -5727,6 +5765,8 @@ def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
 
     status.setdefault("analysis_id", analysis_id)
     status.setdefault("event_log", [])
+    hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     analysis_status[analysis_id] = status
     return status
 
@@ -5734,6 +5774,8 @@ def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
 def get_analysis_entry(analysis_id: str) -> Optional[Dict[str, Any]]:
     status = analysis_status.get(analysis_id)
     if status is not None:
+        hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+        ensure_live_mature_data_proliferation_audit_for_status(status)
         return status
     return load_persisted_analysis(analysis_id)
 
@@ -7815,6 +7857,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_extraction_metadata_summary": status.get("source_extraction_metadata_summary"),
         "vaa1_annotation_master_schema": status.get("vaa1_annotation_master_schema"),
         "evidence_proliferation_matches": status.get("evidence_proliferation_matches", []),
+        "live_mature_data_proliferation_audit": status.get(
+            "live_mature_data_proliferation_audit"
+        ),
     }
 
     source_video_path = status.get("source_video_path")

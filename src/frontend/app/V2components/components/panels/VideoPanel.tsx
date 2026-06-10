@@ -96,6 +96,7 @@ import {
   manualObjectCorrectionTargetId,
   manualObjectTargetId,
   normalizeDraftBox,
+  overlayBoxToNormalizedBox,
   projectNormalizedBoxToVideoContent,
   resolveManualGeometryAtTime as resolveAuthoritativeManualGeometryAtTime,
   resolveManualVisualDisplayLabel,
@@ -4150,9 +4151,25 @@ export default function VideoPanel() {
           narrativeAgentOverride?.label || "",
           hasNarrativeAgentRecognition,
         );
-        const manualTrackAuthority = targetIds
-          .map((trackId) => manualTrackMatureAuthority.get(trackId))
-          .find(Boolean);
+        const manualTrackAuthority = (() => {
+          const authority = targetIds
+            .map((trackId) => manualTrackMatureAuthority.get(trackId))
+            .find(Boolean);
+          if (!authority) {
+            return undefined;
+          }
+          const sourceItem = authority.sourceItem as ManualVisualAnnotation | undefined;
+          if (sourceItem?.geometry_type !== "box") {
+            return authority;
+          }
+          if (!objectNormalizedBox) {
+            return undefined;
+          }
+          const authorityBox = resolveManualGeometryAtTime(sourceItem, currentTime);
+          return authorityBox && isSameSpaceBoxMatch(objectNormalizedBox, authorityBox)
+            ? authority
+            : undefined;
+        })();
         const matureProliferatedOverride = (() => {
           if (manualOverrideActive || localOverride || masterSchemaMatureOverride) {
             return undefined;
@@ -4653,14 +4670,7 @@ export default function VideoPanel() {
     (overlay: OverlayBox): DraftBox => {
       const videoWidth = Math.max(1, videoRef.current?.videoWidth || 1);
       const videoHeight = Math.max(1, videoRef.current?.videoHeight || 1);
-      const fallback = overlay.normalizedBox
-        ? normalizeDraftBox(overlay.normalizedBox)
-        : {
-            x: clamp(overlay.x / videoWidth, 0, 1),
-            y: clamp(overlay.y / videoHeight, 0, 1),
-            w: clamp(overlay.w / videoWidth, 0.002, 1),
-            h: clamp(overlay.h / videoHeight, 0.002, 1),
-          };
+      const fallback = overlayBoxToNormalizedBox(overlay, videoWidth, videoHeight);
       const draft = getOverlayGeometryDraftForEditing(overlay.key);
       if (draft) {
         return draft.box;
@@ -6166,19 +6176,24 @@ export default function VideoPanel() {
               (item) => manualObjectCorrectionTargetId(item) === targetCandidateId,
             )
           : [];
-      const nearbyTrackManual = trackManualCandidates
+      const sameAssertionTrackManualCandidates = trackManualCandidates.filter((item) => {
+        if (item.category !== edit.category) {
+          return false;
+        }
+        return normalizeEvidenceLabel(resolveManualVisualDisplayLabel(item)) ===
+          normalizeEvidenceLabel(label);
+      });
+      const overlappingSameAssertionManual = sameAssertionTrackManualCandidates
         .filter((item) => {
           const itemStart = Number(item.start_seconds ?? item.timestamp_seconds);
           const itemEnd = Number(item.end_seconds ?? item.timestamp_seconds ?? itemStart);
           if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd)) {
             return false;
           }
-          const gap = Math.max(
-            0,
-            Math.max(Math.min(itemStart, itemEnd), start) -
-              Math.min(Math.max(itemStart, itemEnd), end),
+          return (
+            Math.max(Math.min(itemStart, itemEnd), start) <=
+            Math.min(Math.max(itemStart, itemEnd), end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
           );
-          return gap <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS;
         })
         .sort(
           (left, right) =>
@@ -6186,38 +6201,12 @@ export default function VideoPanel() {
         )[0];
       const existingManual =
         allManualVisualAnnotations.find((item) => item.id === annotationId) ||
-        (targetCandidateId
-          ? trackManualCandidates.find((item) => {
-              const itemStart = Number(item.start_seconds ?? item.timestamp_seconds);
-              const itemEnd = Number(item.end_seconds ?? item.timestamp_seconds ?? itemStart);
-              if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd)) {
-                return false;
-              }
-              return (
-                Math.max(Math.min(itemStart, itemEnd), start) <=
-                Math.min(Math.max(itemStart, itemEnd), end) + MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS
-              );
-            })
-          : undefined) ||
-        nearbyTrackManual ||
+        overlappingSameAssertionManual ||
         (overlay.modality === "manual"
           ? (overlay.sourceItem as ManualVisualAnnotation | undefined)
           : undefined);
-      const existingBounds = existingManual ? getManualAnnotationBounds(existingManual) : null;
-      const persistenceStart = existingBounds
-        ? clamp(
-            Math.min(start, existingBounds.start),
-            0,
-            duration || Number.MAX_SAFE_INTEGER,
-          )
-        : start;
-      const persistenceEnd = existingBounds
-        ? clamp(
-            Math.max(end, existingBounds.end, persistenceStart + 0.001),
-            0,
-            duration || Number.MAX_SAFE_INTEGER,
-          )
-        : end;
+      const persistenceStart = start;
+      const persistenceEnd = end;
       const keyframeTime = clamp(
         geometryDraft?.time ?? getOverlayInteractionTime(overlay),
         persistenceStart,

@@ -947,6 +947,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "Data Maturation",
+          onClick: () => {
+            openSchemaPanel("DataMaturation");
+          },
+        },
+        {
           label: "OBJ Detection Lens",
           onClick: () => {
             openPanel("OBJDetection");

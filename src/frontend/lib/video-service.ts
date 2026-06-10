@@ -685,6 +685,40 @@ function applyAnnotationCorrectionsToTranscript(
   });
 }
 
+function transcriptQualityForDisplay(
+  transcriptData: PromiseSettledResult<TranscriptDataBundle>,
+  status: AnalysisStatus,
+): TranscriptDataBundle["quality"] | undefined {
+  if (transcriptData.status === "fulfilled" && transcriptData.value.quality) {
+    return transcriptData.value.quality;
+  }
+  const repairState = status.transcript_timing_repair;
+  const repairQuality =
+    repairState?.quality_after || repairState?.quality_before || repairState?.quality;
+  return repairQuality as TranscriptDataBundle["quality"] | undefined;
+}
+
+function applyTranscriptClockOffsetToAudioProsody(
+  cues: AudioProsodyCue[],
+  corrections?: AnnotationCorrections | null,
+): AudioProsodyCue[] {
+  const offset = Number(corrections?.transcript_clock_offset_seconds || 0);
+  if (!Number.isFinite(offset) || offset === 0) {
+    return cues;
+  }
+  return cues.map((cue) => {
+    const sourceStart = Number(cue.start || 0);
+    const sourceEnd = Number(cue.end ?? sourceStart);
+    const start = Math.max(0, sourceStart + offset);
+    const end = Math.max(start, sourceEnd + offset);
+    return {
+      ...cue,
+      start,
+      end,
+    };
+  });
+}
+
 function applyAnnotationCorrectionsToObjects(
   objects: DetectedObject[],
   corrections?: AnnotationCorrections | null,
@@ -2918,6 +2952,14 @@ export interface AnalysisStatus {
   source_video_message?: string;
   source_media_metadata?: SourceMediaMetadata;
   annotation_corrections?: AnnotationCorrections | null;
+  transcript_timing_repair?: {
+    status?: string;
+    reason?: string;
+    quality?: Record<string, unknown>;
+    quality_before?: Record<string, unknown>;
+    quality_after?: Record<string, unknown>;
+    backup_path?: string;
+  };
   summary?: {
     yolo_detections: number;
     ocr_detections: number;
@@ -3476,6 +3518,10 @@ export class VideoService {
         expressionData.status === "fulfilled"
           ? applyAnnotationCorrectionsToExpressions(expressionData.value, corrections)
           : [];
+      const correctedAudioProsody =
+        audioProsodyData.status === "fulfilled"
+          ? applyTranscriptClockOffsetToAudioProsody(audioProsodyData.value, corrections)
+          : [];
       const manualVisualObjects = buildManualVisualObjects(corrections);
       const manualAnnotationsByCategory =
         groupManualVisualAnnotationsByCategory(corrections);
@@ -3572,8 +3618,7 @@ export class VideoService {
         faceResults: status.face_results,
         ocr: correctedOCR,
         expressionResults: correctedExpressions,
-        audioProsody:
-          audioProsodyData.status === "fulfilled" ? audioProsodyData.value : [],
+        audioProsody: correctedAudioProsody,
         quantityDetection: mergedProfiledObjects,
         annotations: nativeAnnotations,
         manualAnnotationsByCategory,
@@ -3615,10 +3660,7 @@ export class VideoService {
           },
           yoloDetections: status.summary?.yolo_detections || 0,
           ocrDetections: status.summary?.ocr_detections || 0,
-          transcriptQuality:
-            transcriptData.status === "fulfilled"
-              ? transcriptData.value.quality
-              : undefined,
+          transcriptQuality: transcriptQualityForDisplay(transcriptData, status),
           cinematicClues: correctedCinematicClues,
           spatialToneScan: status.summary?.spatial_tone_scan
             ? {

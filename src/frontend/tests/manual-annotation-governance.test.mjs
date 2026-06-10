@@ -36,6 +36,7 @@ const objPanel = read("app/V2components/components/panels/OBJDetectionPanel.tsx"
 const layoutHost = read("app/V2components/components/LayoutHost.tsx");
 const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
+const dataMaturationPanel = read("app/V2components/components/panels/DataMaturationPanel.tsx");
 const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
 const tracebackDrawerPanel = read("app/V2components/components/panels/TracebackDrawerPanel.tsx");
 const secondOrderAffirmations = read(
@@ -285,8 +286,14 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /const nearbyTrackManual = trackManualCandidates[\s\S]*gap <= MANUAL_GEOMETRY_INTERPOLATION_MAX_GAP_SECONDS[\s\S]*nearbyTrackManual[\s\S]*const existingBounds = existingManual \? getManualAnnotationBounds\(existingManual\) : null/,
-    "nearby same-track bbox corrections must append to the same manual keyframe sequence instead of becoming disconnected tiny intervals",
+    /const sameAssertionTrackManualCandidates = trackManualCandidates\.filter\(\(item\) => \{[\s\S]*item\.category !== edit\.category[\s\S]*resolveManualVisualDisplayLabel\(item\)[\s\S]*normalizeEvidenceLabel\(label\)[\s\S]*const overlappingSameAssertionManual = sameAssertionTrackManualCandidates/,
+    "same-track bbox correction reuse must be limited to the same governed assertion, so a later character confirmation cannot replace the previous manual interval",
+  );
+
+  assert.match(
+    videoPanel,
+    /const overlappingSameAssertionManual = sameAssertionTrackManualCandidates[\s\S]*MANUAL_INTERVAL_EDGE_TOLERANCE_SECONDS[\s\S]*const existingManual =[\s\S]*allManualVisualAnnotations\.find\(\(item\) => item\.id === annotationId\)[\s\S]*overlappingSameAssertionManual[\s\S]*overlay\.modality === "manual"/,
+    "normal BBox/ROI Save may update an exact or overlapping same-assertion record, but must create a new record for a sequential manual-timed assertion",
   );
 
   assert.match(
@@ -297,14 +304,20 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.doesNotMatch(
     videoPanel,
-    /nearbyTrackManual[\s\S]*applyScope:\s*"track_family"/,
-    "automatic bbox geometry scaling must not silently promote this-interval analyst corrections into whole-track authority",
+    /nearbyTrackManual/,
+    "nearby same-track BBox/ROI saves must not collapse separate analyst-timed annotations into one manual record",
   );
 
   assert.match(
     videoPanel,
-    /start: persistenceStart,[\s\S]*end: persistenceEnd,[\s\S]*anchorTime:\s*keyframeTime/,
-    "saved bbox corrections must expand their persisted interval while keeping the analyst drag timestamp as the manual keyframe",
+    /const persistenceStart = start;[\s\S]*const persistenceEnd = end;[\s\S]*start: persistenceStart,[\s\S]*end: persistenceEnd,[\s\S]*anchorTime:\s*keyframeTime/,
+    "normal BBox/ROI Save must persist the resolved analyst In/Out interval instead of widening it with stale saved bounds",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /Math\.min\(start,\s*existingBounds\.start\)|Math\.max\(end,\s*existingBounds\.end/,
+    "manual BBox/ROI time corrections must not be unioned with the previous saved interval",
   );
 
   assert.match(
@@ -381,8 +394,8 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /const fallback = overlay\.normalizedBox[\s\S]*normalizeDraftBox\(overlay\.normalizedBox\)[\s\S]*overlay\.x \/ videoWidth/,
-    "video overlay rendering must prefer normalized source-video coordinates before falling back to pixel projection",
+    /const fallback = overlayBoxToNormalizedBox\(overlay, videoWidth, videoHeight\)/,
+    "video overlay rendering must resolve normalized source-video coordinates through bbox authority",
   );
 
   assert.match(
@@ -466,7 +479,7 @@ test("manual bbox geometry stays timestamp scoped", () => {
   assert.match(
     videoPanel,
     /const annotation = buildManualBBoxRoiAnnotation\(\{[\s\S]*analysisId:\s*videoId,[\s\S]*annotationId,[\s\S]*existingManual,[\s\S]*box:\s*governedBox,[\s\S]*start:\s*persistenceStart,[\s\S]*end:\s*persistenceEnd,[\s\S]*anchorTime:\s*keyframeTime/,
-    "Video BBox/ROI Save must delegate governed interval geometry to the shared authority builder",
+    "Video BBox/ROI Save must delegate the analyst-resolved interval geometry to the shared authority builder",
   );
 
   assert.match(
@@ -692,6 +705,12 @@ test("bbox coordinate projection is centralized before rendered overlays", () =>
   );
 
   assert.match(
+    bboxAuthority,
+    /export function overlayBoxToNormalizedBox\([\s\S]*overlay\.normalizedBox[\s\S]*normalizeDraftBox\(overlay\.normalizedBox\)[\s\S]*overlay\.x \/ safeVideoWidth/,
+    "legacy overlay pixel fallbacks must be normalized by bbox authority, not the VideoPanel render path",
+  );
+
+  assert.match(
     videoPanel,
     /setRenderedVideoRect\(getTrueVideoContentRectForElement\(videoElement\)\)/,
     "VideoPanel resize/fullscreen updates must use the shared true video content rect",
@@ -728,6 +747,7 @@ test("bbox coordinate projection is centralized before rendered overlays", () =>
     "calculateDraftBoxCenterDistance",
     "synthesizePersonBoxFromExpression",
     "geometryToNormalizedBox",
+    "overlayBoxToNormalizedBox",
     "isSameSpaceBoxMatch",
     "analystManualAuthoritySuppressesObjectBox",
   ]) {
@@ -891,6 +911,50 @@ test("detection and analysis panels use shared VAA1 video seek navigation", () =
   }
 });
 
+test("Transcript panel text words remain linked to source video time", () => {
+  assert.match(
+    speechPanel,
+    /const openTranscriptRowAtSourceTime = \(row: any\) => \{[\s\S]*openVideoAtTime\(videoId, Number\(row\?\.start \?\? 0\)\);[\s\S]*\};/,
+    "Transcript panel must centralize transcript row navigation through the shared video seek helper",
+  );
+  assert.match(
+    speechPanel,
+    /onClick=\{\(event\) => \{[\s\S]*event\.stopPropagation\(\);[\s\S]*openTranscriptRowAtSourceTime\(row\);[\s\S]*setSelectedWord\(cleanedWord\);/,
+    "clicking visible transcript words must seek the source video before selecting text for correction",
+  );
+  assert.match(
+    speechPanel,
+    /onClick=\{\(\) => \{[\s\S]*openTranscriptRowAtSourceTime\(row\);[\s\S]*\}\}/,
+    "clicking the transcript row must seek the same operational source time as the word text",
+  );
+});
+
+test("Transcript panel surfaces degraded backend timing repair state", () => {
+  assert.match(
+    videoService,
+    /function transcriptQualityForDisplay\([\s\S]*repairState\?\.quality_after \|\| repairState\?\.quality_before \|\| repairState\?\.quality/,
+    "video service must fall back to backend transcript repair quality when the transcript artifact lacks embedded quality",
+  );
+  assert.match(
+    videoService,
+    /transcriptQuality: transcriptQualityForDisplay\(transcriptData, status\)/,
+    "Transcript panel metadata must receive the authoritative display quality from transcript or repair state",
+  );
+});
+
+test("Audio prosody follows corrected transcript operational clock", () => {
+  assert.match(
+    videoService,
+    /function applyTranscriptClockOffsetToAudioProsody\([\s\S]*transcript_clock_offset_seconds[\s\S]*cue[\s\S]*start[\s\S]*sourceStart \+ offset[\s\S]*end[\s\S]*sourceEnd \+ offset/,
+    "audio prosody cues must follow the same correction offset as Transcript rows",
+  );
+  assert.match(
+    videoService,
+    /const correctedAudioProsody =[\s\S]*applyTranscriptClockOffsetToAudioProsody\(audioProsodyData\.value, corrections\)/,
+    "loaded analysis data must expose offset-corrected audio prosody cues",
+  );
+});
+
 test("linked evidence authority is centralized before panel navigation", () => {
   assert.match(
     evidenceAuthority,
@@ -986,6 +1050,12 @@ test("video bbox labels consume Master Schema maturity before raw detector label
 
   assert.match(
     videoPanel,
+    /const manualTrackAuthority = \(\(\) => \{[\s\S]*manualTrackMatureAuthority\.get\(trackId\)[\s\S]*resolveManualGeometryAtTime\(sourceItem, currentTime\)[\s\S]*isSameSpaceBoxMatch\(objectNormalizedBox, authorityBox\)/,
+    "manual track authority must prove the same local bbox occurrence, so one track id cannot eat unrelated detections in the same dialogue or scene",
+  );
+
+  assert.match(
+    videoPanel,
     /manualAnnotationTimeScopeKey/,
     "object-backed bbox annotation ids must include the analyst-confirmed time interval",
   );
@@ -1000,6 +1070,18 @@ test("video bbox labels consume Master Schema maturity before raw detector label
     bboxAuthority,
     /metadata_correlation\?\.apply_scope[\s\S]*track_family[\s\S]*narrative_agent_family/,
     "manual object target authority must only become track-wide when the analyst explicitly chooses a wide apply scope",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /export function manualObjectMatureAuthorityTargetId\([\s\S]*!\[[\s\S]*track_family[\s\S]*narrative_agent_family[\s\S]*current_continuity_segment[\s\S]*current_scene[\s\S]*\.includes\(scope\)[\s\S]*return null/,
+    "mature track authority must reject empty or this-interval-only scope so track ids cannot imperialise future identities",
+  );
+
+  assert.match(
+    bboxAuthority,
+    /const targetId = manualObjectMatureAuthorityTargetId\(item\)/,
+    "manual track mature authority must use the explicit broad-scope target resolver, not the general geometry target id",
   );
 
   assert.match(
@@ -1992,6 +2074,115 @@ test("evidence proliferation launch remains governed and analyst initiated", () 
     videoPanel,
     /Confirmed proliferation candidate/,
     "confirmed candidates must create scoped mature correction rules",
+  );
+});
+
+test("Data Maturation governance panel exposes dynamic proliferation control", () => {
+  assert.match(
+    layoutHost,
+    /import DataMaturationPanel from "\.\/panels\/DataMaturationPanel"/,
+    "layout host must import the Data Maturation governance panel",
+  );
+
+  assert.ok(
+    registeredPanelTypes().includes("DataMaturation"),
+    "Data Maturation must be registered as an openable GoldenLayout panel",
+  );
+
+  assert.match(
+    layoutHost,
+    /DataMaturation:\s*"Maturation"/,
+    "Data Maturation must have a visible workspace title",
+  );
+
+  assert.match(
+    menuBar,
+    /openSchemaPanel\("DataMaturation"\)/,
+    "Lenses menu must open Data Maturation with the active analysis context",
+  );
+
+  assert.match(
+    toolsPanel,
+    /data-vaa1-open-data-maturation="true"/,
+    "Tools governance console must provide a Data Maturation entry point",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-panel="true"/,
+    "Data Maturation panel must expose a stable panel hook",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-dynamic-controls="true"/,
+    "Data Maturation panel must expose guarded, dynamic, and research postures",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /candidate-rich, mature-write-light/i,
+    "Data Maturation panel must diagnose conservative candidate accumulation",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-constellation-lane=\{constellationLane/,
+    "Data Maturation panel must surface constellational co-occurrence as a lane",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-non-user-candidate-lane=\{nonUserCandidateLane/,
+    "Data Maturation panel must surface non-user-confirmed candidate governance",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-audiovisual-source-sampling-lane=\{/,
+    "Data Maturation panel must surface audiovisual source sampling as an operationalization gap",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /source\.sourceSamples/,
+    "Data Maturation panel must count explicit audiovisual source samples",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /source\.audioSampleClouds/,
+    "Data Maturation panel must count audio sample clouds as source sampling substrate",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-live-proliferation-bus-lane=\{/,
+    "Data Maturation panel must surface the live proliferation bus as the v2 delivery requirement",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /Matcher output[\s\S]*candidate-only[\s\S]*promotion decision exists/,
+    "Data Maturation panel must preserve candidate-is-not-promotion governance language",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /source\.evidenceProliferationMatches/,
+    "Data Maturation panel must read proliferation matcher candidates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /corrections\.proliferation_decisions/,
+    "Data Maturation panel must read durable proliferation decisions",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /openGovernedPanel\("MeaningNetwork"\)/,
+    "Data Maturation panel must link directly to the Meaning Network graph",
   );
 });
 

@@ -1,0 +1,700 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1_mature_data_proliferation_regime_overhaul.v2.json",
+  "title": "VAA1 / Datascene Mature Data Proliferation Regime Overhaul Schema",
+  "schema_name": "vaa1.mature_data_proliferation_regime_overhaul.v2",
+  "version": "2.0.0",
+  "created_at": "2026-06-10T15:22:18.887959+00:00",
+  "status": "architecture_and_delivery_schema",
+  "purpose": "Define the missing live Mature Data Proliferation Regime for Datascene/VAA1. The current regime is treated as partially operational but not yet true proliferation: the matcher is on-demand, candidates are not promotions, policy is over-conservative, scene cards are local-overlap only, saved artifacts are incompletely hydrated, and the Meaning Network is not yet carrying actor/object continuity.",
+  "core_promise": {
+    "statement": "Corrected and governed mature data should stand corrected everywhere except traceback.",
+    "operational_translation": "A confirmed or governed mature claim must become reusable system memory, not merely a local panel correction, candidate artifact, or review material.",
+    "required_questions_for_every_mature_claim": [
+      "What source evidence supports this claim?",
+      "What time, coordinate, subject, scene, modality, or relation does it belong to?",
+      "Who or what has authority for the claim?",
+      "Is it raw, weak, candidate, hypothesis, confirmed, canceled, deferred, rejected, or mature?",
+      "Which panels may project it?",
+      "Can the user trace back to the evidence chain?",
+      "Has it been swept forward, backward, cross-scene, and cross-modal where appropriate?"
+    ]
+  },
+  "current_defect_states": [
+    {
+      "defect_id": "D001_ON_DEMAND_MATCHER_NOT_LIVE_BUS",
+      "severity": "critical",
+      "current_behavior": "/api/analysis/{analysis_id}/proliferation/match only runs when explicitly requested.",
+      "system_consequence": "Completed analysis does not automatically sweep early confirmations forward into later detections, scenes, tracks, sample clouds, or modalities.",
+      "target_behavior": "A live mature-data proliferation bus runs on analysis completion, save events, confirmation events, project reopen, and scheduled audit sweeps.",
+      "release_gate": "fail"
+    },
+    {
+      "defect_id": "D002_MATCHER_OUTPUT_IS_NOT_PROMOTION",
+      "severity": "critical",
+      "current_behavior": "Matcher artifacts and candidate files can exist while proliferation_decisions remains empty or near-empty.",
+      "system_consequence": "Candidates remain review material and do not become governed mature data or reusable hypotheses.",
+      "target_behavior": "Every promoted claim must have an explicit promotion_decision record; candidates without decisions remain candidate-only.",
+      "release_gate": "fail"
+    },
+    {
+      "defect_id": "D003_POLICY_TOO_CONSERVATIVE_FOR_MATURE_HYPOTHESES",
+      "severity": "high",
+      "current_behavior": "Backend requires manual authority or approximately 0.95 probability for auto-proliferation.",
+      "system_consequence": "Most useful non-user-confirmed detections stay review-only and do not support cross-scene or cross-modal knowledge emergence.",
+      "target_behavior": "Separate confirmed mature authority from governed mature hypotheses. Hypotheses may proliferate visibly with review state, lower authority, traceback, and safeguards.",
+      "release_gate": "warn"
+    },
+    {
+      "defect_id": "D004_SCENE_CARDS_LOCAL_OVERLAP_ONLY",
+      "severity": "high",
+      "current_behavior": "Scene Cards pull manual annotations only when they overlap the exact scene interval.",
+      "system_consequence": "A scene-1 confirmation does not become a scene-2 or scene-3 mature hypothesis unless another decision or presence interval is written.",
+      "target_behavior": "Scene continuity sweeps create governed presence hypotheses across adjacent and non-linear scene relations where evidence supports reappearance or persistence.",
+      "release_gate": "warn"
+    },
+    {
+      "defect_id": "D005_IMPORTED_SAVED_WORK_HYDRATION_GAP",
+      "severity": "critical",
+      "current_behavior": "Tracked object files can exist on disk while the status object used by the matcher does not hydrate them.",
+      "system_consequence": "The matcher can miss later-scene detections even though visual detection files exist.",
+      "target_behavior": "All saved artifacts must hydrate into a canonical analysis status before matcher, sweeper, promotion, Meaning Network, and projection steps run.",
+      "release_gate": "fail"
+    },
+    {
+      "defect_id": "D006_MEANING_NETWORK_NO_CONTINUITY",
+      "severity": "critical",
+      "current_behavior": "Meaning Network summaries show edge_count: 0 and continuity_anchor_count: 0.",
+      "system_consequence": "The graph is not doing same actor/object continuity across scenes and cannot function as a knowledge topology.",
+      "target_behavior": "Meaning Network receives continuity anchors, relation edges, and mature/hypothesis object links from the proliferation bus.",
+      "release_gate": "fail"
+    },
+    {
+      "defect_id": "D007_AUDIOVISUAL_SOURCE_SAMPLING_NOT_OPERATIONALIZED",
+      "severity": "high",
+      "current_behavior": "Source sampling and sample-cloud contracts exist, but source samples are not routinely created from high-value confirmations or attached to promotion decisions.",
+      "system_consequence": "The regime remains too dependent on text, tracks, and local manual anchors, while source image crops, audio windows, and audiovisual sample clouds stay passive or optional.",
+      "target_behavior": "Audiovisual source samples and sample clouds become first-class memory substrate for candidate generation, promotion decisions, traceback, and cross-modal sweeps.",
+      "release_gate": "warn"
+    }
+  ],
+  "target_architecture": {
+    "name": "Live Mature Data Proliferation Regime",
+    "pipeline": [
+      "artifact_hydration",
+      "evidence_normalization",
+      "master_schema_registration",
+      "maturity_scoring",
+      "candidate_generation",
+      "promotion_eligibility",
+      "promotion_decision_ledger",
+      "live_bus_event",
+      "cross_scene_sweep",
+      "cross_modal_sweep",
+      "meaning_network_continuity_update",
+      "panel_projection",
+      "traceback_update",
+      "quality_audit",
+      "export_report_sync"
+    ],
+    "architecture_invariants": [
+      "candidate_is_not_promotion",
+      "promotion_requires_decision_ledger_entry",
+      "manual_correction_wins",
+      "manual_confirmation_wins",
+      "raw_detection_never_overrides_mature_data",
+      "governed_hypotheses_may_proliferate_but_must_remain_visibly_hypothetical",
+      "all_visible_mature_or_hypothesis_claims_require_traceback",
+      "all_saved_artifacts_hydrate_before_matching",
+      "scene_local_evidence_must_be_eligible_for_cross_scene_continuity",
+      "meaning_network_must_carry_edges_and_continuity_anchors",
+      "sample_clouds_are_memory_substrate_not_passive_evidence",
+      "SOM_or_open_topology_is_diagnostic_not_authority"
+    ]
+  },
+  "authority_classes": [
+    {
+      "authority_class": "confirmed_mature",
+      "allowed_projection": "full_system_projection",
+      "authority_sources": [
+        "manual_correction",
+        "manual_confirmation"
+      ],
+      "ui_badge": "confirmed",
+      "requires_traceback": true,
+      "can_override_raw_detection": true
+    },
+    {
+      "authority_class": "governed_mature_hypothesis",
+      "allowed_projection": "system_projection_with_hypothesis_badge",
+      "authority_sources": [
+        "cross_modal_supported_candidate",
+        "high_probability_match",
+        "sample_cloud_reappearance",
+        "scene_continuity_supported",
+        "meaning_network_supported"
+      ],
+      "ui_badge": "hypothesis",
+      "requires_traceback": true,
+      "can_override_raw_detection": true,
+      "can_override_confirmed_mature": false
+    },
+    {
+      "authority_class": "review_candidate",
+      "allowed_projection": "candidate_tray_or_review_lane_only",
+      "authority_sources": [
+        "single_modality_match",
+        "weak_match",
+        "local_overlap_candidate"
+      ],
+      "ui_badge": "candidate",
+      "requires_traceback": true,
+      "can_override_raw_detection": false,
+      "can_override_confirmed_mature": false
+    },
+    {
+      "authority_class": "raw_substrate",
+      "allowed_projection": "raw_detector_layer_and_traceback_only",
+      "authority_sources": [
+        "object_detector",
+        "speaker_detector",
+        "ocr",
+        "raw_parser",
+        "raw_scene_segmenter"
+      ],
+      "ui_badge": "raw",
+      "requires_traceback": false
+    },
+    {
+      "authority_class": "rejected_or_canceled",
+      "allowed_projection": "inactive_history_and_traceback_only",
+      "authority_sources": [
+        "manual_rejection",
+        "cancel_decision",
+        "false_match_mark"
+      ],
+      "ui_badge": "rejected",
+      "requires_traceback": true
+    }
+  ],
+  "backend_components": {
+    "saved_analysis_hydration_loader": {
+      "module_path": "src/backend/analysis/saved_analysis_hydration_loader.py",
+      "description": "Creates canonical analysis status by loading all relevant saved artifacts before any proliferation logic runs.",
+      "must_hydrate": [
+        "vaa1_annotation_master_schema.json",
+        "manual_visual_annotations",
+        "corrected_objects",
+        "tracked_objects",
+        "object_tracks",
+        "bbox_roi_annotations",
+        "agent_persistence_scene_cut.json",
+        "proliferation_matches.json",
+        "proliferation_decisions.json",
+        "source_samples",
+        "visual_sample_clouds",
+        "audio_sample_clouds",
+        "transcript",
+        "diarization",
+        "scene_segments",
+        "scene_cards",
+        "meaning_network",
+        "second_order_label_affirmations"
+      ],
+      "failure_policy": "If artifact exists on disk but is missing from canonical status, fail hydration audit before matching."
+    },
+    "live_mature_data_proliferation_bus": {
+      "module_path": "src/backend/analysis/live_mature_data_proliferation_bus.py",
+      "description": "Event-driven and sweep-driven bus that propagates mature confirmations and governed hypotheses across time, scenes, modalities, panels, Meaning Network, reports, exports, and traceback.",
+      "triggers": [
+        "analysis_completed",
+        "manual_annotation_saved",
+        "manual_correction_saved",
+        "candidate_confirmed",
+        "candidate_rejected",
+        "metadata_saved",
+        "source_samples_created",
+        "scene_segments_created_or_changed",
+        "tracked_objects_hydrated",
+        "agent_persistence_artifact_written",
+        "meaning_network_rebuilt",
+        "project_reopened",
+        "scheduled_quality_audit"
+      ],
+      "required_methods": [
+        "hydrate_all_source_artifacts",
+        "collect_mature_seed_objects",
+        "collect_governed_hypothesis_seed_objects",
+        "run_forward_sweep",
+        "run_backward_sweep",
+        "run_cross_scene_sweep",
+        "run_cross_modal_sweep",
+        "score_promotion_eligibility",
+        "write_promotion_decision",
+        "emit_projection_events",
+        "update_traceback",
+        "update_meaning_network_continuity",
+        "write_proliferation_audit"
+      ]
+    },
+    "mature_data_promotion_engine": {
+      "module_path": "src/backend/analysis/mature_data_promotion_engine.py",
+      "description": "Converts candidate matches into explicit promotion decisions and authority-classed objects.",
+      "required_rule": "Matcher output must never become projection authority unless a promotion_decision record exists."
+    },
+    "scene_continuity_sweeper": {
+      "module_path": "src/backend/analysis/scene_continuity_sweeper.py",
+      "description": "Turns local scene overlap into cross-scene continuity hypotheses for agents, objects, speakers, relations, and places.",
+      "output_artifact": "scene_continuity_anchors.json"
+    },
+    "meaning_network_continuity_builder": {
+      "module_path": "src/backend/analysis/meaning_network_continuity_builder.py",
+      "description": "Builds Meaning Network edges and continuity anchors from Master Schema objects, promotion decisions, scene continuity anchors, sample clouds, and relation records.",
+      "minimum_required_outputs": [
+        "edge_count_greater_than_zero_when_continuity_exists",
+        "continuity_anchor_count_greater_than_zero_when_reappearance_exists",
+        "agent_to_scene_edges",
+        "agent_to_agent_relation_edges",
+        "agent_to_object_edges",
+        "object_to_scene_edges",
+        "evidence_to_claim_edges",
+        "traceback_edges"
+      ]
+    },
+    "sample_cloud_memory_manager": {
+      "module_path": "src/backend/analysis/sample_cloud_memory_manager.py",
+      "description": "Turns confirmed audiovisual source samples into reusable memory clouds for proliferation.",
+      "required_behavior": [
+        "create_source_samples_from_high_value_confirmations",
+        "attach_samples_to_promotion_decisions",
+        "poll_sample_clouds_during_live_sweeps",
+        "surface_cross_modal_readiness_lane",
+        "preserve_raw_sample_traceback"
+      ]
+    },
+    "master_schema_quality_agent": {
+      "module_path": "src/backend/analysis/master_schema_quality_agent.py",
+      "description": "Audit-only agent for detecting failed proliferation, hydration gaps, missing decisions, missing continuity, and panel divergence.",
+      "may_overwrite_master_schema": false
+    }
+  },
+  "promotion_decision_record": {
+    "type": "object",
+    "required": [
+      "decision_id",
+      "analysis_id",
+      "candidate_id",
+      "decision_state",
+      "authority_class",
+      "source_evidence_refs",
+      "source_anchors",
+      "projection_targets",
+      "traceback_ref",
+      "created_at"
+    ],
+    "properties": {
+      "decision_id": {
+        "type": "string"
+      },
+      "analysis_id": {
+        "type": "string"
+      },
+      "candidate_id": {
+        "type": "string"
+      },
+      "target_master_object_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "decision_state": {
+        "type": "string",
+        "enum": [
+          "confirmed",
+          "rejected",
+          "canceled",
+          "deferred",
+          "weak",
+          "unresolved",
+          "auto_hypothesis_promoted",
+          "manual_confirmed",
+          "manual_corrected"
+        ]
+      },
+      "authority_class": {
+        "type": "string",
+        "enum": [
+          "confirmed_mature",
+          "governed_mature_hypothesis",
+          "review_candidate",
+          "raw_substrate",
+          "rejected_or_canceled"
+        ]
+      },
+      "promotion_score": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 1
+      },
+      "promotion_reason": {
+        "type": "string"
+      },
+      "decision_source": {
+        "type": "string",
+        "enum": [
+          "manual_analyst_action",
+          "live_bus_auto_hypothesis",
+          "cross_modal_sweep",
+          "scene_continuity_sweep",
+          "sample_cloud_sweep",
+          "meaning_network_builder"
+        ]
+      },
+      "source_evidence_refs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "source_anchors": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "projection_targets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "traceback_ref": {
+        "type": "string"
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "created_by": {
+        "type": "string"
+      }
+    }
+  },
+  "continuity_anchor_record": {
+    "type": "object",
+    "required": [
+      "continuity_anchor_id",
+      "analysis_id",
+      "anchor_kind",
+      "source_master_object_id",
+      "target_candidate_or_object_id",
+      "continuity_score",
+      "authority_class",
+      "traceback_refs"
+    ],
+    "properties": {
+      "continuity_anchor_id": {
+        "type": "string"
+      },
+      "analysis_id": {
+        "type": "string"
+      },
+      "anchor_kind": {
+        "type": "string",
+        "enum": [
+          "same_agent_across_scene",
+          "same_object_across_scene",
+          "same_speaker_across_scene",
+          "same_relation_across_scene",
+          "sample_cloud_reappearance",
+          "role_continuity",
+          "presence_interval_expansion",
+          "non_linear_return"
+        ]
+      },
+      "source_master_object_id": {
+        "type": "string"
+      },
+      "target_candidate_or_object_id": {
+        "type": "string"
+      },
+      "source_scene_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "target_scene_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "continuity_score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "authority_class": {
+        "type": "string",
+        "enum": [
+          "confirmed_mature",
+          "governed_mature_hypothesis",
+          "review_candidate"
+        ]
+      },
+      "supporting_modalities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "traceback_refs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "requires_review": {
+        "type": "boolean"
+      }
+    }
+  },
+  "meaning_network_edge_record": {
+    "type": "object",
+    "required": [
+      "edge_id",
+      "analysis_id",
+      "edge_type",
+      "source_node_id",
+      "target_node_id",
+      "authority_class",
+      "traceback_refs"
+    ],
+    "properties": {
+      "edge_id": {
+        "type": "string"
+      },
+      "analysis_id": {
+        "type": "string"
+      },
+      "edge_type": {
+        "type": "string",
+        "enum": [
+          "agent_appears_in_scene",
+          "object_appears_in_scene",
+          "agent_speaks_in_scene",
+          "agent_interacts_with_agent",
+          "agent_uses_object",
+          "agent_related_to_role",
+          "scene_continues_agent",
+          "scene_continues_object",
+          "evidence_supports_claim",
+          "claim_uses_evidence",
+          "candidate_competes_with_candidate",
+          "hypothesis_needs_review"
+        ]
+      },
+      "source_node_id": {
+        "type": "string"
+      },
+      "target_node_id": {
+        "type": "string"
+      },
+      "authority_class": {
+        "type": "string",
+        "enum": [
+          "confirmed_mature",
+          "governed_mature_hypothesis",
+          "review_candidate",
+          "raw_substrate",
+          "rejected_or_canceled"
+        ]
+      },
+      "edge_score": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 1
+      },
+      "continuity_anchor_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "traceback_refs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  },
+  "proliferation_policy": {
+    "thresholds": {
+      "confirmed_mature_requires": [
+        "manual_confirmation",
+        "manual_correction"
+      ],
+      "governed_mature_hypothesis_min_score": 0.72,
+      "cross_modal_hypothesis_min_modalities": 2,
+      "single_modality_candidate_max_authority": "review_candidate",
+      "auto_confirm_forbidden_without_manual_authority": true,
+      "legacy_auto_proliferation_0_95_policy": {
+        "status": "too_conservative_as_only_route",
+        "new_role": "may create strong governed hypothesis, not required as sole propagation path"
+      }
+    },
+    "projection_rules": [
+      {
+        "rule_id": "PR001",
+        "if": "authority_class == confirmed_mature",
+        "then": "project_everywhere_allowed_by_object_family"
+      },
+      {
+        "rule_id": "PR002",
+        "if": "authority_class == governed_mature_hypothesis",
+        "then": "project_with_hypothesis_badge_and_review_affordance"
+      },
+      {
+        "rule_id": "PR003",
+        "if": "authority_class == review_candidate",
+        "then": "candidate_tray_only_no_mature_panel_override"
+      },
+      {
+        "rule_id": "PR004",
+        "if": "authority_class == raw_substrate",
+        "then": "raw_layer_and_traceback_only"
+      },
+      {
+        "rule_id": "PR005",
+        "if": "decision_state in ['rejected', 'canceled']",
+        "then": "inactive_traceback_history_only"
+      }
+    ]
+  },
+  "quality_agent_checks": [
+    "matcher_only_on_demand",
+    "candidate_without_promotion_decision",
+    "confirmed_decision_without_projection",
+    "artifact_exists_but_not_hydrated",
+    "scene_confirmation_not_swept_forward",
+    "meaning_network_edge_count_zero_despite_continuity",
+    "continuity_anchor_count_zero_despite_reappearance",
+    "manual_correction_not_projected",
+    "raw_detection_overrides_mature_label",
+    "source_sample_missing_for_high_value_confirmation",
+    "sample_cloud_not_polled",
+    "traceback_missing",
+    "export_missing_mature_projection",
+    "report_missing_candidate_history"
+  ],
+  "acceptance_tests": [
+    {
+      "test_id": "AT001_LIVE_BUS_RUNS_AFTER_ANALYSIS_COMPLETION",
+      "given": "Analysis completes with manual/source evidence and later-scene raw detections.",
+      "expect": "Live proliferation bus runs without explicit /proliferation/match request and writes sweep audit."
+    },
+    {
+      "test_id": "AT002_MATCHER_OUTPUT_NOT_PROMOTED_WITHOUT_DECISION",
+      "given": "Matcher writes candidate artifact.",
+      "expect": "No mature projection occurs unless proliferation_decisions contains explicit decision record."
+    },
+    {
+      "test_id": "AT003_GOVERNED_HYPOTHESIS_PROJECTS_WITH_BADGE",
+      "given": "Cross-modal candidate score exceeds governed hypothesis threshold but lacks manual confirmation.",
+      "expect": "Candidate projects as hypothesis with traceback and review badge, not as confirmed truth."
+    },
+    {
+      "test_id": "AT004_SCENE_1_CONFIRMATION_SWEEPS_TO_SCENE_2",
+      "given": "Narrative Agent confirmed in scene 1 and matching visual/audio/sample evidence appears in scene 2.",
+      "expect": "Scene continuity anchor is created and scene 2 receives governed mature hypothesis."
+    },
+    {
+      "test_id": "AT005_SAVED_ARTIFACT_HYDRATION_COMPLETE",
+      "given": "Tracked object file exists on disk.",
+      "expect": "Canonical status hydrates tracked object before matcher runs; missing hydration fails audit."
+    },
+    {
+      "test_id": "AT006_MEANING_NETWORK_CONTINUITY_NONZERO",
+      "given": "Same agent/object appears across consecutive scenes.",
+      "expect": "Meaning Network edge_count and continuity_anchor_count are greater than zero."
+    },
+    {
+      "test_id": "AT007_SAMPLE_CLOUD_AS_MEMORY_SUBSTRATE",
+      "given": "High-value manual confirmation creates source crop/audio window.",
+      "expect": "Sample cloud memory is created, attached to promotion decision, and polled in later sweeps."
+    },
+    {
+      "test_id": "AT008_PROJECT_REOPEN_PRESERVES_AUTHORITY",
+      "given": "Project is saved and reopened.",
+      "expect": "Manual corrections, promotion decisions, continuity anchors, Meaning Network edges, traceback refs, and candidate ledgers reload deterministically."
+    }
+  ],
+  "recommended_delivery_slices": [
+    {
+      "slice_id": "P0_HYDRATION_FIRST",
+      "name": "Saved-analysis hydration closure"
+    },
+    {
+      "slice_id": "P1_LIVE_BUS_MINIMUM",
+      "name": "Live bus minimum viable sweep"
+    },
+    {
+      "slice_id": "P2_PROMOTION_LEDGER",
+      "name": "Candidate-to-promotion decision ledger"
+    },
+    {
+      "slice_id": "P3_SCENE_CONTINUITY",
+      "name": "Scene-to-scene continuity sweep"
+    },
+    {
+      "slice_id": "P4_MEANING_NETWORK_CONTINUITY",
+      "name": "Meaning Network continuity edges"
+    },
+    {
+      "slice_id": "P5_SAMPLE_CLOUD_MEMORY",
+      "name": "Audiovisual memory clouds"
+    }
+  ],
+  "recommended_files": {
+    "backend": [
+      "src/backend/analysis/saved_analysis_hydration_loader.py",
+      "src/backend/analysis/live_mature_data_proliferation_bus.py",
+      "src/backend/analysis/mature_data_promotion_engine.py",
+      "src/backend/analysis/scene_continuity_sweeper.py",
+      "src/backend/analysis/meaning_network_continuity_builder.py",
+      "src/backend/analysis/sample_cloud_memory_manager.py",
+      "src/backend/analysis/master_schema_quality_agent.py"
+    ],
+    "frontend": [
+      "src/frontend/app/V2components/components/panels/ProliferationReadinessLane.tsx",
+      "src/frontend/app/V2components/components/panels/PromotionDecisionTray.tsx",
+      "src/frontend/app/V2components/components/panels/ContinuityAnchorPanel.tsx",
+      "src/frontend/app/V2components/components/panels/MeaningNetworkContinuityPanel.tsx",
+      "src/frontend/app/V2components/components/panels/SampleCloudMemoryPanel.tsx"
+    ],
+    "tests": [
+      "tests/test_saved_analysis_hydration_loader.py",
+      "tests/test_live_mature_data_proliferation_bus.py",
+      "tests/test_mature_data_promotion_engine.py",
+      "tests/test_scene_continuity_sweeper.py",
+      "tests/test_meaning_network_continuity_builder.py",
+      "tests/test_sample_cloud_memory_manager.py",
+      "src/frontend/e2e/live-proliferation-bus.spec.ts",
+      "src/frontend/e2e/saved-analysis-hydration.spec.ts",
+      "src/frontend/e2e/meaning-network-continuity.spec.ts"
+    ]
+  }
+}

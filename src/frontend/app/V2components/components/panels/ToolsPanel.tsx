@@ -2591,6 +2591,24 @@ export default function ToolsPanel() {
                               ))}
                             </SelectContent>
                           </Select>
+                          <Button
+                            type="button"
+                            data-vaa1-open-data-maturation="true"
+                            onClick={() => {
+                              if (videoId) {
+                                eventBus.emit("videoIdChanged", videoId);
+                              }
+                              openPanel("DataMaturation", videoId ? { videoId } : {});
+                              if (videoId) {
+                                window.setTimeout(() => {
+                                  eventBus.emit("videoIdChanged", videoId);
+                                }, 0);
+                              }
+                            }}
+                            className="mt-2 h-8 w-full justify-start border border-cyan-400/25 bg-cyan-500/10 text-[11px] text-cyan-100 hover:bg-cyan-500/20"
+                          >
+                            Open maturation governance
+                          </Button>
                         </div>
                       </div>
                       <div className="rounded border border-white/10 bg-[#141414] px-3 py-3">

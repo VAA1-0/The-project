@@ -114,8 +114,8 @@ test("police-car BBox rendered fixture follows exact manual keyframes across scr
   );
   assert.match(
     videoPanel,
-    /const trackManualCandidates =[\s\S]*manualObjectCorrectionTargetId\(item\) === targetCandidateId[\s\S]*const nearbyTrackManual = trackManualCandidates/,
-    "VideoPanel must merge nearby corrections only for the same object target",
+    /const trackManualCandidates =[\s\S]*manualObjectCorrectionTargetId\(item\) === targetCandidateId[\s\S]*const sameAssertionTrackManualCandidates = trackManualCandidates\.filter[\s\S]*const overlappingSameAssertionManual = sameAssertionTrackManualCandidates/,
+    "VideoPanel must merge manual BBox corrections only for the same object target, assertion, and overlapping interval",
   );
 
   const renderedVideoRect = { x: 0, y: 0, width: 960, height: 540 };

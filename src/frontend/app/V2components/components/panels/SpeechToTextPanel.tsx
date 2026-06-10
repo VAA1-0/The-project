@@ -584,6 +584,13 @@ export default function SpeechToTextPanel({
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
+  const openTranscriptRowAtSourceTime = (row: any) => {
+    if (!videoId || row?.synthetic) {
+      return;
+    }
+    openVideoAtTime(videoId, Number(row?.start ?? 0));
+  };
+
   const saveTranscriptEditor = async () => {
     if (!videoId || !editorDraft) {
       return;
@@ -1186,7 +1193,7 @@ export default function SpeechToTextPanel({
                         : "cursor-pointer border-white/8 bg-[#171717] hover:bg-slate-800/25"
                     }`}
                     onClick={() => {
-                      openVideoAtTime(videoId, row.start);
+                      openTranscriptRowAtSourceTime(row);
                     }}
                   >
                     <div className="mb-2 flex items-start justify-between gap-3">
@@ -1257,6 +1264,7 @@ export default function SpeechToTextPanel({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              openTranscriptRowAtSourceTime(row);
                               if (!isSynthetic && cleanedWord) {
                                 setSelectedWord(cleanedWord);
                                 setSelectedWordDraft(cleanedWord);
@@ -1275,7 +1283,7 @@ export default function SpeechToTextPanel({
                             title={
                               isSynthetic
                                 ? "Synthetic coverage marker"
-                                : "Click to select this word for correction or drop."
+                                : "Open the source video at this transcript span and select this word for correction or drop."
                             }
                           >
                             {word}

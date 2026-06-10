@@ -477,6 +477,12 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertEqual(candidate["review_state"], "candidate_manual_source")
         self.assertTrue(candidate["proliferation_allowed"])
         self.assertFalse(candidate["decision_required"])
+        self.assertGreaterEqual(len(candidate["source_anchors"]), 2)
+        self.assertIn("bbox_roi_panel", candidate["projection_targets"])
+        self.assertIn("traceback_drawer", candidate["projection_targets"])
+        self.assertFalse(
+            candidate["master_object_projection"]["governance_status"]["review_required"]
+        )
         self.assertEqual(
             candidate["master_object_projection"]["authority_level"],
             "manual_annotation",

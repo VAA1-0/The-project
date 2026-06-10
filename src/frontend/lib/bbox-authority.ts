@@ -196,6 +196,24 @@ export function projectNormalizedBoxToVideoContent(
   };
 }
 
+export function overlayBoxToNormalizedBox(
+  overlay: { normalizedBox?: DraftBox; x: number; y: number; w: number; h: number },
+  videoWidth: number,
+  videoHeight: number,
+): DraftBox {
+  if (overlay.normalizedBox) {
+    return normalizeDraftBox(overlay.normalizedBox);
+  }
+  const safeVideoWidth = Math.max(1, videoWidth);
+  const safeVideoHeight = Math.max(1, videoHeight);
+  return normalizeDraftBox({
+    x: overlay.x / safeVideoWidth,
+    y: overlay.y / safeVideoHeight,
+    w: overlay.w / safeVideoWidth,
+    h: overlay.h / safeVideoHeight,
+  });
+}
+
 export function mergeManualGeometryKeyframes(
   keyframes: ManualGeometryKeyframe[],
 ): ManualGeometryKeyframe[] {
@@ -618,6 +636,28 @@ export function manualObjectTargetId(item: ManualVisualAnnotation): string | nul
   return targetId === undefined || targetId === null ? null : String(targetId);
 }
 
+export function manualObjectMatureAuthorityTargetId(
+  item: ManualVisualAnnotation,
+): string | null {
+  const targetType = String(item.metadata_correlation?.target_type || "").toLowerCase();
+  if (targetType !== "object") {
+    return null;
+  }
+  const scope = String(item.metadata_correlation?.apply_scope || "").toLowerCase();
+  if (
+    ![
+      "track_family",
+      "narrative_agent_family",
+      "current_continuity_segment",
+      "current_scene",
+    ].includes(scope)
+  ) {
+    return null;
+  }
+  const targetId = item.metadata_correlation?.target_id;
+  return targetId === undefined || targetId === null ? null : String(targetId);
+}
+
 export function manualObjectCorrectionTargetId(
   item: ManualVisualAnnotation,
 ): string | null {
@@ -918,7 +958,7 @@ export function buildManualTrackMatureAuthority(
     if (!isManualAnnotationVisibleAtTime(item, currentTime)) {
       return;
     }
-    const targetId = manualObjectTargetId(item);
+    const targetId = manualObjectMatureAuthorityTargetId(item);
     const label = manualVisualAnnotationMatureLabel(item);
     if (!targetId || !label) {
       return;

@@ -138,6 +138,13 @@ Self-review focus:
 
 Goal: make saved analyst geometry authoritative everywhere.
 
+Design gate:
+
+- Before another deep BBox implementation pass, run the UI/user-path sprint in `docs/vaa1_bbox_meaning_network_narrative_agent_ui_sprint_2026-06-10.md`.
+- BBox/ROI must be scoped as source-local evidence capture and inspection.
+- Continuity questions must move to Meaning Network and Narrative Agent review surfaces.
+- Raw track ids may support traceback and candidates, but they must not act as record identity or semantic continuity authority.
+
 Tasks:
 
 - Enforce one geometry path:
@@ -160,10 +167,12 @@ Acceptance:
 
 - A saved manual BBox/ROI correction survives playback, scrub, Save, Save here, panel navigation, resize, fullscreen, project save, project reopen, mature label refresh, raw object track refresh, Meaning Network sync, and proliferation candidate generation.
 - The visible box comes from the canonical saved geometry, not stale local state, raw detector fallback, panel CSS pixels, or ungoverned interpolation.
+- Sequential manual confirmations on the same raw track, such as `James Bond 43-46s` and `Nomi 47-49s`, remain separate source-local events and are reviewed as continuity/conflict questions in Meaning Network or Narrative Agent, not merged inside BBox/ROI.
 
 Self-review focus:
 
 - Are all BBox/ROI geometry consumers using the same normalization, resolver, projection, and saved-bundle builder?
+- Has BBox/ROI avoided owning cross-scene identity, object, role, or relation continuity?
 
 ## Step 4. Panel Projection Migration
 
@@ -501,7 +510,12 @@ Step 3 protected milestone: exact analyst BBox geometry now sticks and scales.
 Protection follow-up:
 
 - First rendered-geometry fixture added in `src/frontend/tests/bbox-roi-rendered-fixture.test.mjs`. It recreates the police-car style flow with manual keyframes, raw detector alternatives, scrub-away/back checks, between-keyframe scaling, and panel-resize pixel projection. It asserts visible geometry comes from manual keyframes rather than raw detector geometry.
-- Still needed: a true browser/Playwright BBox/ROI fixture for live Video Panel interaction, fullscreen enter/exit, refresh/reopen if available, and DOM overlay measurement.
+- The legacy `OverlayBox.normalizedBox` plus pixel `x/y/w/h` fallback is now resolved through `overlayBoxToNormalizedBox` in `bbox-authority.ts`, so `VideoPanel.tsx` no longer owns the render-path fallback conversion from pixel overlay geometry to normalized source-video geometry.
+- Regression coverage in `manual-annotation-governance.test.mjs` now guards the shared overlay normalization helper and keeps rendered overlay pixel projection routed through `projectNormalizedBoxToVideoContent`.
+- Verified after this authority consolidation slice: `node --test src/frontend/tests/manual-annotation-governance.test.mjs`, `cd src/frontend && npx tsc --noEmit`, `cd src/frontend && npm test`, and `git diff --check`.
+- True browser/Playwright BBox/ROI fixture added in `src/frontend/e2e/bbox-roi-rendered-authority.spec.ts`. It measures DOM overlay pixels inside letterboxed source-video content, verifies normalized analyst geometry projection, simulates live drag normalization, checks a fullscreen-style resize, and verifies resize-handle geometry updates preserve source-video origin.
+- Verified after the Playwright rendered authority slice: `cd src/frontend && npx playwright test e2e/bbox-roi-rendered-authority.spec.ts`, `cd src/frontend && npx playwright test`, `cd src/frontend && npx tsc --noEmit`, `cd src/frontend && npm test`, `conda run -n vaa1_core python -m unittest tests.test_mature_data_proliferation_feedback_loop_contract`, and `git diff --check`.
+- Still needed: project save/reopen BBox/ROI authority proof if a deterministic saved-analysis fixture is available, plus rendered candidate confirm/cancel controls, mature-label priority, and traceback navigation in the live dashboard.
 - Add a saved-bundle inspection check that proves the persisted annotation contains the exact normalized analyst boxes as manual `geometry_keyframes`.
 - Keep raw detector keyframes retained only as traceback/provenance unless explicitly surfaced as candidate support.
 
