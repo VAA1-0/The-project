@@ -2184,6 +2184,54 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
     /openGovernedPanel\("MeaningNetwork"\)/,
     "Data Maturation panel must link directly to the Meaning Network graph",
   );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-governance-matrix="true"/,
+    "Data Maturation panel must expose a governance matrix for inspectable mature claims and candidates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /buildGovernanceMatrixRows\([\s\S]*manual_visual_annotations[\s\S]*proliferation_decisions[\s\S]*masterSchemaResolvedEvidence[\s\S]*evidenceProliferationMatches/,
+    "governance matrix rows must be derived from manual anchors, durable decisions, mature evidence, and matcher candidates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-quality-agent-tray="true"/,
+    "Data Maturation panel must expose an audit-only Quality Agent review tray",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /These tickets warn[\s\S]*They do not overwrite mature data/,
+    "Quality Agent tray must remain audit-only and must not silently overwrite mature data",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /candidate-without-decision-ledger/,
+    "Quality Agent tray must flag candidate evidence without durable promotion/cancel/defer decisions",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /source-sampling-not-operationalized/,
+    "Quality Agent tray must flag missing audiovisual source sampling substrate",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /function temporalCoverageAudit\([\s\S]*manual_visual_annotations[\s\S]*rawDetectedObjects[\s\S]*transcriptTimeline[\s\S]*sourceSamples/,
+    "Data Maturation must audit temporal evidence coverage across annotations, detections, transcript, audio, and samples",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /late-video-evidence-dropoff/,
+    "Quality Agent tray must flag dramatic late-video evidence drop-off for review",
+  );
 });
 
 test("Datascene Meaning Network remains available for mature scene presence proliferation", () => {
@@ -2425,6 +2473,30 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /data-vaa1-meaning-network-sticky-action-rail="true"/,
     "Meaning Network lower action affordances must remain reachable when the graph is crowded",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-continuity-lane="true"/,
+    "Meaning Network must expose a continuity lane for candidate, confirmed, rejected, and conflict edges",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /function meaningNetworkContinuityState[\s\S]*candidate_continuity[\s\S]*confirmed_continuity[\s\S]*rejected_continuity[\s\S]*conflict|function meaningNetworkContinuityState[\s\S]*rejected_continuity[\s\S]*conflict[\s\S]*confirmed_continuity[\s\S]*candidate_continuity/,
+    "Meaning Network continuity rows must keep continuity states separate from BBox relabel authority",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-appearance-table="true"/,
+    "Meaning Network workbench must expose a Narrative Agent appearance review table",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /type NarrativeAgentAppearanceReviewRow = \{[\s\S]*state: "confirmed" \| "candidate" \| "conflict"/,
+    "Narrative Agent appearance rows must distinguish confirmed, candidate, and conflict appearances",
   );
 
   assert.match(

@@ -14,10 +14,10 @@ BBox/ROI should capture, correct, inspect, and traceback source-local visual evi
 
 Recent BBox failures show a product-design problem, not only a code problem:
 
-- raw `track_id` continuity has been treated as if it can carry identity continuity;
+- raw `track_id` continuity has been treated as if it can carry Narrative Agent continuity;
 - manual time corrections can be saved while later BBox logic still treats old intervals as reusable authority;
 - sequential manual confirmations can collapse into one record when the UI assumes same track means same assertion;
-- BBox tries to do annotation, identity confirmation, geometry correction, propagation, continuity, traceback, candidate review, and mature projection at once;
+- BBox tries to do annotation, agent assertion, geometry correction, propagation, continuity, traceback, candidate review, and mature projection at once;
 - the analyst cannot currently see enough of the continuity decision space before a local BBox action starts affecting other moments.
 
 The principle must become visible in the UI:
@@ -70,8 +70,11 @@ The Narrative Agent view should answer:
 - Which appearances are confirmed, candidate, conflicted, or rejected?
 - What paths, roles, relations, and scene trajectories are visible?
 - Which continuity claims need analyst review?
+- Which governed characteristics are maturing, and how do they improve future Mature Data Proliferation?
 
 If the dedicated Narrative Agent view is not yet separate, the first UI slice can route through Master Schema plus Meaning/Plot while preserving this product boundary.
+
+Working schema contract: `docs/vaa1_narrative_agent_characteristics_schema_and_proliferation_contract_2026-06-11.md`.
 
 ## Analyst User Paths
 
@@ -91,7 +94,7 @@ Acceptance:
 - The saved event survives refresh and project reopen.
 - Traceback shows raw detection and old states without restoring raw authority.
 
-### Path 2: Sequential Same-Track Different-Identity Confirmation
+### Path 2: Sequential Same-Track Conflicting Agent Assertions
 
 1. Analyst confirms `James Bond` at `43-46s`.
 2. Analyst confirms `Nomi` at `47-49s`.
@@ -104,7 +107,7 @@ Acceptance:
 
 - `James Bond 43-46s` remains visible and traceable.
 - `Nomi 47-49s` remains visible and traceable.
-- No track id can merge the two identities.
+- No track id can merge the two agent assertions.
 - The system asks a continuity question in graph/agent space rather than altering either BBox event.
 
 ### Path 3: Same Object Across Scenes
@@ -125,20 +128,22 @@ Acceptance:
 
 1. Analyst opens a Narrative Agent.
 2. The view lists confirmed appearances, candidate appearances, rejected appearances, conflicts, relations, roles, and scene trajectory.
-3. Selecting a candidate opens synchronized evidence: BBox crop, video time, transcript line, scene card, expression sample, and traceback.
-4. Analyst confirms or rejects continuity.
-5. The promotion decision updates Meaning Network, Master Schema, BBox projection, and reports.
+3. The view groups evidence into agent semantic families: persona/alias, appearance, voice, expression, gesture/action, role, relation, scene trajectory, object association, linguistic register, continuity, and negative evidence.
+4. Selecting a candidate opens synchronized evidence: BBox crop, video time, transcript line, scene card, expression sample, audio window, graph edge, and traceback.
+5. Analyst confirms or rejects continuity.
+6. The promotion decision updates Meaning Network, Master Schema, BBox projection, Narrative Agent characteristics, and reports.
 
 Acceptance:
 
 - The agent profile is built from evidence events, not raw track ids.
 - Every accepted continuity claim has source anchors and traceback.
 - Rejected candidates remain inspectable as negative evidence.
+- Every new Narrative Agent field or row states which characteristic family it matures and what proliferation hint, projection, rejection, or traceback value it creates.
 
 ## Required UI Changes Before New BBox Coding
 
 1. BBox event ledger:
-   - Show saved BBox events as distinct records, not one mutable track identity.
+   - Show saved BBox events as distinct records, not one mutable track authority.
    - Display event id, time interval, label/assertion, category, target substrate, geometry keyframes, maturity, and traceback.
 
 2. Continuity handoff affordance:
@@ -156,9 +161,10 @@ Acceptance:
 5. Narrative Agent appearance table:
    - Add confirmed/candidate/rejected appearances.
    - Each row jumps to source video, BBox, transcript, scene, graph edge, and traceback.
+   - Each row contributes to governed characteristic families instead of only listing a name and time.
 
 6. Conflict-first review:
-   - If a raw track spans two different manual identities, surface it as a conflict.
+   - If a raw track spans two different manual agent assertions, surface it as a conflict.
    - Do not ask for a new character confirmation in the BBox unless the source-local event is missing.
 
 7. Save-state inspection:
@@ -188,7 +194,7 @@ mature_projection
 Important distinction:
 
 - A geometry continuity track may connect BBox events for visual review.
-- An identity continuity edge may connect Narrative Agent appearances.
+- A Narrative Agent continuity edge may connect agent appearances.
 - These are different objects and must not share one implicit `track_id` authority.
 
 ## UI Sprint Deliverables
@@ -198,6 +204,7 @@ Important distinction:
 - Create user-path diagrams for BBox event creation, continuity review, Narrative Agent review, and mature promotion.
 - Define screen responsibilities for BBox/ROI, Meaning Network, Narrative Agent, Master Schema, and Traceback.
 - Define copy language for `source-local`, `candidate continuity`, `confirmed continuity`, `conflict`, and `promotion`.
+- Working contract: `docs/vaa1_bbox_continuity_ux_map_wire_contract_2026-06-11.md`.
 
 Exit criteria:
 
@@ -210,6 +217,7 @@ Exit criteria:
   - Review continuity handoff,
   - Meaning Network candidate edge lane,
   - Narrative Agent appearance table,
+  - Narrative Agent characteristic families and source-sample readiness,
   - conflict review.
 
 Exit criteria:
@@ -220,7 +228,7 @@ Exit criteria:
 
 - Build deterministic saved-analysis fixture with:
   - two adjacent manual BBox events on a shared raw track,
-  - different identities,
+  - conflicting agent assertions,
   - graph continuity conflict,
   - Narrative Agent appearance rows,
   - traceback refs.
@@ -238,7 +246,7 @@ Implementation may proceed when:
 - BBox no longer owns continuity decisions.
 - Meaning Network has candidate/confirmed/rejected continuity states.
 - Narrative Agent can review appearances and continuity.
-- Raw tracks are visibly substrate, not identity authority.
+- Raw tracks are visibly substrate, not agent authority.
 - Manual local events remain immutable unless the analyst edits that exact event.
 
 ## Non-Negotiable Acceptance Tests
@@ -246,7 +254,7 @@ Implementation may proceed when:
 1. `James Bond 43-46s` and `Nomi 47-49s` can exist on the same raw track without either event being dropped.
 2. A same-track conflict opens Meaning Network/Narrative Agent continuity review, not a destructive BBox relabel.
 3. BBox Save creates or edits a source-local event only.
-4. `Save here` can add geometry keyframes to the selected event, but cannot merge identities.
+4. `Save here` can add geometry keyframes to the selected event, but cannot merge agent assertions.
 5. Continuity promotion requires a decision ledger entry.
 6. Mature projections update panels only from ledgered decisions or local manual events.
 7. Traceback preserves raw track history without restoring raw authority.

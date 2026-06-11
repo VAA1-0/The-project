@@ -174,6 +174,24 @@ type MeaningNetworkEdge = {
   };
 };
 
+type MeaningNetworkContinuityLaneRow = {
+  edge: MeaningNetworkEdge;
+  sourceLabel: string;
+  targetLabel: string;
+  state: "candidate_continuity" | "confirmed_continuity" | "rejected_continuity" | "conflict";
+  timeLabel: string;
+};
+
+type NarrativeAgentAppearanceReviewRow = {
+  key: string;
+  label: string;
+  state: "confirmed" | "candidate" | "conflict";
+  sourceEventId: string;
+  timeLabel: string;
+  authority: string;
+  node: MeaningNetworkNode;
+};
+
 function meaningNetworkEvidenceRefKey(ref: MeaningNetworkEvidenceRef): string {
   return [
     ref.evidence_id || "",
@@ -221,6 +239,84 @@ function dedupeMeaningNetworkEdges(edges: MeaningNetworkEdge[]): MeaningNetworkE
     });
   });
   return [...byId.values()];
+}
+
+function meaningNetworkContinuityState(edge: MeaningNetworkEdge): MeaningNetworkContinuityLaneRow["state"] {
+  const level = String(edge.maturity?.level || "").toLowerCase();
+  const edgeType = String(edge.edge_type || "").toLowerCase();
+  if (/reject|negative/.test(level) || /reject|negative/.test(edgeType)) return "rejected_continuity";
+  if (/conflict/.test(level) || /conflict/.test(edgeType)) return "conflict";
+  if (/confirm|mature|analyst/.test(level)) return "confirmed_continuity";
+  return "candidate_continuity";
+}
+
+function meaningNetworkContinuityRows(
+  edges: MeaningNetworkEdge[],
+  nodes: MeaningNetworkNode[],
+  renamed: Record<string, string>,
+): MeaningNetworkContinuityLaneRow[] {
+  const nodesById = new Map(nodes.map((node) => [node.node_id, node]));
+  return edges
+    .filter((edge) =>
+      /continuity|tracks_same_entity|co_occurs|conflict|appearance/i.test(edge.edge_type),
+    )
+    .map((edge) => {
+      const sourceNode = nodesById.get(edge.source_node_id);
+      const targetNode = nodesById.get(edge.target_node_id);
+      const refs = edge.evidence_refs || [
+        ...(sourceNode?.evidence_refs || []),
+        ...(targetNode?.evidence_refs || []),
+      ];
+      return {
+        edge,
+        sourceLabel: renamed[edge.source_node_id] || sourceNode?.label || edge.source_node_id,
+        targetLabel: renamed[edge.target_node_id] || targetNode?.label || edge.target_node_id,
+        state: meaningNetworkContinuityState(edge),
+        timeLabel: meaningNetworkSourceTimeLabel(refs),
+      };
+    })
+    .sort(
+      (left, right) =>
+        meaningNetworkEvidenceStart(left.edge.evidence_refs) -
+        meaningNetworkEvidenceStart(right.edge.evidence_refs),
+    )
+    .slice(0, 18);
+}
+
+function narrativeAgentAppearanceReviewRows(
+  groups: Array<{ key: string; label: string; nodes: MeaningNetworkNode[] }>,
+): NarrativeAgentAppearanceReviewRow[] {
+  return groups
+    .flatMap((group) =>
+      group.nodes.map((node, index) => {
+        const level = String(node.maturity?.level || "").toLowerCase();
+        const authority = String(node.maturity?.authority || "authority pending");
+        const hasConflict = /conflict/.test(level);
+        const confirmed = /confirm|mature|analyst/.test(level) || /manual|analyst/.test(authority);
+        const state: NarrativeAgentAppearanceReviewRow["state"] = hasConflict
+          ? "conflict"
+          : confirmed
+            ? "confirmed"
+            : "candidate";
+        return {
+          key: `${group.key}:${node.node_id}:${index}`,
+          label: group.label,
+          state,
+          sourceEventId:
+            node.evidence_refs?.[0]?.evidence_id ||
+            String(node.attributes?.master_schema_record_id || node.node_id),
+          timeLabel: meaningNetworkSourceTimeLabel(node.evidence_refs),
+          authority,
+          node,
+        };
+      }),
+    )
+    .sort(
+      (left, right) =>
+        meaningNetworkEvidenceStart(left.node.evidence_refs) -
+        meaningNetworkEvidenceStart(right.node.evidence_refs),
+    )
+    .slice(0, 24);
 }
 
 type MeaningNetworkArtifact = {
@@ -3259,6 +3355,19 @@ export default function MeaningPlotPanel({
       }));
     },
     [characterTimelineNodes, renamedMeaningNetworkMarkers],
+  );
+  const continuityLaneRows = useMemo(
+    () =>
+      meaningNetworkContinuityRows(
+        meaningNetworkEdges,
+        meaningNetworkNodes,
+        renamedMeaningNetworkMarkers,
+      ),
+    [meaningNetworkEdges, meaningNetworkNodes, renamedMeaningNetworkMarkers],
+  );
+  const narrativeAgentAppearanceRows = useMemo(
+    () => narrativeAgentAppearanceReviewRows(characterTimelineGroups),
+    [characterTimelineGroups],
   );
   const plotInstructions = useMemo(
     () =>
@@ -6394,6 +6503,120 @@ export default function MeaningPlotPanel({
                 <div className="mt-1.5 text-[9px] text-slate-500">
                   Click a node/edge/timeline marker to jump to source; double-click a graph node or edge to open its Meaning Sheet.
                 </div>
+              </div>
+              <div
+                className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                data-vaa1-meaning-network-continuity-review-skeleton="true"
+              >
+                <section
+                  className="rounded border border-slate-800 bg-[#101010] p-2"
+                  data-vaa1-meaning-network-continuity-lane="true"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                        Continuity lane
+                      </div>
+                      <div className="text-xs font-semibold text-slate-100">
+                        Candidate / conflict / confirmed edges
+                      </div>
+                    </div>
+                    <div className="rounded border border-teal-900/60 bg-[#080b0b] px-2 py-1 text-[9px] text-teal-100">
+                      {continuityLaneRows.length} edges
+                    </div>
+                  </div>
+                  <div className="max-h-56 space-y-1 overflow-auto">
+                    {continuityLaneRows.length === 0 ? (
+                      <div className="rounded border border-dashed border-slate-800 px-2 py-3 text-[10px] text-slate-500">
+                        Continuity candidates will appear here as graph edges, not as BBox relabels.
+                      </div>
+                    ) : (
+                      continuityLaneRows.map((row) => (
+                        <div
+                          key={row.edge.edge_id}
+                          className="rounded border border-slate-800 bg-[#141414] px-2 py-1.5"
+                          data-vaa1-meaning-network-continuity-edge-row={row.state}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              className="min-w-0 text-left"
+                              onClick={() => {
+                                setMeaningNetworkSheet({ kind: "edge", edge: row.edge });
+                                navigateToMeaningNetworkEvidence(row.edge);
+                              }}
+                            >
+                              <div className="truncate text-[11px] text-slate-100">
+                                {row.sourceLabel} {"->"} {row.targetLabel}
+                              </div>
+                              <div className="truncate text-[9px] text-slate-500">
+                                {row.edge.edge_type} / {row.timeLabel}
+                              </div>
+                            </button>
+                            <div className="shrink-0 rounded border border-white/10 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-cyan-100">
+                              {row.state.replaceAll("_", " ")}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded border border-slate-800 bg-[#101010] p-2"
+                  data-vaa1-narrative-agent-appearance-table="true"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                        Narrative Agent appearances
+                      </div>
+                      <div className="text-xs font-semibold text-slate-100">
+                        Confirmed, candidate, and conflict rows
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openNarrativeAgentPaths}
+                      className="rounded border border-slate-700 bg-[#080b0b] px-2 py-1 text-[9px] text-slate-200 hover:border-teal-700 hover:text-teal-100"
+                      data-vaa1-narrative-agent-appearance-open-home="true"
+                    >
+                      Open agent home
+                    </button>
+                  </div>
+                  <div className="max-h-56 space-y-1 overflow-auto">
+                    {narrativeAgentAppearanceRows.length === 0 ? (
+                      <div className="rounded border border-dashed border-slate-800 px-2 py-3 text-[10px] text-slate-500">
+                        Agent appearances will appear when source-linked Narrative Agent nodes exist.
+                      </div>
+                    ) : (
+                      narrativeAgentAppearanceRows.map((row) => (
+                        <div
+                          key={row.key}
+                          className="rounded border border-slate-800 bg-[#141414] px-2 py-1.5"
+                          data-vaa1-narrative-agent-appearance-row={row.state}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              className="min-w-0 text-left"
+                              onClick={() => navigateToMeaningNetworkEvidence(row.node)}
+                            >
+                              <div className="truncate text-[11px] text-slate-100">{row.label}</div>
+                              <div className="truncate text-[9px] text-slate-500">
+                                {row.sourceEventId} / {row.timeLabel} / {row.authority}
+                              </div>
+                            </button>
+                            <div className="shrink-0 rounded border border-white/10 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-amber-100">
+                              {row.state}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
               </div>
               <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="min-h-0 rounded border border-slate-800 bg-[#101010]">

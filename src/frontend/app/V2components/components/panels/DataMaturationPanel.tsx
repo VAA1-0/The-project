@@ -11,6 +11,27 @@ type DataMaturationPanelProps = {
   videoId?: string;
 };
 
+type GovernanceMatrixRow = {
+  id: string;
+  label: string;
+  family: string;
+  authority: string;
+  maturity: string;
+  source: string;
+  propagation: string;
+  traceback: string;
+  panel: string;
+  reviewNeed: string;
+};
+
+type QualityTicket = {
+  id: string;
+  severity: "ok" | "warn" | "blocked";
+  title: string;
+  detail: string;
+  targetPanel: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -24,6 +45,78 @@ function asArray<T = unknown>(value: unknown): T[] {
 function numberFrom(value: unknown): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function textFrom(value: unknown, fallback = ""): string {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function manualAnnotationLabel(item: Record<string, unknown>): string {
+  return (
+    textFrom(item.identity_affirmation) ||
+    textFrom(item.role_affirmation) ||
+    textFrom(item.custom_label) ||
+    textFrom(item.label) ||
+    textFrom(item.category, "manual annotation")
+  );
+}
+
+function timestampFromRecord(record: Record<string, unknown>): number | null {
+  for (const key of [
+    "timestamp_seconds",
+    "timestamp",
+    "start_seconds",
+    "start",
+    "time",
+    "time_start",
+  ]) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) {
+      return value > 1000 ? value / 1000 : value;
+    }
+  }
+  return null;
+}
+
+function temporalCoverageAudit(source: Record<string, unknown>): {
+  early: number;
+  middle: number;
+  late: number;
+  status: "ok" | "warn";
+} {
+  const sourceMediaMetadata = asRecord(asRecord(source.metadata).sourceMediaMetadata);
+  const duration = numberFrom(sourceMediaMetadata.duration_seconds);
+  if (duration <= 0) {
+    return { early: 0, middle: 0, late: 0, status: "ok" };
+  }
+
+  const corrections = asRecord(source.annotationCorrections);
+  const evidenceRecords = [
+    ...asArray<Record<string, unknown>>(corrections.manual_visual_annotations),
+    ...asArray<Record<string, unknown>>(source.detectedObjects),
+    ...asArray<Record<string, unknown>>(source.rawDetectedObjects),
+    ...asArray<Record<string, unknown>>(source.transcriptTimeline),
+    ...asArray<Record<string, unknown>>(source.transcript),
+    ...asArray<Record<string, unknown>>(source.ocr),
+    ...asArray<Record<string, unknown>>(source.expressionResults),
+    ...asArray<Record<string, unknown>>(source.audioProsody),
+    ...asArray<Record<string, unknown>>(source.sourceSamples),
+  ];
+  const counts = evidenceRecords.reduce<{ early: number; middle: number; late: number }>(
+    (acc, record) => {
+      const timestamp = timestampFromRecord(record);
+      if (timestamp === null || timestamp > duration) return acc;
+      const ratio = timestamp / duration;
+      if (ratio < 1 / 3) acc.early += 1;
+      else if (ratio < 2 / 3) acc.middle += 1;
+      else acc.late += 1;
+      return acc;
+    },
+    { early: 0, middle: 0, late: 0 },
+  );
+  const status = counts.early >= 8 && counts.late * 2 < counts.early ? "warn" : "ok";
+  return { ...counts, status };
 }
 
 function countMatureSurfaces(audit: unknown): number {
@@ -73,6 +166,166 @@ function panelStatusClass(kind: "ok" | "warn" | "blocked"): string {
   if (kind === "ok") return "border-emerald-400/25 bg-emerald-400/8 text-emerald-100";
   if (kind === "warn") return "border-amber-400/25 bg-amber-400/8 text-amber-100";
   return "border-rose-400/25 bg-rose-400/8 text-rose-100";
+}
+
+function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceMatrixRow[] {
+  const corrections = asRecord(source.annotationCorrections);
+  const manualVisualAnnotations = asArray<Record<string, unknown>>(
+    corrections.manual_visual_annotations,
+  );
+  const proliferationDecisions = asArray<Record<string, unknown>>(
+    corrections.proliferation_decisions,
+  );
+  const resolvedEvidence = asArray<Record<string, unknown>>(
+    asRecord(source.masterSchemaResolvedEvidence).records,
+  );
+  const matchCandidates = asArray<Record<string, unknown>>(
+    source.evidenceProliferationMatches,
+  );
+
+  const rows: GovernanceMatrixRow[] = [];
+
+  manualVisualAnnotations.slice(0, 6).forEach((item, index) => {
+    const id = textFrom(item.id, `manual-${index}`);
+    const metadata = asRecord(item.metadata_correlation);
+    rows.push({
+      id,
+      label: manualAnnotationLabel(item),
+      family: textFrom(item.category, "manual"),
+      authority: textFrom(metadata.authority_state, "manual_correction"),
+      maturity: textFrom(metadata.maturity_state, "manual_correction"),
+      source: textFrom(metadata.source_panel, "BBox/ROI"),
+      propagation: metadata.propagation_required === false ? "local" : "projection required",
+      traceback: textFrom(metadata.geometry_track_id || id, "traceback required"),
+      panel: "TracebackDrawer",
+      reviewNeed: "source-local authority",
+    });
+  });
+
+  resolvedEvidence.slice(0, 6).forEach((item, index) => {
+    const metadata = asRecord(item.metadata);
+    rows.push({
+      id: textFrom(item.id || item.evidence_id, `resolved-${index}`),
+      label: textFrom(item.label || metadata.current_label, "resolved evidence"),
+      family: textFrom(item.category || metadata.category, "Master Schema"),
+      authority: textFrom(item.authority || item.authority_level, "mature"),
+      maturity: textFrom(item.maturity_state || metadata.maturity_state, "resolved"),
+      source: textFrom(item.source_panel || metadata.source_panel, "Master Schema"),
+      propagation: textFrom(metadata.propagation_state, "projected"),
+      traceback: textFrom(item.traceback || metadata.traceback_ref, "traceback required"),
+      panel: "MasterSchema",
+      reviewNeed: textFrom(metadata.review_need, "inspect if conflicting"),
+    });
+  });
+
+  proliferationDecisions.slice(0, 4).forEach((item, index) => {
+    rows.push({
+      id: textFrom(item.id || item.decision_id || item.candidate_id, `decision-${index}`),
+      label: textFrom(item.label || item.target_label || item.candidate_label, "decision"),
+      family: textFrom(item.target || item.category, "proliferation"),
+      authority: "decision_ledger",
+      maturity: textFrom(item.decision || item.status, "reviewed"),
+      source: textFrom(item.source_panel, "candidate review"),
+      propagation: Array.isArray(item.proliferates_to) ? "confirmed projection" : "review only",
+      traceback: textFrom(item.source_traceback_refs, "traceback required"),
+      panel: "MasterSchema",
+      reviewNeed: Array.isArray(item.proliferates_to) ? "projection audit" : "candidate retained",
+    });
+  });
+
+  matchCandidates.slice(0, 4).forEach((item, index) => {
+    rows.push({
+      id: textFrom(item.request_id || item.candidate_id, `candidate-${index}`),
+      label: textFrom(item.label || item.target_label, "match candidate"),
+      family: "candidate",
+      authority: "candidate_only",
+      maturity: "review_candidate",
+      source: textFrom(item.source_panel, "matcher"),
+      propagation: "blocked until decision",
+      traceback: textFrom(item.traceback_ref, "traceback required"),
+      panel: "MeaningNetwork",
+      reviewNeed: "needs analyst decision",
+    });
+  });
+
+  return rows.slice(0, 12);
+}
+
+function buildQualityTickets(
+  metrics: {
+    manualAnchorCount: number;
+    candidateCount: number;
+    matureWriteCount: number;
+    matureSurfaces: number;
+    proliferationDecisions: number;
+    audiovisualSampleCount: number;
+    temporalCoverage: { early: number; middle: number; late: number; status: "ok" | "warn" };
+    busStatus: "ok" | "warn" | "blocked";
+  },
+): QualityTicket[] {
+  const tickets: QualityTicket[] = [];
+
+  if (metrics.busStatus === "blocked") {
+    tickets.push({
+      id: "candidate-rich-mature-write-light",
+      severity: "blocked",
+      title: "Candidate-rich, mature-write-light",
+      detail: "Candidates exist, but mature projections or ledgered decisions are not keeping up.",
+      targetPanel: "DataMaturation",
+    });
+  }
+
+  if (metrics.manualAnchorCount > 0 && metrics.matureSurfaces === 0) {
+    tickets.push({
+      id: "manual-anchor-without-surface",
+      severity: "warn",
+      title: "Manual anchors need mature surface proof",
+      detail: "Manual confirmations exist, but no mature surface count is visible in the audit summary.",
+      targetPanel: "MasterSchema",
+    });
+  }
+
+  if (metrics.candidateCount > 0 && metrics.proliferationDecisions === 0) {
+    tickets.push({
+      id: "candidate-without-decision-ledger",
+      severity: "warn",
+      title: "Candidate ledger gap",
+      detail: "Candidate evidence is present without durable promotion/cancel/defer decisions.",
+      targetPanel: "MeaningNetwork",
+    });
+  }
+
+  if (metrics.audiovisualSampleCount === 0) {
+    tickets.push({
+      id: "source-sampling-not-operationalized",
+      severity: "warn",
+      title: "Audiovisual source sampling missing",
+      detail: "No source samples or audio sample clouds are visible as matching substrate.",
+      targetPanel: "DataMaturation",
+    });
+  }
+
+  if (metrics.temporalCoverage.status === "warn") {
+    tickets.push({
+      id: "late-video-evidence-dropoff",
+      severity: "warn",
+      title: "Late-video evidence drop-off",
+      detail: `Evidence density drops toward the end: early ${metrics.temporalCoverage.early}, middle ${metrics.temporalCoverage.middle}, late ${metrics.temporalCoverage.late}. Inspect whether this is media truth or pipeline degradation.`,
+      targetPanel: "DataMaturation",
+    });
+  }
+
+  if (tickets.length === 0) {
+    tickets.push({
+      id: "quality-agent-clear",
+      severity: "ok",
+      title: "No immediate governance blockers",
+      detail: "The audit-only review tray did not find a candidate, surface, ledger, or source-sampling blocker.",
+      targetPanel: "MasterSchema",
+    });
+  }
+
+  return tickets;
 }
 
 export default function DataMaturationPanel({ videoId: initialVideoId }: DataMaturationPanelProps) {
@@ -153,12 +406,14 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     const manualAnchorCount = manualVisualAnnotations.length + confirmedDecisions;
     const candidateCount = matchCandidates + secondOrderInstructions.length + agentPersistence.review;
     const matureWriteCount = matureSurfaces + resolvedEvidence + agentPersistence.accepted + confirmedDecisions;
+    const temporalCoverage = temporalCoverageAudit(source);
     const busStatus: "ok" | "warn" | "blocked" =
       manualAnchorCount > 0 && candidateCount > 0 && matureWriteCount > 0
         ? "ok"
         : candidateCount > 0 && matureWriteCount === 0
           ? "blocked"
           : "warn";
+    const governanceMatrixRows = buildGovernanceMatrixRows(source);
 
     return {
       manualVisualAnnotations: manualVisualAnnotations.length,
@@ -177,8 +432,15 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       candidateCount,
       matureWriteCount,
       busStatus,
+      governanceMatrixRows,
+      temporalCoverage,
     };
   }, [analysisData]);
+
+  const qualityTickets = useMemo(
+    () => buildQualityTickets(metrics),
+    [metrics],
+  );
 
   const openGovernedPanel = (panelType: string) => {
     if (videoId) {
@@ -322,6 +584,113 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           should remain candidate-only until a promotion decision exists.
         </Lane>
       </div>
+
+      <section
+        className="mt-4 rounded border border-white/10 bg-[#101010] p-3"
+        data-vaa1-data-maturation-governance-matrix="true"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+              Governance matrix
+            </div>
+            <div className="text-sm font-semibold text-slate-100">
+              Mature claim and candidate surface audit
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-500">
+            {metrics.governanceMatrixRows.length} inspectable rows
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-[11px]">
+            <thead className="border-b border-white/10 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+              <tr>
+                <th className="py-2 pr-3">Claim</th>
+                <th className="py-2 pr-3">Authority</th>
+                <th className="py-2 pr-3">Maturity</th>
+                <th className="py-2 pr-3">Source</th>
+                <th className="py-2 pr-3">Propagation</th>
+                <th className="py-2 pr-3">Review</th>
+                <th className="py-2 pr-3">Open</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {metrics.governanceMatrixRows.length === 0 ? (
+                <tr>
+                  <td className="py-3 text-slate-500" colSpan={7}>
+                    No governed claims are visible for this analysis yet.
+                  </td>
+                </tr>
+              ) : (
+                metrics.governanceMatrixRows.map((row) => (
+                  <tr key={row.id} data-vaa1-data-maturation-governance-row={row.id}>
+                    <td className="max-w-[220px] py-2 pr-3">
+                      <div className="truncate text-slate-100">{row.label}</div>
+                      <div className="truncate font-mono text-[10px] text-slate-500">{row.id}</div>
+                    </td>
+                    <td className="py-2 pr-3 text-cyan-100">{row.authority}</td>
+                    <td className="py-2 pr-3 text-slate-300">{row.maturity}</td>
+                    <td className="py-2 pr-3 text-slate-400">{row.source}</td>
+                    <td className="py-2 pr-3 text-slate-400">{row.propagation}</td>
+                    <td className="py-2 pr-3 text-amber-100">{row.reviewNeed}</td>
+                    <td className="py-2 pr-3">
+                      <button
+                        type="button"
+                        className="rounded border border-white/10 bg-[#181818] px-2 py-1 text-[10px] text-slate-200 hover:bg-white/10"
+                        onClick={() => openGovernedPanel(row.panel)}
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section
+        className="mt-4 rounded border border-white/10 bg-[#101010] p-3"
+        data-vaa1-data-maturation-quality-agent-tray="true"
+      >
+        <div className="mb-3">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+            Quality Agent
+          </div>
+          <div className="text-sm font-semibold text-slate-100">
+            Audit-only review tray
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            These tickets warn about missing anchors, stale projections, candidate
+            ledger gaps, and source-sampling gaps. They do not overwrite mature data.
+          </p>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-2">
+          {qualityTickets.map((ticket) => (
+            <div
+              key={ticket.id}
+              className={`rounded border px-3 py-2 text-xs ${panelStatusClass(ticket.severity)}`}
+              data-vaa1-data-maturation-quality-ticket={ticket.id}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{ticket.title}</div>
+                  <p className="mt-1 leading-5 opacity-85">{ticket.detail}</p>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded border border-white/10 bg-black/15 px-2 py-1 text-[10px] hover:bg-black/25"
+                  onClick={() => openGovernedPanel(ticket.targetPanel)}
+                >
+                  Inspect
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button

@@ -143,7 +143,7 @@ Design gate:
 - Before another deep BBox implementation pass, run the UI/user-path sprint in `docs/vaa1_bbox_meaning_network_narrative_agent_ui_sprint_2026-06-10.md`.
 - BBox/ROI must be scoped as source-local evidence capture and inspection.
 - Continuity questions must move to Meaning Network and Narrative Agent review surfaces.
-- Raw track ids may support traceback and candidates, but they must not act as record identity or semantic continuity authority.
+- Raw track ids may support traceback and candidates, but they must not act as record authority or Narrative Agent continuity authority.
 
 Tasks:
 
@@ -172,7 +172,7 @@ Acceptance:
 Self-review focus:
 
 - Are all BBox/ROI geometry consumers using the same normalization, resolver, projection, and saved-bundle builder?
-- Has BBox/ROI avoided owning cross-scene identity, object, role, or relation continuity?
+- Has BBox/ROI avoided owning cross-scene Narrative Agent, object, role, or relation continuity?
 
 ## Step 4. Panel Projection Migration
 
@@ -222,21 +222,30 @@ Self-review focus:
 
 Goal: turn Narrative Agents into mature, source-linked agents with paths, roles, relations, and evidence.
 
+Protected milestone:
+
+- Every Narrative Agent addition must mature a governed characteristic, not just add another profile field.
+- Working contract: `docs/vaa1_narrative_agent_characteristics_schema_and_proliferation_contract_2026-06-11.md`.
+
 Tasks:
 
 - Keep Character Paths primarily in Narrative Agent surfaces.
 - Add scene presence, character-by-scene, participant ranking, dramatic archetype readings, and role/relation/action paths.
 - Feed paths from mature BBox/ROI, Meaning Network intervals, transcript/speaker links, scene anchors, object relations, prosody, and manual annotations.
+- Add agent semantic families for persona/alias, appearance, voice/speech, expression/affect, gesture/action, role/function, relation, scene trajectory, object association, linguistic register, continuity, and negative evidence.
+- Make characteristic observations produce better proliferation candidates, stricter rejection, source-sample readiness, and late-video coverage audits.
 - Propagate analyst renames, confirmations, merges, splits, rejections, and drops across panels.
 - Make node/edge sheet actions open the specific relevant Narrative Agent storyline, not a generic overview.
 
 Acceptance:
 
 - Narrative Agents are not just names. They are governed subjects with timelines, evidence, roles, relations, and traceback.
+- Every mature agent characteristic can answer what source evidence supports it, what panels may project it, what it can safely proliferate to, and what it should prevent from proliferating.
 
 Self-review focus:
 
 - Do Narrative Agent changes flow through one governed subject/path model instead of separate rename, profile, BBox, graph, and report paths?
+- Does each characteristic improve Mature Data Proliferation, or is it only descriptive UI?
 
 ## Step 7. Meaning / Plot And Interpretive Lenses
 
@@ -494,6 +503,26 @@ Step 3 first implementation slice:
 - `manual-annotation-governance.test.mjs` now reviews the shared-builder boundary rather than expecting Video Panel to rebuild the schema locally.
 - Verified: `node --test src/frontend/tests/manual-annotation-governance.test.mjs`, `cd src/frontend && npx tsc --noEmit`, `cd src/frontend && npm test`, and `git diff --check`.
 - Residual Step 3 risk: overlay authority selection and the mixed `OverlayBox.normalizedBox` plus pixel `x/y/w/h` representation still need consolidation before the BBox/ROI coordinate regime can be called complete.
+
+Step 2 protected milestone: Data Maturation governance matrix and audit-only Quality Agent tray.
+
+- `DataMaturationPanel.tsx` now exposes a read-only governance matrix derived from manual visual annotations, durable proliferation decisions, mature resolved evidence records, and matcher candidates.
+- Matrix rows show claim label, authority, maturity, source, propagation state, review need, and an inspect action routed to the relevant governed panel.
+- The panel now includes an audit-only Quality Agent tray for candidate-rich/mature-write-light state, manual anchors without mature surface proof, candidate ledger gaps, and missing audiovisual source sampling substrate.
+- The tray explicitly warns and routes review; it does not overwrite mature data or create a new authority path.
+- Regression guards in `manual-annotation-governance.test.mjs` protect the matrix, durable-decision source set, audit-only language, candidate ledger warning, and source-sampling warning.
+- Verified after this Step 2 slice: `cd src/frontend && npm test -- --runTestsByPath tests/manual-annotation-governance.test.mjs`, `cd src/frontend && npx tsc --noEmit`, and `git diff --check`.
+
+Step 5 protected milestone: Meaning Network continuity review skeleton and Narrative Agent appearance table.
+
+- `MeaningPlotPanel.tsx` now exposes a Meaning Network continuity lane for candidate, confirmed, rejected, and conflict edges.
+- Continuity rows are derived from graph edges and remain review objects, not BBox relabel authority.
+- The workbench now exposes a Narrative Agent appearance table with confirmed, candidate, and conflict appearance rows sourced from existing Meaning Network agent nodes.
+- Appearance rows jump to source evidence and route users to the Narrative Agent / Character Paths home rather than asking BBox to solve continuity.
+- `DataMaturationPanel.tsx` now audits temporal evidence coverage across manual annotations, raw/detected objects, transcript, OCR, expressions, audio prosody, and source samples.
+- The audit-only Quality Agent now flags `late-video-evidence-dropoff` when evidence density drops dramatically in the final third of a video, so disappearing annotations/detections become a reviewable pipeline concern rather than an invisible absence.
+- Regression guards in `manual-annotation-governance.test.mjs` protect the continuity lane, continuity state vocabulary, Narrative Agent appearance table, appearance state vocabulary, and late-video evidence drop-off ticket.
+- Verified after this Step 5 slice: `cd src/frontend && npm test -- --runTestsByPath tests/manual-annotation-governance.test.mjs`, `cd src/frontend && npx tsc --noEmit`, and `git diff --check`.
 
 Step 3 protected milestone: exact analyst BBox geometry now sticks and scales.
 
