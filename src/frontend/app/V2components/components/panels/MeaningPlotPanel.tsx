@@ -6,6 +6,7 @@ import { openVideoAtTime } from "@/lib/video-navigation";
 import { apiService, type AnnotationCorrections, type ManualVisualAnnotation, type ProliferationDecision, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
 import {
   retimeManualVisualAnnotationsFromPresenceInterval,
+  upsertMasterSchemaPresenceInterval,
 } from "@/lib/annotation-corrections";
 import {
   matureSceneSegmentsFromAnalysis,
@@ -192,6 +193,35 @@ type NarrativeAgentAppearanceReviewRow = {
   node: MeaningNetworkNode;
 };
 
+type NarrativeAgentSemanticReadinessRow = {
+  key: string;
+  label: string;
+  state: NarrativeAgentAppearanceReviewRow["state"];
+  semanticFamilies: string[];
+  visualPatternSamples: string[];
+  audioPatternSamples: string[];
+  transcriptInterpretationSamples: string[];
+  scenePresenceProse: string;
+  proliferationUse: string;
+  sourceEventId: string;
+  masterTimeLabel: string;
+  timeLabel: string;
+  authority: string;
+  node: MeaningNetworkNode;
+};
+
+type NarrativeAgentAnnotationCardRow = {
+  key: string;
+  label: string;
+  sourceKind: string;
+  sourceEventId: string;
+  timeLabel: string;
+  state: NarrativeAgentAppearanceReviewRow["state"];
+  authority: string;
+  evidenceCount: number;
+  node: MeaningNetworkNode;
+};
+
 function meaningNetworkEvidenceRefKey(ref: MeaningNetworkEvidenceRef): string {
   return [
     ref.evidence_id || "",
@@ -317,6 +347,195 @@ function narrativeAgentAppearanceReviewRows(
         meaningNetworkEvidenceStart(right.node.evidence_refs),
     )
     .slice(0, 24);
+}
+
+function narrativeAgentSemanticFamiliesForRow(row: NarrativeAgentAppearanceReviewRow): string[] {
+  const refs = row.node.evidence_refs || [];
+  const sourceTypes = refs.map((ref) => String(ref.source_type || "").toLowerCase());
+  const attributes = row.node.attributes || {};
+  const families = new Set<string>(["persona/alias", "continuity"]);
+
+  if (
+    sourceTypes.some((type) => /bbox|object|manual|visual|frame|crop|image/.test(type)) ||
+    attributes.bbox_event_id ||
+    attributes.source_track_id
+  ) {
+    families.add("appearance");
+  }
+  if (sourceTypes.some((type) => /audio|prosody|speaker|transcript/.test(type))) {
+    families.add("voice/speech");
+  }
+  if (sourceTypes.some((type) => /expression|affect|emotion/.test(type))) {
+    families.add("expression/affect");
+  }
+  if (Array.isArray(attributes.role_labels) || attributes.role || attributes.role_description) {
+    families.add("role/function");
+  }
+  if (Array.isArray(attributes.relations) || attributes.relation) {
+    families.add("relation");
+  }
+  if (row.timeLabel !== "source pending") {
+    families.add("scene trajectory");
+  }
+  if (row.state === "conflict") {
+    families.add("negative evidence");
+  }
+
+  return [...families];
+}
+
+function narrativeAgentEvidenceSampleLabels(
+  refs: MeaningNetworkEvidenceRef[],
+  kind: "visual" | "audio" | "transcript",
+): string[] {
+  const pattern = kind === "visual"
+    ? /bbox|object|manual|visual|frame|crop|image|expression/
+    : kind === "audio"
+      ? /audio|prosody|speaker|speech/
+      : /transcript|speaker|speech|sfl|dependency|pos/;
+  const labels = refs
+    .filter((ref) => pattern.test(String(ref.source_type || "").toLowerCase()))
+    .map((ref) => {
+      const source = String(ref.source_type || kind).replaceAll("_", " ");
+      const time = meaningNetworkSourceTimeLabel([ref]);
+      return `${source} ${time}`;
+    });
+  return [...new Set(labels)].slice(0, 3);
+}
+
+function narrativeAgentScenePresenceProse(row: NarrativeAgentAppearanceReviewRow): string {
+  const timeText = row.timeLabel === "source pending" ? "a source-pending moment" : row.timeLabel;
+  if (row.state === "conflict") {
+    return `${row.label} has conflicted scene presence around ${timeText}; graph review must resolve the evidence before proliferation.`;
+  }
+  if (row.state === "confirmed") {
+    return `${row.label} is source-present around ${timeText} with governed evidence ready for panel projection.`;
+  }
+  return `${row.label} has candidate scene presence around ${timeText}; samples and source anchors should be inspected before promotion.`;
+}
+
+function narrativeAgentProliferationUse(row: NarrativeAgentAppearanceReviewRow, families: string[]): string {
+  if (row.state === "conflict") {
+    return "Blocks unsafe propagation and preserves contradiction evidence for analyst review.";
+  }
+  if (families.includes("voice/speech") && families.includes("appearance")) {
+    return "Can strengthen cross-modal proliferation because visual and audio evidence co-support the agent reading.";
+  }
+  if (families.includes("appearance")) {
+    return "Can seed visual continuity candidates while staying bounded to source evidence.";
+  }
+  if (families.includes("voice/speech")) {
+    return "Can seed speaker/prosody candidates while waiting for visual corroboration.";
+  }
+  return "Keeps the agent reading inspectable, but needs richer samples before dynamic proliferation.";
+}
+
+function narrativeAgentSemanticReadinessRowsFromAppearances(
+  rows: NarrativeAgentAppearanceReviewRow[],
+): NarrativeAgentSemanticReadinessRow[] {
+  return rows.slice(0, 18).map((row) => {
+    const semanticFamilies = narrativeAgentSemanticFamiliesForRow(row);
+    const visualPatternSamples = narrativeAgentEvidenceSampleLabels(row.node.evidence_refs || [], "visual");
+    const audioPatternSamples = narrativeAgentEvidenceSampleLabels(row.node.evidence_refs || [], "audio");
+    const transcriptInterpretationSamples = narrativeAgentEvidenceSampleLabels(row.node.evidence_refs || [], "transcript");
+    return {
+      key: `semantic:${row.key}`,
+      label: row.label,
+      state: row.state,
+      semanticFamilies,
+      visualPatternSamples,
+      audioPatternSamples,
+      transcriptInterpretationSamples,
+      scenePresenceProse: narrativeAgentScenePresenceProse(row),
+      proliferationUse: narrativeAgentProliferationUse(row, semanticFamilies),
+      sourceEventId: row.sourceEventId,
+      masterTimeLabel: row.timeLabel,
+      timeLabel: row.timeLabel,
+      authority: row.authority,
+      node: row.node,
+    };
+  });
+}
+
+function narrativeAgentAnnotationCardMatchKeys(
+  node: MeaningNetworkNode,
+  renamed: Record<string, string>,
+): string[] {
+  const attrs = node.attributes || {};
+  return [
+    node.node_id,
+    renamed[node.node_id],
+    node.label,
+    attrs.profile_id,
+    attrs.narrative_agent_profile_id,
+    attrs.master_schema_record_id,
+    attrs.target_id,
+    attrs.raw_label,
+    attrs.actor_name,
+  ]
+    .map(normalizeAgentKey)
+    .filter(Boolean);
+}
+
+function narrativeAgentAnnotationCardRowsForNode(
+  selectedNode: MeaningNetworkNode,
+  groups: Array<{ key: string; label: string; nodes: MeaningNetworkNode[] }>,
+  renamed: Record<string, string>,
+): NarrativeAgentAnnotationCardRow[] {
+  const selectedKeys = narrativeAgentAnnotationCardMatchKeys(selectedNode, renamed);
+  const relatedNodes = groups
+    .flatMap((group) => group.nodes)
+    .filter((node) => {
+      if (node.node_id === selectedNode.node_id) return true;
+      const candidateKeys = narrativeAgentAnnotationCardMatchKeys(node, renamed);
+      return candidateKeys.some((candidate) =>
+        selectedKeys.some((selected) =>
+          candidate === selected ||
+          (candidate.length > 3 && selected.includes(candidate)) ||
+          (selected.length > 3 && candidate.includes(selected)),
+        ),
+      );
+    });
+  const byId = new Map<string, MeaningNetworkNode>();
+  relatedNodes.forEach((node) => byId.set(node.node_id, node));
+  return [...byId.values()]
+    .map((node, index) => {
+      const level = String(node.maturity?.level || "").toLowerCase();
+      const authority = String(node.maturity?.authority || "authority pending");
+      const conflict = /conflict/.test(level);
+      const confirmed = /confirm|mature|analyst/.test(level) || /manual|analyst/.test(authority);
+      const state: NarrativeAgentAnnotationCardRow["state"] = conflict
+        ? "conflict"
+        : confirmed
+          ? "confirmed"
+          : "candidate";
+      const sourceKind = String(
+        node.attributes?.source_panel ||
+          node.ui?.display_group ||
+          node.attributes?.category ||
+          node.node_type ||
+          "meaning network",
+      ).replaceAll("_", " ");
+      return {
+        key: `narrative-agent-annotation-card:${node.node_id}:${index}`,
+        label: renamed[node.node_id] || node.label,
+        sourceKind,
+        sourceEventId:
+          node.evidence_refs?.[0]?.evidence_id ||
+          String(node.attributes?.master_schema_record_id || node.attributes?.target_id || node.node_id),
+        timeLabel: meaningNetworkSourceTimeLabel(node.evidence_refs),
+        state,
+        authority,
+        evidenceCount: node.evidence_refs?.length || 0,
+        node,
+      };
+    })
+    .sort(
+      (left, right) =>
+        meaningNetworkEvidenceStart(left.node.evidence_refs) -
+        meaningNetworkEvidenceStart(right.node.evidence_refs),
+    )
+    .slice(0, 18);
 }
 
 type MeaningNetworkArtifact = {
@@ -581,6 +800,16 @@ const MEANING_NETWORK_SFL_CONFIRMATION_RELATIONS = [
   "morally_legitimizes",
   "morally_delegitimizes",
 ];
+
+const NARRATIVE_AGENT_VOCAL_AFFECT_REGISTRY: Record<
+  "positive" | "negative" | "regulating" | "ambivalent",
+  string[]
+> = {
+  positive: ["warmth", "reassurance", "delight", "tenderness", "confidence", "relief"],
+  negative: ["distress", "anger", "fear", "contempt", "grief", "hostility"],
+  regulating: ["calm", "composure", "restraint", "formal_neutrality", "reflection", "measured_delivery"],
+  ambivalent: ["irony", "hesitation", "uncertainty", "mixed_affect", "masking", "performative_control"],
+};
 
 const MEANING_NETWORK_SFL_VIRTUES: Record<string, Record<string, { positive: string[]; antithesis: string[] }>> = {
   wisdom_and_knowledge: {
@@ -2719,11 +2948,15 @@ export default function MeaningPlotPanel({
   initialMeaningNetworkExpanded = false,
   initialMeaningNetworkViewMode = "graph",
   dedicatedMeaningNetworkPanel = false,
+  focusNarrativeAgentNodeId = "",
+  focusNarrativeAgentLabel = "",
 }: {
   videoId?: string;
   initialMeaningNetworkExpanded?: boolean;
   initialMeaningNetworkViewMode?: MeaningNetworkViewMode;
   dedicatedMeaningNetworkPanel?: boolean;
+  focusNarrativeAgentNodeId?: string;
+  focusNarrativeAgentLabel?: string;
 }) {
   const [selectedVideoId, setSelectedVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
@@ -3369,6 +3602,10 @@ export default function MeaningPlotPanel({
     () => narrativeAgentAppearanceReviewRows(characterTimelineGroups),
     [characterTimelineGroups],
   );
+  const narrativeAgentSemanticReadinessRows = useMemo(
+    () => narrativeAgentSemanticReadinessRowsFromAppearances(narrativeAgentAppearanceRows),
+    [narrativeAgentAppearanceRows],
+  );
   const plotInstructions = useMemo(
     () =>
       instructions
@@ -3514,6 +3751,58 @@ export default function MeaningPlotPanel({
       generic_narrative_agent_view_opened: false,
     });
   }, [selectedVideoId]);
+
+  const openNarrativeAgentAnnotationCardForRequest = useCallback((request: {
+    nodeId?: string;
+    label?: string;
+    sourcePanel?: string;
+  }) => {
+    const requestedNodeId = String(request.nodeId || "").trim();
+    const requestedLabel = normalizeAgentKey(request.label);
+    const node = meaningNetworkNodes.find((candidate) => {
+      if (requestedNodeId && candidate.node_id === requestedNodeId) return true;
+      const candidateKeys = narrativeAgentAnnotationCardMatchKeys(candidate, renamedMeaningNetworkMarkers);
+      return candidateKeys.some((key) =>
+        requestedNodeId
+          ? requestedNodeId.includes(key) || key.includes(requestedNodeId)
+          : requestedLabel && (key === requestedLabel || key.includes(requestedLabel) || requestedLabel.includes(key)),
+      );
+    });
+    if (!node) return;
+    setMeaningNetworkViewMode("graph");
+    setSelectedMeaningNetworkNodeId(node.node_id);
+    setMeaningNetworkSheet({ kind: "node", node });
+    eventBus.emit("meaningNetworkNarrativeAgentAnnotationCardOpened", {
+      videoId: selectedVideoId,
+      node_id: node.node_id,
+      label: renamedMeaningNetworkMarkers[node.node_id] || node.label,
+      opened_from: request.sourcePanel || "NarrativeAgentPanel",
+      generic_narrative_agent_view_opened: false,
+    });
+  }, [meaningNetworkNodes, renamedMeaningNetworkMarkers, selectedVideoId]);
+
+  useEffect(() => {
+    if (!focusNarrativeAgentNodeId && !focusNarrativeAgentLabel) return;
+    openNarrativeAgentAnnotationCardForRequest({
+      nodeId: focusNarrativeAgentNodeId,
+      label: focusNarrativeAgentLabel,
+      sourcePanel: "NarrativeAgentPanel",
+    });
+  }, [focusNarrativeAgentLabel, focusNarrativeAgentNodeId, openNarrativeAgentAnnotationCardForRequest]);
+
+  useEffect(() => {
+    const handler = (payload: {
+      videoId?: string;
+      nodeId?: string;
+      label?: string;
+      sourcePanel?: string;
+    }) => {
+      if (payload?.videoId && selectedVideoId && payload.videoId !== selectedVideoId) return;
+      openNarrativeAgentAnnotationCardForRequest(payload || {});
+    };
+    eventBus.on("narrativeAgentGraphAnnotationCardRequested", handler);
+    return () => eventBus.off("narrativeAgentGraphAnnotationCardRequested", handler);
+  }, [openNarrativeAgentAnnotationCardForRequest, selectedVideoId]);
 
   const openSpecificNarrativeAgentStoryline = useCallback((node: MeaningNetworkNode) => {
     eventBus.emit("openPanelRequest", {
@@ -3684,24 +3973,9 @@ export default function MeaningPlotPanel({
       updated_at: now,
       updated_by: "analyst",
     };
-    const currentIntervals = existing.master_schema_presence_intervals || [];
-    const nextIntervals = [
-      ...currentIntervals.filter((item) => item.id !== interval.id && item.node_id !== interval.node_id),
-      interval,
-    ];
     const nextCorrectionsBase: AnnotationCorrections = {
-      ...existing,
+      ...upsertMasterSchemaPresenceInterval(existing, interval, { now }),
       analysis_id: selectedVideoId,
-      version: 1,
-      updated_at: now,
-      updated_by: "analyst",
-      text_substitutions: existing.text_substitutions || [],
-      label_overrides: existing.label_overrides || [],
-      manual_transcript_entries: existing.manual_transcript_entries || [],
-      manual_visual_annotations: existing.manual_visual_annotations || [],
-      proliferation_decisions: existing.proliferation_decisions || [],
-      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
-      master_schema_presence_intervals: nextIntervals,
     };
     const nextCorrections = retimeManualVisualAnnotationsFromPresenceInterval(
       nextCorrectionsBase,
@@ -3830,6 +4104,27 @@ export default function MeaningPlotPanel({
     setSelectedMeaningNetworkNodeId(null);
     setMeaningNetworkViewMode("graph");
   }, []);
+
+  const closeMeaningNetworkOverlay = useCallback(() => {
+    setMeaningNetworkExpanded(false);
+    setMeaningNetworkContextMenu(null);
+    eventBus.emit("meaningNetworkOverlayClosed", {
+      videoId: selectedVideoId,
+      source: "in_panel_close",
+    });
+  }, [selectedVideoId]);
+
+  useEffect(() => {
+    if (dedicatedMeaningNetworkPanel || !meaningNetworkExpanded) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      closeMeaningNetworkOverlay();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [closeMeaningNetworkOverlay, dedicatedMeaningNetworkPanel, meaningNetworkExpanded]);
 
   const reportMeaningNetworkMaturitySave = useCallback((message: string, detail: string, status: "saved" | "staged" | "error" = "saved") => {
     setMeaningNetworkSaveFeedback({
@@ -5492,6 +5787,16 @@ export default function MeaningPlotPanel({
                   >
                     {dedicatedMeaningNetworkPanel ? "Dedicated panel" : meaningNetworkExpanded ? "Collapse" : "Expand"}
                   </button>
+                  {meaningNetworkExpanded && !dedicatedMeaningNetworkPanel ? (
+                    <button
+                      type="button"
+                      onClick={closeMeaningNetworkOverlay}
+                      className="rounded border border-rose-800/70 bg-[#101010] px-2 py-1 text-[10px] text-rose-100 hover:bg-rose-950/25"
+                      data-vaa1-meaning-network-close-overlay="true"
+                    >
+                      Close graph
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {
@@ -6142,6 +6447,13 @@ export default function MeaningPlotPanel({
                       const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
                       const refs = node.evidence_refs || [];
                       const range = meaningNetworkVerificationRange(node);
+                      const narrativeAgentAnnotationRows = isNarrativeAgentMeaningNode(node)
+                        ? narrativeAgentAnnotationCardRowsForNode(
+                            node,
+                            characterTimelineGroups,
+                            renamedMeaningNetworkMarkers,
+                          )
+                        : [];
                       return (
                         <>
                           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -6174,6 +6486,88 @@ export default function MeaningPlotPanel({
                             </div>
                           </div>
                           {renderMeaningNetworkSflControls("node", node)}
+                          {isNarrativeAgentMeaningNode(node) ? (
+                            <div
+                              className="mt-2 rounded border border-violet-900/50 bg-violet-950/10 p-2"
+                              data-vaa1-meaning-network-agent-annotation-card="true"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <div className="text-[9px] uppercase tracking-[0.12em] text-violet-200">
+                                    Narrative Agent annotation card
+                                  </div>
+                                  <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                                    Related detections and annotations for this node. Source edits stay governed by their originating panel.
+                                  </div>
+                                </div>
+                                <div
+                                  className="rounded border border-violet-900/60 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-violet-100"
+                                  data-vaa1-meaning-network-agent-annotation-card-count="true"
+                                >
+                                  {narrativeAgentAnnotationRows.length} linked
+                                </div>
+                              </div>
+                              <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+                                {narrativeAgentAnnotationRows.length === 0 ? (
+                                  <div className="rounded border border-dashed border-slate-800 px-2 py-2 text-[10px] text-slate-500">
+                                    No related source rows are linked to this Narrative Agent node yet.
+                                  </div>
+                                ) : (
+                                  narrativeAgentAnnotationRows.map((row) => (
+                                    <div
+                                      key={row.key}
+                                      className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+                                      data-vaa1-meaning-network-agent-annotation-card-row={row.state}
+                                    >
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <button
+                                          type="button"
+                                          className="min-w-0 text-left"
+                                          onClick={() => navigateToMeaningNetworkEvidence(row.node)}
+                                        >
+                                          <div className="truncate text-[10px] text-slate-100">
+                                            {row.label}
+                                          </div>
+                                          <div className="truncate text-[9px] text-slate-500">
+                                            {row.sourceKind} / {row.timeLabel} / refs {row.evidenceCount}
+                                          </div>
+                                        </button>
+                                        <div className="flex shrink-0 flex-wrap gap-1">
+                                          <span className="rounded border border-white/10 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-violet-100">
+                                            {row.state}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="rounded border border-cyan-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/30"
+                                            data-vaa1-meaning-network-agent-annotation-card-jump="true"
+                                            onClick={() => navigateToMeaningNetworkEvidence(row.node)}
+                                          >
+                                            Jump
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="rounded border border-emerald-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                                            data-vaa1-meaning-network-agent-annotation-card-confirm="true"
+                                            onClick={() => void quickConfirmMeaningNetworkNode(row.node)}
+                                          >
+                                            Confirm
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="rounded border border-slate-700 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-teal-700 hover:text-teal-100"
+                                            data-vaa1-meaning-network-agent-annotation-card-edit="true"
+                                            onClick={() => renameMeaningNetworkNode(row.node)}
+                                          >
+                                            Edit label
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
                           <div className="mt-2 flex flex-wrap gap-1">
                             <button
                               type="button"
@@ -6611,6 +7005,119 @@ export default function MeaningPlotPanel({
                             <div className="shrink-0 rounded border border-white/10 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-amber-100">
                               {row.state}
                             </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded border border-slate-800 bg-[#101010] p-2 xl:col-span-2"
+                  data-vaa1-narrative-agent-semantic-readiness="true"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                        Narrative Agent semantic readiness
+                      </div>
+                      <div className="text-xs font-semibold text-slate-100">
+                        Scene presence, visual pattern samples, and audio pattern samples
+                      </div>
+                      <div
+                        className="mt-0.5 text-[9px] text-slate-500"
+                        data-vaa1-narrative-agent-balanced-vocal-affect-registry="true"
+                      >
+                        Balanced vocal-affect registry: positive, negative, regulating, and ambivalent cues are equal candidates.
+                      </div>
+                      <div
+                        className="mt-0.5 text-[9px] text-slate-500"
+                        data-vaa1-narrative-agent-master-time-contract="true"
+                      >
+                        Master time: visual expression, vocal expression, transcript interpretation, and scene presence use the same source-video clock.
+                      </div>
+                    </div>
+                    <div className="rounded border border-cyan-900/60 bg-[#080b0b] px-2 py-1 text-[9px] text-cyan-100">
+                      {narrativeAgentSemanticReadinessRows.length} rows
+                    </div>
+                  </div>
+                  <div className="max-h-64 space-y-1 overflow-auto">
+                    {narrativeAgentSemanticReadinessRows.length === 0 ? (
+                      <div className="rounded border border-dashed border-slate-800 px-2 py-3 text-[10px] text-slate-500">
+                        Semantic readiness appears when Narrative Agent appearances have source evidence. Visual and audio pattern samples remain pending until source anchors exist.
+                      </div>
+                    ) : (
+                      narrativeAgentSemanticReadinessRows.map((row) => (
+                        <div
+                          key={row.key}
+                          className="rounded border border-slate-800 bg-[#141414] px-2 py-1.5"
+                          data-vaa1-narrative-agent-semantic-readiness-row={row.state}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <button
+                              type="button"
+                              className="min-w-0 text-left"
+                              onClick={() => navigateToMeaningNetworkEvidence(row.node)}
+                            >
+                              <div className="truncate text-[11px] text-slate-100">{row.label}</div>
+                              <div
+                                className="mt-0.5 text-[10px] leading-snug text-slate-400"
+                                data-vaa1-narrative-agent-scene-presence-prose="true"
+                              >
+                                {row.scenePresenceProse}
+                              </div>
+                            </button>
+                            <div className="shrink-0 rounded border border-white/10 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-emerald-100">
+                              {row.state}
+                            </div>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span
+                              className="rounded border border-cyan-900/70 bg-[#061011] px-1.5 py-0.5 text-[9px] text-cyan-100"
+                              data-vaa1-narrative-agent-master-time-label="true"
+                            >
+                              master time {row.masterTimeLabel}
+                            </span>
+                            {row.semanticFamilies.map((family) => (
+                              <span
+                                key={`${row.key}:family:${family}`}
+                                className="rounded border border-slate-700 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-slate-300"
+                              >
+                                {family}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="mt-1 grid gap-1 md:grid-cols-3">
+                            <div
+                              className="rounded border border-slate-800 bg-[#0b0b0b] px-2 py-1 text-[9px] text-slate-400"
+                              data-vaa1-narrative-agent-visual-pattern-samples="true"
+                            >
+                              <span className="text-slate-500">visual pattern samples: </span>
+                              {row.visualPatternSamples.length > 0
+                                ? row.visualPatternSamples.join(" / ")
+                                : "pending source crop or visual anchor"}
+                            </div>
+                            <div
+                              className="rounded border border-slate-800 bg-[#0b0b0b] px-2 py-1 text-[9px] text-slate-400"
+                              data-vaa1-narrative-agent-audio-pattern-samples="true"
+                            >
+                              <span className="text-slate-500">audio pattern samples: </span>
+                              {row.audioPatternSamples.length > 0
+                                ? row.audioPatternSamples.join(" / ")
+                                : "pending voice, transcript, or prosody anchor"}
+                            </div>
+                            <div
+                              className="rounded border border-slate-800 bg-[#0b0b0b] px-2 py-1 text-[9px] text-slate-400"
+                              data-vaa1-narrative-agent-transcript-interpretation-samples="true"
+                            >
+                              <span className="text-slate-500">transcript interpretation: </span>
+                              {row.transcriptInterpretationSamples.length > 0
+                                ? row.transcriptInterpretationSamples.join(" / ")
+                                : "pending transcript, SFL, or dependency anchor"}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-[9px] leading-snug text-cyan-100/80">
+                            {row.proliferationUse}
                           </div>
                         </div>
                       ))

@@ -1008,8 +1008,8 @@ test("video bbox labels consume Master Schema maturity before raw detector label
 
   assert.match(
     videoService,
-    /records\.push\(\.\.\.masterSchemaObjectRecords\(masterSchema\)\)/,
-    "resolved evidence must include Master Schema object and track records",
+    /masterSchemaScopedRecords\([\s\S]*masterSchemaObjectRecords\(masterSchema\)[\s\S]*masterSchema[\s\S]*analysisId/,
+    "resolved evidence must include analysis-scoped Master Schema object and track records",
   );
 
   assert.match(
@@ -1558,6 +1558,282 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
+    /data-vaa1-narrative-agent-review-compass="true"/,
+    "Narrative Agent panel must expose a stable review compass for usability",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-single-profile-selector="true"/,
+    "Narrative Agent panel must expose a single-profile selector instead of dumping all agents at once",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-profile-dropdown="true"/,
+    "Narrative Agent panel must use a dropdown to select one canonical agent profile",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-single-profile-view="true"/,
+    "Narrative Agent panel must render one selected character profile at a time",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /findNarrativeAgentRowKey[\s\S]*sharesProfile[\s\S]*sharesAlias[\s\S]*likelySame/,
+    "Narrative Agent rows must combine multiple labels for the same character through profile, alias, or clear label evidence",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-combined-profile-aliases="true"/,
+    "Narrative Agent panel must keep combined labels visible as source evidence",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Overview[\s\S]*Evidence[\s\S]*Semantics[\s\S]*Continuity[\s\S]*Scenes/,
+    "Narrative Agent review compass must name overview, evidence, semantics, continuity, and scenes",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Agent semantics are source-linked and Master-time governed[\s\S]*Meaning Network for continuity review/,
+    "Narrative Agent review compass must orient semantics to source evidence and route continuity to Meaning Network",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-timeline-strip="true"/,
+    "Narrative Agent panel must expose a simple one-agent timeline strip",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-timeline-handle=\{handle\.kind\}/,
+    "Narrative Agent timeline strip must render clickable source, scene, and cue handles",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /sourceItems[\s\S]*timeSupportsFromSourceItem[\s\S]*kind:\s*"occurrence"/,
+    "Narrative Agent timeline must preserve all merged source evidence items and render occurrence handles beyond the first source item",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-timeline-cursor-line="true"/,
+    "Narrative Agent timeline must expose a visible cursor synchronized to source video time",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /eventBus\.on\("videoTimeLineChanged", handler\)/,
+    "Narrative Agent timeline cursor must use the shared source-video timeline event",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /narrativeAgentNearestTimelineHandles[\s\S]*data-vaa1-narrative-agent-timeline-near-cursor="true"/,
+    "Narrative Agent timeline must provide a readable near-cursor handle lane instead of relying on dense rail labels",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /narrativeAgentHandleRailGlyph[\s\S]*className=\{`absolute top-1\/2 flex h-4 w-4/,
+    "Narrative Agent rail handles must render as compact markers so the timeline remains navigable",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-timeline-handle-commits-presence="true"/,
+    "Narrative Agent timeline handles must commit governed presence intervals, not only navigate",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /openVideoAtTime\(videoId, handle\.time\)[\s\S]*onCommitTimelineHandle\(\{ row: selectedRow, handle \}\)/,
+    "Narrative Agent timeline handles must request a saved handle and still navigate to source video time",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /onCommitTimelineHandle=\{\(commit\) => \{[\s\S]*commitNarrativeAgentTimelineHandle\(commit\)/,
+    "Narrative Agent timeline handle commit requests must route to the Master Schema save path",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /buildNarrativeAgentTimelinePresenceInterval[\s\S]*master_schema_surface:\s*"narrative_agent_profile_annotations"[\s\S]*source_range_source:\s*"narrative_agent_timeline_handle"/,
+    "Narrative Agent timeline handle saves must produce Master Schema presence intervals for the Narrative Agent surface",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /upsertMasterSchemaPresenceInterval\(existingCorrections, interval/,
+    "Narrative Agent timeline handles must use the shared Master Schema presence interval upsert engine",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /presenceIntervals:[\s\S]*master_schema_presence_intervals[\s\S]*Master Schema Narrative Agent handle[\s\S]*timeline handle/,
+    "Narrative Agent timeline and graph must rehydrate saved Master Schema handle intervals",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /retimeManualVisualAnnotationsFromPresenceInterval\([\s\S]*nextCorrectionsBase,[\s\S]*interval/,
+    "Narrative Agent timeline handles must retime linked manual visual annotations through the same presence interval path",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /upsertMasterSchemaPresenceInterval\(existing, interval/,
+    "Meaning Network graph handles must use the same shared Master Schema presence interval upsert engine",
+  );
+
+  assert.match(
+    annotationCorrections,
+    /export function upsertMasterSchemaPresenceInterval/,
+    "Master Schema presence interval upsert must be shared between Meaning Network and Narrative Agent handles",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-timeline-open-meaning-network="true"/,
+    "Narrative Agent timeline strip must hand fuller continuity review to Meaning Network",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /type NarrativeAgentGraphNode[\s\S]*kind:\s*"agent" \| "source" \| "scene" \| "cue" \| "occurrence"/,
+    "Narrative Agent panel must model a real one-agent graph with agent, source, scene, cue, and occurrence nodes",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /function buildNarrativeAgentGraphModel[\s\S]*scene_presence[\s\S]*source_anchor[\s\S]*cue_support[\s\S]*occurrence_support/,
+    "Narrative Agent graph must build typed evidence edges instead of rendering nominal labels only",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-operational-graph="true"/,
+    "Narrative Agent panel must render an operational graph surface",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-node=\{node\.kind\}/,
+    "Narrative Agent graph must render interactive typed nodes",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /selectNarrativeAgentGraphNode[\s\S]*seekNarrativeAgentGraphSource\(videoId, node\.time\)[\s\S]*narrativeAgentGraphNodeSelected/,
+    "Narrative Agent graph node selection must seek source video without changing panel focus and emit a governed selection event",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /function seekNarrativeAgentGraphSource[\s\S]*videoTimeLineChanged[\s\S]*narrativeAgentGraphSourceSeekRequested[\s\S]*focus_panel_changed:\s*false/,
+    "Narrative Agent graph source seeking must use the loaded source-video clock instead of opening another panel",
+  );
+
+  assert.doesNotMatch(
+    masterSchemaPanel,
+    /selectNarrativeAgentGraphNode[\s\S]{0,500}openVideoAtTime/,
+    "Narrative Agent graph node selection must not call the panel-opening video navigation helper",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-node-handle-label="true"[\s\S]*formatSeconds\(node\.time\)/,
+    "Narrative Agent graph nodes must visibly surface their handle time instead of generic node labels only",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-node-start-handle="true"[\s\S]*data-vaa1-narrative-agent-graph-node-end-handle="true"[\s\S]*data-vaa1-narrative-agent-graph-node-duration-bar="true"/,
+    "Narrative Agent graph nodes must expose visible stretchable start/end handles on the nodes themselves",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /startNarrativeAgentGraphNodeHandleDrag[\s\S]*setGraphNodeHandleDrag/,
+    "Narrative Agent graph node handles must drag in place and update the governed presence draft without panel navigation",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /const handlePointerMove[\s\S]*setGraphDurationDrafts[\s\S]*narrativeAgentGraphNodeHandleDragged[\s\S]*window\.addEventListener\("pointermove", handlePointerMove\)/,
+    "Narrative Agent graph node handle dragging must update the presence draft and emit a governed drag event",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-open-annotation-card="true"/,
+    "Narrative Agent graph must expose an annotation-card action",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /openSelectedAgentAnnotationCard[\s\S]*nodeId[\s\S]*sourcePanel:\s*"NarrativeAgentPanel"[\s\S]*narrativeAgentGraphAnnotationCardRequested/,
+    "Narrative Agent graph must request the selected agent's annotation card through the shared Meaning Network sheet path",
+  );
+
+  assert.doesNotMatch(
+    masterSchemaPanel,
+    /openSelectedAgentAnnotationCard[\s\S]{0,900}openPanel\("MeaningPlot"/,
+    "Narrative Agent graph annotation-card handoff must not navigate away from the current panel",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-selection-card="true"[\s\S]*data-vaa1-narrative-agent-graph-jump-source="true"/,
+    "Narrative Agent graph must expose a selected-node work card with source jump action",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-fast-presence-editor="true"[\s\S]*data-vaa1-narrative-agent-graph-draggable-duration-handle="true"[\s\S]*data-vaa1-narrative-agent-graph-fast-confirm-presence="true"/,
+    "Narrative Agent graph must support fast draggable presence-length confirmation in place",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /confirmSelectedGraphNodePresence[\s\S]*onCommitTimelineHandle\(\{[\s\S]*quick-presence/,
+    "Narrative Agent graph fast confirmation must reuse the governed timeline-handle save path",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /analysisDataRef[\s\S]*currentAnalysis[\s\S]*currentAnalysis\.analysisId[\s\S]*setAnalysisData\(null\)/,
+    "Narrative Agent panel must keep current analysis visible during same-video background refreshes",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /isLoading && !analysisData[\s\S]*data-vaa1-master-schema-background-refresh="true"/,
+    "Narrative Agent panel must show only a small background refresh state when current data is still usable",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /VideoService\.saveAnnotationCorrections\(videoId, nextCorrections\)[\s\S]*setAnalysisData\(\(current:[\s\S]*annotationCorrections:\s*nextCorrections/,
+    "Narrative Agent fast handle saves must update local corrections optimistically instead of reloading the panel",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /suppressNextLocalCorrectionRefreshRef\.current = true[\s\S]*broadcastAnalysisCorrectionRefresh\(videoId\)/,
+    "Narrative Agent fast handle saves must suppress their own correction-refresh reload",
+  );
+
+  assert.match(
+    masterSchemaPanel,
     /const NARRATIVE_AGENT_ARCHETYPE_LENSES/,
     "Narrative Agent panel must keep dramatic archetype readings available",
   );
@@ -1572,6 +1848,24 @@ test("Narrative Agent panel owns Character Paths home", () => {
     masterSchemaPanel,
     /buildNarrativeAgentPathRows/,
     "Narrative Agent Character Paths must read governed agent rows from shared analysis data",
+  );
+
+  assert.match(
+    videoService,
+    /analysisId:\s*id/,
+    "VideoService analysis data must carry the active analysis id so panels can reject stale cross-analysis payloads",
+  );
+
+  assert.match(
+    videoService,
+    /masterSchemaScopedRecords[\s\S]*schemaAnalysisId === analysisId[\s\S]*recordAnalysisId === analysisId/,
+    "Master Schema resolved evidence must reject records from a foreign analysis id",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /setAnalysisData\(null\)[\s\S]*VideoService\.getAnalysis\(requestedVideoId\)[\s\S]*nextAnalysisData\.analysisId[\s\S]*nextAnalysisData\.analysisId !== requestedVideoId/,
+    "Narrative Agent panel must clear stale data and reject late analysis responses from another saved work",
   );
 
   assert.match(
@@ -2501,6 +2795,60 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
+    /data-vaa1-narrative-agent-semantic-readiness="true"/,
+    "Meaning Network workbench must expose Narrative Agent semantic readiness",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-visual-pattern-samples="true"/,
+    "Narrative Agent semantic readiness must surface visual pattern sample status from the start",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-audio-pattern-samples="true"/,
+    "Narrative Agent semantic readiness must surface audio pattern sample status from the start",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /NARRATIVE_AGENT_VOCAL_AFFECT_REGISTRY[\s\S]*positive:\s*\[[\s\S]*negative:\s*\[[\s\S]*regulating:\s*\[[\s\S]*ambivalent:\s*\[/,
+    "Narrative Agent vocal-affect readiness must keep positive, negative, regulating, and ambivalent registries on equal footing",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-balanced-vocal-affect-registry="true"/,
+    "Narrative Agent semantic readiness must visibly reject a stress/emphasis-only audio-affect model",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-master-time-contract="true"/,
+    "Narrative Agent semantic readiness must state that visual, vocal, transcript, and scene presence evidence share Master time",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /masterTimeLabel:\s*row\.timeLabel/,
+    "Narrative Agent semantic readiness rows must derive their Master time label from the source evidence time label",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-transcript-interpretation-samples="true"/,
+    "Narrative Agent semantic readiness must include transcript interpretation samples on the same Master time surface",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-scene-presence-prose="true"/,
+    "Narrative Agent semantic readiness must include simple scene-presence prose",
+  );
+
+  assert.match(
+    meaningPlotPanel,
     /data-vaa1-meaning-network-node-list-scroll="true"/,
     "Meaning Network node marker lists must be independently scrollable when hundreds of detections surface",
   );
@@ -2647,6 +2995,90 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /data-vaa1-meaning-network-sheet-specific-storyline="true"/,
     "Narrative Agent node sheets must expose a specific storyline leaf action",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-agent-annotation-card="true"/,
+    "Narrative Agent nodes must open an annotation card in the Meaning Network sheet",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /narrativeAgentAnnotationCardRowsForNode[\s\S]*characterTimelineGroups[\s\S]*renamedMeaningNetworkMarkers/,
+    "Narrative Agent annotation cards must gather related detections and annotations for the selected node",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-agent-annotation-card-row=\{row\.state\}/,
+    "Narrative Agent annotation cards must render each related detection or annotation as an inspectable row",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-agent-annotation-card-jump="true"[\s\S]*navigateToMeaningNetworkEvidence\(row\.node\)/,
+    "Narrative Agent annotation card rows must jump back to their source evidence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-agent-annotation-card-confirm="true"[\s\S]*quickConfirmMeaningNetworkNode\(row\.node\)/,
+    "Narrative Agent annotation card rows must allow confirmation through the existing governed node save path",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-agent-annotation-card-edit="true"[\s\S]*renameMeaningNetworkNode\(row\.node\)/,
+    "Narrative Agent annotation card rows must expose an edit action for the linked node label",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /focusNarrativeAgentNodeId[\s\S]*focusNarrativeAgentLabel/,
+    "Meaning Network must accept a focused Narrative Agent request from the Narrative Agent graph",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /openNarrativeAgentAnnotationCardForRequest[\s\S]*setMeaningNetworkViewMode\("graph"\)[\s\S]*setSelectedMeaningNetworkNodeId\(node\.node_id\)[\s\S]*setMeaningNetworkSheet\(\{ kind: "node", node \}\)/,
+    "Meaning Network must focus the selected Narrative Agent node sheet as an annotation card without forcing a full-screen graph",
+  );
+
+  assert.doesNotMatch(
+    meaningPlotPanel,
+    /openNarrativeAgentAnnotationCardForRequest[\s\S]{0,900}setMeaningNetworkExpanded\(true\)/,
+    "Narrative Agent graph annotation-card requests must not trap the dashboard in the expanded Meaning Network overlay",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-close-overlay="true"/,
+    "Expanded Meaning Network graph must expose an in-panel close control",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /closeMeaningNetworkOverlay[\s\S]*setMeaningNetworkExpanded\(false\)[\s\S]*meaningNetworkOverlayClosed/,
+    "Meaning Network graph close must collapse the overlay and emit a traceable close event",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /event\.key !== "Escape"[\s\S]*closeMeaningNetworkOverlay\(\)/,
+    "Expanded Meaning Network graph must close with Escape when focus is not in an editor field",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /eventBus\.on\("narrativeAgentGraphAnnotationCardRequested", handler\)/,
+    "Meaning Network must listen for Narrative Agent graph annotation-card requests",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkNarrativeAgentAnnotationCardOpened/,
+    "Meaning Network must emit a traceable event when a Narrative Agent graph request opens the annotation card",
   );
 
   assert.match(

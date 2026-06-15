@@ -19,7 +19,9 @@ import {
   broadcastAnalysisCorrectionRefresh,
   pushCorrectionSnapshot,
   removeManualVisualAnnotation,
+  retimeManualVisualAnnotationsFromPresenceInterval,
   upsertManualVisualAnnotation,
+  upsertMasterSchemaPresenceInterval,
 } from "@/lib/annotation-corrections";
 import {
   closeManualAnnotationInVideo,
@@ -112,6 +114,9 @@ type ScenePresenceSupport = "source" | "manual" | "cue" | "scene_ref" | "profile
 type NarrativeAgentPathRow = {
   key: string;
   label: string;
+  aliases: string[];
+  sourceLabels: string[];
+  profileIds: string[];
   source: string;
   role?: string;
   start?: number;
@@ -130,6 +135,46 @@ type NarrativeAgentPathRow = {
     support: ScenePresenceSupport;
   }>;
   sourceItem?: Record<string, unknown>;
+  sourceItems: Record<string, unknown>[];
+};
+
+type NarrativeAgentTimelineHandle = {
+  key: string;
+  label: string;
+  kind: "source" | "scene" | "cue" | "occurrence";
+  time: number;
+  end?: number;
+  title: string;
+};
+
+type NarrativeAgentTimelineHandleCommit = {
+  row: NarrativeAgentPathRow;
+  handle: NarrativeAgentTimelineHandle;
+};
+
+type NarrativeAgentGraphNode = {
+  id: string;
+  label: string;
+  kind: "agent" | "source" | "scene" | "cue" | "occurrence";
+  time?: number;
+  end?: number;
+  x: number;
+  y: number;
+  handle?: NarrativeAgentTimelineHandle;
+  scene?: NarrativeAgentPathRow["scenePresence"][number];
+};
+
+type NarrativeAgentGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  kind: "source_anchor" | "scene_presence" | "cue_support" | "occurrence_support";
+  label: string;
+};
+
+type NarrativeAgentGraphModel = {
+  nodes: NarrativeAgentGraphNode[];
+  edges: NarrativeAgentGraphEdge[];
 };
 
 const NARRATIVE_AGENT_ARCHETYPE_LENSES = [
@@ -187,6 +232,39 @@ function normalizeAgentKey(value: unknown): string {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function uniqueStrings(values: unknown[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => stringFrom(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
+function arrayStringsFromUnknown(value: unknown): string[] {
+  return Array.isArray(value) ? uniqueStrings(value) : [];
+}
+
+function narrativeAgentAliasKeys(values: unknown[]): string[] {
+  return uniqueStrings(values)
+    .map(normalizeAgentKey)
+    .filter(Boolean);
+}
+
+function labelsLikelySameNarrativeAgent(left: string, right: string): boolean {
+  const leftKey = normalizeAgentKey(left);
+  const rightKey = normalizeAgentKey(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  const leftTokens = leftKey.split(" ");
+  const rightTokens = rightKey.split(" ");
+  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+  const longer = leftTokens.length <= rightTokens.length ? rightTokens : leftTokens;
+  if (shorter.length === 1 && shorter[0].length < 4) return false;
+  return shorter.every((token) => longer.includes(token));
 }
 
 function secondsFromInstruction(instruction: SecondOrderLabelInstruction): number {
@@ -256,6 +334,85 @@ function narrativeAgentProfileEvidenceChips(profile: Record<string, unknown>): s
     .map(([items, label]) => `${label} ${Array.isArray(items) ? items.length : ""}`.trim());
 }
 
+function narrativeAgentAliasesFromSource(
+  label: string,
+  sourceItem?: Record<string, unknown>,
+): string[] {
+  const source = asRecord(sourceItem);
+  const metadata = asRecord(source.metadata);
+  const performer = asRecord(source.attached_performer_metadata);
+  const sourceMetadata = asRecord(source.source_metadata);
+  return uniqueStrings([
+    label,
+    source.narrative_agent_name,
+    source.character_name,
+    source.current_label,
+    source.agent_label,
+    source.identity_affirmation,
+    source.custom_label,
+    source.label,
+    performer.actor_name,
+    metadata.narrative_agent_name,
+    metadata.character_name,
+    metadata.agent_label,
+    metadata.current_label,
+    metadata.identity_affirmation,
+    metadata.custom_label,
+    metadata.label,
+    ...arrayStringsFromUnknown(source.aliases),
+    ...arrayStringsFromUnknown(source.alias_labels),
+    ...arrayStringsFromUnknown(source.character_aliases),
+    ...arrayStringsFromUnknown(source.known_aliases),
+    ...arrayStringsFromUnknown(source.alternative_labels),
+    ...arrayStringsFromUnknown(source.previous_labels),
+    ...arrayStringsFromUnknown(metadata.aliases),
+    ...arrayStringsFromUnknown(metadata.alias_labels),
+    ...arrayStringsFromUnknown(metadata.character_aliases),
+    ...arrayStringsFromUnknown(metadata.known_aliases),
+    ...arrayStringsFromUnknown(metadata.alternative_labels),
+    ...arrayStringsFromUnknown(metadata.previous_labels),
+    ...arrayStringsFromUnknown(sourceMetadata.aliases),
+    ...arrayStringsFromUnknown(sourceMetadata.alias_labels),
+    ...arrayStringsFromUnknown(sourceMetadata.character_aliases),
+  ]);
+}
+
+function narrativeAgentProfileIdsFromSource(sourceItem?: Record<string, unknown>): string[] {
+  const source = asRecord(sourceItem);
+  const metadata = asRecord(source.metadata);
+  return uniqueStrings([
+    source.profile_id,
+    source.narrative_agent_profile_id,
+    source.character_id,
+    metadata.profile_id,
+    metadata.narrative_agent_profile_id,
+    metadata.character_id,
+  ]);
+}
+
+function findNarrativeAgentRowKey(
+  rows: Map<string, NarrativeAgentPathRow>,
+  label: string,
+  aliases: string[],
+  profileIds: string[],
+): string {
+  const labelKey = normalizeAgentKey(label);
+  const aliasKeys = new Set(narrativeAgentAliasKeys([label, ...aliases]));
+  if (labelKey && rows.has(labelKey)) return labelKey;
+  for (const [key, row] of rows.entries()) {
+    const rowAliasKeys = new Set(narrativeAgentAliasKeys([row.label, ...row.aliases]));
+    const sharesProfile = profileIds.some((profileId) => row.profileIds.includes(profileId));
+    const sharesAlias = [...aliasKeys].some((aliasKey) => rowAliasKeys.has(aliasKey));
+    const likelySame = [row.label, ...row.aliases].some((rowLabel) =>
+      [label, ...aliases].some((candidateLabel) =>
+        labelsLikelySameNarrativeAgent(rowLabel, candidateLabel),
+      ),
+    );
+    if (sharesProfile || sharesAlias || likelySame) return key;
+  }
+  return labelKey;
+}
+
 function arrayFromUnknown(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -306,12 +463,42 @@ function upsertNarrativeAgentPathRow(
   rows: Map<string, NarrativeAgentPathRow>,
   patch: Partial<NarrativeAgentPathRow> & { label: string; source: string },
 ) {
-  const key = normalizeAgentKey(patch.label);
+  const aliases = uniqueStrings([
+    ...(patch.aliases || []),
+    ...narrativeAgentAliasesFromSource(patch.label, patch.sourceItem),
+  ]);
+  const profileIds = uniqueStrings([
+    ...(patch.profileIds || []),
+    ...narrativeAgentProfileIdsFromSource(patch.sourceItem),
+  ]);
+  const key = findNarrativeAgentRowKey(rows, patch.label, aliases, profileIds);
   if (!key) return;
   const existing = rows.get(key);
+  const sourceLabels = uniqueStrings([
+    ...(existing?.sourceLabels || []),
+    ...(patch.sourceLabels || []),
+    patch.label,
+  ]);
+  const nextAliases = uniqueStrings([
+    ...(existing?.aliases || []),
+    ...aliases,
+    patch.label,
+  ]);
+  const nextProfileIds = uniqueStrings([
+    ...(existing?.profileIds || []),
+    ...profileIds,
+  ]);
+  const sourceItems = [
+    ...(existing?.sourceItems || []),
+    ...(patch.sourceItems || []),
+    ...(patch.sourceItem ? [patch.sourceItem] : []),
+  ];
   const next: NarrativeAgentPathRow = {
     key,
-    label: patch.label,
+    label: existing?.label || patch.label,
+    aliases: nextAliases,
+    sourceLabels,
+    profileIds: nextProfileIds,
     source: existing?.source || patch.source,
     role: patch.role || existing?.role,
     start:
@@ -330,8 +517,9 @@ function upsertNarrativeAgentPathRow(
     ),
     cues: existing?.cues || patch.cues || [],
     sceneRefs: Array.from(new Set([...(existing?.sceneRefs || []), ...(patch.sceneRefs || [])])),
-    scenePresence: existing?.scenePresence || patch.scenePresence || [],
+    scenePresence: [...(existing?.scenePresence || []), ...(patch.scenePresence || [])],
     sourceItem: existing?.sourceItem || patch.sourceItem,
+    sourceItems,
   };
   rows.set(key, next);
 }
@@ -345,6 +533,8 @@ function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[]
   const sceneSegments = matureSceneSegmentsFromAnalysis(analysisData);
   const manualIdentification: ManualVisualAnnotation[] =
     analysisData?.manualAnnotationsByCategory?.Identification || [];
+  const presenceIntervals: MeaningNetworkPresenceInterval[] =
+    analysisData?.annotationCorrections?.master_schema_presence_intervals || [];
   const narrativeAgentProfiles: Record<string, unknown>[] =
     analysisData?.metadata?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
     analysisData?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
@@ -409,14 +599,48 @@ function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[]
     });
   }
 
+  for (const interval of presenceIntervals) {
+    const isNarrativeAgentInterval =
+      interval.node_type === "narrative_agent" ||
+      interval.lane_id === "on_camera_agents" ||
+      interval.master_schema_surface === "narrative_agent_profile_annotations" ||
+      Boolean(interval.narrative_agent_profile_id);
+    if (!isNarrativeAgentInterval) continue;
+    const label =
+      interval.label ||
+      interval.narrative_agent_profile_id ||
+      interval.node_id ||
+      "Narrative Agent handle";
+    upsertNarrativeAgentPathRow(rows, {
+      label,
+      source: "Master Schema Narrative Agent handle",
+      start: interval.start_seconds,
+      end: interval.end_seconds,
+      manualCount: interval.authority_level === "manual_correction" ? 1 : 0,
+      sceneRefs: [],
+      profileIds: interval.narrative_agent_profile_id ? [interval.narrative_agent_profile_id] : [],
+      evidenceChips: ["timeline handle"],
+      sourceItem: {
+        ...interval,
+        category: "Identification",
+        narrative_agent_profile_id: interval.narrative_agent_profile_id,
+        profile_id: interval.narrative_agent_profile_id,
+        label,
+        start_seconds: interval.start_seconds,
+        end_seconds: interval.end_seconds,
+      } as Record<string, unknown>,
+    });
+  }
+
   const nextRows = [...rows.values()].map((row) => {
     const cues = instructions.filter((instruction) => instructionTouchesAgent(instruction, row.label));
     const cueStart = cues
       .map(secondsFromInstruction)
       .filter((value) => Number.isFinite(value))
       .sort((left, right) => left - right)[0];
+    const sourceItems = row.sourceItems.length ? row.sourceItems : [row.sourceItem].filter(Boolean) as Record<string, unknown>[];
     const supportTimes = [
-      ...timeSupportsFromSourceItem(row.sourceItem),
+      ...sourceItems.flatMap(timeSupportsFromSourceItem),
       ...cues.map((cue) => ({
         start: secondsFromInstruction(cue),
         end: cue.time_span?.end_ms !== undefined
@@ -642,6 +866,305 @@ function formatSeconds(value?: number) {
   const seconds = Math.floor(safeValue % 60);
   const milliseconds = Math.floor((safeValue - Math.floor(safeValue)) * 1000);
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
+function narrativeAgentTimelineHandles(row: NarrativeAgentPathRow): NarrativeAgentTimelineHandle[] {
+  const handles: NarrativeAgentTimelineHandle[] = [];
+  const sourceItems = row.sourceItems.length ? row.sourceItems : [row.sourceItem].filter(Boolean) as Record<string, unknown>[];
+  sourceItems
+    .flatMap((item, index) =>
+      timeSupportsFromSourceItem(item).map((support) => ({
+        key: `${row.key}:timeline:occurrence:${index}:${support.start}`,
+        label: support.support === "manual" ? "manual" : "seen",
+        kind: "occurrence" as const,
+        time: support.start,
+        end: support.end,
+        title: `${support.support} occurrence ${formatSeconds(support.start)}-${formatSeconds(support.end ?? support.start)}`,
+      })),
+    )
+    .slice(0, 24)
+    .forEach((handle) => handles.push(handle));
+  if (row.start !== undefined) {
+    handles.push({
+      key: `${row.key}:timeline:source:${row.start}`,
+      label: "source",
+      kind: "source",
+      time: row.start,
+      end: row.end,
+      title: `Source anchor ${formatSeconds(row.start)}`,
+    });
+  }
+  row.scenePresence.slice(0, 8).forEach((scene) => {
+    handles.push({
+      key: `${row.key}:timeline:scene:${scene.sceneIndex}:${scene.start}`,
+      label: scene.sceneLabel,
+      kind: "scene",
+      time: scene.start,
+      end: scene.end,
+      title: `${scene.sceneLabel} ${scene.support} support ${formatSeconds(scene.start)}-${formatSeconds(scene.end)}`,
+    });
+  });
+  row.cues.slice(0, 8).forEach((cue) => {
+    const cueTime = secondsFromInstruction(cue);
+    handles.push({
+      key: `${row.key}:timeline:cue:${cue.instruction_id}`,
+      label: "cue",
+      kind: "cue",
+      time: cueTime,
+      title: `${cue.candidate_label || "cue"} ${formatSeconds(cueTime)}`,
+    });
+  });
+  return handles
+    .filter((handle) => Number.isFinite(handle.time))
+    .sort((left, right) => left.time - right.time);
+}
+
+function narrativeAgentTimelinePosition(
+  handle: NarrativeAgentTimelineHandle,
+  handles: NarrativeAgentTimelineHandle[],
+): number {
+  return narrativeAgentTimelinePositionForTime(handle.time, handles);
+}
+
+function narrativeAgentTimelinePositionForTime(
+  time: number,
+  handles: NarrativeAgentTimelineHandle[],
+): number {
+  const times = [...handles.map((item) => item.time), time].filter((value) => Number.isFinite(value));
+  if (times.length <= 1) return 50;
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  const span = Math.max(max - min, 1);
+  return Math.min(98, Math.max(2, ((time - min) / span) * 96 + 2));
+}
+
+function narrativeAgentTimelineDomain(
+  handles: NarrativeAgentTimelineHandle[],
+): { start: number; end: number } | null {
+  const times = handles.flatMap((handle) => [handle.time, handle.end]).filter((time): time is number =>
+    typeof time === "number" && Number.isFinite(time),
+  );
+  if (!times.length) return null;
+  return { start: Math.min(...times), end: Math.max(...times) };
+}
+
+function narrativeAgentNearestTimelineHandles(
+  handles: NarrativeAgentTimelineHandle[],
+  cursorTime: number,
+  limit = 5,
+): NarrativeAgentTimelineHandle[] {
+  return [...handles]
+    .sort((left, right) =>
+      Math.abs(left.time - cursorTime) - Math.abs(right.time - cursorTime) ||
+      left.time - right.time,
+    )
+    .slice(0, limit)
+    .sort((left, right) => left.time - right.time);
+}
+
+function narrativeAgentHandleRailGlyph(handle: NarrativeAgentTimelineHandle): string {
+  if (handle.kind === "scene") return handle.label.replace(/^S/i, "");
+  if (handle.kind === "source") return "S";
+  return "";
+}
+
+function narrativeAgentGraphNodeTone(kind: NarrativeAgentGraphNode["kind"]): string {
+  if (kind === "agent") return "border-cyan-400 bg-cyan-950 text-cyan-100";
+  if (kind === "scene") return "border-emerald-500 bg-emerald-950 text-emerald-100";
+  if (kind === "source") return "border-sky-500 bg-sky-950 text-sky-100";
+  if (kind === "cue") return "border-violet-500 bg-violet-950 text-violet-100";
+  return "border-amber-500 bg-amber-950 text-amber-100";
+}
+
+function narrativeAgentGraphNodeShortLabel(node: NarrativeAgentGraphNode): string {
+  if (node.kind === "agent") return "Agent";
+  if (node.kind === "scene") return node.label.replace(/^S/i, "S");
+  if (node.kind === "source") return "Src";
+  if (node.kind === "cue") return "Cue";
+  return "Seen";
+}
+
+function narrativeAgentGraphNodeHandleLabel(node: NarrativeAgentGraphNode): string {
+  const prefix = narrativeAgentGraphNodeShortLabel(node);
+  if (node.time === undefined) return prefix;
+  return `${prefix} ${formatSeconds(node.time)}`;
+}
+
+function seekNarrativeAgentGraphSource(videoId: string, time: number) {
+  const timestamp = Math.max(0, Number(time || 0));
+  eventBus.emit("videoTimeLineChanged", timestamp);
+  eventBus.emit("narrativeAgentGraphSourceSeekRequested", {
+    videoId,
+    timestamp,
+    source_panel: "NarrativeAgentPanel",
+    focus_panel_changed: false,
+  });
+}
+
+function buildNarrativeAgentGraphModel(
+  row: NarrativeAgentPathRow,
+  handles: NarrativeAgentTimelineHandle[],
+): NarrativeAgentGraphModel {
+  const agentNodeId = `agent:${row.key}`;
+  const nodes: NarrativeAgentGraphNode[] = [{
+    id: agentNodeId,
+    label: row.label,
+    kind: "agent",
+    x: 50,
+    y: 50,
+    time: row.start,
+    end: row.end,
+  }];
+  const edges: NarrativeAgentGraphEdge[] = [];
+  const addNode = (node: NarrativeAgentGraphNode, edge: Omit<NarrativeAgentGraphEdge, "id" | "source" | "target">) => {
+    if (!nodes.some((item) => item.id === node.id)) {
+      nodes.push(node);
+    }
+    edges.push({
+      id: `edge:${agentNodeId}:${node.id}:${edge.kind}`,
+      source: agentNodeId,
+      target: node.id,
+      ...edge,
+    });
+  };
+
+  row.scenePresence.slice(0, 6).forEach((scene, index) => {
+    const x = 12 + index * (76 / Math.max(1, Math.min(5, row.scenePresence.length - 1)));
+    addNode(
+      {
+        id: `scene:${row.key}:${scene.sceneIndex}:${scene.start}`,
+        label: scene.sceneLabel,
+        kind: "scene",
+        x,
+        y: 22,
+        time: scene.start,
+        end: scene.end,
+        scene,
+      },
+      {
+        kind: "scene_presence",
+        label: scene.support,
+      },
+    );
+  });
+
+  handles
+    .filter((handle) => handle.kind !== "scene")
+    .slice(0, 10)
+    .forEach((handle, index, selectedHandles) => {
+      const x = 10 + index * (80 / Math.max(1, selectedHandles.length - 1));
+      const y = handle.kind === "cue" ? 82 : handle.kind === "source" ? 66 : 72;
+      const kind = handle.kind === "source"
+        ? "source_anchor"
+        : handle.kind === "cue"
+          ? "cue_support"
+          : "occurrence_support";
+      addNode(
+        {
+          id: `handle:${handle.key}`,
+          label: handle.label,
+          kind: handle.kind,
+          x,
+          y,
+          time: handle.time,
+          end: handle.end,
+          handle,
+        },
+        {
+          kind,
+          label: handle.label,
+        },
+      );
+    });
+
+  return { nodes, edges };
+}
+
+function narrativeAgentPathProfileId(row: NarrativeAgentPathRow): string | undefined {
+  const source = asRecord(row.sourceItem);
+  const metadata = asRecord(source.metadata);
+  return stringFrom(source.profile_id) ||
+    stringFrom(metadata.profile_id) ||
+    stringFrom(source.narrative_agent_profile_id) ||
+    stringFrom(metadata.narrative_agent_profile_id);
+}
+
+function narrativeAgentPathNodeId(row: NarrativeAgentPathRow): string {
+  const profileId = narrativeAgentPathProfileId(row);
+  if (profileId) return `profile:narrative-agent:${profileId}`;
+  return `narrative-agent-path:${row.key}`;
+}
+
+function narrativeAgentHandleSourceEvidenceRef(
+  row: NarrativeAgentPathRow,
+  handle: NarrativeAgentTimelineHandle,
+) {
+  const source = asRecord(row.sourceItem);
+  const metadata = asRecord(source.metadata);
+  const sourceId =
+    stringFrom(source.id) ||
+    stringFrom(source.annotation_id) ||
+    stringFrom(source.profile_id) ||
+    stringFrom(metadata.profile_id) ||
+    `${row.key}:${handle.kind}:${handle.time}`;
+  const sourceType = row.source.includes("Manual")
+    ? "manual_visual_annotation"
+    : row.source.includes("Source Media")
+      ? "source_media_narrative_agent_profile"
+      : "master_schema_narrative_agent";
+  return {
+    evidence_id: sourceId,
+    source_type: sourceType,
+    time_range: {
+      start: handle.time,
+      end: handle.end ?? handle.time,
+    },
+    traceback_record_id: `traceback:${sourceId}`,
+    confidence: 1,
+  };
+}
+
+function buildNarrativeAgentTimelinePresenceInterval(
+  row: NarrativeAgentPathRow,
+  handle: NarrativeAgentTimelineHandle,
+  options?: { now?: string },
+): MeaningNetworkPresenceInterval {
+  const start = Math.max(0, Math.min(handle.time, handle.end ?? handle.time));
+  const end = Math.max(start + 0.05, Math.max(handle.time, handle.end ?? handle.time));
+  const nodeId = narrativeAgentPathNodeId(row);
+  const profileId = narrativeAgentPathProfileId(row);
+  const evidenceRef = narrativeAgentHandleSourceEvidenceRef(row, handle);
+  return {
+    id: `meaning-network-presence:${nodeId}`,
+    node_id: nodeId,
+    node_type: "narrative_agent",
+    label: row.label,
+    narrative_agent_profile_id: profileId,
+    master_schema_surface: "narrative_agent_profile_annotations",
+    lane_id: "on_camera_agents",
+    presence_mode: "on_camera",
+    start_seconds: Number(start.toFixed(3)),
+    end_seconds: Number(end.toFixed(3)),
+    authority_level: "manual_correction",
+    source_panel: "NarrativeAgentPanel",
+    source_profile_surface: "NarrativeAgentProfiles",
+    source_verification_status: "source_time_resolved",
+    source_range_source: "narrative_agent_timeline_handle",
+    source_evidence_refs: [evidenceRef],
+    source_traceback_refs: [evidenceRef.traceback_record_id],
+    propagation_required: true,
+    partial_propagation_allowed: false,
+    proliferates_to: [
+      "master_schema",
+      "meaning_network",
+      "narrative_agent_cards",
+      "video_panel",
+      "bbox_roi_panel",
+      "scene_card_panel",
+    ],
+    updated_at: options?.now || new Date().toISOString(),
+    updated_by: "analyst",
+  };
 }
 
 type MeaningNetworkPresenceInterval = NonNullable<AnnotationCorrections["master_schema_presence_intervals"]>[number];
@@ -1411,15 +1934,207 @@ function NarrativeAgentCharacterPathsHome({
   analysisData,
   videoId,
   openPanel,
+  onCommitTimelineHandle,
 }: {
   analysisData: any;
   videoId: string;
   openPanel: (panelType: string, panelProps?: any) => void;
+  onCommitTimelineHandle: (commit: NarrativeAgentTimelineHandleCommit) => void;
 }) {
   const rows = useMemo(
     () => buildNarrativeAgentPathRows(analysisData),
     [analysisData],
   );
+  const [selectedAgentKey, setSelectedAgentKey] = useState("");
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("");
+  const [graphDurationDrafts, setGraphDurationDrafts] = useState<Record<string, { start: number; end: number }>>({});
+  const [graphNodeHandleDrag, setGraphNodeHandleDrag] = useState<{
+    nodeId: string;
+    handle: "start" | "end";
+    originX: number;
+    originStart: number;
+    originEnd: number;
+    secondsPerPixel: number;
+  } | null>(null);
+  const [videoTimelineCursor, setVideoTimelineCursor] = useState(0);
+  const graphCanvasRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!rows.length) {
+      if (selectedAgentKey) setSelectedAgentKey("");
+      return;
+    }
+    if (!selectedAgentKey || !rows.some((row) => row.key === selectedAgentKey)) {
+      setSelectedAgentKey(rows[0].key);
+    }
+  }, [rows, selectedAgentKey]);
+  const selectedRow = rows.find((row) => row.key === selectedAgentKey) || rows[0];
+  const selectedTimelineHandles = selectedRow ? narrativeAgentTimelineHandles(selectedRow) : [];
+  const selectedGraphModel = selectedRow
+    ? buildNarrativeAgentGraphModel(selectedRow, selectedTimelineHandles)
+    : { nodes: [], edges: [] };
+  const selectedGraphNode =
+    selectedGraphModel.nodes.find((node) => node.id === selectedGraphNodeId) ||
+    selectedGraphModel.nodes[0];
+  const selectedGraphNodeDraft = selectedGraphNode?.time !== undefined
+    ? graphDurationDrafts[selectedGraphNode.id] || {
+        start: selectedGraphNode.time,
+        end: Math.max(selectedGraphNode.end ?? selectedGraphNode.time + 2, selectedGraphNode.time + 0.05),
+      }
+    : null;
+  const selectedTimelineDomain = narrativeAgentTimelineDomain(selectedTimelineHandles);
+  const selectedTimelineCursorLeft = selectedTimelineHandles.length
+    ? narrativeAgentTimelinePositionForTime(videoTimelineCursor, selectedTimelineHandles)
+    : 50;
+  const selectedNearbyTimelineHandles = narrativeAgentNearestTimelineHandles(
+    selectedTimelineHandles,
+    videoTimelineCursor,
+  );
+  useEffect(() => {
+    const handler = (time: number) => {
+      const next = Number(time);
+      if (Number.isFinite(next)) {
+        setVideoTimelineCursor(Math.max(0, next));
+      }
+    };
+    eventBus.on("videoTimeLineChanged", handler);
+    return () => eventBus.off("videoTimeLineChanged", handler);
+  }, []);
+  useEffect(() => {
+    if (!selectedGraphModel.nodes.length) {
+      if (selectedGraphNodeId) setSelectedGraphNodeId("");
+      return;
+    }
+    if (!selectedGraphNodeId || !selectedGraphModel.nodes.some((node) => node.id === selectedGraphNodeId)) {
+      setSelectedGraphNodeId(selectedGraphModel.nodes[0].id);
+    }
+  }, [selectedGraphModel.nodes, selectedGraphNodeId]);
+  const openSelectedAgentAnnotationCard = () => {
+    if (!selectedRow) return;
+    const nodeId = narrativeAgentPathNodeId(selectedRow);
+    const payload = {
+      videoId,
+      nodeId,
+      label: selectedRow.label,
+      sourcePanel: "NarrativeAgentPanel",
+    };
+    eventBus.emit("narrativeAgentGraphAnnotationCardRequested", payload);
+  };
+  const selectNarrativeAgentGraphNode = (node: NarrativeAgentGraphNode) => {
+    setSelectedGraphNodeId(node.id);
+    if (node.time !== undefined) {
+      const nodeTime = node.time;
+      setGraphDurationDrafts((current) => ({
+        ...current,
+        [node.id]: current[node.id] || {
+          start: nodeTime,
+          end: Math.max(node.end ?? nodeTime + 2, nodeTime + 0.05),
+        },
+      }));
+    }
+    if (videoId && node.time !== undefined) {
+      seekNarrativeAgentGraphSource(videoId, node.time);
+    }
+    eventBus.emit("narrativeAgentGraphNodeSelected", {
+      videoId,
+      row_key: selectedRow?.key,
+      label: selectedRow?.label,
+      node_id: node.id,
+      node_kind: node.kind,
+      timestamp: node.time,
+      end_timestamp: node.end,
+      source_panel: "NarrativeAgentPanel",
+    });
+  };
+  const updateSelectedGraphNodeDraft = (patch: Partial<{ start: number; end: number }>) => {
+    if (!selectedGraphNode || selectedGraphNode.time === undefined) return;
+    setGraphDurationDrafts((current) => {
+      const existing = current[selectedGraphNode.id] || selectedGraphNodeDraft || {
+        start: selectedGraphNode.time || 0,
+        end: Math.max(selectedGraphNode.end ?? (selectedGraphNode.time || 0) + 2, (selectedGraphNode.time || 0) + 0.05),
+      };
+      const start = Math.max(0, patch.start ?? existing.start);
+      const end = Math.max(start + 0.05, patch.end ?? existing.end);
+      return {
+        ...current,
+        [selectedGraphNode.id]: { start, end },
+      };
+    });
+  };
+  const startNarrativeAgentGraphNodeHandleDrag = (
+    event: React.PointerEvent<HTMLSpanElement>,
+    node: NarrativeAgentGraphNode,
+    handle: "start" | "end",
+  ) => {
+    if (node.time === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectNarrativeAgentGraphNode(node);
+    const existing = graphDurationDrafts[node.id] || {
+      start: node.time,
+      end: Math.max(node.end ?? node.time + 2, node.time + 0.05),
+    };
+    const graphWidth = Math.max(1, graphCanvasRef.current?.getBoundingClientRect().width || 520);
+    const domainStart = selectedTimelineDomain?.start ?? 0;
+    const domainEnd = Math.max(selectedTimelineDomain?.end ?? existing.end, existing.end, existing.start + 10);
+    setGraphNodeHandleDrag({
+      nodeId: node.id,
+      handle,
+      originX: event.clientX,
+      originStart: existing.start,
+      originEnd: existing.end,
+      secondsPerPixel: Math.max((domainEnd - domainStart) / graphWidth, 0.01),
+    });
+  };
+  useEffect(() => {
+    if (!graphNodeHandleDrag) return;
+    const handlePointerMove = (event: PointerEvent) => {
+      const deltaSeconds = (event.clientX - graphNodeHandleDrag.originX) * graphNodeHandleDrag.secondsPerPixel;
+      const nextStart = graphNodeHandleDrag.handle === "start"
+        ? Math.max(0, graphNodeHandleDrag.originStart + deltaSeconds)
+        : graphNodeHandleDrag.originStart;
+      const nextEnd = graphNodeHandleDrag.handle === "end"
+        ? Math.max(nextStart + 0.05, graphNodeHandleDrag.originEnd + deltaSeconds)
+        : Math.max(nextStart + 0.05, graphNodeHandleDrag.originEnd);
+      const draft = { start: nextStart, end: nextEnd };
+      setGraphDurationDrafts((current) => ({
+        ...current,
+        [graphNodeHandleDrag.nodeId]: draft,
+      }));
+      if (videoId) {
+        seekNarrativeAgentGraphSource(videoId, graphNodeHandleDrag.handle === "start" ? nextStart : nextEnd);
+      }
+      eventBus.emit("narrativeAgentGraphNodeHandleDragged", {
+        videoId,
+        row_key: selectedRow?.key,
+        node_id: graphNodeHandleDrag.nodeId,
+        handle: graphNodeHandleDrag.handle,
+        start_timestamp: nextStart,
+        end_timestamp: nextEnd,
+        source_panel: "NarrativeAgentPanel",
+      });
+    };
+    const handlePointerUp = () => setGraphNodeHandleDrag(null);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [graphNodeHandleDrag, selectedRow?.key, videoId]);
+  const confirmSelectedGraphNodePresence = () => {
+    if (!selectedRow || !selectedGraphNode || !selectedGraphNodeDraft) return;
+    onCommitTimelineHandle({
+      row: selectedRow,
+      handle: {
+        key: `${selectedGraphNode.id}:quick-presence`,
+        label: "manual",
+        kind: selectedGraphNode.kind === "cue" ? "cue" : selectedGraphNode.kind === "source" ? "source" : "occurrence",
+        time: selectedGraphNodeDraft.start,
+        end: selectedGraphNodeDraft.end,
+        title: `Manual presence ${formatSeconds(selectedGraphNodeDraft.start)}-${formatSeconds(selectedGraphNodeDraft.end)}`,
+      },
+    });
+  };
   return (
     <section
       className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2"
@@ -1442,6 +2157,91 @@ function NarrativeAgentCharacterPathsHome({
         >
           Meaning / Plot map
         </button>
+      </div>
+
+      <div
+        className="mt-2 rounded border border-slate-800 bg-[#111214] px-2 py-2"
+        data-vaa1-narrative-agent-review-compass="true"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+              Narrative Agent review compass
+            </div>
+            <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+              Agent semantics are source-linked and Master-time governed. Use this panel for one-agent understanding; use Meaning Network for continuity review.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1" data-vaa1-narrative-agent-review-modes="true">
+            {[
+              "Overview",
+              "Evidence",
+              "Semantics",
+              "Continuity",
+              "Scenes",
+            ].map((mode) => (
+              <span
+                key={`narrative-agent-review-mode:${mode}`}
+                className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
+              >
+                {mode}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2"
+        data-vaa1-narrative-agent-single-profile-selector="true"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <label className="min-w-[220px] flex-1">
+            <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+              Narrative Agent view
+            </span>
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-[#0c0d0f] px-2 py-1 text-[11px] text-slate-100 outline-none focus:border-cyan-600"
+              value={selectedAgentKey}
+              data-vaa1-narrative-agent-profile-dropdown="true"
+              onChange={(event) => setSelectedAgentKey(event.target.value)}
+            >
+              {rows.length === 0 ? (
+                <option value="">No governed Narrative Agents</option>
+              ) : (
+                rows.map((row) => (
+                  <option key={`narrative-agent-option:${row.key}`} value={row.key}>
+                    {row.label}
+                    {row.sourceLabels.length > 1 ? ` (${row.sourceLabels.length} labels combined)` : ""}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <div className="text-right text-[9px] text-[var(--ui-passive-text)]">
+            {rows.length} canonical profile{rows.length === 1 ? "" : "s"}
+            <br />
+            Single-agent view; continuity review stays in Meaning Network.
+          </div>
+        </div>
+        {selectedRow && selectedRow.sourceLabels.length > 1 ? (
+          <div
+            className="mt-2 flex flex-wrap gap-1"
+            data-vaa1-narrative-agent-combined-profile-aliases="true"
+          >
+            <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-400">
+              combined labels
+            </span>
+            {selectedRow.sourceLabels.slice(0, 8).map((label) => (
+              <span
+                key={`narrative-agent-combined-label:${selectedRow.key}:${label}`}
+                className="rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2">
@@ -1475,31 +2275,31 @@ function NarrativeAgentCharacterPathsHome({
           <div className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
             No governed Narrative Agent paths yet. Confirm or name an agent to seed this home.
           </div>
-        ) : (
-          rows.slice(0, 16).map((row) => (
-            <div
-              key={row.key}
-              className="rounded border border-slate-800 bg-[#111214] px-2 py-2"
-              data-vaa1-narrative-agent-path-row="true"
-            >
+        ) : selectedRow ? (
+              <div
+                key={selectedRow.key}
+                className="rounded border border-slate-800 bg-[#111214] px-2 py-2"
+                data-vaa1-narrative-agent-path-row="true"
+                data-vaa1-narrative-agent-single-profile-view="true"
+              >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-[11px] font-medium text-slate-100">
-                    {row.label}
+                    {selectedRow.label}
                   </div>
                   <div className="mt-0.5 text-[9px] text-[var(--ui-passive-text)]">
-                    {row.source}
-                    {row.role ? ` / ${row.role}` : ""}
+                    {selectedRow.source}
+                    {selectedRow.role ? ` / ${selectedRow.role}` : ""}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1">
-                  {row.start !== undefined && (
+                  {selectedRow.start !== undefined && (
                     <button
                       type="button"
                       className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-600 hover:text-cyan-100"
-                      onClick={() => openVideoAtTime(videoId, row.start || 0)}
+                      onClick={() => openVideoAtTime(videoId, selectedRow.start || 0)}
                     >
-                      source {formatSeconds(row.start)}
+                      source {formatSeconds(selectedRow.start)}
                     </button>
                   )}
                   <button
@@ -1513,15 +2313,15 @@ function NarrativeAgentCharacterPathsHome({
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
                 <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
-                  cues {row.cueCount}
+                  cues {selectedRow.cueCount}
                 </span>
                 <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
-                  scenes {row.sceneCount}
+                  scenes {selectedRow.sceneCount}
                 </span>
                 <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-400">
-                  manual {row.manualCount}
+                  manual {selectedRow.manualCount}
                 </span>
-                {row.evidenceChips.slice(0, 6).map((chip) => (
+                {selectedRow.evidenceChips.slice(0, 6).map((chip) => (
                   <span
                     key={chip}
                     className="rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100"
@@ -1531,13 +2331,308 @@ function NarrativeAgentCharacterPathsHome({
                 ))}
               </div>
               <div
+                className="mt-2 rounded border border-slate-800 bg-[#0c0d0f] px-2 py-2"
+                data-vaa1-narrative-agent-timeline-strip="true"
+              >
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                    Agent timeline handles
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span
+                      className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
+                      data-vaa1-narrative-agent-timeline-cursor-label="true"
+                    >
+                      cursor {formatSeconds(videoTimelineCursor)}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded border border-cyan-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/30"
+                      data-vaa1-narrative-agent-timeline-open-meaning-network="true"
+                      onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
+                    >
+                      Open in Meaning Network
+                    </button>
+                  </div>
+                </div>
+                {selectedTimelineHandles.length > 0 ? (
+                  <div
+                    className="relative h-10 rounded border border-slate-900 bg-[#070808]"
+                    data-vaa1-narrative-agent-timeline-cursor="true"
+                  >
+                    <div className="absolute left-2 right-2 top-1/2 h-px bg-slate-700" />
+                    {selectedTimelineDomain ? (
+                      <div className="absolute left-2 right-2 top-1 flex justify-between text-[8px] text-slate-500">
+                        <span>{formatSeconds(selectedTimelineDomain.start)}</span>
+                        <span>{formatSeconds(selectedTimelineDomain.end)}</span>
+                      </div>
+                    ) : null}
+                    <div
+                      className="absolute bottom-1 top-1 w-px bg-cyan-300 shadow-[0_0_8px_rgba(103,232,249,0.7)]"
+                      style={{ left: `${selectedTimelineCursorLeft}%` }}
+                      title={`Current video time ${formatSeconds(videoTimelineCursor)}`}
+                      data-vaa1-narrative-agent-timeline-cursor-line="true"
+                    />
+                    {selectedTimelineHandles.map((handle) => {
+                      const left = narrativeAgentTimelinePosition(handle, selectedTimelineHandles);
+                      const tone = handle.kind === "source"
+                        ? "border-cyan-500 bg-cyan-950 text-cyan-100"
+                        : handle.kind === "scene"
+                          ? "border-emerald-500 bg-emerald-950 text-emerald-100"
+                          : handle.kind === "occurrence"
+                            ? "border-amber-500 bg-amber-950 text-amber-100"
+                            : "border-violet-500 bg-violet-950 text-violet-100";
+                      return (
+                        <button
+                          key={handle.key}
+                          type="button"
+                          className={`absolute top-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[7px] leading-none ${tone}`}
+                          style={{ left: `${left}%` }}
+                          title={handle.title}
+                          aria-label={`${handle.kind} handle ${formatSeconds(handle.time)}`}
+                          data-vaa1-narrative-agent-timeline-handle={handle.kind}
+                          data-vaa1-narrative-agent-timeline-handle-commits-presence="true"
+                          onClick={() => {
+                            openVideoAtTime(videoId, handle.time);
+                            onCommitTimelineHandle({ row: selectedRow, handle });
+                          }}
+                        >
+                          {narrativeAgentHandleRailGlyph(handle)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded border border-dashed border-slate-800 px-2 py-2 text-[9px] text-[var(--ui-passive-text)]">
+                    Timeline handles appear when this agent has source, scene, or cue time anchors.
+                  </div>
+                )}
+                {selectedNearbyTimelineHandles.length > 0 ? (
+                  <div
+                    className="mt-2 flex flex-wrap gap-1"
+                    data-vaa1-narrative-agent-timeline-near-cursor="true"
+                  >
+                    <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-400">
+                      near cursor
+                    </span>
+                    {selectedNearbyTimelineHandles.map((handle) => (
+                      <button
+                        key={`near-cursor:${handle.key}`}
+                        type="button"
+                        className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                        title={handle.title}
+                        onClick={() => {
+                          openVideoAtTime(videoId, handle.time);
+                          onCommitTimelineHandle({ row: selectedRow, handle });
+                        }}
+                      >
+                        {formatSeconds(handle.time)} {handle.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className="mt-2 rounded border border-cyan-900/40 bg-[#0c0d0f] px-2 py-2"
+                data-vaa1-narrative-agent-operational-graph="true"
+              >
+                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-200">
+                      Agent graph
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
+                      One-agent graph for source, scene, cue, and occurrence navigation.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded border border-violet-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-violet-100 hover:bg-violet-950/30"
+                    data-vaa1-narrative-agent-graph-open-annotation-card="true"
+                    onClick={openSelectedAgentAnnotationCard}
+                  >
+                    Annotation card
+                  </button>
+                </div>
+                <div
+                  ref={graphCanvasRef}
+                  className="relative h-48 overflow-hidden rounded border border-slate-900 bg-[#070808]"
+                  data-vaa1-narrative-agent-graph-canvas="true"
+                >
+                  <svg
+                    className="absolute inset-0 h-full w-full"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    {selectedGraphModel.edges.map((edge) => {
+                      const source = selectedGraphModel.nodes.find((node) => node.id === edge.source);
+                      const target = selectedGraphModel.nodes.find((node) => node.id === edge.target);
+                      if (!source || !target) return null;
+                      return (
+                        <line
+                          key={edge.id}
+                          x1={source.x}
+                          y1={source.y}
+                          x2={target.x}
+                          y2={target.y}
+                          stroke="rgba(34, 211, 238, 0.35)"
+                          strokeWidth="0.5"
+                          data-vaa1-narrative-agent-graph-edge={edge.kind}
+                        />
+                      );
+                    })}
+                  </svg>
+                  {selectedGraphModel.nodes.map((node) => {
+                    const selected = selectedGraphNode?.id === node.id;
+                    return (
+                      <button
+                        key={node.id}
+                        type="button"
+                        className={`absolute flex h-10 min-w-12 max-w-20 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded border px-1 text-[8px] font-semibold leading-tight shadow-sm ${narrativeAgentGraphNodeTone(node.kind)} ${selected ? "ring-2 ring-cyan-200" : ""}`}
+                        style={{ left: `${node.x}%`, top: `${node.y}%` }}
+                        title={`${node.label}${node.time !== undefined ? ` / ${formatSeconds(node.time)}` : ""}`}
+                        aria-label={narrativeAgentGraphNodeHandleLabel(node)}
+                        data-vaa1-narrative-agent-graph-node={node.kind}
+                        data-vaa1-narrative-agent-graph-node-handle-label="true"
+                        data-vaa1-narrative-agent-graph-node-selected={selected ? "true" : "false"}
+                        onClick={() => selectNarrativeAgentGraphNode(node)}
+                        onDoubleClick={openSelectedAgentAnnotationCard}
+                      >
+                        <span>{narrativeAgentGraphNodeShortLabel(node)}</span>
+                        {node.time !== undefined ? (
+                          <span className="mt-0.5 text-[7px] font-normal opacity-90">
+                            {formatSeconds(node.time)}
+                          </span>
+                        ) : null}
+                        {node.time !== undefined ? (
+                          <>
+                            <span
+                              role="slider"
+                              tabIndex={0}
+                              aria-label={`Drag start of ${narrativeAgentGraphNodeHandleLabel(node)}`}
+                              aria-valuemin={0}
+                              aria-valuenow={graphDurationDrafts[node.id]?.start ?? node.time}
+                              aria-valuetext={formatSeconds(graphDurationDrafts[node.id]?.start ?? node.time)}
+                              className="absolute -left-1.5 top-1/2 h-5 w-2 -translate-y-1/2 cursor-ew-resize rounded border border-cyan-200 bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                              title="Drag presence start"
+                              data-vaa1-narrative-agent-graph-node-start-handle="true"
+                              data-vaa1-narrative-agent-graph-stretchable-node-handle="start"
+                              onPointerDown={(event) => startNarrativeAgentGraphNodeHandleDrag(event, node, "start")}
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                            <span
+                              role="slider"
+                              tabIndex={0}
+                              aria-label={`Drag end of ${narrativeAgentGraphNodeHandleLabel(node)}`}
+                              aria-valuemin={0}
+                              aria-valuenow={graphDurationDrafts[node.id]?.end ?? Math.max(node.end ?? node.time + 2, node.time + 0.05)}
+                              aria-valuetext={formatSeconds(graphDurationDrafts[node.id]?.end ?? Math.max(node.end ?? node.time + 2, node.time + 0.05))}
+                              className="absolute -right-1.5 top-1/2 h-5 w-2 -translate-y-1/2 cursor-ew-resize rounded border border-cyan-200 bg-cyan-300 shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                              title="Drag presence end"
+                              data-vaa1-narrative-agent-graph-node-end-handle="true"
+                              data-vaa1-narrative-agent-graph-stretchable-node-handle="end"
+                              onPointerDown={(event) => startNarrativeAgentGraphNodeHandleDrag(event, node, "end")}
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                            <span
+                              className="pointer-events-none absolute -bottom-1 left-1 right-1 h-0.5 rounded-full bg-cyan-300"
+                              data-vaa1-narrative-agent-graph-node-duration-bar="true"
+                            />
+                          </>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedGraphNode ? (
+                  <div
+                    className="mt-2 flex flex-wrap items-center gap-1"
+                    data-vaa1-narrative-agent-graph-selection-card="true"
+                  >
+                    <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300">
+                      {selectedGraphNode.kind}
+                    </span>
+                    <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300">
+                      {selectedGraphNode.label}
+                    </span>
+                    {selectedGraphNode.time !== undefined ? (
+                      <button
+                        type="button"
+                        className="rounded border border-cyan-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/30"
+                        data-vaa1-narrative-agent-graph-jump-source="true"
+                        onClick={() => seekNarrativeAgentGraphSource(videoId, selectedGraphNode.time || 0)}
+                      >
+                        Jump {formatSeconds(selectedGraphNode.time)}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded border border-violet-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-violet-100 hover:bg-violet-950/30"
+                      data-vaa1-narrative-agent-graph-selection-open-card="true"
+                      onClick={openSelectedAgentAnnotationCard}
+                    >
+                      Open card
+                    </button>
+                    {selectedGraphNodeDraft ? (
+                      <div
+                        className="mt-1 flex w-full flex-wrap items-center gap-1 rounded border border-slate-800 bg-[#080b0b] px-2 py-1"
+                        data-vaa1-narrative-agent-graph-fast-presence-editor="true"
+                      >
+                        <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300">
+                          {formatSeconds(selectedGraphNodeDraft.start)}-{formatSeconds(selectedGraphNodeDraft.end)}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                          data-vaa1-narrative-agent-graph-presence-start-back="true"
+                          onClick={() => updateSelectedGraphNodeDraft({ start: selectedGraphNodeDraft.start - 1 })}
+                        >
+                          start -1s
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                          data-vaa1-narrative-agent-graph-presence-end-forward="true"
+                          onClick={() => updateSelectedGraphNodeDraft({ end: selectedGraphNodeDraft.end + 1 })}
+                        >
+                          end +1s
+                        </button>
+                        <input
+                          type="range"
+                          min={Math.max(0, selectedGraphNodeDraft.start + 0.05)}
+                          max={Math.max(
+                            selectedGraphNodeDraft.end + 10,
+                            selectedTimelineDomain?.end ?? selectedGraphNodeDraft.end + 10,
+                          )}
+                          step="0.05"
+                          value={selectedGraphNodeDraft.end}
+                          className="h-1 min-w-[140px] flex-1 accent-cyan-400"
+                          aria-label="Drag Narrative Agent presence end"
+                          data-vaa1-narrative-agent-graph-draggable-duration-handle="true"
+                          onChange={(event) => updateSelectedGraphNodeDraft({ end: Number(event.target.value) })}
+                        />
+                        <button
+                          type="button"
+                          className="rounded border border-emerald-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                          data-vaa1-narrative-agent-graph-fast-confirm-presence="true"
+                          onClick={confirmSelectedGraphNodePresence}
+                        >
+                          Confirm presence
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div
                 className="mt-2 flex flex-wrap gap-1"
                 data-vaa1-narrative-agent-scene-presence="true"
               >
-                {row.scenePresence.length > 0 ? (
-                  row.scenePresence.map((scene) => (
+                {selectedRow.scenePresence.length > 0 ? (
+                  selectedRow.scenePresence.map((scene) => (
                     <button
-                      key={`${row.key}:scene:${scene.sceneIndex}:${scene.start}`}
+                      key={`${selectedRow.key}:scene:${scene.sceneIndex}:${scene.start}`}
                       type="button"
                       className="rounded border border-emerald-800/60 bg-emerald-950/15 px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
                       title={`${scene.support} support / ${formatSeconds(scene.start)}-${formatSeconds(scene.end)}`}
@@ -1552,9 +2647,9 @@ function NarrativeAgentCharacterPathsHome({
                   </span>
                 )}
               </div>
-              {row.cues.length > 0 && (
+              {selectedRow.cues.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {row.cues.slice(0, 3).map((cue) => (
+                  {selectedRow.cues.slice(0, 3).map((cue) => (
                     <button
                       key={cue.instruction_id}
                       type="button"
@@ -1567,8 +2662,7 @@ function NarrativeAgentCharacterPathsHome({
                 </div>
               )}
             </div>
-          ))
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -1600,6 +2694,12 @@ export default function MasterSchemaPanel({
   const [timeInputDrafts, setTimeInputDrafts] = useState<Record<string, string>>({});
   const [leafActionMessage, setLeafActionMessage] = useState("");
   const suppressNextLocalCorrectionRefreshRef = useRef(false);
+  const analysisLoadRequestRef = useRef(0);
+  const analysisDataRef = useRef<AnalysisData | null>(null);
+
+  useEffect(() => {
+    analysisDataRef.current = analysisData;
+  }, [analysisData]);
 
   const knownCharacters = React.useMemo(() => {
     const records = analysisData?.masterSchemaResolvedEvidence?.records || [];
@@ -1639,20 +2739,42 @@ export default function MasterSchemaPanel({
 
   useEffect(() => {
     async function load() {
+      const requestedVideoId = videoId;
+      const requestId = analysisLoadRequestRef.current + 1;
+      analysisLoadRequestRef.current = requestId;
       if (!videoId) {
         setAnalysisData(null);
         setIsLoading(false);
         return;
       }
 
+      const currentAnalysis = analysisDataRef.current;
+      if (
+        !currentAnalysis ||
+        (currentAnalysis.analysisId && currentAnalysis.analysisId !== requestedVideoId)
+      ) {
+        setAnalysisData(null);
+      }
       setIsLoading(true);
       try {
-        setAnalysisData(await VideoService.getAnalysis(videoId));
+        const nextAnalysisData = await VideoService.getAnalysis(requestedVideoId);
+        if (
+          analysisLoadRequestRef.current !== requestId ||
+          requestedVideoId !== videoId ||
+          (nextAnalysisData.analysisId && nextAnalysisData.analysisId !== requestedVideoId)
+        ) {
+          return;
+        }
+        setAnalysisData(nextAnalysisData);
       } catch (error) {
         console.error("Failed to load master schema annotations:", error);
-        setAnalysisData(null);
+        if (analysisLoadRequestRef.current === requestId) {
+          setAnalysisData(null);
+        }
       } finally {
-        setIsLoading(false);
+        if (analysisLoadRequestRef.current === requestId) {
+          setIsLoading(false);
+        }
       }
     }
 
@@ -1902,6 +3024,80 @@ export default function MasterSchemaPanel({
     broadcastAnalysisCorrectionRefresh(videoId);
   }
 
+  async function commitNarrativeAgentTimelineHandle({
+    row,
+    handle,
+  }: NarrativeAgentTimelineHandleCommit) {
+    if (!videoId) return;
+    const now = new Date().toISOString();
+    const existingCorrections = analysisData?.annotationCorrections;
+    const interval = buildNarrativeAgentTimelinePresenceInterval(row, handle, { now });
+    const nextCorrectionsBase = {
+      ...upsertMasterSchemaPresenceInterval(existingCorrections, interval, { now }),
+      analysis_id: videoId,
+    };
+    const nextCorrections = retimeManualVisualAnnotationsFromPresenceInterval(
+      nextCorrectionsBase,
+      interval,
+      { now },
+    );
+    setLeafActionMessage(`Saving Narrative Agent handle ${row.label} / ${formatSeconds(handle.time)}...`);
+    try {
+      pushCorrectionSnapshot(videoId, existingCorrections);
+      await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      setAnalysisData((current: AnalysisData | null) =>
+        current
+          ? {
+              ...current,
+              annotationCorrections: nextCorrections,
+            }
+          : current,
+      );
+      setLeafActionMessage(`Saved Narrative Agent handle ${row.label} / ${formatSeconds(handle.time)}`);
+      eventBus.emit("meaningNetworkPresenceIntervalCommitted", {
+        videoId,
+        interval,
+        event_type: "master_schema_updated",
+        update_source: "narrative_agent_timeline_handle",
+        update_authority: "manual_correction",
+        master_schema_surface: interval.master_schema_surface,
+        narrative_agent_profile_id: interval.narrative_agent_profile_id,
+        source_verification_status: interval.source_verification_status,
+        source_range_source: interval.source_range_source,
+        source_evidence_refs: interval.source_evidence_refs,
+        source_traceback_refs: interval.source_traceback_refs,
+        propagation_required: true,
+        partial_propagation_allowed: false,
+        affected_panels: [
+          "meaning_network",
+          "master_schema",
+          "video_panel",
+          "bbox_roi_panel",
+          "scene_card_panel",
+          "narrative_agent_panel",
+        ],
+      });
+      eventBus.emit("narrativeAgentProfilePresenceUpdated", {
+        videoId,
+        interval,
+        profile_id: interval.narrative_agent_profile_id,
+        source_panel: "NarrativeAgentPanel",
+        master_schema_surface: interval.master_schema_surface,
+        source_verification_status: interval.source_verification_status,
+        source_evidence_refs: interval.source_evidence_refs,
+      });
+      suppressNextLocalCorrectionRefreshRef.current = true;
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      console.error("Failed to save Narrative Agent timeline handle:", error);
+      setLeafActionMessage(
+        error instanceof Error
+          ? `Handle save failed: ${error.message}`
+          : "Handle save failed. See console for details.",
+      );
+    }
+  }
+
   const groupedAnnotations = useMemo(() => {
     const groups =
       analysisData?.manualAnnotationsByCategory ||
@@ -1953,12 +3149,20 @@ export default function MasterSchemaPanel({
           {panelDescription}
         </div>
 
-        {isLoading ? (
+        {isLoading && !analysisData ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
             Loading master schema...
           </div>
         ) : (
           <>
+            {isLoading ? (
+              <div
+                className="my-2 rounded border border-slate-800 bg-slate-950/20 px-2 py-1 text-[10px] text-[var(--ui-passive-text)]"
+                data-vaa1-master-schema-background-refresh="true"
+              >
+                Refreshing in background...
+              </div>
+            ) : null}
             <MatureEvidenceStrip analysisData={analysisData} />
             <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
             <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
@@ -1971,6 +3175,9 @@ export default function MasterSchemaPanel({
                 analysisData={analysisData}
                 videoId={videoId}
                 openPanel={openPanel}
+                onCommitTimelineHandle={(commit) => {
+                  void commitNarrativeAgentTimelineHandle(commit);
+                }}
               />
             )}
             <SecondOrderLabelReviewTray

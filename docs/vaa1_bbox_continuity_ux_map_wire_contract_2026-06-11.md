@@ -117,6 +117,11 @@ Must show:
 - conflicting appearances;
 - role/relation/action path;
 - scene trajectory;
+- simple prose scene-presence description;
+- visual pattern sample status;
+- audio pattern sample status;
+- transcript interpretation status;
+- Master time/source-video clock status;
 - source sample readiness;
 - negative evidence;
 - source evidence row for every appearance.
@@ -343,6 +348,11 @@ Fields:
 - `maturity_state`
 - `projection_targets`
 - `source_sample_refs`
+- `visual_pattern_sample_refs`
+- `audio_pattern_sample_refs`
+- `transcript_interpretation_refs`
+- `scene_presence_prose`
+- `master_time_range`
 - `negative_evidence_refs`
 - `traceback_refs`
 
@@ -376,7 +386,9 @@ The safest next implementation slice is not a full graph rebuild. It is a visibl
 4. Add a Meaning Network continuity lane placeholder with candidate/conflict/confirmed/rejected states.
 5. Add a Narrative Agent appearance-table placeholder sourced from manual BBox events.
 6. Add a Narrative Agent semantic-family placeholder showing how each appearance matures persona/alias, appearance, voice, role, relation, continuity, or negative evidence.
-7. Add a fixture for James Bond `43-46s` and Nomi `47-49s`.
+7. Include visual pattern sample status, audio pattern sample status, and a simple prose scene-presence description from the first UI slice.
+8. Bind visual expression, vocal expression, transcript interpretation, and scene presence to one Master time/source-video clock.
+9. Add a fixture for James Bond `43-46s` and Nomi `47-49s`.
 
 This gives the analyst the right mental model before deeper data migration begins.
 

@@ -226,13 +226,21 @@ Protected milestone:
 
 - Every Narrative Agent addition must mature a governed characteristic, not just add another profile field.
 - Working contract: `docs/vaa1_narrative_agent_characteristics_schema_and_proliferation_contract_2026-06-11.md`.
+- Usability contract: `docs/vaa1_narrative_agent_panel_usability_design_contract_2026-06-12.md`.
 
 Tasks:
 
 - Keep Character Paths primarily in Narrative Agent surfaces.
+- Make the Narrative Agent panel usable through an Overview, Evidence, Semantics, Continuity, and Scenes review compass.
+- Add a dropdown-led single-profile Narrative Agent view so the panel shows one canonical agent at a time.
+- Combine same-character labels into one canonical profile only when profile-id, alias, or clear label-containment evidence supports it; keep source labels visible as aliases and traceback.
+- Add a simple one-agent timeline handle strip with source, scene, and cue handles that jump to source-video time, commit governed `master_schema_presence_intervals`, sync with Meaning Network handles, and hand fuller continuity review to Meaning Network.
 - Add scene presence, character-by-scene, participant ranking, dramatic archetype readings, and role/relation/action paths.
 - Feed paths from mature BBox/ROI, Meaning Network intervals, transcript/speaker links, scene anchors, object relations, prosody, and manual annotations.
 - Add agent semantic families for persona/alias, appearance, voice/speech, expression/affect, gesture/action, role/function, relation, scene trajectory, object association, linguistic register, continuity, and negative evidence.
+- Add visual pattern sample status, audio pattern sample status, and simple scene-presence prose from the first Narrative Agent semantic readiness slice.
+- Keep vocal-affect registries balanced across positive, negative, regulating, and ambivalent cues so audio evidence does not overproduce stress/emphasis readings.
+- Require visual expression, vocal expression, transcript interpretation, and scene presence to share Master time/source-video clock anchors before they can mature or proliferate.
 - Make characteristic observations produce better proliferation candidates, stricter rejection, source-sample readiness, and late-video coverage audits.
 - Propagate analyst renames, confirmations, merges, splits, rejections, and drops across panels.
 - Make node/edge sheet actions open the specific relevant Narrative Agent storyline, not a generic overview.

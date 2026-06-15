@@ -72,9 +72,12 @@ The Narrative Agent view should answer:
 - Which continuity claims need analyst review?
 - Which governed characteristics are maturing, and how do they improve future Mature Data Proliferation?
 
+The default Narrative Agent panel view should show one canonical agent profile at a time through a dropdown selector. If the same character appears under multiple labels, the panel combines them only when profile-id, explicit alias, or clear label-containment evidence supports the merge. The original labels remain visible as aliases and traceback evidence.
+
 If the dedicated Narrative Agent view is not yet separate, the first UI slice can route through Master Schema plus Meaning/Plot while preserving this product boundary.
 
 Working schema contract: `docs/vaa1_narrative_agent_characteristics_schema_and_proliferation_contract_2026-06-11.md`.
+Usability design contract: `docs/vaa1_narrative_agent_panel_usability_design_contract_2026-06-12.md`.
 
 ## Analyst User Paths
 
@@ -162,6 +165,33 @@ Acceptance:
    - Add confirmed/candidate/rejected appearances.
    - Each row jumps to source video, BBox, transcript, scene, graph edge, and traceback.
    - Each row contributes to governed characteristic families instead of only listing a name and time.
+   - From the first slice, include visual pattern sample status, audio pattern sample status, and a simple prose sentence describing scene presence.
+   - Treat positive, negative, regulating, and ambivalent vocal-affect registers as equal candidates so audio does not become a stress/emphasis detector.
+   - Bind visual expression, vocal expression, transcript interpretation, and scene-presence prose to the same Master time/source-video clock; source-pending rows cannot mature.
+
+8. Narrative Agent review compass:
+   - Add Overview, Evidence, Semantics, Continuity, and Scenes orientation at the top of the panel.
+   - Keep Meaning Network as the destination for continuity decisions.
+   - State that Narrative Agent semantics are source-linked and Master-time governed.
+
+9. Narrative Agent timeline handle strip:
+   - Add a simple one-agent source-time strip inside the Narrative Agent panel.
+   - Include source, scene-presence, and cue handles.
+   - Each handle jumps to source-video time and commits a governed user annotation through `master_schema_presence_intervals`.
+   - Use the same shared Master Schema presence-interval engine and manual-annotation retiming path as Meaning Network Graph handles.
+   - Include an `Open in Meaning Network` action for fuller continuity review.
+
+10. Narrative Agent single-profile view:
+   - Add a dropdown for selecting one canonical Narrative Agent profile.
+   - Render only the selected agent in the panel.
+   - Combine same-character labels into one profile when governed alias/profile evidence supports it.
+   - Keep all combined source labels visible as aliases and traceback evidence.
+
+11. Narrative Agent occurrence coverage:
+   - A canonical profile must preserve all merged source evidence items, not only the first retained source item.
+   - Timeline handles should include source, scene, cue, and occurrence anchors.
+   - Known agents from detections or metadata that are not yet present in the Narrative Agent timeline, Meaning Network timeline, or another major panel should enter as source-linked candidate occurrences.
+   - Candidate occurrences can promote to mature presence only after source-time anchoring, traceback, and analyst/governance support.
 
 6. Conflict-first review:
    - If a raw track spans two different manual agent assertions, surface it as a conflict.
@@ -217,7 +247,11 @@ Exit criteria:
   - Review continuity handoff,
   - Meaning Network candidate edge lane,
   - Narrative Agent appearance table,
-  - Narrative Agent characteristic families and source-sample readiness,
+  - Narrative Agent semantic readiness with visual pattern samples, audio pattern samples, and scene-presence prose,
+  - Master time labels shared by visual expression, vocal expression, transcript interpretation, and scene presence,
+  - Narrative Agent review compass for Overview, Evidence, Semantics, Continuity, and Scenes,
+  - Narrative Agent one-agent timeline handle strip,
+  - Narrative Agent dropdown and single-profile canonical view,
   - conflict review.
 
 Exit criteria:

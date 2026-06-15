@@ -26,7 +26,7 @@ test("VideoService builds a single mature evidence view from corrected and Maste
 
   assert.match(
     videoService,
-    /records\.push\(\.\.\.masterSchemaObjectRecords\(masterSchema\)\);[\s\S]*records\.push\(\.\.\.masterSchemaNarrativeAgentRecords\(masterSchema\)\);[\s\S]*records\.push\(\.\.\.manualAnnotationNarrativeAgentRecords\(nativeAnnotations\)\);/,
+    /masterSchemaScopedRecords\([\s\S]*masterSchemaObjectRecords\(masterSchema\)[\s\S]*masterSchema[\s\S]*analysisId[\s\S]*masterSchemaScopedRecords\([\s\S]*masterSchemaNarrativeAgentRecords\(masterSchema\)[\s\S]*masterSchema[\s\S]*analysisId[\s\S]*records\.push\(\.\.\.manualAnnotationNarrativeAgentRecords\(nativeAnnotations\)\);/,
     "Master Schema and manual mature subject records must enter the resolved view before raw panel records",
   );
 

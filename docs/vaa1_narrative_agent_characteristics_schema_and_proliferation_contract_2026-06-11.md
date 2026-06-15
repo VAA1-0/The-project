@@ -10,6 +10,8 @@ A Narrative Agent addition is valid only when it helps mature at least one gover
 
 Narrative Agents are not just character names. They are governed subjects built from source evidence, characteristic observations, continuity decisions, relations, roles, negative evidence, and traceback.
 
+All Narrative Agent semantic evidence must abide by Master time: visual expression, vocal expression, transcript interpretation, scene presence, source samples, and proliferation hints use the same source-video clock. If an evidence row cannot be anchored to that clock, it remains source-pending and cannot mature.
+
 ```text
 source evidence
   -> characteristic observation
@@ -34,6 +36,19 @@ Each new field, row, chip, graph edge, or panel action should belong to one or m
 - object and prop association: recurring car, phone, weapon, document, costume, symbol;
 - linguistic register: recurring phrases, modality, agency, command/request/response behavior;
 - continuity and negative evidence: confirmed continuity, rejected continuity, conflict, absence, contradiction.
+
+## Balanced Vocal-Affect Registry
+
+Audio-affect evidence must not become a stress/emphasis machine.
+
+Positive, negative, regulating, and ambivalent vocal registers enter the Narrative Agent semantics layer on equal footing:
+
+- positive: warmth, reassurance, delight, tenderness, confidence, relief;
+- negative: distress, anger, fear, contempt, grief, hostility;
+- regulating: calm, composure, restraint, formal neutrality, reflection, measured delivery;
+- ambivalent: irony, hesitation, uncertainty, mixed affect, masking, performative control.
+
+Audio-only affect remains candidate evidence. It can mature only through source anchors, transcript/speaker context, visual expression or scene corroboration, and analyst confirmation.
 
 ## Schema Contract
 
@@ -102,6 +117,11 @@ Fields:
 - `source_event_id`
 - `source_anchor_refs`
 - `source_sample_refs`
+- `visual_pattern_sample_refs`
+- `audio_pattern_sample_refs`
+- `transcript_interpretation_refs`
+- `scene_presence_prose`
+- `master_time_range`
 - `confidence`
 - `authority`
 - `maturity_state`
@@ -203,6 +223,11 @@ Must show:
 - characteristic summary by family;
 - confirmed, candidate, conflicted, rejected, and missing appearances;
 - source evidence rows for every mature claim;
+- simple scene-presence prose for each reviewable appearance;
+- visual pattern sample status;
+- audio pattern sample status;
+- transcript interpretation status;
+- Master time range for every visual, vocal, transcript, and scene-presence row;
 - continuity and conflict edges;
 - role/relation/action path;
 - source sample readiness;
@@ -215,6 +240,7 @@ Must not:
 - hide rejected candidates;
 - merge appearances without a decision ledger;
 - project a characteristic without source anchors.
+- mature visual expression, vocal expression, transcript interpretation, or scene-presence evidence when their time anchors disagree with Master time.
 
 ### Meaning Network Graph
 

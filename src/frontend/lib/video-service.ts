@@ -1065,6 +1065,33 @@ function masterSchemaNarrativeAgentRecords(masterSchema: unknown): MasterSchemaR
   return records;
 }
 
+function masterSchemaAnalysisId(masterSchema: unknown): string {
+  const schema = asLooseRecord(masterSchema);
+  return looseString(schema?.analysis_id);
+}
+
+function masterSchemaScopedRecords(
+  records: MasterSchemaResolvedEvidenceRecord[],
+  masterSchema: unknown,
+  analysisId?: string,
+): MasterSchemaResolvedEvidenceRecord[] {
+  const schemaAnalysisId = masterSchemaAnalysisId(masterSchema);
+  if (!analysisId || !schemaAnalysisId || schemaAnalysisId === analysisId) {
+    return records;
+  }
+  return records.filter((record) => {
+    const metadata = asLooseRecord(record.metadata) || {};
+    const recordAnalysisId = looseString(
+      metadata.analysis_id ||
+        metadata.source_analysis_id ||
+        metadata.owner_analysis_id ||
+        metadata.media_id ||
+        metadata.video_id,
+    );
+    return recordAnalysisId === analysisId;
+  });
+}
+
 function isKnownSubjectLabel(value: unknown): boolean {
   const key = looseString(value)
     .toLowerCase()
@@ -1278,6 +1305,7 @@ function buildMasterSchemaResolvedEvidenceView({
   secondOrderLabelProliferation,
   evidenceProliferationMatches,
   masterSchema,
+  analysisId,
 }: {
   transcript: TranscriptSegment[];
   objects: DetectedObject[];
@@ -1289,11 +1317,24 @@ function buildMasterSchemaResolvedEvidenceView({
   secondOrderLabelProliferation?: SecondOrderLabelProliferationPlan | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[] | null;
   masterSchema?: unknown;
+  analysisId?: string;
 }): MasterSchemaResolvedEvidenceView {
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
 
-  records.push(...masterSchemaObjectRecords(masterSchema));
-  records.push(...masterSchemaNarrativeAgentRecords(masterSchema));
+  records.push(
+    ...masterSchemaScopedRecords(
+      masterSchemaObjectRecords(masterSchema),
+      masterSchema,
+      analysisId,
+    ),
+  );
+  records.push(
+    ...masterSchemaScopedRecords(
+      masterSchemaNarrativeAgentRecords(masterSchema),
+      masterSchema,
+      analysisId,
+    ),
+  );
   records.push(...manualAnnotationNarrativeAgentRecords(nativeAnnotations));
   records.push(...agentPersistenceTrackRecords(secondOrderLabelProliferation));
   records.push(...evidenceProliferationMatchRecords(evidenceProliferationMatches));
@@ -2196,6 +2237,7 @@ export interface QuantAnalysis {
 }
 
 export interface AnalysisData {
+  analysisId?: string;
   quantAnalysis: QuantAnalysis[];
   posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
@@ -3606,9 +3648,11 @@ export class VideoService {
         secondOrderLabelProliferation: status.second_order_label_proliferation || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         masterSchema: status.vaa1_annotation_master_schema,
+        analysisId: id,
       });
 
       const analysisData = {
+        analysisId: id,
         quantAnalysis: correctedQuantAnalysis,
         posAnalysis: correctedPosAnalysis,
         transcript: correctedTranscript,

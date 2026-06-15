@@ -321,6 +321,34 @@ type MasterSchemaPresenceInterval = NonNullable<
   AnnotationCorrections["master_schema_presence_intervals"]
 >[number];
 
+export function upsertMasterSchemaPresenceInterval(
+  existing: AnnotationCorrections | null | undefined,
+  interval: MasterSchemaPresenceInterval,
+  options?: {
+    now?: string;
+  },
+): AnnotationCorrections {
+  const current = existing?.master_schema_presence_intervals || [];
+  return {
+    ...(existing || {}),
+    version: 1,
+    updated_at: options?.now || new Date().toISOString(),
+    updated_by: "analyst",
+    text_substitutions: [...(existing?.text_substitutions || [])],
+    label_overrides: [...(existing?.label_overrides || [])],
+    manual_transcript_entries: [...(existing?.manual_transcript_entries || [])],
+    manual_visual_annotations: [...(existing?.manual_visual_annotations || [])],
+    proliferation_decisions: [...(existing?.proliferation_decisions || [])],
+    meaning_network_custom_lanes: [...(existing?.meaning_network_custom_lanes || [])],
+    master_schema_presence_intervals: [
+      ...current.filter(
+        (item) => item.id !== interval.id && item.node_id !== interval.node_id,
+      ),
+      interval,
+    ],
+  };
+}
+
 function manualVisualAnnotationNodeType(entry: ManualVisualAnnotation): string {
   if (entry.category === "OBJ") {
     return "object";
