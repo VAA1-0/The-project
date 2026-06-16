@@ -36,6 +36,7 @@ const sourceMediaMetadataPanel = readFrontend(
 const dataMaturationPanel = readFrontend(
   "app/V2components/components/panels/DataMaturationPanel.tsx",
 );
+const apiServiceSource = readFrontend("lib/api-service.ts");
 const searchPanel = readFrontend(
   "app/V2components/components/panels/SearchPanel.tsx",
 );
@@ -302,6 +303,24 @@ test("Datascene Search panel reads Content Search without mutating governed data
     menuBar,
     /openPanel\("Search"/,
     "MenuBar must expose the Datascene Search panel",
+  );
+});
+
+test("saved-analysis local fallback does not break Save Analysis or Save Project", () => {
+  assert.match(
+    apiServiceSource,
+    /\/api\/local-analysis\/\$\{analysisId\}\/bundle/,
+    "Save Analysis must have a local bundle fallback for surfaced saved analyses",
+  );
+  assert.match(
+    apiServiceSource,
+    /\/api\/local-project-bundle/,
+    "Save Project must have a local project bundle fallback for surfaced saved analyses",
+  );
+  assert.doesNotMatch(
+    apiServiceSource,
+    /downloadUrl\(this\.getBundleDownloadUrl\(analysisId\)/,
+    "Save Analysis must not bypass fallback/error handling with a direct backend-only anchor",
   );
 });
 

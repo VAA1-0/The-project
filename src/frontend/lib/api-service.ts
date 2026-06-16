@@ -1833,12 +1833,24 @@ class ApiService {
       });
     }
 
-    const response = await fetch(`${this.baseURL}/api/download-bundle/${analysisId}`);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/download-bundle/${analysisId}`);
+    } catch (error) {
+      console.warn("Backend bundle download failed, trying local analysis bundle:", error);
+      response = await fetch(`/api/local-analysis/${analysisId}/bundle`);
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const localResponse = response.url.includes("/api/local-analysis/")
+        ? response
+        : await fetch(`/api/local-analysis/${analysisId}/bundle`);
+      if (localResponse.ok) {
+        return localResponse.blob();
+      }
+      const errorText = await localResponse.text();
       throw new Error(
-        `Bundle download failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Bundle download failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
       );
     }
 
@@ -2000,10 +2012,6 @@ class ApiService {
     filename?: string,
   ): Promise<void> {
     try {
-      if (!analysisId.startsWith("mock-")) {
-        this.downloadUrl(this.getBundleDownloadUrl(analysisId), filename);
-        return;
-      }
       const blob = await this.downloadBundle(analysisId);
       this.downloadBlob(blob, filename || `${analysisId}_analysis_bundle.zip`);
     } catch (error) {
@@ -2013,18 +2021,42 @@ class ApiService {
   }
 
   async downloadProjectBundle(payload: Record<string, unknown>): Promise<Blob> {
-    const response = await fetch(`${this.baseURL}/api/download-project-bundle`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/download-project-bundle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.warn("Backend project bundle failed, trying local project bundle:", error);
+      response = await fetch("/api/local-project-bundle", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const localResponse = response.url.includes("/api/local-project-bundle")
+        ? response
+        : await fetch("/api/local-project-bundle", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+      if (localResponse.ok) {
+        return localResponse.blob();
+      }
+      const errorText = await localResponse.text();
       throw new Error(
-        `Project bundle download failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Project bundle download failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
       );
     }
 
@@ -2034,19 +2066,27 @@ class ApiService {
   async prepareProjectBundle(
     payload: Record<string, unknown>,
   ): Promise<{ filename: string; download_url: string }> {
-    const response = await fetch(`${this.baseURL}/api/prepare-project-bundle`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/prepare-project-bundle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      return {
+        filename: `${String(payload.project_name || "vaa1_project")}_project_bundle.zip`,
+        download_url: "/api/local-project-bundle",
+      };
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Project bundle preparation failed: ${response.status} ${response.statusText} - ${errorText}`,
-      );
+      return {
+        filename: `${String(payload.project_name || "vaa1_project")}_project_bundle.zip`,
+        download_url: "/api/local-project-bundle",
+      };
     }
 
     const result = await response.json();
@@ -2065,6 +2105,11 @@ class ApiService {
   ): Promise<void> {
     try {
       const prepared = await this.prepareProjectBundle(payload);
+      if (prepared.download_url === "/api/local-project-bundle") {
+        const blob = await this.downloadProjectBundle(payload);
+        this.downloadBlob(blob, filename || prepared.filename);
+        return;
+      }
       const downloadUrl = prepared.download_url.startsWith("http")
         ? prepared.download_url
         : `${this.baseURL}${prepared.download_url}`;
