@@ -1,0 +1,561 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1.datascene_content_search.v1.json",
+  "title": "Datascene / VAA1 Content Search Schema",
+  "schema_name": "vaa1.datascene_content_search.v1",
+  "version": "1.0.0",
+  "status": "operational_architecture_schema",
+  "description": "Governed multimodal content search contract for Datascene/VAA1. Search consumes Entity Registry, Master Schema, Scene Cards, Meaning Network, transcript, OCR, metadata, object detections, pattern records, and sample-cloud evidence. Search never overwrites governed data; it returns source-linked results, maturity, authority, traceback, and actions.",
+  "core_purpose": [
+    "video_content_search",
+    "named_entity_search",
+    "object_search",
+    "narrative_agent_search",
+    "pattern_search",
+    "scene_card_search",
+    "mature_data_proliferation_support",
+    "forensic_traceability"
+  ],
+  "source_switchboard": {
+    "transcript": true,
+    "ocr": true,
+    "manual_annotations": true,
+    "metadata": true,
+    "object_detection": true,
+    "audiovisual_narrative_agent_samples": true,
+    "visual_sample_clouds": true,
+    "audio_sample_clouds": true,
+    "detected_pattern_entities": true,
+    "motion_patterns": true,
+    "scene_cards": true,
+    "meaning_network": true,
+    "master_schema": true
+  },
+  "legacy_aliases": {
+    "character_search": "narrative_agent_search",
+    "audiovisual_character_samples": "audiovisual_narrative_agent_samples",
+    "AUDIOVISUAL_CHARACTER": "AUDIOVISUAL_NARRATIVE_AGENT",
+    "CHARACTER": "NARRATIVE_AGENT"
+  },
+  "search_modes": {
+    "keyword_search": {
+      "enabled": true,
+      "example": "Find all mentions of MyData",
+      "description": "Exact or fuzzy text matches across transcript, OCR, annotations, metadata, and scene cards."
+    },
+    "entity_search": {
+      "enabled": true,
+      "example": "Find all scenes containing Nomi",
+      "description": "Search canonical Entity Registry records and aliases."
+    },
+    "object_search": {
+      "enabled": true,
+      "example": "Find all scenes with microphones, cars, flags, or documents",
+      "description": "Search detected objects, object tracks, and manually confirmed object labels."
+    },
+    "narrative_agent_search": {
+      "enabled": true,
+      "legacy_alias": "character_search",
+      "example": "Find all appearances of James Bond",
+      "description": "Search audiovisual Narrative Agent samples, face/body tracks, speaker IDs, and manual Narrative Agent annotations."
+    },
+    "semantic_search": {
+      "enabled": true,
+      "example": "Find scenes discussing data self-determination",
+      "description": "Search meaning-level similarity, concepts, topics, themes, and paraphrased content."
+    },
+    "pattern_search": {
+      "enabled": true,
+      "example": "Find all gunshot-like audio events or running motion patterns",
+      "description": "Search detected pattern entities and governed motion, audio, visual, text, cinematic, and multimodal patterns."
+    },
+    "multimodal_search": {
+      "enabled": true,
+      "example": "Find scenes where Petteri is speaking and a slide mentions AI Act",
+      "description": "Search combinations of transcript, OCR, object, Narrative Agent, audio, annotation, metadata, pattern, and Meaning Network evidence."
+    },
+    "forensic_search": {
+      "enabled": true,
+      "example": "Show every evidence source supporting this entity label",
+      "description": "Return full source evidence chains and traceback for a result or claim."
+    }
+  },
+  "return_levels": {
+    "video": "Return matching analyses or source videos.",
+    "scene": "Return governed scene cards.",
+    "segment": "Return exact Master-time segments.",
+    "frame": "Return exact OCR, object, bbox, or frame-level hits.",
+    "entity": "Return governed entity or Narrative Agent cards.",
+    "pattern": "Return detected or mature pattern records.",
+    "forensic": "Return full evidence chains with traceback."
+  },
+  "content_search_query": {
+    "type": "object",
+    "required": [
+      "query_id",
+      "query_text",
+      "query_type",
+      "filters",
+      "logic",
+      "return_level",
+      "sort_by"
+    ],
+    "properties": {
+      "query_id": { "type": "string" },
+      "query_text": { "type": "string" },
+      "query_type": {
+        "type": "string",
+        "enum": [
+          "keyword_search",
+          "entity_search",
+          "object_search",
+          "narrative_agent_search",
+          "semantic_search",
+          "pattern_search",
+          "multimodal_search",
+          "forensic_search"
+        ]
+      },
+      "filters": {
+        "type": "object",
+        "properties": {
+          "analysis_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "video_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "collection_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "scene_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "time_range": {
+            "type": "object",
+            "properties": {
+              "start_time": { "type": ["number", "null"] },
+              "end_time": { "type": ["number", "null"] }
+            },
+            "additionalProperties": false
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "transcript",
+                "ocr",
+                "manual_annotations",
+                "metadata",
+                "object_detection",
+                "audiovisual_narrative_agent_samples",
+                "visual_sample_clouds",
+                "audio_sample_clouds",
+                "detected_pattern_entities",
+                "motion_patterns",
+                "scene_cards",
+                "meaning_network",
+                "master_schema"
+              ]
+            }
+          },
+          "entity_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "PERSON_NAME",
+                "NARRATIVE_AGENT",
+                "ORG",
+                "PLACE",
+                "EVENT",
+                "DATE",
+                "LAW_POLICY",
+                "CONCEPT",
+                "OBJECT",
+                "VISUAL_SYMBOL",
+                "AUDIO_ENTITY",
+                "AUDIOVISUAL_NARRATIVE_AGENT",
+                "COLLECTION_ENTITY",
+                "SOURCE_MEDIA_ENTITY"
+              ]
+            }
+          },
+          "maturity_levels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+            }
+          },
+          "authority_status": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "single_model_detected",
+                "multi_source_corroborated",
+                "metadata_authoritative",
+                "manual_confirmed",
+                "manual_corrected",
+                "manual_rejected",
+                "superseded"
+              ]
+            }
+          },
+          "minimum_confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "additionalProperties": true
+      },
+      "logic": {
+        "type": "object",
+        "required": ["operator", "conditions"],
+        "properties": {
+          "operator": {
+            "type": "string",
+            "enum": ["AND", "OR", "NOT", "NEAR"]
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type", "value"],
+              "properties": {
+                "condition_id": { "type": "string" },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "keyword_present",
+                    "entity_present",
+                    "narrative_agent_present",
+                    "object_present",
+                    "pattern_present",
+                    "motion_present",
+                    "transcript_mentions",
+                    "ocr_mentions",
+                    "metadata_mentions",
+                    "semantic_similarity",
+                    "meaning_network_relation",
+                    "forensic_trace_supports"
+                  ]
+                },
+                "value": { "type": "string" },
+                "entity_type": { "type": "string" },
+                "source_preference": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "within_seconds": { "type": "number" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "return_level": {
+        "type": "string",
+        "enum": ["video", "scene", "segment", "frame", "entity", "pattern", "forensic"]
+      },
+      "sort_by": {
+        "type": "string",
+        "enum": [
+          "maturity_then_relevance",
+          "relevance_then_maturity",
+          "source_time",
+          "confidence",
+          "source_diversity",
+          "manual_authority_first"
+        ]
+      }
+    },
+    "additionalProperties": true
+  },
+  "search_index_record": {
+    "type": "object",
+    "required": [
+      "index_id",
+      "analysis_id",
+      "start_time",
+      "end_time",
+      "searchable_text",
+      "sources",
+      "maturity_summary"
+    ],
+    "properties": {
+      "index_id": { "type": "string" },
+      "analysis_id": { "type": "string" },
+      "video_id": { "type": "string" },
+      "collection_id": { "type": "string" },
+      "scene_id": { "type": "string" },
+      "segment_id": { "type": "string" },
+      "start_time": { "type": "number" },
+      "end_time": { "type": "number" },
+      "canonical_entity_id": { "type": "string" },
+      "canonical_name": { "type": "string" },
+      "entity_type": { "type": "string" },
+      "searchable_text": { "type": "string" },
+      "searchable_keywords": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "sources": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["source_type", "source_id", "confidence", "maturity", "authority_status"],
+          "properties": {
+            "source_type": { "type": "string" },
+            "source_id": { "type": "string" },
+            "match_text": { "type": "string" },
+            "detected_class": { "type": "string" },
+            "track_id": { "type": "string" },
+            "start_time": { "type": "number" },
+            "end_time": { "type": "number" },
+            "bbox": {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maturity": {
+              "type": "string",
+              "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+            },
+            "authority_status": { "type": "string" },
+            "evidence_ref": { "type": "string" },
+            "traceback_ref": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "maturity_summary": {
+        "type": "object",
+        "properties": {
+          "highest_maturity": {
+            "type": "string",
+            "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+          },
+          "has_manual_confirmation": { "type": "boolean" },
+          "has_multi_source_support": { "type": "boolean" },
+          "requires_review": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      },
+      "forensic_render_available": { "type": "boolean" },
+      "scene_card_available": { "type": "boolean" },
+      "entity_card_available": { "type": "boolean" }
+    },
+    "additionalProperties": true
+  },
+  "search_result": {
+    "type": "object",
+    "required": [
+      "result_id",
+      "query_id",
+      "analysis_id",
+      "start_time",
+      "end_time",
+      "match_type",
+      "matched_query",
+      "evidence",
+      "ranking",
+      "actions"
+    ],
+    "properties": {
+      "result_id": { "type": "string" },
+      "query_id": { "type": "string" },
+      "analysis_id": { "type": "string" },
+      "video_id": { "type": "string" },
+      "scene_id": { "type": "string" },
+      "segment_id": { "type": "string" },
+      "start_time": { "type": "number" },
+      "end_time": { "type": "number" },
+      "title": { "type": "string" },
+      "summary": { "type": "string" },
+      "match_type": {
+        "type": "string",
+        "enum": [
+          "keyword_match",
+          "entity_match",
+          "object_match",
+          "narrative_agent_match",
+          "pattern_match",
+          "semantic_match",
+          "multimodal_entity_match",
+          "forensic_trace_match"
+        ]
+      },
+      "matched_query": { "type": "string" },
+      "matched_entity_id": { "type": "string" },
+      "matched_entity_type": { "type": "string" },
+      "matched_entities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "entity_id": { "type": "string" },
+            "canonical_name": { "type": "string" },
+            "entity_type": { "type": "string" },
+            "maturity": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "evidence": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["source_type", "evidence_ref", "display_label", "confidence", "maturity"],
+          "properties": {
+            "source_type": { "type": "string" },
+            "evidence_ref": { "type": "string" },
+            "display_label": { "type": "string" },
+            "match_text": { "type": "string" },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maturity": {
+              "type": "string",
+              "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+            },
+            "authority_status": { "type": "string" },
+            "source_time_anchor": {
+              "type": "object",
+              "properties": {
+                "start_time": { "type": "number" },
+                "end_time": { "type": "number" }
+              },
+              "additionalProperties": false
+            },
+            "traceback_refs": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "ranking": {
+        "type": "object",
+        "properties": {
+          "ranking_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "relevance_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "maturity_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "source_diversity_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "confidence_score": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "additionalProperties": true
+      },
+      "actions": {
+        "type": "object",
+        "properties": {
+          "jump_to_video": { "type": "boolean" },
+          "open_scene_card": { "type": "boolean" },
+          "open_entity_card": { "type": "boolean" },
+          "open_pattern_card": { "type": "boolean" },
+          "open_forensic_render": { "type": "boolean" },
+          "promote_to_mature_data_candidate": { "type": "boolean" },
+          "export_result": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "additionalProperties": true
+  },
+  "ranking_policy": {
+    "primary_order": [
+      "manual_confirmation",
+      "maturity_level",
+      "multi_source_corroboration",
+      "semantic_relevance",
+      "confidence",
+      "temporal_precision"
+    ],
+    "manual_confirmed_boost": true,
+    "mature_data_boost": true,
+    "multi_source_boost": true,
+    "raw_machine_detection_penalty": true
+  },
+  "governance_rules": {
+    "manual_correction_wins": true,
+    "search_does_not_overwrite_data": true,
+    "candidate_results_must_be_marked_as_candidate": true,
+    "uncertain_narrative_agent_claim_must_not_be_presented_as_fact": true,
+    "object_track_identity_must_not_equal_narrative_agent_without_confirmation": true,
+    "cross_scene_proliferation_requires_evidence": true,
+    "forensic_trace_required_for_mature_search_results": true,
+    "analysis_scoped_records_must_not_bleed_to_other_videos": true
+  },
+  "som_open_topology_boundary": {
+    "status": "diagnostic_scanner_matcher_only",
+    "can_suggest": true,
+    "can_cluster": true,
+    "can_surface_near_matches": true,
+    "can_create_review_candidates": true,
+    "can_override_master_schema": false,
+    "can_mark_mature_without_decision": false,
+    "required_outputs": [
+      "candidate_id",
+      "source_refs",
+      "similarity_score",
+      "cluster_context",
+      "reason_for_match",
+      "review_required",
+      "blocked_actions"
+    ]
+  },
+  "api_endpoints_draft": {
+    "search_content": {
+      "method": "POST",
+      "path": "/api/search/content",
+      "input": "content_search_query",
+      "output": "search_result[]"
+    },
+    "search_entities": {
+      "method": "POST",
+      "path": "/api/search/entities",
+      "input": "entity_search_query",
+      "output": "canonical_entity[]"
+    },
+    "search_objects": {
+      "method": "POST",
+      "path": "/api/search/objects",
+      "input": "object_search_query",
+      "output": "search_result[]"
+    },
+    "search_narrative_agents": {
+      "method": "POST",
+      "path": "/api/search/narrative-agents",
+      "input": "narrative_agent_search_query",
+      "output": "search_result[]"
+    },
+    "search_patterns": {
+      "method": "POST",
+      "path": "/api/search/patterns",
+      "input": "pattern_search_query",
+      "output": "search_result[]"
+    },
+    "open_forensic_render": {
+      "method": "GET",
+      "path": "/api/search/results/{result_id}/forensic-render",
+      "output": "forensic_evidence_chain"
+    }
+  }
+}

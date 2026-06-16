@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
-import { VideoService, type AnalysisData, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
+import { VideoService, type AnalysisData, type DatasceneEntityRegistryRecord, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
 import type { AudioProsodyCue, ExpressionSample, TranscriptSegment } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { apiService, type AnnotationCorrections, type ManualVisualAnnotation, type ProliferationDecision, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
@@ -1256,6 +1256,75 @@ function masterRecordToMeaningNode(
       copy_paste_enabled: true,
       update_enabled: true,
       source_navigation_enabled: Boolean(evidenceRef.time_range),
+    },
+  };
+}
+
+function datasceneEntityToMeaningNode(
+  entity: DatasceneEntityRegistryRecord,
+): MeaningNetworkNode {
+  const firstMention = entity.source_mentions[0];
+  const start = firstMention?.start_time ?? 0;
+  const end = firstMention?.end_time ?? start;
+  const sourceTypes = [...new Set(entity.source_mentions.map((mention) => mention.source_type))];
+  const evidenceRefs = entity.source_mentions.slice(0, 8).map((mention) => ({
+    evidence_id: mention.evidence_ref,
+    source_type: mention.source_type,
+    time_range: { start: mention.start_time, end: mention.end_time },
+    traceback_record_id: mention.traceback_ref || `traceback:${mention.evidence_ref}`,
+    confidence: mention.confidence,
+  }));
+  const isNarrativeAgent =
+    entity.entity_type === "NARRATIVE_AGENT" ||
+    entity.entity_type === "AUDIOVISUAL_NARRATIVE_AGENT";
+
+  return {
+    node_id: `entity-registry:${entity.entity_id}`,
+    node_type: isNarrativeAgent ? "narrative_agent" : "entity",
+    label: entity.canonical_name,
+    description: `${entity.entity_type} / ${entity.maturity} / ${sourceTypes.join(", ")}`,
+    attributes: {
+      lane_id: isNarrativeAgent ? "on_camera_agents" : "entity_registry",
+      entity_id: entity.entity_id,
+      entity_type: entity.entity_type,
+      authority_status: entity.authority_status,
+      maturity: entity.maturity,
+      source_types: sourceTypes,
+      aliases: entity.aliases,
+      source_mention_count: entity.source_mentions.length,
+      content_search_ready: true,
+      scanner_matcher_boundary: "diagnostic_candidate_support",
+    },
+    maturity: {
+      level:
+        entity.maturity === "mature"
+          ? "analyst_confirmed"
+          : entity.maturity === "corroborated"
+            ? "machine_supported"
+            : entity.maturity === "candidate"
+              ? "candidate"
+              : "raw_detected",
+      authority: entity.authority_status,
+      confidence: entity.confidence,
+    },
+    evidence_refs:
+      evidenceRefs.length > 0
+        ? evidenceRefs
+        : [
+            {
+              evidence_id: entity.entity_id,
+              source_type: "entity_registry",
+              time_range: { start, end },
+              traceback_record_id: `traceback:${entity.entity_id}`,
+              confidence: entity.confidence,
+            },
+          ],
+    ui: {
+      display_group: isNarrativeAgent ? "entity_registry_narrative_agents" : "entity_registry",
+      quick_confirm_enabled: entity.maturity !== "mature",
+      copy_paste_enabled: true,
+      update_enabled: true,
+      source_navigation_enabled: Boolean(firstMention),
     },
   };
 }
@@ -3342,6 +3411,12 @@ export default function MeaningPlotPanel({
       .map(prosodyCueToMeaningNode),
     [analysisData?.audioProsody],
   );
+  const entityRegistryMeaningNodes = useMemo(
+    () => (analysisData?.entityRegistry?.entities || [])
+      .slice(0, 260)
+      .map(datasceneEntityToMeaningNode),
+    [analysisData?.entityRegistry?.entities],
+  );
   const narrativeAgentProfileMeaningNodes = useMemo(
     () => narrativeAgentProfiles.map(narrativeAgentProfileToMeaningNode),
     [narrativeAgentProfiles],
@@ -3353,6 +3428,7 @@ export default function MeaningPlotPanel({
         ...sceneMeaningNodes,
         ...narrativeAgentProfileMeaningNodes,
         ...masterSchemaMeaningNodes,
+        ...entityRegistryMeaningNodes,
         ...persistedPresenceMeaningNodes,
         ...transcriptMeaningNodes,
         ...prosodyMeaningNodes,
@@ -3361,7 +3437,7 @@ export default function MeaningPlotPanel({
       ].forEach((node) => byId.set(node.node_id, node));
       return [...byId.values()];
     },
-    [datasceneMeaningNetwork, draftMeaningNetworkNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
+    [datasceneMeaningNetwork, draftMeaningNetworkNodes, entityRegistryMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
   );
   const masterSchemaMeaningEdges = useMemo<MeaningNetworkEdge[]>(
     () => {

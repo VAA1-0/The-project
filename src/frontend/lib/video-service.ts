@@ -370,6 +370,163 @@ export interface MasterSchemaResolvedEvidenceView {
   rawArtifactsPreserved: boolean;
 }
 
+export type DatasceneEntityType =
+  | "PERSON_NAME"
+  | "NARRATIVE_AGENT"
+  | "ORG"
+  | "PLACE"
+  | "EVENT"
+  | "DATE"
+  | "LAW_POLICY"
+  | "CONCEPT"
+  | "OBJECT"
+  | "VISUAL_SYMBOL"
+  | "AUDIO_ENTITY"
+  | "AUDIOVISUAL_NARRATIVE_AGENT"
+  | "COLLECTION_ENTITY"
+  | "SOURCE_MEDIA_ENTITY";
+
+export type DatasceneEntityMaturity =
+  | "raw"
+  | "candidate"
+  | "corroborated"
+  | "mature"
+  | "rejected"
+  | "superseded";
+
+export type DatasceneEntityAuthorityStatus =
+  | "single_model_detected"
+  | "multi_source_corroborated"
+  | "metadata_authoritative"
+  | "manual_confirmed"
+  | "manual_corrected"
+  | "manual_rejected"
+  | "superseded";
+
+export type DatasceneEntitySourceType =
+  | "transcript"
+  | "ocr"
+  | "annotation"
+  | "metadata"
+  | "object_detection"
+  | "visual_sample_cloud"
+  | "audio_sample_cloud"
+  | "audiovisual_narrative_agent_sample";
+
+export interface DatasceneEntityMention {
+  mention_id: string;
+  source_type: DatasceneEntitySourceType;
+  start_time: number;
+  end_time: number;
+  confidence: number;
+  evidence_ref: string;
+  text?: string;
+  label?: string;
+  detected_class?: string;
+  track_id?: string;
+  sample_id?: string;
+  annotation_id?: string;
+  metadata_field?: string;
+  bbox?: [number, number, number, number];
+  authority_status?: DatasceneEntityAuthorityStatus;
+  traceback_ref?: string;
+}
+
+export interface DatasceneEntityRegistryRecord {
+  entity_id: string;
+  analysis_id: string;
+  canonical_name: string;
+  entity_type: DatasceneEntityType;
+  aliases: string[];
+  maturity: DatasceneEntityMaturity;
+  authority_status: DatasceneEntityAuthorityStatus;
+  confidence: number;
+  source_mentions: DatasceneEntityMention[];
+  linked_object_tracks: string[];
+  linked_ocr_mentions: string[];
+  linked_metadata_fields: string[];
+  sample_cloud_refs: string[];
+  traceback_refs: string[];
+  proliferation_policy: {
+    can_proliferate: boolean;
+    requires_manual_review: boolean;
+    allowed_targets: string[];
+    blocked_actions: string[];
+  };
+}
+
+export interface DatasceneEntityRegistryView {
+  schema: "vaa1.datascene_entity_registry.v1";
+  analysis_id: string;
+  entities: DatasceneEntityRegistryRecord[];
+  source_counts: Record<DatasceneEntitySourceType, number>;
+  governance_rules: {
+    manual_correction_wins: true;
+    manual_confirmation_wins: true;
+    raw_detection_never_overrides_mature_entity: true;
+    track_identity_must_not_equal_narrative_agent_without_confirmation: true;
+    analysis_scoped_records_must_not_bleed_to_other_videos: true;
+  };
+}
+
+export interface DatasceneContentSearchIndexRecord {
+  index_id: string;
+  analysis_id: string;
+  canonical_entity_id: string;
+  canonical_name: string;
+  entity_type: DatasceneEntityType;
+  start_time: number;
+  end_time: number;
+  searchable_text: string;
+  searchable_keywords: string[];
+  sources: Array<{
+    source_type: DatasceneEntitySourceType;
+    source_id: string;
+    match_text?: string;
+    detected_class?: string;
+    track_id?: string;
+    start_time: number;
+    end_time: number;
+    confidence: number;
+    maturity: DatasceneEntityMaturity;
+    authority_status: DatasceneEntityAuthorityStatus;
+    evidence_ref: string;
+    traceback_ref?: string;
+  }>;
+  maturity_summary: {
+    highest_maturity: DatasceneEntityMaturity;
+    has_manual_confirmation: boolean;
+    has_multi_source_support: boolean;
+    requires_review: boolean;
+  };
+  forensic_render_available: boolean;
+  entity_card_available: boolean;
+}
+
+export interface DatasceneContentSearchView {
+  schema: "vaa1.datascene_content_search.v1";
+  analysis_id: string;
+  source_switchboard: Record<string, boolean>;
+  search_index_records: DatasceneContentSearchIndexRecord[];
+  governance_rules: {
+    manual_correction_wins: true;
+    search_does_not_overwrite_data: true;
+    candidate_results_must_be_marked_as_candidate: true;
+    object_track_identity_must_not_equal_narrative_agent_without_confirmation: true;
+    analysis_scoped_records_must_not_bleed_to_other_videos: true;
+  };
+  som_open_topology_boundary: {
+    status: "diagnostic_scanner_matcher_only";
+    can_suggest: true;
+    can_cluster: true;
+    can_surface_near_matches: true;
+    can_create_review_candidates: true;
+    can_override_master_schema: false;
+    can_mark_mature_without_decision: false;
+    required_outputs: string[];
+  };
+}
+
 export interface MasterSchemaMaturityAudit {
   audit_schema?: string;
   updated_at?: string;
@@ -1479,6 +1636,559 @@ function buildMasterSchemaResolvedEvidenceView({
   };
 }
 
+function datasceneEntityKey(type: DatasceneEntityType, label: string): string {
+  return `${type}:${label.toLowerCase().replace(/\s+/g, " ").trim()}`;
+}
+
+function datasceneMaturityForAuthority(
+  authority: MatureEvidenceAuthority,
+): DatasceneEntityMaturity {
+  if (authority === "manual_correction" || authority === "manual_annotation") {
+    return "mature";
+  }
+  if (authority === "mature_triangulated") {
+    return "corroborated";
+  }
+  if (authority === "interpreted_detection") {
+    return "candidate";
+  }
+  return "raw";
+}
+
+function datasceneAuthorityStatusForAuthority(
+  authority: MatureEvidenceAuthority,
+): DatasceneEntityAuthorityStatus {
+  if (authority === "manual_correction") return "manual_corrected";
+  if (authority === "manual_annotation") return "manual_confirmed";
+  if (authority === "mature_triangulated") return "multi_source_corroborated";
+  return "single_model_detected";
+}
+
+function datasceneEntityTypeForMasterRecord(
+  record: MasterSchemaResolvedEvidenceRecord,
+): DatasceneEntityType {
+  if (
+    record.category === "narrative_agent_profile" ||
+    record.category === "character_role" ||
+    record.category === "identity"
+  ) {
+    return "NARRATIVE_AGENT";
+  }
+  if (record.category === "object") return "OBJECT";
+  if (record.category === "ocr" || record.category === "transcript") {
+    return "SOURCE_MEDIA_ENTITY";
+  }
+  if (record.category === "expression") return "AUDIOVISUAL_NARRATIVE_AGENT";
+  return "CONCEPT";
+}
+
+function sourceCountSeed(): Record<DatasceneEntitySourceType, number> {
+  return {
+    transcript: 0,
+    ocr: 0,
+    annotation: 0,
+    metadata: 0,
+    object_detection: 0,
+    visual_sample_cloud: 0,
+    audio_sample_cloud: 0,
+    audiovisual_narrative_agent_sample: 0,
+  };
+}
+
+function entityProliferationPolicy(maturity: DatasceneEntityMaturity) {
+  const canProliferate = maturity === "mature" || maturity === "corroborated";
+  return {
+    can_proliferate: canProliferate,
+    requires_manual_review: maturity !== "mature",
+    allowed_targets: canProliferate
+      ? [
+          "master_schema",
+          "scene_cards",
+          "search_index",
+          "entity_registry",
+          "meaning_network",
+          "narrative_agent_panel",
+          "bbox_roi",
+          "transcript",
+          "ocr",
+          "forensic_render",
+          "export_report",
+        ]
+      : ["search_index", "entity_registry", "forensic_render"],
+    blocked_actions: [
+      "overwrite_prior_manual_label",
+      "overwrite_different_track_identity",
+      "cross_scene_relabel_without_evidence",
+      "promote_raw_detection_without_traceback",
+      "project_rejected_entity",
+    ],
+  };
+}
+
+function buildDatasceneEntityRegistryView({
+  analysisId,
+  transcript,
+  objects,
+  ocr,
+  nativeAnnotations,
+  sourceSamples,
+  sourceMediaMetadata,
+  masterSchemaResolvedEvidence,
+}: {
+  analysisId?: string;
+  transcript: TranscriptSegment[];
+  objects: DetectedObject[];
+  ocr: OCR[];
+  nativeAnnotations: NativeAnnotationRecord[];
+  sourceSamples: SourceSample[];
+  sourceMediaMetadata?: SourceMediaMetadata;
+  masterSchemaResolvedEvidence: MasterSchemaResolvedEvidenceView;
+}): DatasceneEntityRegistryView {
+  const resolvedAnalysisId = analysisId || sourceMediaMetadata?.analysis_id || "analysis";
+  const source_counts = sourceCountSeed();
+  const entities = new Map<string, DatasceneEntityRegistryRecord>();
+
+  const addEntity = ({
+    label,
+    type,
+    maturity,
+    authority_status,
+    confidence,
+    mention,
+    aliases = [],
+    linkedObjectTrack,
+    linkedOcrMention,
+    linkedMetadataField,
+    sampleCloudRef,
+  }: {
+    label: string;
+    type: DatasceneEntityType;
+    maturity: DatasceneEntityMaturity;
+    authority_status: DatasceneEntityAuthorityStatus;
+    confidence: number;
+    mention: DatasceneEntityMention;
+    aliases?: string[];
+    linkedObjectTrack?: string;
+    linkedOcrMention?: string;
+    linkedMetadataField?: string;
+    sampleCloudRef?: string;
+  }) => {
+    const canonical = looseString(label);
+    if (!canonical) return;
+    const key = datasceneEntityKey(type, canonical);
+    const existing = entities.get(key);
+    source_counts[mention.source_type] += 1;
+    const traceback = mention.traceback_ref || mention.evidence_ref;
+    if (existing) {
+      existing.source_mentions.push(mention);
+      existing.traceback_refs = uniqueStringValues([...existing.traceback_refs, traceback]);
+      existing.aliases = uniqueStringValues([...existing.aliases, ...aliases, canonical]);
+      if (linkedObjectTrack) {
+        existing.linked_object_tracks = uniqueStringValues([
+          ...existing.linked_object_tracks,
+          linkedObjectTrack,
+        ]);
+      }
+      if (linkedOcrMention) {
+        existing.linked_ocr_mentions = uniqueStringValues([
+          ...existing.linked_ocr_mentions,
+          linkedOcrMention,
+        ]);
+      }
+      if (linkedMetadataField) {
+        existing.linked_metadata_fields = uniqueStringValues([
+          ...existing.linked_metadata_fields,
+          linkedMetadataField,
+        ]);
+      }
+      if (sampleCloudRef) {
+        existing.sample_cloud_refs = uniqueStringValues([
+          ...existing.sample_cloud_refs,
+          sampleCloudRef,
+        ]);
+      }
+      return;
+    }
+    entities.set(key, {
+      entity_id: `entity:${resolvedAnalysisId}:${entities.size + 1}`,
+      analysis_id: resolvedAnalysisId,
+      canonical_name: canonical,
+      entity_type: type,
+      aliases: uniqueStringValues([...aliases, canonical]),
+      maturity,
+      authority_status,
+      confidence,
+      source_mentions: [mention],
+      linked_object_tracks: linkedObjectTrack ? [linkedObjectTrack] : [],
+      linked_ocr_mentions: linkedOcrMention ? [linkedOcrMention] : [],
+      linked_metadata_fields: linkedMetadataField ? [linkedMetadataField] : [],
+      sample_cloud_refs: sampleCloudRef ? [sampleCloudRef] : [],
+      traceback_refs: [traceback],
+      proliferation_policy: entityProliferationPolicy(maturity),
+    });
+  };
+
+  masterSchemaResolvedEvidence.records.forEach((record, index) => {
+    const label = looseString(record.label);
+    if (!label) return;
+    const maturity = datasceneMaturityForAuthority(record.authority);
+    addEntity({
+      label,
+      type: datasceneEntityTypeForMasterRecord(record),
+      maturity,
+      authority_status: datasceneAuthorityStatusForAuthority(record.authority),
+      confidence: record.authority === "raw_detection" ? 0.5 : 1,
+      mention: {
+        mention_id: `master-schema:${index}:${record.id}`,
+        source_type:
+          record.category === "object"
+            ? "object_detection"
+            : record.category === "ocr"
+              ? "ocr"
+              : record.category === "transcript"
+                ? "transcript"
+                : "annotation",
+        start_time: finiteNumber(record.start) ?? 0,
+        end_time: finiteNumber(record.end) ?? finiteNumber(record.start) ?? 0,
+        confidence: record.authority === "raw_detection" ? 0.5 : 1,
+        evidence_ref: record.id,
+        label,
+        detected_class: record.rawLabel,
+        track_id: record.targetId,
+        authority_status: datasceneAuthorityStatusForAuthority(record.authority),
+        traceback_ref: record.maturityRoute || record.id,
+      },
+      aliases: [record.rawLabel || ""],
+      linkedObjectTrack: record.category === "object" ? record.targetId : undefined,
+      linkedOcrMention: record.category === "ocr" ? record.id : undefined,
+    });
+  });
+
+  nativeAnnotations.forEach((item, index) => {
+    const label = looseString(
+      item.identity_affirmation || item.role_affirmation || item.custom_label || item.label,
+    );
+    if (!label) return;
+    const category = looseString(item.category);
+    addEntity({
+      label,
+      type: ["Identification", "Role"].includes(category)
+        ? "NARRATIVE_AGENT"
+        : category === "OBJ"
+          ? "OBJECT"
+          : "CONCEPT",
+      maturity: "mature",
+      authority_status: "manual_confirmed",
+      confidence: 1,
+      mention: {
+        mention_id: item.id || `manual:${index}`,
+        source_type: "annotation",
+        start_time: finiteNumber(item.start_seconds) ?? finiteNumber(item.timestamp_seconds) ?? 0,
+        end_time:
+          finiteNumber(item.end_seconds) ??
+          finiteNumber(item.start_seconds) ??
+          finiteNumber(item.timestamp_seconds) ??
+          0,
+        confidence: 1,
+        evidence_ref: item.id || `manual:${index}`,
+        label,
+        annotation_id: item.id,
+        authority_status: "manual_confirmed",
+        traceback_ref: "master_schema.review_layer.manual_subject_annotation",
+      },
+      aliases: [item.custom_label || "", item.label || ""],
+    });
+  });
+
+  objects.slice(0, 2000).forEach((item, index) => {
+    const label = looseString(item.displayLabel || item.class_name);
+    if (!label) return;
+    const sourceIsManual = item.sourceType === "manual_visual";
+    addEntity({
+      label,
+      type: "OBJECT",
+      maturity: sourceIsManual ? "mature" : item.displayLabel ? "candidate" : "raw",
+      authority_status: sourceIsManual ? "manual_confirmed" : "single_model_detected",
+      confidence: Number(item.confidence || 0),
+      mention: {
+        mention_id:
+          item.trackId !== undefined ? `object:${item.trackId}:${index}` : `object:${index}`,
+        source_type: sourceIsManual ? "annotation" : "object_detection",
+        start_time: finiteNumber(item.startTimestamp) ?? finiteNumber(item.timestamp) ?? 0,
+        end_time:
+          finiteNumber(item.endTimestamp) ??
+          finiteNumber(item.startTimestamp) ??
+          finiteNumber(item.timestamp) ??
+          0,
+        confidence: Number(item.confidence || 0),
+        evidence_ref:
+          item.trackId !== undefined ? `object_track_${item.trackId}` : `object:${index}`,
+        detected_class: item.raw_class_name || item.class_name,
+        track_id: item.trackId !== undefined ? String(item.trackId) : undefined,
+        authority_status: sourceIsManual ? "manual_confirmed" : "single_model_detected",
+        traceback_ref: sourceIsManual ? "manual_visual_annotation" : "object_detection",
+      },
+      aliases: [item.raw_class_name || "", item.class_name || ""],
+      linkedObjectTrack: item.trackId !== undefined ? String(item.trackId) : undefined,
+    });
+  });
+
+  transcript.slice(0, 1200).forEach((segment, index) => {
+    const text = looseString(segment.text);
+    if (!text) return;
+    addEntity({
+      label: text,
+      type: "SOURCE_MEDIA_ENTITY",
+      maturity: segment.correctionSource === "manual" ? "mature" : "raw",
+      authority_status:
+        segment.correctionSource === "manual" ? "manual_confirmed" : "single_model_detected",
+      confidence: segment.status === "confirmed" ? 0.85 : 0.5,
+      mention: {
+        mention_id: segment.targetId || `transcript:${index}`,
+        source_type: "transcript",
+        start_time: finiteNumber(segment.start) ?? 0,
+        end_time: finiteNumber(segment.end) ?? finiteNumber(segment.start) ?? 0,
+        confidence: segment.status === "confirmed" ? 0.85 : 0.5,
+        evidence_ref: segment.targetId || `transcript:${index}`,
+        text,
+        authority_status:
+          segment.correctionSource === "manual"
+            ? "manual_confirmed"
+            : "single_model_detected",
+        traceback_ref: "transcript",
+      },
+    });
+  });
+
+  ocr.slice(0, 1200).forEach((item, index) => {
+    const text = looseString(item.text);
+    if (!text) return;
+    addEntity({
+      label: text,
+      type: "SOURCE_MEDIA_ENTITY",
+      maturity: item.rawText && item.rawText !== item.text ? "mature" : "candidate",
+      authority_status:
+        item.rawText && item.rawText !== item.text
+          ? "manual_corrected"
+          : "single_model_detected",
+      confidence: Number(item.confidence || 0),
+      mention: {
+        mention_id: `ocr:${index}:${item.timestamp}`,
+        source_type: "ocr",
+        start_time: finiteNumber(item.timestamp) ?? 0,
+        end_time: finiteNumber(item.timestamp) ?? 0,
+        confidence: Number(item.confidence || 0),
+        evidence_ref: `ocr:${index}:${item.timestamp}`,
+        text,
+        authority_status:
+          item.rawText && item.rawText !== item.text
+            ? "manual_corrected"
+            : "single_model_detected",
+        traceback_ref: "ocr",
+      },
+      linkedOcrMention: `ocr:${index}:${item.timestamp}`,
+    });
+  });
+
+  sourceSamples.forEach((sample) => {
+    const label = looseString(sample.label || sample.purpose || sample.sample_id);
+    if (!label) return;
+    const source_type: DatasceneEntitySourceType =
+      sample.sample_type === "audio"
+        ? "audio_sample_cloud"
+        : sample.sample_type === "visual"
+          ? "visual_sample_cloud"
+          : "audiovisual_narrative_agent_sample";
+    addEntity({
+      label,
+      type:
+        sample.sample_type === "audio"
+          ? "AUDIO_ENTITY"
+          : sample.sample_type === "visual"
+            ? "VISUAL_SYMBOL"
+            : "AUDIOVISUAL_NARRATIVE_AGENT",
+      maturity: sample.status === "completed" ? "candidate" : "raw",
+      authority_status: "single_model_detected",
+      confidence: sample.status === "completed" ? 0.75 : 0.4,
+      mention: {
+        mention_id: sample.sample_id,
+        source_type,
+        start_time: finiteNumber(sample.time_start) ?? 0,
+        end_time: finiteNumber(sample.time_end) ?? finiteNumber(sample.time_start) ?? 0,
+        confidence: sample.status === "completed" ? 0.75 : 0.4,
+        evidence_ref: sample.sample_id,
+        sample_id: sample.sample_id,
+        label,
+        authority_status: "single_model_detected",
+        traceback_ref: `source_sample:${sample.sample_id}`,
+      },
+      sampleCloudRef: sample.sample_id,
+    });
+  });
+
+  const metadataEntries: Array<[string, unknown]> = [
+    ["original_filename", sourceMediaMetadata?.original_filename],
+    ["stored_filename", sourceMediaMetadata?.stored_filename],
+    ["format_name", sourceMediaMetadata?.format_name],
+    ["recorded_at", sourceMediaMetadata?.recorded_at],
+    ["gps_coordinates", sourceMediaMetadata?.gps_coordinates],
+    ["filmed_by", sourceMediaMetadata?.filmed_by],
+  ];
+  metadataEntries.forEach(([field, value]) => {
+    const label = looseString(value);
+    if (!label) return;
+    addEntity({
+      label,
+      type: "SOURCE_MEDIA_ENTITY",
+      maturity: "corroborated",
+      authority_status: "metadata_authoritative",
+      confidence: 1,
+      mention: {
+        mention_id: `metadata:${field}`,
+        source_type: "metadata",
+        start_time: 0,
+        end_time: 0,
+        confidence: 1,
+        evidence_ref: `metadata:${field}`,
+        metadata_field: field,
+        label,
+        authority_status: "metadata_authoritative",
+        traceback_ref: `source_media_metadata:${field}`,
+      },
+      linkedMetadataField: field,
+    });
+  });
+
+  return {
+    schema: "vaa1.datascene_entity_registry.v1",
+    analysis_id: resolvedAnalysisId,
+    entities: [...entities.values()],
+    source_counts,
+    governance_rules: {
+      manual_correction_wins: true,
+      manual_confirmation_wins: true,
+      raw_detection_never_overrides_mature_entity: true,
+      track_identity_must_not_equal_narrative_agent_without_confirmation: true,
+      analysis_scoped_records_must_not_bleed_to_other_videos: true,
+    },
+  };
+}
+
+function uniqueStringValues(values: Array<string | undefined>): string[] {
+  return [...new Set(values.map((value) => looseString(value)).filter(Boolean))];
+}
+
+function buildDatasceneContentSearchView({
+  analysisId,
+  entityRegistry,
+}: {
+  analysisId?: string;
+  entityRegistry: DatasceneEntityRegistryView;
+}): DatasceneContentSearchView {
+  const resolvedAnalysisId = analysisId || entityRegistry.analysis_id || "analysis";
+  const search_index_records = entityRegistry.entities.flatMap((entity) =>
+    entity.source_mentions.map((mention, index): DatasceneContentSearchIndexRecord => {
+      const searchableParts = [
+        entity.canonical_name,
+        ...entity.aliases,
+        mention.text,
+        mention.label,
+        mention.detected_class,
+      ];
+      const searchable_text = uniqueStringValues(searchableParts).join(" ");
+      const searchable_keywords = uniqueStringValues(
+        searchable_text
+          .toLowerCase()
+          .split(/[^a-z0-9_]+/i)
+          .filter((part) => part.length > 1),
+      );
+      return {
+        index_id: `search:${entity.entity_id}:${index}`,
+        analysis_id: resolvedAnalysisId,
+        canonical_entity_id: entity.entity_id,
+        canonical_name: entity.canonical_name,
+        entity_type: entity.entity_type,
+        start_time: mention.start_time,
+        end_time: mention.end_time,
+        searchable_text,
+        searchable_keywords,
+        sources: [
+          {
+            source_type: mention.source_type,
+            source_id: mention.mention_id,
+            match_text: mention.text || mention.label,
+            detected_class: mention.detected_class,
+            track_id: mention.track_id,
+            start_time: mention.start_time,
+            end_time: mention.end_time,
+            confidence: mention.confidence,
+            maturity: entity.maturity,
+            authority_status: entity.authority_status,
+            evidence_ref: mention.evidence_ref,
+            traceback_ref: mention.traceback_ref,
+          },
+        ],
+        maturity_summary: {
+          highest_maturity: entity.maturity,
+          has_manual_confirmation:
+            entity.authority_status === "manual_confirmed" ||
+            entity.authority_status === "manual_corrected",
+          has_multi_source_support: entity.source_mentions.length > 1,
+          requires_review: entity.maturity !== "mature",
+        },
+        forensic_render_available: entity.traceback_refs.length > 0,
+        entity_card_available: true,
+      };
+    }),
+  );
+
+  return {
+    schema: "vaa1.datascene_content_search.v1",
+    analysis_id: resolvedAnalysisId,
+    source_switchboard: {
+      transcript: true,
+      ocr: true,
+      manual_annotations: true,
+      metadata: true,
+      object_detection: true,
+      audiovisual_narrative_agent_samples: true,
+      visual_sample_clouds: true,
+      audio_sample_clouds: true,
+      detected_pattern_entities: true,
+      motion_patterns: true,
+      scene_cards: true,
+      meaning_network: true,
+      master_schema: true,
+    },
+    search_index_records,
+    governance_rules: {
+      manual_correction_wins: true,
+      search_does_not_overwrite_data: true,
+      candidate_results_must_be_marked_as_candidate: true,
+      object_track_identity_must_not_equal_narrative_agent_without_confirmation: true,
+      analysis_scoped_records_must_not_bleed_to_other_videos: true,
+    },
+    som_open_topology_boundary: {
+      status: "diagnostic_scanner_matcher_only",
+      can_suggest: true,
+      can_cluster: true,
+      can_surface_near_matches: true,
+      can_create_review_candidates: true,
+      can_override_master_schema: false,
+      can_mark_mature_without_decision: false,
+      required_outputs: [
+        "candidate_id",
+        "source_refs",
+        "similarity_score",
+        "cluster_context",
+        "reason_for_match",
+        "review_required",
+        "blocked_actions",
+      ],
+    },
+  };
+}
+
 function applyAnnotationCorrectionsToRawObjects(
   objects: DetectedObject[],
   corrections?: AnnotationCorrections | null,
@@ -2254,6 +2964,8 @@ export interface AnalysisData {
     Record<ManualVisualAnnotation["category"], ManualVisualAnnotation[]>
   >;
   masterSchemaResolvedEvidence?: MasterSchemaResolvedEvidenceView;
+  entityRegistry?: DatasceneEntityRegistryView;
+  contentSearch?: DatasceneContentSearchView;
   annotationCorrections?: AnnotationCorrections | null;
   forensicRenderJobs?: ForensicRenderJob[];
   sourceSamples?: SourceSample[];
@@ -3650,6 +4362,20 @@ export class VideoService {
         masterSchema: status.vaa1_annotation_master_schema,
         analysisId: id,
       });
+      const entityRegistry = buildDatasceneEntityRegistryView({
+        analysisId: id,
+        transcript: correctedTranscript,
+        objects: mergedProfiledObjects,
+        ocr: correctedOCR,
+        nativeAnnotations,
+        sourceSamples: status.source_samples || [],
+        sourceMediaMetadata: status.source_media_metadata || undefined,
+        masterSchemaResolvedEvidence,
+      });
+      const contentSearch = buildDatasceneContentSearchView({
+        analysisId: id,
+        entityRegistry,
+      });
 
       const analysisData = {
         analysisId: id,
@@ -3667,6 +4393,8 @@ export class VideoService {
         annotations: nativeAnnotations,
         manualAnnotationsByCategory,
         masterSchemaResolvedEvidence,
+        entityRegistry,
+        contentSearch,
         annotationCorrections: corrections,
         forensicRenderJobs: status.forensic_render_jobs || [],
         sourceSamples: status.source_samples || [],

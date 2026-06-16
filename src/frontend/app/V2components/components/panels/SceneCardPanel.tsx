@@ -597,6 +597,48 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
           video_id: selectedVideoId,
         },
       }));
+    const entityItems = (analysisData?.entityRegistry?.entities || [])
+      .flatMap((entity) =>
+        entity.source_mentions
+          .filter((mention) =>
+            intervalsOverlap(sceneStart, sceneEnd, mention.start_time, mention.end_time),
+          )
+          .map((mention) => ({
+            item_id: `entity:${entity.entity_id}:${mention.mention_id}`,
+            category:
+              entity.entity_type === "NARRATIVE_AGENT" ||
+              entity.entity_type === "AUDIOVISUAL_NARRATIVE_AGENT" ||
+              entity.entity_type === "PERSON_NAME"
+                ? "persons"
+                : entity.entity_type === "PLACE"
+                  ? "places"
+                  : entity.entity_type === "OBJECT" || entity.entity_type === "VISUAL_SYMBOL"
+                    ? "props"
+                    : entity.entity_type === "AUDIO_ENTITY"
+                      ? "events"
+                      : "themes",
+            label: entity.canonical_name,
+            symbol:
+              entity.maturity === "mature"
+                ? "✓"
+                : entity.maturity === "corroborated"
+                  ? "◈"
+                  : "◇",
+            likelihood: entity.authority_status,
+            status:
+              entity.maturity === "mature"
+                ? "manual"
+                : entity.maturity === "corroborated"
+                  ? "mature"
+                  : "candidate",
+            navigation: {
+              panel: mention.source_type === "metadata" ? "SourceMediaMetadata" : "MeaningPlot",
+              time_seconds: mention.start_time,
+              video_id: selectedVideoId,
+            },
+          })),
+      )
+      .slice(0, 24);
     const audioItems = (analysisData?.audioProsody || [])
       .filter((cue) => intervalsOverlap(sceneStart, sceneEnd, cue.start, cue.end))
       .map((cue) => ({
@@ -617,9 +659,10 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
           video_id: selectedVideoId,
         },
       }));
-    return [...resolvedItems, ...audioItems];
+    return [...resolvedItems, ...entityItems, ...audioItems];
   }, [
     analysisData?.audioProsody,
+    analysisData?.entityRegistry?.entities,
     analysisData?.masterSchemaResolvedEvidence?.records,
     sceneEnd,
     sceneStart,

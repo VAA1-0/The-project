@@ -401,11 +401,36 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     const sourceSamples = asArray(source.sourceSamples);
     const audioSampleClouds = asArray(asRecord(source.audioSampleClouds).clouds);
     const audiovisualSampleCount = sourceSamples.length + audioSampleClouds.length;
+    const entityRegistry = asRecord(source.entityRegistry);
+    const entityRecords = asArray<Record<string, unknown>>(entityRegistry.entities);
+    const contentSearch = asRecord(source.contentSearch);
+    const searchIndexRecords = asArray<Record<string, unknown>>(
+      contentSearch.search_index_records,
+    );
+    const matureEntityRecords = entityRecords.filter((entity) =>
+      /mature|corroborated/i.test(String(entity.maturity || "")),
+    ).length;
+    const entitySourceMentionCount = entityRecords.reduce((total, entity) => {
+      return total + asArray(entity.source_mentions).length;
+    }, 0);
+    const scannerReadySearchRecords = searchIndexRecords.filter((record) => {
+      const summary = asRecord(record.maturity_summary);
+      return summary.requires_review === true;
+    }).length;
     const resolvedEvidence = asArray(asRecord(source.masterSchemaResolvedEvidence).records).length;
     const matureSurfaces = countMatureSurfaces(source.masterSchemaMaturityAudit);
     const manualAnchorCount = manualVisualAnnotations.length + confirmedDecisions;
-    const candidateCount = matchCandidates + secondOrderInstructions.length + agentPersistence.review;
-    const matureWriteCount = matureSurfaces + resolvedEvidence + agentPersistence.accepted + confirmedDecisions;
+    const candidateCount =
+      matchCandidates +
+      secondOrderInstructions.length +
+      agentPersistence.review +
+      scannerReadySearchRecords;
+    const matureWriteCount =
+      matureSurfaces +
+      resolvedEvidence +
+      agentPersistence.accepted +
+      confirmedDecisions +
+      matureEntityRecords;
     const temporalCoverage = temporalCoverageAudit(source);
     const busStatus: "ok" | "warn" | "blocked" =
       manualAnchorCount > 0 && candidateCount > 0 && matureWriteCount > 0
@@ -427,6 +452,11 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       sourceSamples: sourceSamples.length,
       audioSampleClouds: audioSampleClouds.length,
       audiovisualSampleCount,
+      entityRecords: entityRecords.length,
+      matureEntityRecords,
+      entitySourceMentionCount,
+      searchIndexRecords: searchIndexRecords.length,
+      scannerReadySearchRecords,
       agentPersistence,
       manualAnchorCount,
       candidateCount,
@@ -522,9 +552,27 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
 
       <div className="grid gap-3 lg:grid-cols-4">
         <MetricCard label="Manual anchors" value={metrics.manualAnchorCount} detail={`${metrics.manualVisualAnnotations} visual, ${metrics.confirmedDecisions} accepted decisions`} />
-        <MetricCard label="Candidates" value={metrics.candidateCount} detail={`${metrics.matchCandidates} matcher, ${metrics.secondOrderInstructions} second-order`} />
-        <MetricCard label="Mature writes" value={metrics.matureWriteCount} detail={`${metrics.matureSurfaces} surfaces, ${metrics.resolvedEvidence} resolved evidence`} />
+        <MetricCard label="Candidates" value={metrics.candidateCount} detail={`${metrics.matchCandidates} matcher, ${metrics.secondOrderInstructions} second-order, ${metrics.scannerReadySearchRecords} search`} />
+        <MetricCard label="Mature writes" value={metrics.matureWriteCount} detail={`${metrics.matureSurfaces} surfaces, ${metrics.resolvedEvidence} resolved evidence, ${metrics.matureEntityRecords} entities`} />
         <MetricCard label="Review pressure" value={metrics.agentPersistence.review + metrics.rejectedDecisions} detail={`${metrics.agentPersistence.labels} persistence labels tracked`} />
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+        <MetricCard
+          label="Entity Registry"
+          value={metrics.entityRecords}
+          detail={`${metrics.entitySourceMentionCount} source mentions harvested`}
+        />
+        <MetricCard
+          label="Content Search"
+          value={metrics.searchIndexRecords}
+          detail="source-linked index rows"
+        />
+        <MetricCard
+          label="SOM / scanner support"
+          value={metrics.scannerReadySearchRecords}
+          detail="review-required candidates, not mature truth"
+        />
       </div>
 
       <div className="mt-4 grid gap-3 xl:grid-cols-2">

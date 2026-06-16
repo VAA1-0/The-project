@@ -6,7 +6,7 @@ import {
   type SharedTaxonomyLabel,
   type SourceMediaMetadata,
 } from "@/lib/api-service";
-import { VideoService } from "@/lib/video-service";
+import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
@@ -325,6 +325,92 @@ function splitEditableList(value: string): string[] {
     .filter(Boolean);
 }
 
+function uniqueCleanValues(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const clean = String(value || "").trim();
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) return;
+    seen.add(key);
+    result.push(clean);
+  });
+  return result;
+}
+
+function entityRegistryMetadataCandidateRows(
+  entities: NonNullable<AnalysisData["entityRegistry"]>["entities"],
+  current: Record<string, string>,
+): MetadataCandidate[] {
+  const candidatesByField = new Map<string, string[]>();
+  const evidenceByField = new Map<string, string[]>();
+
+  const add = (field: string, value: string | undefined, evidence: string) => {
+    const clean = String(value || "").trim();
+    if (!clean) return;
+    candidatesByField.set(field, uniqueCleanValues([...(candidatesByField.get(field) || []), clean]));
+    evidenceByField.set(field, uniqueCleanValues([...(evidenceByField.get(field) || []), evidence]));
+  };
+
+  entities.forEach((entity) => {
+    const label = entity.canonical_name;
+    const evidence = `${entity.entity_type}:${entity.entity_id}`;
+    if (entity.entity_type === "PERSON_NAME") {
+      add("persons", label, evidence);
+    } else if (
+      entity.entity_type === "NARRATIVE_AGENT" ||
+      entity.entity_type === "AUDIOVISUAL_NARRATIVE_AGENT"
+    ) {
+      add("character_roles", label, evidence);
+    } else if (entity.entity_type === "PLACE") {
+      add("location_place", label, evidence);
+      add("keywords", label, evidence);
+    } else if (entity.entity_type === "EVENT") {
+      add("situation_event", label, evidence);
+      add("keywords", label, evidence);
+    } else if (
+      ["LAW_POLICY", "CONCEPT", "OBJECT", "VISUAL_SYMBOL", "AUDIO_ENTITY", "COLLECTION_ENTITY"].includes(
+        entity.entity_type,
+      )
+    ) {
+      add("keywords", label, evidence);
+    } else if (entity.entity_type === "SOURCE_MEDIA_ENTITY") {
+      const metadataBacked = entity.source_mentions.some(
+        (mention) => mention.source_type === "metadata",
+      );
+      add(metadataBacked ? "source_context" : "keywords", label, evidence);
+    }
+  });
+
+  const labels: Record<string, string> = {
+    persons: "People / roles",
+    character_roles: "Character roles",
+    location_place: "Place",
+    situation_event: "Situation",
+    keywords: "Keywords",
+    source_context: "Source context",
+  };
+
+  return [...candidatesByField.entries()]
+    .map(([key, values]) => {
+      const suggestion = key === "character_roles" ? values.join("\n") : values.join(", ");
+      const existing = current[key] || "";
+      if (!suggestion || sameCandidateValue(existing, suggestion)) {
+        return null;
+      }
+      return {
+        key,
+        label: labels[key] || key,
+        current: existing,
+        suggestion,
+        maturity: "entity_registry_candidate",
+        route: "entity_registry.source_media_metadata_harvest",
+        evidenceSources: evidenceByField.get(key) || [],
+      };
+    })
+    .filter((row): row is MetadataCandidate => Boolean(row));
+}
+
 function formatCharacterDefinition(definition: CharacterDefinition): string {
   const character = String(definition.character_name || "").trim();
   const actor = String(definition.actor_name || "").trim();
@@ -403,6 +489,7 @@ export default function SourceMediaMetadataPanel() {
   const [videoId, setVideoId] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
+  const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [presenceIntervals, setPresenceIntervals] = useState<MeaningNetworkPresenceInterval[]>([]);
   const [editorNotes, setEditorNotes] = useState("");
   const [sourceContext, setSourceContext] = useState("");
@@ -549,6 +636,7 @@ export default function SourceMediaMetadataPanel() {
     async function load() {
       if (!videoId) {
         setMetadata(null);
+        setAnalysisData(null);
         setPresenceIntervals([]);
         setEditorNotes("");
         setSourceContext("");
@@ -608,10 +696,12 @@ export default function SourceMediaMetadataPanel() {
           }),
         ]);
         hydrateMetadataState(nextMetadata);
+        setAnalysisData(nextAnalysis);
         setPresenceIntervals(nextAnalysis?.annotationCorrections?.master_schema_presence_intervals || []);
       } catch (error) {
         console.error("Failed to load source media metadata:", error);
         setMetadata(null);
+        setAnalysisData(null);
         setPresenceIntervals([]);
       }
     }
@@ -1302,7 +1392,20 @@ export default function SourceMediaMetadataPanel() {
     { key: "situational_subtype", label: "Situational subtype", current: situationalSubtype },
     { key: "confidence", label: "Confidence", current: confidence },
   ];
-  const maturityCandidateRows: MetadataCandidate[] = candidateFieldConfig
+  const sourceMediaEntityRows = analysisData?.entityRegistry?.entities || [];
+  const sourceMediaEntityCandidateRows = entityRegistryMetadataCandidateRows(
+    sourceMediaEntityRows,
+    {
+      persons,
+      character_roles: characterRoles,
+      location_place: locationPlace,
+      situation_event: situationEvent,
+      keywords,
+      source_context: sourceContext,
+    },
+  );
+  const maturityCandidateRows: MetadataCandidate[] = [
+    ...candidateFieldConfig
     .map((field) => {
       const suggestion = formatCandidateValue(
         metadata?.video_internal_harvest?.annotations?.[field.key],
@@ -1325,7 +1428,9 @@ export default function SourceMediaMetadataPanel() {
         evidenceSources: fieldSource.evidence_sources || [],
       };
     })
-    .filter((row): row is MetadataCandidate => Boolean(row));
+    .filter((row): row is MetadataCandidate => Boolean(row)),
+    ...sourceMediaEntityCandidateRows,
+  ];
   const applyMaturityCandidate = (key: string, suggestion: string) => {
     if (key === "title") setUserTitle(suggestion);
     else if (key === "persons") setPersons(suggestion);

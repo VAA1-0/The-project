@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1.datascene_entity_registry.v1.json",
+  "title": "Datascene / VAA1 Entity Registry Schema",
+  "schema_name": "vaa1.datascene_entity_registry.v1",
+  "version": "1.0.0",
+  "status": "operational_architecture_schema",
+  "description": "A governed entity registry for multimodal Datascene/VAA1 evidence. It treats transcript, OCR, metadata, manual annotations, object detections, visual subjects, audio entities, and audiovisual Narrative Agent samples as traceable entity evidence while preserving Master Schema authority and manual correction priority.",
+  "purpose": [
+    "named_entity_extraction",
+    "mature_data_proliferation",
+    "video_content_search",
+    "scene_card_generation",
+    "meaning_network_continuity",
+    "forensic_traceability",
+    "export_report_sync"
+  ],
+  "entity_sources": {
+    "transcript": {
+      "description": "Entities detected from spoken or transcribed language.",
+      "examples": ["person names", "organizations", "places", "laws", "events", "concepts"]
+    },
+    "ocr": {
+      "description": "Entities detected from visible text in frames.",
+      "examples": ["slide titles", "signs", "captions", "document text", "logos with text"]
+    },
+    "annotation": {
+      "description": "Entities created, corrected, confirmed, rejected, merged, or split by the analyst.",
+      "examples": ["manual bbox labels", "scene labels", "Narrative Agent labels", "relationship notes"]
+    },
+    "metadata": {
+      "description": "Entities extracted from file-level, collection-level, source-media, platform, archive, or web metadata.",
+      "examples": ["title", "creator", "date", "keywords", "collection", "location"]
+    },
+    "object_detection": {
+      "description": "Visual entity seeds detected from computer-vision object models.",
+      "examples": ["person", "car", "building", "weapon", "flag", "microphone", "document"]
+    },
+    "visual_sample_cloud": {
+      "description": "Reusable visual sample substrate for a subject, object, symbol, place, or Narrative Agent.",
+      "examples": ["James Bond visual sample", "police car visual sample", "flag sample"]
+    },
+    "audio_sample_cloud": {
+      "description": "Reusable audio sample substrate for a speaker, voice, soundmark, music cue, or recurring audio entity.",
+      "examples": ["speaker-profile sample", "voice sample", "music cue sample"]
+    },
+    "audiovisual_narrative_agent_sample": {
+      "description": "A reusable multimodal sample of a represented character or media-internal agent, composed from face, body, voice, clothing, movement, OCR, transcript, metadata, and manual evidence.",
+      "examples": ["James Bond audiovisual sample", "Nomi audiovisual sample", "speaker-to-face support sample"]
+    }
+  },
+  "entity_types": [
+    "PERSON_NAME",
+    "NARRATIVE_AGENT",
+    "ORG",
+    "PLACE",
+    "EVENT",
+    "DATE",
+    "LAW_POLICY",
+    "CONCEPT",
+    "OBJECT",
+    "VISUAL_SYMBOL",
+    "AUDIO_ENTITY",
+    "AUDIOVISUAL_NARRATIVE_AGENT",
+    "COLLECTION_ENTITY",
+    "SOURCE_MEDIA_ENTITY"
+  ],
+  "maturity_states": [
+    "raw",
+    "candidate",
+    "corroborated",
+    "mature",
+    "rejected",
+    "superseded"
+  ],
+  "authority_statuses": [
+    "single_model_detected",
+    "multi_source_corroborated",
+    "metadata_authoritative",
+    "manual_confirmed",
+    "manual_corrected",
+    "manual_rejected",
+    "superseded"
+  ],
+  "authority_rules": {
+    "manual_correction_wins": true,
+    "manual_confirmation_wins": true,
+    "manual_rejection_blocks_projection": true,
+    "never_overwrite_manual_labels_without_explicit_user_action": true,
+    "new_scene_requires_new_evidence": true,
+    "track_identity_must_not_equal_narrative_agent_without_confirmation": true,
+    "raw_detection_never_overrides_mature_entity": true,
+    "governed_hypotheses_may_proliferate_with_badge_and_traceback": true
+  },
+  "required": [
+    "entity_id",
+    "analysis_id",
+    "canonical_name",
+    "entity_type",
+    "maturity",
+    "authority_status",
+    "source_mentions",
+    "proliferation_policy",
+    "traceback_refs"
+  ],
+  "properties": {
+    "entity_id": {
+      "type": "string"
+    },
+    "analysis_id": {
+      "type": "string"
+    },
+    "project_entity_id": {
+      "type": "string",
+      "description": "Optional cross-analysis project-level entity id. Must not be used to overwrite analysis-scoped manual evidence."
+    },
+    "canonical_name": {
+      "type": "string"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": [
+        "PERSON_NAME",
+        "NARRATIVE_AGENT",
+        "ORG",
+        "PLACE",
+        "EVENT",
+        "DATE",
+        "LAW_POLICY",
+        "CONCEPT",
+        "OBJECT",
+        "VISUAL_SYMBOL",
+        "AUDIO_ENTITY",
+        "AUDIOVISUAL_NARRATIVE_AGENT",
+        "COLLECTION_ENTITY",
+        "SOURCE_MEDIA_ENTITY"
+      ]
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "description": {
+      "type": "string"
+    },
+    "maturity": {
+      "type": "string",
+      "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+    },
+    "authority_status": {
+      "type": "string",
+      "enum": [
+        "single_model_detected",
+        "multi_source_corroborated",
+        "metadata_authoritative",
+        "manual_confirmed",
+        "manual_corrected",
+        "manual_rejected",
+        "superseded"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "source_mentions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "mention_id",
+          "source_type",
+          "start_time",
+          "end_time",
+          "confidence",
+          "evidence_ref"
+        ],
+        "properties": {
+          "mention_id": { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "transcript",
+              "ocr",
+              "annotation",
+              "metadata",
+              "object_detection",
+              "visual_sample_cloud",
+              "audio_sample_cloud",
+              "audiovisual_narrative_agent_sample"
+            ]
+          },
+          "text": { "type": "string" },
+          "label": { "type": "string" },
+          "detected_class": { "type": "string" },
+          "track_id": { "type": "string" },
+          "speaker_id": { "type": "string" },
+          "sample_id": { "type": "string" },
+          "annotation_id": { "type": "string" },
+          "metadata_field": { "type": "string" },
+          "start_time": { "type": "number" },
+          "end_time": { "type": "number" },
+          "bbox": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "authority_status": { "type": "string" },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_ref": { "type": "string" },
+          "traceback_ref": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "linked_scene_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "linked_object_tracks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "linked_audio_tracks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "linked_ocr_mentions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "linked_metadata_fields": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "sample_cloud_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "traceback_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "proliferation_policy": {
+      "type": "object",
+      "required": [
+        "can_proliferate",
+        "requires_manual_review",
+        "allowed_targets",
+        "blocked_actions"
+      ],
+      "properties": {
+        "can_proliferate": { "type": "boolean" },
+        "requires_manual_review": { "type": "boolean" },
+        "allowed_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "master_schema",
+              "scene_cards",
+              "search_index",
+              "entity_registry",
+              "meaning_network",
+              "narrative_agent_panel",
+              "bbox_roi",
+              "transcript",
+              "ocr",
+              "forensic_render",
+              "export_report"
+            ]
+          }
+        },
+        "blocked_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "overwrite_prior_manual_label",
+              "overwrite_different_track_identity",
+              "cross_scene_relabel_without_evidence",
+              "promote_raw_detection_without_traceback",
+              "project_rejected_entity"
+            ]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "search_index_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "index_id",
+          "entity_id",
+          "analysis_id",
+          "scene_id",
+          "start_time",
+          "end_time",
+          "sources",
+          "maturity",
+          "searchable_text"
+        ],
+        "properties": {
+          "index_id": { "type": "string" },
+          "entity_id": { "type": "string" },
+          "analysis_id": { "type": "string" },
+          "scene_id": { "type": "string" },
+          "start_time": { "type": "number" },
+          "end_time": { "type": "number" },
+          "sources": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "maturity": {
+            "type": "string",
+            "enum": ["raw", "candidate", "corroborated", "mature", "rejected", "superseded"]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "searchable_text": { "type": "string" },
+          "forensic_render_available": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
