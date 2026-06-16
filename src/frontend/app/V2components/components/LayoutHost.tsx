@@ -25,6 +25,7 @@ import SourceMediaMetadataPanel from "./panels/SourceMediaMetadataPanel";
 import TimeBankPanel from "./panels/TimeBankPanel";
 import MeaningPlotPanel from "./panels/MeaningPlotPanel";
 import SceneCardPanel from "./panels/SceneCardPanel";
+import SearchPanel from "./panels/SearchPanel";
 import MasterSchemaPanel from "./panels/MasterSchemaPanel";
 import DataMaturationPanel from "./panels/DataMaturationPanel";
 import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
@@ -59,6 +60,7 @@ const RIGHT_STACK_ANCHOR_TYPES = [
   "TimeBank",
   "MeaningNetwork",
   "MeaningPlot",
+  "Search",
   "SceneCards",
   "Transcript",
   "POS",
@@ -413,6 +415,7 @@ export default function LayoutHost({
     TimeBank: "Time Bank",
     MeaningNetwork: "Meaning Network",
     MeaningPlot: "Meaning / Plot",
+    Search: "Search",
     SceneCards: "Scene Cards",
     MasterSchema: "Master Schema",
     DataMaturation: "Maturation",
@@ -753,6 +756,18 @@ export default function LayoutHost({
             initialMeaningNetworkExpanded: true,
             initialMeaningNetworkViewMode: "graph",
           },
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "Search",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          SearchPanel,
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },

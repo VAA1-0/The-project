@@ -989,6 +989,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "Search",
+          onClick: () => {
+            openPanel("Search", selectedVideoId ? { videoId: selectedVideoId } : {});
+          },
+        },
+        {
           label: "Transcript Lens",
           onClick: () => {
             openPanel("Transcript");
@@ -1029,6 +1035,12 @@ export function MenuBar() {
           label: "Scene Cards",
           onClick: () => {
             openPanel("SceneCards", selectedVideoId ? { videoId: selectedVideoId } : {});
+          },
+        },
+        {
+          label: "Search",
+          onClick: () => {
+            openPanel("Search", selectedVideoId ? { videoId: selectedVideoId } : {});
           },
         },
         {

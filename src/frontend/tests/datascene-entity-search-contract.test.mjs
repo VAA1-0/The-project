@@ -36,6 +36,11 @@ const sourceMediaMetadataPanel = readFrontend(
 const dataMaturationPanel = readFrontend(
   "app/V2components/components/panels/DataMaturationPanel.tsx",
 );
+const searchPanel = readFrontend(
+  "app/V2components/components/panels/SearchPanel.tsx",
+);
+const layoutHost = readFrontend("app/V2components/components/LayoutHost.tsx");
+const menuBar = readFrontend("app/V2components/components/MenuBar.tsx");
 
 test("Entity Registry schema uses Narrative Agent semantics and manual-wins governance", () => {
   assert.equal(entityRegistrySchema.schema_name, "vaa1.datascene_entity_registry.v1");
@@ -264,6 +269,39 @@ test("Entity Registry projects into governed panels without creating new truth i
     dataMaturationPanel,
     /SOM \/ scanner support/,
     "Data Maturation must expose SOM/open-topology support status",
+  );
+});
+
+test("Datascene Search panel reads Content Search without mutating governed data", () => {
+  assert.match(
+    searchPanel,
+    /analysisData\.contentSearch\?\.search_index_records/,
+    "Search UI must read the governed Content Search index",
+  );
+  assert.match(
+    searchPanel,
+    /openVideoAtTime\(row\.analysisId,\s*record\.start_time\)/,
+    "Search results must navigate through source-linked Master-time anchors",
+  );
+  assert.match(
+    searchPanel,
+    /record\.maturity_summary\.requires_review/,
+    "Search results must expose review state instead of treating candidates as truth",
+  );
+  assert.doesNotMatch(
+    searchPanel,
+    /updateAnnotationCorrections|saveAnnotationCorrections|upsertMasterSchema/,
+    "Search UI must remain read-only for the first governed release",
+  );
+  assert.match(
+    layoutHost,
+    /import SearchPanel/,
+    "LayoutHost must register the Datascene Search panel",
+  );
+  assert.match(
+    menuBar,
+    /openPanel\("Search"/,
+    "MenuBar must expose the Datascene Search panel",
   );
 });
 

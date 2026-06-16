@@ -1465,6 +1465,10 @@ class ApiService {
       if (this.useMock) {
         return this.getMockStatus(analysisId);
       }
+      const localResponse = await fetch(`/api/local-analysis/${analysisId}`);
+      if (localResponse.ok) {
+        return localResponse.json();
+      }
       throw error;
     }
   }
@@ -1784,15 +1788,33 @@ class ApiService {
     }
 
     const noCacheToken = Date.now().toString(36);
-    const response = await fetch(
-      `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
-      { cache: "no-store" },
-    );
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
+        { cache: "no-store" },
+      );
+    } catch (error) {
+      console.warn("Backend download failed, trying local analysis artifact:", error);
+      response = await fetch(
+        `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`,
+        { cache: "no-store" },
+      );
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const localResponse = response.url.includes("/api/local-analysis/")
+        ? response
+        : await fetch(
+            `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`,
+            { cache: "no-store" },
+          );
+      if (localResponse.ok) {
+        return localResponse.blob();
+      }
+      const errorText = await localResponse.text();
       throw new Error(
-        `Download failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Download failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
       );
     }
 
@@ -1828,15 +1850,26 @@ class ApiService {
   }
 
   async getAnnotationCorrections(analysisId: string): Promise<AnnotationCorrections> {
-    const response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`);
+    } catch {
+      response = await fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`);
+    }
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Annotation corrections fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
-      );
+      const localResponse = response.url.includes("/api/local-analysis/")
+        ? response
+        : await fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`);
+      if (!localResponse.ok) {
+        const errorText = await localResponse.text();
+        throw new Error(
+          `Annotation corrections fetch failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
+        );
+      }
+      response = localResponse;
     }
     const result = await response.json();
-    return result.annotation_corrections || {};
+    return result.annotation_corrections || result || {};
   }
 
   async saveAnnotationCorrections(
@@ -2089,15 +2122,26 @@ class ApiService {
   }
 
   async getSourceMediaMetadata(analysisId: string): Promise<SourceMediaMetadata> {
-    const response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`);
+    } catch {
+      response = await fetch(`/api/local-analysis/${analysisId}/download/source_media_metadata_json`);
+    }
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Source media metadata fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
-      );
+      const localResponse = response.url.includes("/api/local-analysis/")
+        ? response
+        : await fetch(`/api/local-analysis/${analysisId}/download/source_media_metadata_json`);
+      if (!localResponse.ok) {
+        const errorText = await localResponse.text();
+        throw new Error(
+          `Source media metadata fetch failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
+        );
+      }
+      response = localResponse;
     }
     const data = await response.json();
-    return data.source_media_metadata || {};
+    return data.source_media_metadata || data || {};
   }
 
   async updateSourceMediaMetadata(
@@ -2455,10 +2499,12 @@ class ApiService {
       if (!response.ok) {
         const errorText = await response.text();
         console.warn("Failed to fetch analyses:", response.status, errorText);
-        // For development, fall back to mock
-        if (!this.useMock) {
-          return this.getMockAnalyses(limit);
+        const localResponse = await fetch(`/api/local-analyses?limit=${limit}`);
+        if (localResponse.ok) {
+          return localResponse.json();
         }
+        // For development, fall back to mock
+        if (!this.useMock) return this.getMockAnalyses(limit);
         throw new Error(
           `Failed to list analyses: ${response.status} ${response.statusText} - ${errorText}`,
         );
@@ -2468,9 +2514,13 @@ class ApiService {
       console.log("Got analyses:", Object.keys(result.analyses || {}).length);
       return result;
     } catch (error) {
-      console.warn("List analyses failed, using fallback:", error);
-      // Fallback to mock data
-      // return this.getMockAnalyses(limit);
+      console.warn("List analyses failed, using local fallback:", error);
+      const localResponse = await fetch(`/api/local-analyses?limit=${limit}`);
+      if (localResponse.ok) {
+        return localResponse.json();
+      }
+      if (this.useMock) return this.getMockAnalyses(limit);
+      return { analyses: {} };
     }
   }
 
