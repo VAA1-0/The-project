@@ -2329,6 +2329,24 @@ test("evidence proliferation launch remains governed and analyst initiated", () 
   );
 
   assert.match(
+    apiService,
+    /refreshEvidenceProliferationMatcher/,
+    "frontend API must expose an analyst-triggered open-topology matcher refresh",
+  );
+
+  assert.match(
+    videoPanel,
+    /openTopologyMatcherRefreshRequested/,
+    "right-click evidence regimes must be able to launch an open-topology matcher refresh",
+  );
+
+  assert.match(
+    videoPanel,
+    /refreshEvidenceProliferationMatcher\(videoId/,
+    "Video panel right-click matcher refresh must call the governed backend refresh endpoint",
+  );
+
+  assert.match(
     videoPanel,
     /function isReviewableProliferationCandidate/,
     "BBox/ROI overlays must distinguish reviewable near matches from mature projections",
@@ -2487,6 +2505,186 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
+    /data-vaa1-data-maturation-local-issue-drawer="true"/,
+    "Data Maturation Inspect actions must resolve inside a local governance issue drawer",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-sticky-decision-drawer="true"/,
+    "Maturation decision controls must stay visible while the analyst works down the queue",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-queue-filter=\{queue\}/,
+    "Maturation must expose queue filters instead of forcing lane-to-matrix scrolling guesswork",
+  );
+
+  assert.ok(
+    dataMaturationPanel.indexOf('data-vaa1-data-maturation-governance-matrix="true"') <
+      dataMaturationPanel.indexOf('data-vaa1-data-maturation-lane={dataAttr}'),
+    "Maturation must surface the active decision queue before explanatory governance lanes",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-governance-matrix="true"[\s\S]*data-vaa1-data-maturation-row-confirm="true"[\s\S]*data-vaa1-data-maturation-row-stage-annotation="true"[\s\S]*data-vaa1-data-maturation-row-defer="true"/,
+    "The active queue itself must expose confirm, stage, and defer actions without requiring an upper-panel drawer jump",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /const \[activeQueue, setActiveQueue\] = useState<MaturationQueue>\("confirmations"\)/,
+    "Maturation must open on the mature-data confirmation queue rather than burying review work below manual anchors",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /function searchRowTimeRange/,
+    "Content Search review candidates must be converted into source-timed governance rows",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /isConfirmableCluster[\s\S]*\? "confirmations"[\s\S]*: "patterns"/,
+    "Maturation must separate explicit confirmable clusters from raw detected source patterns",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-quick-decision="stage-annotation"/,
+    "Detected patterns must stage annotation instead of pretending to confirm mature data",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /BBox confirmations/,
+    "Maturation must expose the timebound BBox confirmation queue as a first-class surface",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /bboxConfirmationCandidate[\s\S]*detectedObjects[\s\S]*rawDetectedObjects/,
+    "Maturation must harvest BBox confirmation rows from the same object detections used by the video overlay",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /function buildBBoxConfirmationAggregates/,
+    "BBox confirmation rows must be aggregated into analyst-scale track intervals instead of frame-level forensic volume",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /function bboxSpatialBucket/,
+    "BBox confirmation aggregation must group untracked frame detections by coarse source-space position",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /item\.trackId \|\| item\.track_id[\s\S]*spatial:\$\{family\}:\$\{bboxSpatialBucket/,
+    "BBox confirmation aggregation must not invent one unique untracked id per frame",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /canStageAnnotation: true[\s\S]*queue: "bbox"/,
+    "BBox confirmation rows must be source-linked staging candidates, not mature proliferation confirmations",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /audioProsodyCues[\s\S]*queue: "patterns"/,
+    "Audio prosody detections must participate in the detected-pattern staging queue",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /const selectGovernanceRow[\s\S]*openVideoAtTime\(videoId, row\.timestamp\)/,
+    "Selecting a timebound governance row must immediately align the video panel to source time",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /setRefreshNonce\(\(current\) => current \+ 1\)[\s\S]*analysisCorrectionsChanged/,
+    "Maturation must listen for correction refresh events emitted by BBox/ROI or manual annotation saves",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /VideoService\.getAnalysis\(videoId\)[\s\S]*\[refreshNonce, videoId\]/,
+    "Maturation must reload when BBox/ROI or manual annotation saves emit correction refresh events",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /setSelectedIssue\(issueFromQualityTicket\(ticket\)\)/,
+    "Quality Agent Inspect must stay in Maturation before offering aligned panels",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-aligned-panel-action=\{panel\}/,
+    "Aligned panels must remain explicit secondary actions from the local issue drawer",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-quick-decision-console="true"/,
+    "Maturation Inspect must expose a local quick-decision console instead of only cross-panel navigation",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-quick-decision="confirm"/,
+    "Maturation must provide a local Confirm proliferation action for anchored candidates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-open-source-at-time="true"/,
+    "Maturation must align the video panel through a source-time jump action",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-source-box-status=/,
+    "Maturation must show whether the selected issue has BBox/ROI authority",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-cluster-scanner-context="true"/,
+    "Maturation must expose candidate, cluster, and SOM/scanner context inside the local case drawer",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /source_anchors:\s*\[/,
+    "Local proliferation decisions must persist source anchors for timebound and coordinate-bound review",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /proliferates_to:\s*confirmed[\s\S]*source_timed_panels/,
+    "Confirmed proliferation must explicitly target source-timed panels as mature-data surfaces",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /formatTimeRange\(row\.timeRange\)/,
+    "Governance matrix rows must display source time before the analyst opens another panel",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /formatBBox\(row\.bbox\)/,
+    "Governance matrix rows must display BBox\\/ROI authority before the analyst opens another panel",
+  );
+
+  assert.match(
+    dataMaturationPanel,
     /buildGovernanceMatrixRows\([\s\S]*manual_visual_annotations[\s\S]*proliferation_decisions[\s\S]*masterSchemaResolvedEvidence[\s\S]*evidenceProliferationMatches/,
     "governance matrix rows must be derived from manual anchors, durable decisions, mature evidence, and matcher candidates",
   );
@@ -2525,6 +2723,62 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
     dataMaturationPanel,
     /late-video-evidence-dropoff/,
     "Quality Agent tray must flag dramatic late-video evidence drop-off for review",
+  );
+
+  assert.match(
+    apiService,
+    /Backend annotation corrections save failed, trying local analysis save/,
+    "Annotation correction saves must fall back to local saved-analysis writes when the backend endpoint is unavailable",
+  );
+
+  assert.match(
+    read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts"),
+    /export async function POST[\s\S]*fileType !== "annotation_corrections"[\s\S]*annotation_corrections: corrections/,
+    "Local saved analyses must accept annotation-corrections writes so BBox/ROI saves can close and refresh",
+  );
+});
+
+test("Narrative Agent panel lands mature-data proliferation provenance", () => {
+  assert.match(
+    masterSchemaPanel,
+    /liveMatureDataProliferationAudit/,
+    "Narrative Agent panel must read the live Mature Data Proliferation audit",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-proliferation-provenance="true"/,
+    "Narrative Agent panel must expose a local provenance surface for identity proliferation",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-audiovisual-memory="true"/,
+    "Narrative Agent provenance must explicitly surface audiovisual identity memory",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-multi-visual-samples="true"/,
+    "Narrative Agent provenance must show that central characters can have multiple visual samples",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /clothing, lighting, scale, and scene changes/,
+    "Narrative Agent provenance must document appearance variation instead of treating one look as global identity",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-constellational-matching-governance="true"/,
+    "Narrative Agent panel must expose constellational matching governance alongside provenance",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /narrativeAgentIdentityContinuityCandidates\(analysisData\)/,
+    "Narrative Agent panel must surface continuity candidates created by the proliferation bus",
   );
 });
 
@@ -2593,6 +2847,72 @@ test("Datascene Meaning Network remains available for mature scene presence prol
     meaningPlotPanel,
     /onContextMenu=\{\(event\) => openMeaningNetworkEdgeContextMenu\(event, edge\)\}/,
     "Meaning Network graph edges must expose the same VAA1 context menu workflow as nodes",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-context-matcher="true"/,
+    "Meaning Network node and edge context menus must expose focused matcher discovery",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-source-preview="true"/,
+    "Matcher candidates must expose source-video previews for analyst verification",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-thumbnail-grid="true"/,
+    "Matcher candidates must render as a large checkable thumbnail gallery",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-visual-gallery="true"/,
+    "Matcher review must provide a visual-identity-first evidence filter",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-section=\{section\.dataAttribute\}/,
+    "Matcher review must separate known samples, confirmable detections, and contextual support",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /meaningNetworkMatcherCandidateRole\(item\.candidate\) === "identity_candidate"/,
+    "Only explicit identity candidates may enter the governed matcher decision ledger",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-preview-bbox="true"/,
+    "Visual matcher previews must render linked normalized BBox geometry when available",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-second-screen="true"/,
+    "Matcher candidates must support opening linked source video on a second panel",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /setMeaningNetworkMatcherSelections/,
+    "Matcher review must stage several candidate decisions before persistence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-save-round="true"/,
+    "Matcher review must save one governed multi-candidate review round",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /"user_confirmed_truth"/,
+    "Confirmed matcher candidates must become user-confirmed truth before propagation",
   );
 
   assert.match(

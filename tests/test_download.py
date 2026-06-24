@@ -1,31 +1,34 @@
-# test_download.py
+import os
+import unittest
+
 import requests
-import json
 
-analysis_id = "cf3c6581-ab6e-4d56-91c9-d022c9d78190"
 
-# Get status to see download links
-status_url = f"http://localhost:8000/api/status/{analysis_id}"
-status = requests.get(status_url).json()
+class LiveDownloadSmokeTest(unittest.TestCase):
+    def test_live_backend_download_links_when_enabled(self):
+        if os.environ.get("VAA1_RUN_LIVE_DOWNLOAD_TEST") != "1":
+            self.skipTest(
+                "live backend download smoke requires VAA1_RUN_LIVE_DOWNLOAD_TEST=1"
+            )
 
-print("Analysis Status:")
-print(json.dumps(status, indent=2))
+        analysis_id = os.environ.get(
+            "VAA1_LIVE_DOWNLOAD_ANALYSIS_ID",
+            "cf3c6581-ab6e-4d56-91c9-d022c9d78190",
+        )
+        status_url = f"http://localhost:8000/api/status/{analysis_id}"
+        status = requests.get(status_url, timeout=5).json()
 
-# List all available files
-if "download_links" in status:
-    print("\n📁 Available files to download:")
-    for file_type, url in status["download_links"].items():
-        print(f"  {file_type}: {url}")
+        self.assertIn("download_links", status)
+        self.assertIsInstance(status["download_links"], dict)
 
-# Try to download one file
-if "download_links" in status and "video" in status["download_links"]:
-    print("\n📥 Testing download...")
-    download_url = f"http://localhost:8000/api/download/{analysis_id}/video"
-    response = requests.get(download_url)
-    
-    if response.status_code == 200:
-        with open(f"{analysis_id}_annotated_video.mp4", "wb") as f:
-            f.write(response.content)
-        print(f"✅ Downloaded annotated video: {analysis_id}_annotated_video.mp4")
-    else:
-        print(f"❌ Download failed: {response.status_code}")
+        if "video" in status["download_links"]:
+            response = requests.get(
+                f"http://localhost:8000/api/download/{analysis_id}/video",
+                timeout=10,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertGreater(len(response.content), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

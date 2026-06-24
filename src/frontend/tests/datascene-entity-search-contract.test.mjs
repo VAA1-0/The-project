@@ -177,6 +177,16 @@ test("VideoService exposes operational Entity Registry and Content Search views"
   );
   assert.match(
     videoService,
+    /function liveMatureDataSearchRecords/,
+    "Content Search must ingest Mature Data bus records through one shared builder",
+  );
+  assert.match(
+    videoService,
+    /search_surface\?:\s*"entity"\s*\|\s*"mature_data"\s*\|\s*"confirmable_cluster"/,
+    "Content Search records must distinguish entity, mature data, and confirmable cluster surfaces",
+  );
+  assert.match(
+    videoService,
     /masterSchemaResolvedEvidence,\s*\n\s*\}\);\s*\n\s*const contentSearch = buildDatasceneContentSearchView\(\{/,
     "Content Search must be derived after Entity Registry so search stays source-linked",
   );
@@ -184,6 +194,39 @@ test("VideoService exposes operational Entity Registry and Content Search views"
     videoService,
     /entityRegistry\.entities\.flatMap/,
     "Content Search index records must derive from entity registry records",
+  );
+});
+
+test("VideoService bridges repeated manual narrative-agent identity across fragmented person tracks", () => {
+  assert.match(
+    videoService,
+    /function manualAnnotationNarrativeAgentContinuityRecords/,
+    "Repeated manual Narrative Agent confirmations must feed a continuity bridge",
+  );
+  assert.match(
+    videoService,
+    /manualAnnotationNarrativeAgentContinuityRecords\(nativeAnnotations,\s*objects\)/,
+    "Continuity bridge must evaluate active object tracks, not only prior manual annotation tracks",
+  );
+  assert.match(
+    videoService,
+    /maturityRoute:\s*"master_schema\.manual_identity_continuity_bridge"/,
+    "Continuity bridge records must be auditable as mature-data propagation",
+  );
+  assert.match(
+    videoService,
+    /mappingStatus:\s*"triangulated_from_repeated_manual_identity"/,
+    "Fragmented-track identity propagation must be marked as triangulated, not raw detection",
+  );
+  assert.match(
+    videoService,
+    /no_competing_confirmed_identity:\s*true/,
+    "The bridge must stay conservative and avoid proliferating across competing identities",
+  );
+  assert.match(
+    videoService,
+    /targetId:\s*trackId/,
+    "A bridged identity must resolve onto the current detected track so late-frame overlays can mature",
   );
 });
 
@@ -278,6 +321,46 @@ test("Datascene Search panel reads Content Search without mutating governed data
     searchPanel,
     /analysisData\.contentSearch\?\.search_index_records/,
     "Search UI must read the governed Content Search index",
+  );
+  assert.match(
+    searchPanel,
+    /matureDataRecords/,
+    "Search UI must surface Mature Data counts from the shared Content Search index",
+  );
+  assert.match(
+    searchPanel,
+    /confirmableClusters/,
+    "Search UI must surface confirmable clusters from the shared Content Search index",
+  );
+  assert.match(
+    searchPanel,
+    /data-datascene-search-run-matcher-refresh="true"/,
+    "Search UI must expose an analyst-triggered matcher refresh control",
+  );
+  assert.match(
+    searchPanel,
+    /refreshEvidenceProliferationMatcher\(selectedVideoId/,
+    "Search matcher refresh must call the governed proliferation refresh endpoint",
+  );
+  assert.match(
+    searchPanel,
+    /data-datascene-search-matcher-refresh-status="true"/,
+    "Search matcher refresh must report diagnostic refresh status locally",
+  );
+  assert.match(
+    searchPanel,
+    /record\.search_surface === "mature_data"/,
+    "Search UI must identify mature data records without creating another maturity source",
+  );
+  assert.match(
+    searchPanel,
+    /record\.search_surface === "confirmable_cluster"/,
+    "Search UI must identify confirmable clusters without creating another clustering source",
+  );
+  assert.match(
+    searchPanel,
+    /openPanel\("DataMaturation",\s*\{ videoId: row\.analysisId \}\)/,
+    "Search mature-data and cluster rows must route correction work to Data Maturation",
   );
   assert.match(
     searchPanel,

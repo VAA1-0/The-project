@@ -411,7 +411,8 @@ export type DatasceneEntitySourceType =
   | "object_detection"
   | "visual_sample_cloud"
   | "audio_sample_cloud"
-  | "audiovisual_narrative_agent_sample";
+  | "audiovisual_narrative_agent_sample"
+  | "mature_data_bus";
 
 export interface DatasceneEntityMention {
   mention_id: string;
@@ -501,6 +502,14 @@ export interface DatasceneContentSearchIndexRecord {
   };
   forensic_render_available: boolean;
   entity_card_available: boolean;
+  search_surface?: "entity" | "mature_data" | "confirmable_cluster";
+  confidence_percent?: number;
+  cluster_summary?: {
+    cluster_key: string;
+    candidate_count: number;
+    propagation_state: string;
+    promotion_requires_decision: boolean;
+  };
 }
 
 export interface DatasceneContentSearchView {
@@ -563,6 +572,11 @@ type NativeAnnotationRecord = {
   start_seconds?: number;
   end_seconds?: number;
   timestamp_seconds?: number;
+  metadata_correlation?: {
+    target_id?: string | number;
+    target_type?: string;
+    target_label?: string;
+  } | null;
 };
 
 type IdentityResolvedCandidate = {
@@ -1265,6 +1279,34 @@ function isKnownSubjectLabel(value: unknown): boolean {
   );
 }
 
+function isGovernedNarrativeAgentIdentity(value: unknown): boolean {
+  const label = looseString(value);
+  if (!isKnownSubjectLabel(label)) {
+    return false;
+  }
+  return !isRawObjectDisplayLabel(label);
+}
+
+function canonicalNarrativeAgentIdentity(value: unknown): string {
+  return looseString(value)
+    .split(",")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function preferredNarrativeAgentLabel(labels: string[]): string {
+  return [...labels]
+    .filter(isGovernedNarrativeAgentIdentity)
+    .sort((left, right) => {
+      const leftBbc = /\bbbc\b/i.test(left) ? 1 : 0;
+      const rightBbc = /\bbbc\b/i.test(right) ? 1 : 0;
+      if (leftBbc !== rightBbc) return rightBbc - leftBbc;
+      return right.length - left.length;
+    })[0] || "";
+}
+
 function manualAnnotationNarrativeAgentRecords(
   nativeAnnotations: NativeAnnotationRecord[],
 ): MasterSchemaResolvedEvidenceRecord[] {
@@ -1275,7 +1317,7 @@ function manualAnnotationNarrativeAgentRecords(
     const roleLabel = looseString(item.role_affirmation);
     const fallbackLabel = looseString(item.custom_label || item.label);
     const label = identityLabel || roleLabel || fallbackLabel;
-    const category = looseString((item as any).category);
+    const category = looseString(item.category);
     const hasManualSubjectAffirmation = isKnownSubjectLabel(identityLabel) || isKnownSubjectLabel(roleLabel);
     if (
       !hasManualSubjectAffirmation &&
@@ -1286,13 +1328,13 @@ function manualAnnotationNarrativeAgentRecords(
     if (!isKnownSubjectLabel(label)) {
       return;
     }
-    const manualTargetId = looseString((item as any).metadata_correlation?.target_id);
+    const manualTargetId = looseString(item.metadata_correlation?.target_id);
     const key = [
       label.toLowerCase(),
       looseString(item.id),
       manualTargetId,
-      looseString((item as any).timestamp_seconds),
-      looseString((item as any).start_seconds),
+      looseString(item.timestamp_seconds),
+      looseString(item.start_seconds),
     ].filter(Boolean).join("|");
     if (seen.has(key)) return;
     seen.add(key);
@@ -1302,8 +1344,8 @@ function manualAnnotationNarrativeAgentRecords(
       label,
       authority: "manual_annotation",
       sourcePanel: "MasterSchema",
-      start: (item as any).start_seconds ?? (item as any).timestamp_seconds,
-      end: (item as any).end_seconds ?? (item as any).timestamp_seconds,
+      start: item.start_seconds ?? item.timestamp_seconds,
+      end: item.end_seconds ?? item.timestamp_seconds,
       targetId: manualTargetId || item.id,
       maturityRoute: "master_schema.review_layer.manual_subject_annotation",
       metadata: {
@@ -1313,7 +1355,7 @@ function manualAnnotationNarrativeAgentRecords(
         aliases: [fallbackLabel, identityLabel, roleLabel].filter(isKnownSubjectLabel),
         source_metadata: {
           role_labels: roleLabel && roleLabel !== label ? [roleLabel] : [],
-          role_description: looseString((item as any).open_note),
+          role_description: looseString(item.open_note),
           source_preference: "manual_visual_annotation",
         },
         evidence_slots: {
@@ -1324,6 +1366,137 @@ function manualAnnotationNarrativeAgentRecords(
       },
     });
   });
+  return records;
+}
+
+function manualAnnotationNarrativeAgentContinuityRecords(
+  nativeAnnotations: NativeAnnotationRecord[],
+  objects: DetectedObject[],
+): MasterSchemaResolvedEvidenceRecord[] {
+  const identityGroups = new Map<
+    string,
+    {
+      labels: string[];
+      sourceIds: string[];
+      sourceTrackIds: Set<string>;
+      firstSeen: number;
+      lastSeen: number;
+    }
+  >();
+
+  nativeAnnotations.forEach((item) => {
+    const identityLabel = looseString(item.identity_affirmation);
+    const fallbackLabel = looseString(item.custom_label || item.label);
+    const label = preferredNarrativeAgentLabel([identityLabel, fallbackLabel]);
+    if (!label) return;
+
+    const key = canonicalNarrativeAgentIdentity(label);
+    if (!key) return;
+
+    const timestamp = finiteNumber(item.timestamp_seconds) ?? 0;
+    const start = finiteNumber(item.start_seconds) ?? timestamp;
+    const end = finiteNumber(item.end_seconds) ?? timestamp;
+    const targetTrackId = looseString(item.metadata_correlation?.target_id);
+    const existing = identityGroups.get(key) || {
+      labels: [],
+      sourceIds: [],
+      sourceTrackIds: new Set<string>(),
+      firstSeen: Number.POSITIVE_INFINITY,
+      lastSeen: Number.NEGATIVE_INFINITY,
+    };
+    existing.labels.push(label);
+    if (item.id) existing.sourceIds.push(item.id);
+    if (targetTrackId) existing.sourceTrackIds.add(targetTrackId);
+    existing.firstSeen = Math.min(existing.firstSeen, start, end);
+    existing.lastSeen = Math.max(existing.lastSeen, start, end);
+    identityGroups.set(key, existing);
+  });
+
+  const eligibleGroups = [...identityGroups.entries()].filter(([, group]) => {
+    const supportCount = group.sourceIds.length + group.sourceTrackIds.size;
+    return supportCount >= 2 && Number.isFinite(group.firstSeen);
+  });
+  if (eligibleGroups.length !== 1) {
+    return [];
+  }
+
+  const [identityKey, group] = eligibleGroups[0];
+  const label = preferredNarrativeAgentLabel(group.labels);
+  if (!label) {
+    return [];
+  }
+
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  const seenTracks = new Set<string>();
+  objects.forEach((object) => {
+    const className = looseString(object.class_name || object.raw_class_name).toLowerCase();
+    if (className !== "person") {
+      return;
+    }
+    const trackId = object.trackId !== undefined ? String(object.trackId) : "";
+    if (!trackId || seenTracks.has(trackId) || group.sourceTrackIds.has(trackId)) {
+      return;
+    }
+    const start = finiteNumber(object.startTimestamp) ?? finiteNumber(object.timestamp);
+    const end = finiteNumber(object.endTimestamp) ?? finiteNumber(object.timestamp);
+    if (start === undefined || end === undefined || Math.max(start, end) < group.firstSeen) {
+      return;
+    }
+    const confidence = Number(object.confidence || 0);
+    const width = Math.abs(Number(object.bbox?.x2 ?? 0) - Number(object.bbox?.x1 ?? 0));
+    const height = Math.abs(Number(object.bbox?.y2 ?? 0) - Number(object.bbox?.y1 ?? 0));
+    const area =
+      width > 1 || height > 1
+        ? (width * height) / (1920 * 1080)
+        : width * height;
+    const occurrenceCount = Number(object.occurrenceCount || 0);
+    if (confidence < 0.75 && occurrenceCount < 20) {
+      return;
+    }
+    if (area < 0.04 && occurrenceCount < 60) {
+      return;
+    }
+
+    seenTracks.add(trackId);
+    records.push({
+      id: `manual-identity-continuity:${identityKey}:track:${trackId}`,
+      category: "narrative_agent_profile",
+      label,
+      authority: "mature_triangulated",
+      sourcePanel: "MasterSchema",
+      start,
+      end,
+      rawLabel: `person track ${trackId}`,
+      targetId: trackId,
+      maturityRoute: "master_schema.manual_identity_continuity_bridge",
+      mappingStatus: "triangulated_from_repeated_manual_identity",
+      metadata: {
+        profile_type: "manual_identity_continuity_bridge",
+        narrative_agent_name: label,
+        aliases: [...new Set(group.labels)].filter(isGovernedNarrativeAgentIdentity),
+        source_manual_annotation_ids: [...new Set(group.sourceIds)],
+        source_track_ids: [...group.sourceTrackIds],
+        target_track_id: trackId,
+        confidence_basis: {
+          repeated_manual_identity: true,
+          no_competing_confirmed_identity: true,
+          object_confidence: confidence,
+          object_occurrence_count: occurrenceCount,
+          object_screen_area: Number(area.toFixed(4)),
+        },
+        evidence_refs: [
+          ...[...new Set(group.sourceIds)],
+          `track:${trackId}`,
+        ],
+        source_bbox_refs: object.bbox ? [{ track_id: trackId, bbox: object.bbox }] : [],
+        source_frame_refs: [
+          { time: start, source: "manual_identity_continuity_bridge" },
+          { time: end, source: "manual_identity_continuity_bridge" },
+        ],
+      },
+    });
+  });
+
   return records;
 }
 
@@ -1493,6 +1666,7 @@ function buildMasterSchemaResolvedEvidenceView({
     ),
   );
   records.push(...manualAnnotationNarrativeAgentRecords(nativeAnnotations));
+  records.push(...manualAnnotationNarrativeAgentContinuityRecords(nativeAnnotations, objects));
   records.push(...agentPersistenceTrackRecords(secondOrderLabelProliferation));
   records.push(...evidenceProliferationMatchRecords(evidenceProliferationMatches));
 
@@ -1692,6 +1866,7 @@ function sourceCountSeed(): Record<DatasceneEntitySourceType, number> {
     visual_sample_cloud: 0,
     audio_sample_cloud: 0,
     audiovisual_narrative_agent_sample: 0,
+    mature_data_bus: 0,
   };
 }
 
@@ -2081,12 +2256,22 @@ function uniqueStringValues(values: Array<string | undefined>): string[] {
 function buildDatasceneContentSearchView({
   analysisId,
   entityRegistry,
+  liveMatureDataProliferationAudit,
+  transcript = [],
+  objects = [],
+  ocr = [],
+  sourceMediaAnnotations,
 }: {
   analysisId?: string;
   entityRegistry: DatasceneEntityRegistryView;
+  liveMatureDataProliferationAudit?: Record<string, unknown> | null;
+  transcript?: TranscriptSegment[];
+  objects?: DetectedObject[];
+  ocr?: OCR[];
+  sourceMediaAnnotations?: Record<string, unknown> | null;
 }): DatasceneContentSearchView {
   const resolvedAnalysisId = analysisId || entityRegistry.analysis_id || "analysis";
-  const search_index_records = entityRegistry.entities.flatMap((entity) =>
+  const entitySearchRecords = entityRegistry.entities.flatMap((entity) =>
     entity.source_mentions.map((mention, index): DatasceneContentSearchIndexRecord => {
       const searchableParts = [
         entity.canonical_name,
@@ -2138,9 +2323,27 @@ function buildDatasceneContentSearchView({
         },
         forensic_render_available: entity.traceback_refs.length > 0,
         entity_card_available: true,
+        search_surface: "entity",
       };
     }),
   );
+  const fallbackRecords = fallbackSourceSearchRecords({
+    analysisId: resolvedAnalysisId,
+    transcript,
+    objects,
+    ocr,
+    sourceMediaAnnotations,
+    existingKeys: new Set(
+      entitySearchRecords.map((record) =>
+        `${record.canonical_name.toLowerCase()}:${record.start_time}:${record.end_time}`,
+      ),
+    ),
+  });
+  const search_index_records = [
+    ...entitySearchRecords,
+    ...fallbackRecords,
+    ...liveMatureDataSearchRecords(resolvedAnalysisId, liveMatureDataProliferationAudit),
+  ];
 
   return {
     schema: "vaa1.datascene_content_search.v1",
@@ -2187,6 +2390,412 @@ function buildDatasceneContentSearchView({
       ],
     },
   };
+}
+
+function contentSearchKeywords(text: string): string[] {
+  return uniqueStringValues(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9_]+/i)
+      .filter((part) => part.length > 1),
+  );
+}
+
+function fallbackContentSearchRecord({
+  analysisId,
+  indexId,
+  canonicalName,
+  entityType,
+  sourceType,
+  sourceId,
+  startTime,
+  endTime,
+  confidence,
+  textParts,
+  detectedClass,
+  trackId,
+}: {
+  analysisId: string;
+  indexId: string;
+  canonicalName: string;
+  entityType: DatasceneEntityType;
+  sourceType: DatasceneEntitySourceType;
+  sourceId: string;
+  startTime: number;
+  endTime: number;
+  confidence: number;
+  textParts: unknown[];
+  detectedClass?: string;
+  trackId?: string;
+}): DatasceneContentSearchIndexRecord {
+  const searchable_text = uniqueStringValues(
+    [canonicalName, ...textParts.map((item) => looseString(item))],
+  ).join(" ");
+  return {
+    index_id: indexId,
+    analysis_id: analysisId,
+    canonical_entity_id: `${sourceType}:${sourceId}`,
+    canonical_name: canonicalName,
+    entity_type: entityType,
+    start_time: startTime,
+    end_time: endTime,
+    searchable_text,
+    searchable_keywords: contentSearchKeywords(searchable_text),
+    sources: [
+      {
+        source_type: sourceType,
+        source_id: sourceId,
+        match_text: searchable_text,
+        detected_class: detectedClass,
+        track_id: trackId,
+        start_time: startTime,
+        end_time: endTime,
+        confidence,
+        maturity: "raw",
+        authority_status: "single_model_detected",
+        evidence_ref: sourceId,
+        traceback_ref: sourceId,
+      },
+    ],
+    maturity_summary: {
+      highest_maturity: "raw",
+      has_manual_confirmation: false,
+      has_multi_source_support: false,
+      requires_review: true,
+    },
+    forensic_render_available: true,
+    entity_card_available: true,
+    search_surface: "entity",
+  };
+}
+
+function fallbackSourceSearchRecords({
+  analysisId,
+  transcript,
+  objects,
+  ocr,
+  sourceMediaAnnotations,
+  existingKeys,
+}: {
+  analysisId: string;
+  transcript: TranscriptSegment[];
+  objects: DetectedObject[];
+  ocr: OCR[];
+  sourceMediaAnnotations?: Record<string, unknown> | null;
+  existingKeys: Set<string>;
+}): DatasceneContentSearchIndexRecord[] {
+  const records: DatasceneContentSearchIndexRecord[] = [];
+  const pushRecord = (record: DatasceneContentSearchIndexRecord) => {
+    const key = `${record.canonical_name.toLowerCase()}:${record.start_time}:${record.end_time}`;
+    if (existingKeys.has(key)) return;
+    existingKeys.add(key);
+    records.push(record);
+  };
+
+  objects.slice(0, 300).forEach((object, index) => {
+    const rawObject = object as DetectedObject & Record<string, unknown>;
+    const label = looseString(
+      object.displayLabel || object.class_name || object.raw_class_name || rawObject.label,
+    );
+    if (!label) return;
+    const start =
+      finiteNumber(object.startTimestamp) ??
+      finiteNumber(object.timestamp) ??
+      finiteNumber(rawObject.start) ??
+      0;
+    const end =
+      finiteNumber(object.endTimestamp) ??
+      finiteNumber(rawObject.end) ??
+      start;
+    const confidence = finiteNumber(object.confidence) ?? 0.5;
+    pushRecord(
+      fallbackContentSearchRecord({
+        analysisId,
+        indexId: `fallback-object:${analysisId}:${index}`,
+        canonicalName: label,
+        entityType: /person|agent|speaker/i.test(label) ? "NARRATIVE_AGENT" : "OBJECT",
+        sourceType: "object_detection",
+        sourceId: looseString(rawObject.id || object.trackId) || `object:${index}`,
+        startTime: start,
+        endTime: end,
+        confidence,
+        textParts: [object.class_name, object.raw_class_name, object.trackId],
+        detectedClass: looseString(object.class_name || object.raw_class_name),
+        trackId: looseString(object.trackId),
+      }),
+    );
+  });
+
+  ocr.slice(0, 220).forEach((item, index) => {
+    const rawOcr = item as OCR & Record<string, unknown>;
+    const text = looseString(item.text || item.rawText);
+    if (!text) return;
+    const start = finiteNumber(item.timestamp) ?? 0;
+    const end = finiteNumber(rawOcr.end) ?? start;
+    pushRecord(
+      fallbackContentSearchRecord({
+        analysisId,
+        indexId: `fallback-ocr:${analysisId}:${index}`,
+        canonicalName: text,
+        entityType: "SOURCE_MEDIA_ENTITY",
+        sourceType: "ocr",
+        sourceId: looseString(rawOcr.id) || `ocr:${index}`,
+        startTime: start,
+        endTime: end,
+        confidence: finiteNumber(item.confidence) ?? 0.65,
+        textParts: [item.rawText],
+      }),
+    );
+  });
+
+  transcript.slice(0, 220).forEach((segment, index) => {
+    const rawSegment = segment as TranscriptSegment & Record<string, unknown>;
+    const text = looseString(segment.text);
+    if (!text) return;
+    const start = finiteNumber(segment.start) ?? 0;
+    const end = finiteNumber(segment.end) ?? start;
+    pushRecord(
+      fallbackContentSearchRecord({
+        analysisId,
+        indexId: `fallback-transcript:${analysisId}:${index}`,
+        canonicalName: text.slice(0, 96),
+        entityType: "SOURCE_MEDIA_ENTITY",
+        sourceType: "transcript",
+        sourceId: looseString(rawSegment.id) || `transcript:${index}`,
+        startTime: start,
+        endTime: end,
+        confidence: 0.7,
+        textParts: [segment.speaker, text],
+      }),
+    );
+  });
+
+  const keywords = unknownArray<Record<string, unknown>>(
+    unknownRecord(sourceMediaAnnotations).keywords,
+  );
+  keywords.slice(0, 80).forEach((keyword, index) => {
+    const label = looseString(keyword.label || keyword.name || keyword.value || keyword);
+    if (!label) return;
+    pushRecord(
+      fallbackContentSearchRecord({
+        analysisId,
+        indexId: `fallback-metadata:${analysisId}:${index}`,
+        canonicalName: label,
+        entityType: "SOURCE_MEDIA_ENTITY",
+        sourceType: "metadata",
+        sourceId: `metadata:keyword:${index}`,
+        startTime: 0,
+        endTime: 0,
+        confidence: finiteNumber(keyword.confidence) ?? 0.8,
+        textParts: [keyword.category, keyword.source],
+      }),
+    );
+  });
+
+  return records;
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function unknownArray<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function liveMatureDataSearchRecords(
+  analysisId: string,
+  liveMatureDataProliferationAudit?: Record<string, unknown> | null,
+): DatasceneContentSearchIndexRecord[] {
+  const audit = unknownRecord(liveMatureDataProliferationAudit);
+  const observations = [
+    ...unknownArray<Record<string, unknown>>(
+      audit.content_derived_mature_observations_preview,
+    ),
+    ...unknownArray<Record<string, unknown>>(audit.genre_rule_observations_preview),
+  ];
+  const hypotheses = unknownArray<Record<string, unknown>>(
+    audit.governed_mature_hypotheses_preview,
+  );
+
+  const matureRecords = observations.map((item, index) => {
+    const label = looseString(item.label) || "Mature observation";
+    const time = unknownRecord(item.time);
+    const start = finiteNumber(time.start) ?? 0;
+    const end = finiteNumber(time.end) ?? start;
+    const confidencePercent = finiteNumber(item.confidence_percent) ?? 86;
+    const sourceRef = looseString(item.source_ref || item.observation_id) || `mature:${index}`;
+    return matureDataSearchRecord({
+      analysisId,
+      indexId: `mature-data:${sourceRef}:${index}`,
+      canonicalEntityId: `mature-data:${sourceRef}`,
+      canonicalName: label,
+      entityType: entityTypeFromMatureCategory(item.category),
+      startTime: start,
+      endTime: end,
+      text: [
+        label,
+        item.category,
+        item.authority,
+        item.authority_class,
+        item.genre_rule_id,
+        `${confidencePercent}% confidence`,
+      ],
+      sourceId: sourceRef,
+      sourceType: "mature_data_bus",
+      confidence: confidencePercent / 100,
+      maturity: "mature",
+      authorityStatus: "metadata_authoritative",
+      evidenceRef: sourceRef,
+      searchSurface: "mature_data",
+      confidencePercent,
+      requiresReview: false,
+    });
+  });
+
+  const clusterRecords = hypotheses.map((item, index) => {
+    const label = looseString(item.candidate_label || item.seed_label) || "Confirmable cluster";
+    const time = unknownRecord(item.candidate_time);
+    const start = finiteNumber(time.start) ?? 0;
+    const end = finiteNumber(time.end) ?? start;
+    const confidence = finiteNumber(item.confidence) ?? 0.74;
+    const sourceRef =
+      looseString(item.hypothesis_id || item.source_opportunity_id || item.candidate_id) ||
+      `cluster:${index}`;
+    return matureDataSearchRecord({
+      analysisId,
+      indexId: `confirmable-cluster:${sourceRef}:${index}`,
+      canonicalEntityId: `confirmable-cluster:${sourceRef}`,
+      canonicalName: `Confirmable cluster: ${label}`,
+      entityType: entityTypeFromMatureCategory(item.candidate_category),
+      startTime: start,
+      endTime: end,
+      text: [
+        label,
+        item.seed_label,
+        item.candidate_category,
+        item.match_reason,
+        item.review_badge,
+        item.maturity_projection_state,
+      ],
+      sourceId: sourceRef,
+      sourceType: "mature_data_bus",
+      confidence,
+      maturity: "candidate",
+      authorityStatus: "multi_source_corroborated",
+      evidenceRef: sourceRef,
+      searchSurface: "confirmable_cluster",
+      confidencePercent: Math.round(confidence * 100),
+      requiresReview: true,
+      clusterSummary: {
+        cluster_key: looseString(item.candidate_id || sourceRef) || sourceRef,
+        candidate_count: 1,
+        propagation_state:
+          looseString(item.maturity_projection_state) || "review_visible_not_mature",
+        promotion_requires_decision: item.promotion_requires_decision !== false,
+      },
+    });
+  });
+
+  return [...matureRecords, ...clusterRecords];
+}
+
+function matureDataSearchRecord({
+  analysisId,
+  indexId,
+  canonicalEntityId,
+  canonicalName,
+  entityType,
+  startTime,
+  endTime,
+  text,
+  sourceId,
+  sourceType,
+  confidence,
+  maturity,
+  authorityStatus,
+  evidenceRef,
+  searchSurface,
+  confidencePercent,
+  requiresReview,
+  clusterSummary,
+}: {
+  analysisId: string;
+  indexId: string;
+  canonicalEntityId: string;
+  canonicalName: string;
+  entityType: DatasceneEntityType;
+  startTime: number;
+  endTime: number;
+  text: unknown[];
+  sourceId: string;
+  sourceType: DatasceneEntitySourceType;
+  confidence: number;
+  maturity: DatasceneEntityMaturity;
+  authorityStatus: DatasceneEntityAuthorityStatus;
+  evidenceRef: string;
+  searchSurface: "mature_data" | "confirmable_cluster";
+  confidencePercent: number;
+  requiresReview: boolean;
+  clusterSummary?: DatasceneContentSearchIndexRecord["cluster_summary"];
+}): DatasceneContentSearchIndexRecord {
+  const searchable_text = uniqueStringValues(
+    [canonicalName, ...text.map((item) => looseString(item))].filter(Boolean),
+  ).join(" ");
+  const searchable_keywords = uniqueStringValues(
+    searchable_text
+      .toLowerCase()
+      .split(/[^a-z0-9_]+/i)
+      .filter((part) => part.length > 1),
+  );
+  return {
+    index_id: indexId,
+    analysis_id: analysisId,
+    canonical_entity_id: canonicalEntityId,
+    canonical_name: canonicalName,
+    entity_type: entityType,
+    start_time: startTime,
+    end_time: endTime,
+    searchable_text,
+    searchable_keywords,
+    sources: [
+      {
+        source_type: sourceType,
+        source_id: sourceId,
+        match_text: searchable_text,
+        start_time: startTime,
+        end_time: endTime,
+        confidence,
+        maturity,
+        authority_status: authorityStatus,
+        evidence_ref: evidenceRef,
+        traceback_ref: evidenceRef,
+      },
+    ],
+    maturity_summary: {
+      highest_maturity: maturity,
+      has_manual_confirmation: false,
+      has_multi_source_support: true,
+      requires_review: requiresReview,
+    },
+    forensic_render_available: true,
+    entity_card_available: true,
+    search_surface: searchSurface,
+    confidence_percent: confidencePercent,
+    cluster_summary: clusterSummary,
+  };
+}
+
+function entityTypeFromMatureCategory(category: unknown): DatasceneEntityType {
+  const text = looseString(category).toLowerCase();
+  if (/person|speaker|identity|lower_third/.test(text)) return "PERSON_NAME";
+  if (/place|location|city|country/.test(text)) return "PLACE";
+  if (/event|summit|situation/.test(text)) return "EVENT";
+  if (/object|prop/.test(text)) return "OBJECT";
+  if (/genre|concept|subject/.test(text)) return "CONCEPT";
+  return "SOURCE_MEDIA_ENTITY";
 }
 
 function applyAnnotationCorrectionsToRawObjects(
@@ -2975,6 +3584,7 @@ export interface AnalysisData {
   characterPathReading?: Record<string, unknown> | null;
   datasceneMeaningNetwork?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
+  liveMatureDataProliferationAudit?: Record<string, unknown> | null;
   audioDiarization?: AudioDiarizationScaffold | null;
   summary: string;
   rawCsv: string;
@@ -3705,6 +4315,7 @@ export interface AnalysisStatus {
   source_video_exists?: boolean;
   source_video_message?: string;
   source_media_metadata?: SourceMediaMetadata;
+  source_media_annotations?: Record<string, unknown>;
   annotation_corrections?: AnnotationCorrections | null;
   transcript_timing_repair?: {
     status?: string;
@@ -3980,6 +4591,7 @@ export interface AnalysisStatus {
   datascene_meaning_network?: Record<string, unknown> | null;
   mise_en_scene_scene_cards?: Record<string, unknown> | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
+  live_mature_data_proliferation_audit?: Record<string, unknown> | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   vaa1_annotation_master_schema?: unknown;
   pipeline_type?: string; // This was missing
@@ -4375,6 +4987,12 @@ export class VideoService {
       const contentSearch = buildDatasceneContentSearchView({
         analysisId: id,
         entityRegistry,
+        liveMatureDataProliferationAudit:
+          status.live_mature_data_proliferation_audit || null,
+        transcript: correctedTranscript,
+        objects: mergedProfiledObjects,
+        ocr: correctedOCR,
+        sourceMediaAnnotations: status.source_media_annotations || null,
       });
 
       const analysisData = {
@@ -4404,6 +5022,8 @@ export class VideoService {
         characterPathReading: status.character_path_reading || null,
         datasceneMeaningNetwork: status.datascene_meaning_network || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
+        liveMatureDataProliferationAudit:
+          status.live_mature_data_proliferation_audit || null,
         audioDiarization: status.audio_diarization || null,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",

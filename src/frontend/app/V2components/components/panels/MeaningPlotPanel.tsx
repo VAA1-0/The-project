@@ -3,7 +3,15 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type DatasceneEntityRegistryRecord, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
 import type { AudioProsodyCue, ExpressionSample, TranscriptSegment } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
-import { apiService, type AnnotationCorrections, type ManualVisualAnnotation, type ProliferationDecision, type SecondOrderLabelInstruction, type SourceMediaMetadata } from "@/lib/api-service";
+import {
+  apiService,
+  type AnnotationCorrections,
+  type EvidenceProliferationCandidate,
+  type ManualVisualAnnotation,
+  type ProliferationDecision,
+  type SecondOrderLabelInstruction,
+  type SourceMediaMetadata,
+} from "@/lib/api-service";
 import {
   retimeManualVisualAnnotationsFromPresenceInterval,
   upsertMasterSchemaPresenceInterval,
@@ -288,7 +296,7 @@ function meaningNetworkContinuityRows(
   const nodesById = new Map(nodes.map((node) => [node.node_id, node]));
   return edges
     .filter((edge) =>
-      /continuity|tracks_same_entity|co_occurs|conflict|appearance/i.test(edge.edge_type),
+      /continuity|tracks_same_entity|co_occurs|conflict|appearance|traceable_similarity|constellational_match/i.test(edge.edge_type),
     )
     .map((edge) => {
       const sourceNode = nodesById.get(edge.source_node_id);
@@ -618,6 +626,16 @@ type MeaningNetworkSheetState = {
   edge?: MeaningNetworkEdge;
 };
 
+type MeaningNetworkMatcherQueueState = {
+  anchorKind: "node" | "edge";
+  anchorId: string;
+  anchorLabel: string;
+  requestId: string;
+  loading: boolean;
+  error?: string;
+  candidates: EvidenceProliferationCandidate[];
+};
+
 type MeaningNetworkSflLayer = "ideational" | "interpersonal" | "textual" | "virtues_and_vices";
 type MeaningNetworkMoralPolarity = "virtue" | "vice" | "ambivalent" | "not_moralized";
 type MeaningNetworkReadingLens = "sfl_ideational" | "sfl_interpersonal" | "sfl_textual" | "moral_virtue";
@@ -681,6 +699,7 @@ const MEANING_NETWORK_DEFAULT_LANES: MeaningNetworkLane[] = [
   { lane_id: "objects", label: "Objects / props", nodeTypes: ["object"] },
   { lane_id: "location", label: "Location / setting", nodeTypes: ["location"], presenceMode: "location" },
   { lane_id: "music", label: "Music / sonic field", nodeTypes: ["music"], presenceMode: "music" },
+  { lane_id: "matcher", label: "Matcher / SOM candidates", nodeTypes: ["matcher_anchor", "matcher_candidate"] },
   { lane_id: "evidence", label: "Evidence / language", nodeTypes: ["evidence_fragment", "expression", "manual_annotation"] },
   { lane_id: "other", label: "Other meaning tracks" },
 ];
@@ -1961,12 +1980,143 @@ function meaningNetworkShortLabel(label: string, maxLength = 26): string {
 function meaningNetworkNodePriority(node: MeaningNetworkNode): number {
   const canonicalType = meaningNetworkCanonicalNodeType(node.node_type);
   if (canonicalType === "scene") return 0;
+  if (isMatcherSomMeaningNode(node)) return 1;
   if (["narrative_agent", "character", "identity", "speaker"].includes(canonicalType)) return 1;
   if (canonicalType === "off_camera_presence") return 2;
   if (canonicalType === "object") return 3;
   if (canonicalType === "transcript") return 4;
   if (canonicalType === "prosody") return 5;
   return 6;
+}
+
+function isMatcherSomMeaningNode(node: MeaningNetworkNode): boolean {
+  const canonicalType = meaningNetworkCanonicalNodeType(node.node_type);
+  return (
+    canonicalType === "matcher_anchor" ||
+    canonicalType === "matcher_candidate" ||
+    String(node.ui?.display_group || "") === "open_topology_som_matcher" ||
+    Boolean(node.attributes?.open_topology_som)
+  );
+}
+
+function isMatcherSomMeaningEdge(edge: MeaningNetworkEdge): boolean {
+  return (
+    /matcher|som|traceable_similarity|constellational_match/i.test(edge.edge_type) ||
+    Boolean((edge as any).attributes?.open_topology_som)
+  );
+}
+
+function meaningNetworkMatcherTargetForNode(node: MeaningNetworkNode): string {
+  const type = meaningNetworkCanonicalNodeType(node.node_type);
+  if (["narrative_agent", "character", "identity", "speaker"].includes(type)) {
+    return "character_continuity";
+  }
+  if (["transcript", "spoken_word", "prosody"].includes(type)) {
+    return "speaker_voice_continuity";
+  }
+  if (["location", "scene", "setting"].includes(type)) {
+    return "scene_setting";
+  }
+  if (type === "object") return "visual_pattern";
+  return "named_entity";
+}
+
+function meaningNetworkMatcherCandidateLabel(candidate: EvidenceProliferationCandidate): string {
+  return String(
+    candidate.label ||
+      candidate.master_object_projection?.current_label ||
+      candidate.evidence_id ||
+      candidate.candidate_id ||
+      "Matcher candidate",
+  );
+}
+
+function meaningNetworkMatcherCandidateConfidence(candidate: EvidenceProliferationCandidate): number {
+  return Number(
+    candidate.match_probability ??
+      candidate.match_score ??
+      candidate.master_object_projection?.confidence ??
+      0,
+  );
+}
+
+type MeaningNetworkMatcherCandidateRole =
+  | "anchor_sample"
+  | "identity_candidate"
+  | "context_support"
+  | "conflict";
+
+function meaningNetworkMatcherCandidateRole(
+  candidate: EvidenceProliferationCandidate,
+): MeaningNetworkMatcherCandidateRole {
+  if (
+    candidate.candidate_role === "anchor_sample" ||
+    candidate.candidate_role === "identity_candidate" ||
+    candidate.candidate_role === "context_support" ||
+    candidate.candidate_role === "conflict"
+  ) {
+    return candidate.candidate_role;
+  }
+  const compatibility = candidate.closest_match?.identity_compatibility;
+  if (compatibility === "contextual_support") return "context_support";
+  if (compatibility === "incompatible") return "conflict";
+  if (
+    compatibility === "direct_identity" &&
+    candidate.source_verification_class === "known_verified_sample"
+  ) {
+    return "anchor_sample";
+  }
+  return "identity_candidate";
+}
+
+function meaningNetworkMatcherCandidateBasis(candidate: EvidenceProliferationCandidate): string[] {
+  const components = candidate.closest_match?.components || {};
+  const activeComponents = Object.entries(components)
+    .filter(([, value]) => Number(value || 0) > 0)
+    .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
+    .slice(0, 4)
+    .map(([key]) => key.replaceAll("_", " "));
+  return activeComponents.length
+    ? activeComponents
+    : [candidate.source_panel, candidate.source_kind, candidate.probability_band]
+        .filter(Boolean)
+        .map((value) => String(value).replaceAll("_", " "));
+}
+
+function meaningNetworkMatcherCandidateBbox(
+  candidate: EvidenceProliferationCandidate,
+): { x: number; y: number; width: number; height: number } | null {
+  const geometry = candidate.geometry || {};
+  const source = (
+    (geometry.bbox && typeof geometry.bbox === "object" ? geometry.bbox : null) ||
+    (geometry.roi && typeof geometry.roi === "object" ? geometry.roi : null) ||
+    geometry
+  ) as Record<string, unknown>;
+  const x = Number(source.x ?? source.left ?? source.x1);
+  const y = Number(source.y ?? source.top ?? source.y1);
+  const width = Number(
+    source.width ??
+      source.w ??
+      (Number.isFinite(Number(source.x2)) && Number.isFinite(x)
+        ? Number(source.x2) - x
+        : NaN),
+  );
+  const height = Number(
+    source.height ??
+      source.h ??
+      (Number.isFinite(Number(source.y2)) && Number.isFinite(y)
+        ? Number(source.y2) - y
+        : NaN),
+  );
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+  const normalized = Math.max(x, y, width, height) <= 1.5;
+  if (!normalized) return null;
+  return {
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y)),
+    width: Math.max(0.01, Math.min(1, width)),
+    height: Math.max(0.01, Math.min(1, height)),
+  };
 }
 
 function meaningNetworkGraphLayout(
@@ -1982,9 +2132,11 @@ function meaningNetworkGraphLayout(
     nodes: nodes.filter((node) => meaningNetworkLaneForNode(node, lanes).lane_id === lane.lane_id),
   }));
   const visibleNodes = laneNodes.flatMap((entry) => {
-    const laneLimit =
+      const laneLimit =
       entry.lane.lane_id === "scene"
         ? 24
+        : entry.lane.lane_id === "matcher"
+          ? 72
         : entry.lane.lane_id === "on_camera_agents"
           ? 48
           : entry.lane.lane_id === "spoken_word"
@@ -3042,6 +3194,12 @@ export default function MeaningPlotPanel({
   const [copiedMeaningNetworkContent, setCopiedMeaningNetworkContent] = useState<MeaningNetworkCopiedContent | null>(null);
   const [meaningNetworkContextMenu, setMeaningNetworkContextMenu] = useState<MeaningNetworkContextMenuState | null>(null);
   const [meaningNetworkSheet, setMeaningNetworkSheet] = useState<MeaningNetworkSheetState | null>(null);
+  const [meaningNetworkMatcherQueue, setMeaningNetworkMatcherQueue] =
+    useState<MeaningNetworkMatcherQueueState | null>(null);
+  const [meaningNetworkMatcherSelections, setMeaningNetworkMatcherSelections] =
+    useState<Record<string, "confirmed" | "canceled" | "deferred">>({});
+  const [meaningNetworkMatcherView, setMeaningNetworkMatcherView] =
+    useState<"visual" | "all">("visual");
   const [meaningNetworkSaveFeedback, setMeaningNetworkSaveFeedback] = useState<{
     status: "saved" | "staged" | "error";
     message: string;
@@ -3524,6 +3682,7 @@ export default function MeaningPlotPanel({
             "master_schema_evidence",
             "spoken_word",
             "prosody",
+            "open_topology_som_matcher",
             "meaning_network_presence",
             "analyst_added_nodes",
             "analyst_pasted_nodes",
@@ -3535,8 +3694,28 @@ export default function MeaningPlotPanel({
   const reviewableMeaningNetworkEdges = useMemo(
     () =>
       meaningNetworkEdges
-        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as"].includes(edge.edge_type))
+        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as", "traceable_similarity", "constellational_match_candidate"].includes(edge.edge_type) || isMatcherSomMeaningEdge(edge))
         .sort((left, right) => meaningNetworkEvidenceStart(left.evidence_refs) - meaningNetworkEvidenceStart(right.evidence_refs)),
+    [meaningNetworkEdges],
+  );
+  const matcherSomMeaningNodes = useMemo(
+    () =>
+      meaningNetworkNodes
+        .filter(isMatcherSomMeaningNode)
+        .sort((left, right) => {
+          const confidenceDelta = Number(right.maturity?.confidence || 0) - Number(left.maturity?.confidence || 0);
+          if (confidenceDelta !== 0) return confidenceDelta;
+          return meaningNetworkEvidenceStart(left.evidence_refs) - meaningNetworkEvidenceStart(right.evidence_refs);
+        })
+        .slice(0, 24),
+    [meaningNetworkNodes],
+  );
+  const matcherSomMeaningEdges = useMemo(
+    () =>
+      meaningNetworkEdges
+        .filter(isMatcherSomMeaningEdge)
+        .sort((left, right) => Number(right.weight || 0) - Number(left.weight || 0))
+        .slice(0, 24),
     [meaningNetworkEdges],
   );
   const focusedMeaningNetworkScene = useMemo(
@@ -3961,6 +4140,105 @@ export default function MeaningPlotPanel({
       edge,
     });
   }, []);
+
+  const runMeaningNetworkMatcher = useCallback(async (
+    item: MeaningNetworkNode | MeaningNetworkEdge,
+    kind: "node" | "edge",
+  ) => {
+    if (!selectedVideoId) {
+      setMeaningNetworkMatcherQueue({
+        anchorKind: kind,
+        anchorId: kind === "node" ? (item as MeaningNetworkNode).node_id : (item as MeaningNetworkEdge).edge_id,
+        anchorLabel: kind === "node" ? (item as MeaningNetworkNode).label : (item as MeaningNetworkEdge).edge_type,
+        requestId: "",
+        loading: false,
+        error: "Select an analysed video before using Matcher.",
+        candidates: [],
+      });
+      return;
+    }
+    const node = kind === "node" ? item as MeaningNetworkNode : null;
+    const edge = kind === "edge" ? item as MeaningNetworkEdge : null;
+    const sourceNode = edge
+      ? meaningNetworkNodes.find((candidate) => candidate.node_id === edge.source_node_id)
+      : node;
+    const targetNode = edge
+      ? meaningNetworkNodes.find((candidate) => candidate.node_id === edge.target_node_id)
+      : null;
+    const anchorId = node?.node_id || edge?.edge_id || `meaning-network:${Date.now()}`;
+    const anchorLabel = node
+      ? renamedMeaningNetworkMarkers[node.node_id] || node.label
+      : `${sourceNode ? renamedMeaningNetworkMarkers[sourceNode.node_id] || sourceNode.label : edge?.source_node_id} -> ${
+          targetNode ? renamedMeaningNetworkMarkers[targetNode.node_id] || targetNode.label : edge?.target_node_id
+        }`;
+    const refs = item.evidence_refs || [];
+    const range = meaningNetworkEvidenceTimeRange(refs);
+    const attributes = node?.attributes || {};
+    const geometry = attributes.geometry || attributes.bbox || attributes.roi || null;
+    const requestId = `meaning-network-match:${Date.now()}:${anchorId}`;
+    setMeaningNetworkMatcherSelections({});
+    setMeaningNetworkMatcherView("visual");
+    setMeaningNetworkMatcherQueue({
+      anchorKind: kind,
+      anchorId,
+      anchorLabel,
+      requestId,
+      loading: true,
+      candidates: [],
+    });
+    setMeaningNetworkContextMenu(null);
+    try {
+      const result = await apiService.matchEvidenceProliferation(selectedVideoId, {
+        request_id: requestId,
+        created_at: new Date().toISOString(),
+        video_id: selectedVideoId,
+        evidence: {
+          overlay_key: anchorId,
+          label: anchorLabel,
+          source_label: anchorLabel,
+          category: node?.node_type || edge?.edge_type || "meaning_network",
+          source_panel: "MeaningNetwork",
+          source_node_id: node?.node_id,
+          source_edge_id: edge?.edge_id,
+          source_track_id: attributes.source_track_id || attributes.target_id,
+          geometry,
+          interval: range ? { start: range.start, end: range.end } : undefined,
+          evidence_refs: refs,
+        },
+        scope: "same_video_open_topology",
+        target: node ? meaningNetworkMatcherTargetForNode(node) : "interaction",
+        governance: {
+          manual_correction_wins: true,
+          source_anchor_required_for_promotion: true,
+          candidate_only_until_decision: true,
+          open_topology_som: true,
+        },
+      });
+      setMeaningNetworkMatcherQueue({
+        anchorKind: kind,
+        anchorId,
+        anchorLabel,
+        requestId: result.request_id || requestId,
+        loading: false,
+        candidates: result.candidates || [],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Matcher request failed";
+      setMeaningNetworkMatcherQueue({
+        anchorKind: kind,
+        anchorId,
+        anchorLabel,
+        requestId,
+        loading: false,
+        error: message,
+        candidates: [],
+      });
+    }
+  }, [
+    meaningNetworkNodes,
+    renamedMeaningNetworkMarkers,
+    selectedVideoId,
+  ]);
 
   const changeMeaningNetworkZoom = useCallback((delta: number) => {
     setMeaningNetworkZoom((current) => {
@@ -4468,6 +4746,153 @@ export default function MeaningPlotPanel({
     renamedMeaningNetworkMarkers,
     reportMeaningNetworkMaturitySave,
     resetMeaningNetworkReviewFrame,
+    selectedVideoId,
+  ]);
+
+  const saveMeaningNetworkMatcherReviewRound = useCallback(async () => {
+    if (!selectedVideoId || !meaningNetworkMatcherQueue) return;
+    const selectedCandidates = meaningNetworkMatcherQueue.candidates
+      .map((candidate) => ({
+        candidate,
+        decision: meaningNetworkMatcherSelections[candidate.candidate_id],
+      }))
+      .filter(
+        (item): item is {
+          candidate: EvidenceProliferationCandidate;
+          decision: "confirmed" | "canceled" | "deferred";
+        } =>
+          Boolean(item.decision) &&
+          meaningNetworkMatcherCandidateRole(item.candidate) === "identity_candidate",
+      );
+    if (selectedCandidates.length === 0) return;
+    const now = new Date().toISOString();
+    const projectionTargets = [
+      "master_schema",
+      "meaning_network",
+      "narrative_agent_cards",
+      "video_panel",
+      "bbox_roi_panel",
+      "scene_card_panel",
+      "content_search",
+      "traceback",
+    ];
+    const roundId = `matcher-review-round:${meaningNetworkMatcherQueue.requestId}:${Date.now()}`;
+    const proliferationDecisions: ProliferationDecision[] = selectedCandidates.map(
+      ({ candidate, decision }) => {
+        const start = Number(candidate.time?.start);
+        const end = Number(candidate.time?.end ?? candidate.time?.start);
+        const hasTime = Number.isFinite(start);
+        const candidateLabel = meaningNetworkMatcherCandidateLabel(candidate);
+        const rawEvidenceRefs =
+          candidate.evidence_refs ||
+          candidate.master_object_projection?.evidence_refs ||
+          [];
+        return {
+          decision_id: `meaning-network-matcher:${candidate.candidate_id}`,
+          candidate_id: candidate.candidate_id,
+          request_id: meaningNetworkMatcherQueue.requestId,
+          decision,
+          authority_level:
+            decision === "confirmed"
+              ? "manual_confirmation"
+              : decision === "canceled"
+                ? "manual_rejection"
+                : "manual_review",
+          source_panel: "MeaningNetwork",
+          source_verification_status: hasTime ? "source_time_resolved" : "source_anchor_missing",
+          source_range_source: hasTime ? "evidence_ref" : undefined,
+          candidate_label: candidateLabel,
+          applied_label:
+            decision === "confirmed" ? meaningNetworkMatcherQueue.anchorLabel : candidateLabel,
+          target_evidence_id:
+            candidate.evidence_id ||
+            String(candidate.master_object_projection?.master_object_id || candidate.candidate_id),
+          source_anchors: hasTime
+            ? [{
+                start_seconds: Number(start.toFixed(3)),
+                end_seconds: Number((Number.isFinite(end) ? end : start).toFixed(3)),
+                range_source: "evidence_ref",
+                geometry: candidate.geometry || undefined,
+              }]
+            : [],
+          evidence_refs: rawEvidenceRefs,
+          source_traceback_refs: [
+            candidate.master_object_projection?.traceback_ref,
+            String(candidate.provenance?.traceback_ref || ""),
+          ].filter(Boolean) as string[],
+          projection_targets: projectionTargets,
+          proliferates_to: projectionTargets,
+          governance_status: {
+            maturity_result:
+              decision === "confirmed"
+                ? "user_confirmed_truth"
+                : decision === "canceled"
+                  ? "analyst_rejected_match"
+                  : "analyst_deferred_match",
+            matcher_review_round_id: roundId,
+            matcher_anchor_id: meaningNetworkMatcherQueue.anchorId,
+            matcher_anchor_kind: meaningNetworkMatcherQueue.anchorKind,
+            matcher_anchor_label: meaningNetworkMatcherQueue.anchorLabel,
+            match_probability: meaningNetworkMatcherCandidateConfidence(candidate),
+            match_basis: meaningNetworkMatcherCandidateBasis(candidate),
+            propagation_required: decision === "confirmed",
+            partial_propagation_allowed: false,
+            source_verification_status: hasTime ? "source_time_resolved" : "source_anchor_missing",
+            corrected_data_proliferates: decision === "confirmed",
+            raw_detection_retained_as: "traceback_only",
+          },
+          proliferation_allowed: decision === "confirmed" && hasTime,
+          decision_reason: "meaning_network_context_matcher_batch_review",
+          created_at: now,
+          created_by: "analyst",
+        };
+      },
+    );
+    const existing = analysisData?.annotationCorrections || {};
+    const currentDecisions = existing.proliferation_decisions || [];
+    const reviewedCandidateIds = new Set(
+      proliferationDecisions.map((decision) => decision.candidate_id),
+    );
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      analysis_id: selectedVideoId,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: existing.text_substitutions || [],
+      label_overrides: existing.label_overrides || [],
+      manual_transcript_entries: existing.manual_transcript_entries || [],
+      manual_visual_annotations: existing.manual_visual_annotations || [],
+      master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+      proliferation_decisions: [
+        ...currentDecisions.filter((item) => !reviewedCandidateIds.has(item.candidate_id)),
+        ...proliferationDecisions,
+      ],
+    };
+    await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
+    const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
+    setAnalysisData(refreshed);
+    setMeaningNetworkMatcherSelections({});
+    reportMeaningNetworkMaturitySave(
+      "Matcher review round saved",
+      `${proliferationDecisions.filter((item) => item.decision === "confirmed").length} confirmed, ${
+        proliferationDecisions.filter((item) => item.decision === "canceled").length
+      } rejected, ${proliferationDecisions.filter((item) => item.decision === "deferred").length} deferred. Confirmed candidates are now user-confirmed truths and are queued for governed projection.`,
+    );
+    eventBus.emit("meaningNetworkMatcherReviewRoundCommitted", {
+      videoId: selectedVideoId,
+      request_id: meaningNetworkMatcherQueue.requestId,
+      review_round_id: roundId,
+      decisions: proliferationDecisions,
+      affected_panels: projectionTargets,
+    });
+    eventBus.emit("analysisCorrectionsChanged", selectedVideoId);
+  }, [
+    analysisData?.annotationCorrections,
+    meaningNetworkMatcherQueue,
+    meaningNetworkMatcherSelections,
+    reportMeaningNetworkMaturitySave,
     selectedVideoId,
   ]);
 
@@ -5813,7 +6238,7 @@ export default function MeaningPlotPanel({
             <section
               className={
                 dedicatedMeaningNetworkPanel
-                  ? "flex h-full min-h-[620px] resize flex-col overflow-auto rounded border border-teal-700/60 bg-[#080b0b] px-4 py-3"
+                  ? "flex min-h-[620px] resize flex-col overflow-visible rounded border border-teal-700/60 bg-[#080b0b] px-4 py-3"
                   : meaningNetworkExpanded
                   ? "fixed left-4 top-4 z-50 h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] resize overflow-auto rounded border border-teal-700/60 bg-[#080b0b] px-4 py-3 shadow-2xl shadow-black/70"
                   : "max-h-[calc(100vh-170px)] overflow-auto rounded border border-teal-900/40 bg-teal-950/10 px-3 py-2"
@@ -6422,6 +6847,19 @@ export default function MeaningPlotPanel({
                       type="button"
                       onClick={() => {
                         const item = meaningNetworkContextMenu.node || meaningNetworkContextMenu.edge;
+                        if (item) {
+                          void runMeaningNetworkMatcher(item, meaningNetworkContextMenu.kind);
+                        }
+                      }}
+                      className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-teal-100 hover:bg-teal-950/40"
+                      data-vaa1-meaning-network-context-matcher="true"
+                    >
+                      Matcher: find constellations
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const item = meaningNetworkContextMenu.node || meaningNetworkContextMenu.edge;
                         if (item) copyMeaningNetworkItemContent(item, meaningNetworkContextMenu.kind);
                         setMeaningNetworkContextMenu(null);
                       }}
@@ -6973,7 +7411,557 @@ export default function MeaningPlotPanel({
                 <div className="mt-1.5 text-[9px] text-slate-500">
                   Click a node/edge/timeline marker to jump to source; double-click a graph node or edge to open its Meaning Sheet.
                 </div>
+                {(matcherSomMeaningNodes.length > 0 || matcherSomMeaningEdges.length > 0) ? (
+                  <div
+                    className="mt-2 rounded border border-teal-900/60 bg-teal-950/10 p-2"
+                    data-vaa1-meaning-network-matcher-som-strip="true"
+                  >
+                    <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="text-[9px] uppercase tracking-[0.12em] text-teal-200">
+                          Matcher / SOM candidates
+                        </div>
+                        <div className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
+                          Open-topology scanner output is candidate support: jump to source, inspect traceback, then confirm or reject in this graph.
+                        </div>
+                      </div>
+                      <div className="rounded border border-teal-900/70 bg-[#080b0b] px-2 py-1 text-[9px] text-teal-100">
+                        {matcherSomMeaningNodes.length} nodes / {matcherSomMeaningEdges.length} edges
+                      </div>
+                    </div>
+                    <div className="grid gap-2 xl:grid-cols-2">
+                      <div className="max-h-44 space-y-1 overflow-auto pr-1">
+                        {matcherSomMeaningNodes.map((node) => {
+                          const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
+                          const confidence = Number(node.maturity?.confidence || 0);
+                          return (
+                            <div
+                              key={`matcher-som-node:${node.node_id}`}
+                              className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+                              data-vaa1-meaning-network-matcher-som-node="true"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <button
+                                  type="button"
+                                  className="min-w-0 text-left"
+                                  onClick={() => {
+                                    setSelectedMeaningNetworkNodeId(node.node_id);
+                                    navigateToMeaningNetworkEvidence(node);
+                                  }}
+                                >
+                                  <div className="truncate text-[10px] text-slate-100">{label}</div>
+                                  <div className="mt-0.5 truncate text-[9px] text-slate-500">
+                                    {meaningNetworkNodeKindLabel(node.node_type)} / {meaningNetworkSourceTimeLabel(node.evidence_refs)}
+                                  </div>
+                                </button>
+                                <div className="flex shrink-0 flex-wrap gap-1">
+                                  <span className="rounded border border-teal-900/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-teal-100">
+                                    {Math.round(confidence * 100)}%
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => openMeaningNetworkNodeInspector(node)}
+                                    className="rounded border border-cyan-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/30"
+                                  >
+                                    Review
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void quickConfirmMeaningNetworkNode(node)}
+                                    className="rounded border border-emerald-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                                  >
+                                    Confirm
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="max-h-44 space-y-1 overflow-auto pr-1">
+                        {matcherSomMeaningEdges.map((edge) => {
+                          const sourceNode = meaningNetworkNodes.find((node) => node.node_id === edge.source_node_id);
+                          const targetNode = meaningNetworkNodes.find((node) => node.node_id === edge.target_node_id);
+                          const sourceLabel = sourceNode ? renamedMeaningNetworkMarkers[sourceNode.node_id] || sourceNode.label : edge.source_node_id;
+                          const targetLabel = targetNode ? renamedMeaningNetworkMarkers[targetNode.node_id] || targetNode.label : edge.target_node_id;
+                          return (
+                            <div
+                              key={`matcher-som-edge:${edge.edge_id}`}
+                              className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+                              data-vaa1-meaning-network-matcher-som-edge="true"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <button
+                                  type="button"
+                                  className="min-w-0 text-left"
+                                  onClick={() => {
+                                    setMeaningNetworkSheet({ kind: "edge", edge });
+                                    navigateToMeaningNetworkEvidence(edge);
+                                  }}
+                                >
+                                  <div className="truncate text-[10px] text-slate-100">
+                                    {sourceLabel} {"->"} {targetLabel}
+                                  </div>
+                                  <div className="mt-0.5 truncate text-[9px] text-slate-500">
+                                    {edge.edge_type.replaceAll("_", " ")} / {meaningNetworkSourceTimeLabel(edge.evidence_refs)}
+                                  </div>
+                                </button>
+                                <div className="flex shrink-0 flex-wrap gap-1">
+                                  <span className="rounded border border-teal-900/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-teal-100">
+                                    {Math.round(Number(edge.weight || 0) * 100)}%
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => openMeaningNetworkEdgeInspector(edge)}
+                                    className="rounded border border-cyan-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/30"
+                                  >
+                                    Review
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void persistMeaningNetworkEdgeDecision(edge, "confirmed")}
+                                    className="rounded border border-emerald-800/70 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                                  >
+                                    Confirm
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
+              {meaningNetworkMatcherQueue ? (
+                <section
+                  className="mt-2 rounded border border-teal-700/60 bg-[#071011] p-2"
+                  data-vaa1-meaning-network-matcher-review-queue="true"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-teal-200">
+                        Matcher review queue
+                      </div>
+                      <div className="mt-0.5 truncate text-[12px] font-medium text-slate-100">
+                        Anchor: {meaningNetworkMatcherQueue.anchorLabel}
+                      </div>
+                      <div className="mt-0.5 text-[9px] text-slate-500">
+                        {meaningNetworkMatcherQueue.anchorKind} / {meaningNetworkMatcherQueue.requestId || "request pending"}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex rounded border border-slate-800 bg-[#080b0b] p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setMeaningNetworkMatcherView("visual")}
+                          className={`rounded px-2 py-0.5 text-[9px] ${
+                            meaningNetworkMatcherView === "visual"
+                              ? "bg-teal-950/70 text-teal-100"
+                              : "text-slate-500 hover:text-slate-200"
+                          }`}
+                          data-vaa1-meaning-network-matcher-visual-gallery="true"
+                        >
+                          Visual gallery
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMeaningNetworkMatcherView("all")}
+                          className={`rounded px-2 py-0.5 text-[9px] ${
+                            meaningNetworkMatcherView === "all"
+                              ? "bg-teal-950/70 text-teal-100"
+                              : "text-slate-500 hover:text-slate-200"
+                          }`}
+                        >
+                          All evidence
+                        </button>
+                      </div>
+                      <span className="rounded border border-teal-900/70 bg-[#080b0b] px-2 py-1 text-[9px] text-teal-100">
+                        {meaningNetworkMatcherQueue.loading
+                          ? "matching..."
+                          : `${meaningNetworkMatcherQueue.candidates.length} candidates`}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={
+                          meaningNetworkMatcherQueue.loading ||
+                          Object.keys(meaningNetworkMatcherSelections).length === 0
+                        }
+                        onClick={() => void saveMeaningNetworkMatcherReviewRound()}
+                        className="rounded border border-emerald-700/70 bg-emerald-950/20 px-2 py-1 text-[9px] text-emerald-100 hover:bg-emerald-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-vaa1-meaning-network-matcher-save-round="true"
+                      >
+                        Save review round ({Object.keys(meaningNetworkMatcherSelections).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMeaningNetworkMatcherQueue(null);
+                          setMeaningNetworkMatcherSelections({});
+                        }}
+                        className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[9px] text-slate-300 hover:border-teal-700 hover:text-teal-100"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  {meaningNetworkMatcherQueue.error ? (
+                    <div className="mt-2 rounded border border-rose-900/70 bg-rose-950/15 px-2 py-2 text-[10px] text-rose-100">
+                      {meaningNetworkMatcherQueue.error}
+                    </div>
+                  ) : null}
+                  {meaningNetworkMatcherQueue.loading ? (
+                    <div className="mt-2 rounded border border-dashed border-teal-900/70 px-2 py-3 text-[10px] text-slate-400">
+                      Scanning source-linked multimodal constellations from this anchor...
+                    </div>
+                  ) : null}
+                  {!meaningNetworkMatcherQueue.loading &&
+                  !meaningNetworkMatcherQueue.error &&
+                  meaningNetworkMatcherQueue.candidates.length === 0 ? (
+                    <div className="mt-2 rounded border border-dashed border-slate-800 px-2 py-3 text-[10px] text-slate-500">
+                      No candidates cleared the matcher threshold for this anchor.
+                    </div>
+                  ) : null}
+                  {meaningNetworkMatcherQueue.candidates.length > 0 ? (
+                    <div
+                      className="mt-2 grid max-h-[640px] grid-cols-1 gap-2 overflow-auto pr-1 xl:grid-cols-2"
+                      data-vaa1-meaning-network-matcher-thumbnail-grid="true"
+                    >
+                      {[
+                        {
+                          key: "anchor_sample",
+                          label: "Known samples",
+                          description: "Already-confirmed identity evidence used to guide matching.",
+                          roles: ["anchor_sample"] as MeaningNetworkMatcherCandidateRole[],
+                          dataAttribute: "known-samples",
+                        },
+                        {
+                          key: "identity_candidate",
+                          label: "Confirm these detections",
+                          description: "Unknown-person detections that can receive this mature identity.",
+                          roles: ["identity_candidate"] as MeaningNetworkMatcherCandidateRole[],
+                          dataAttribute: "identity-candidates",
+                        },
+                        {
+                          key: "context_support",
+                          label: "Context supporting this match",
+                          description: "Transcript, audio, metadata, scene context, and conflicts; inspection only.",
+                          roles: ["context_support", "conflict"] as MeaningNetworkMatcherCandidateRole[],
+                          dataAttribute: "context-support",
+                        },
+                      ].map((section) => {
+                        const allSectionCandidates = meaningNetworkMatcherQueue.candidates.filter(
+                          (candidate) =>
+                            section.roles.includes(meaningNetworkMatcherCandidateRole(candidate)),
+                        );
+                        const visibleSectionCandidates = allSectionCandidates.filter((candidate) => {
+                          if (meaningNetworkMatcherView === "all") return true;
+                          const start = Number(candidate.time?.start);
+                          return (
+                            section.key !== "context_support" &&
+                            Number.isFinite(start) &&
+                            Boolean(meaningNetworkMatcherCandidateBbox(candidate))
+                          );
+                        });
+                        return (
+                          <React.Fragment key={section.key}>
+                            <div
+                              className="col-span-full rounded border border-slate-800 bg-[#080b0b] px-2 py-1.5"
+                              data-vaa1-meaning-network-matcher-section={section.dataAttribute}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <div className="text-[10px] font-medium text-slate-100">
+                                    {section.label}
+                                  </div>
+                                  <div className="text-[9px] text-slate-500">
+                                    {section.description}
+                                  </div>
+                                </div>
+                                <span className="rounded border border-slate-800 px-1.5 py-0.5 text-[9px] text-slate-400">
+                                  {allSectionCandidates.length}
+                                </span>
+                              </div>
+                              {allSectionCandidates.length > 0 &&
+                              visibleSectionCandidates.length === 0 ? (
+                                <div className="mt-1 text-[9px] text-slate-600">
+                                  Available in All evidence.
+                                </div>
+                              ) : null}
+                            </div>
+                            {visibleSectionCandidates.map((candidate) => {
+                        const label = meaningNetworkMatcherCandidateLabel(candidate);
+                        const confidence = meaningNetworkMatcherCandidateConfidence(candidate);
+                        const basis = meaningNetworkMatcherCandidateBasis(candidate);
+                        const candidateRole = meaningNetworkMatcherCandidateRole(candidate);
+                        const isDecisionCandidate = candidateRole === "identity_candidate";
+                        const start = Number(candidate.time?.start);
+                        const end = Number(candidate.time?.end ?? candidate.time?.start);
+                        const hasTime = Number.isFinite(start);
+                        const bbox = meaningNetworkMatcherCandidateBbox(candidate);
+                        const hasGeometry = Boolean(bbox);
+                        const stagedDecision =
+                          meaningNetworkMatcherSelections[candidate.candidate_id];
+                        return (
+                          <div
+                            key={candidate.candidate_id}
+                            className={`rounded border bg-[#101010] px-2 py-2 ${
+                              stagedDecision === "confirmed"
+                                ? "border-emerald-700/70"
+                                : stagedDecision === "canceled"
+                                  ? "border-rose-900/70"
+                                  : stagedDecision === "deferred"
+                                    ? "border-amber-800/70"
+                                    : "border-slate-800"
+                            }`}
+                            data-vaa1-meaning-network-matcher-candidate="true"
+                          >
+                            {hasTime && selectedVideoId ? (
+                              <button
+                                type="button"
+                                disabled={!isDecisionCandidate}
+                                onClick={() =>
+                                  setMeaningNetworkMatcherSelections((current) => {
+                                    if (!isDecisionCandidate) return current;
+                                    const next = { ...current };
+                                    if (next[candidate.candidate_id] === "confirmed") {
+                                      delete next[candidate.candidate_id];
+                                    } else {
+                                      next[candidate.candidate_id] = "confirmed";
+                                    }
+                                    return next;
+                                  })
+                                }
+                                className={`group relative mb-2 block aspect-video w-full overflow-hidden rounded border bg-black text-left ${
+                                  stagedDecision === "confirmed"
+                                    ? "border-emerald-400 ring-2 ring-emerald-500/40"
+                                    : "border-slate-800 hover:border-teal-500"
+                                }`}
+                                data-vaa1-meaning-network-matcher-source-preview="true"
+                                title={
+                                  isDecisionCandidate
+                                    ? "Click to check this match. Hover to preview."
+                                    : "Known and contextual evidence is inspection-only. Hover to preview."
+                                }
+                              >
+                                <video
+                                  src={`${apiService.getDownloadUrl(selectedVideoId, "source_video")}#t=${Math.max(0, start).toFixed(3)}`}
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  className="h-full w-full object-cover"
+                                  onLoadedMetadata={(event) => {
+                                    event.currentTarget.currentTime = start;
+                                  }}
+                                  onLoadedData={(event) => {
+                                    event.currentTarget.currentTime = start;
+                                  }}
+                                  onMouseEnter={(event) => {
+                                    event.currentTarget.currentTime = start;
+                                    void event.currentTarget.play().catch(() => undefined);
+                                  }}
+                                  onMouseLeave={(event) => {
+                                    event.currentTarget.pause();
+                                    event.currentTarget.currentTime = start;
+                                  }}
+                                />
+                                {bbox ? (
+                                  <span
+                                    className="pointer-events-none absolute border-2 border-cyan-300 bg-cyan-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.7)]"
+                                    style={{
+                                      left: `${bbox.x * 100}%`,
+                                      top: `${bbox.y * 100}%`,
+                                      width: `${bbox.width * 100}%`,
+                                      height: `${bbox.height * 100}%`,
+                                    }}
+                                    data-vaa1-meaning-network-matcher-preview-bbox="true"
+                                  />
+                                ) : null}
+                                <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                                  {formatTime(start)} / {isDecisionCandidate ? "click to check" : "known evidence"}
+                                </span>
+                                <span
+                                  className={`pointer-events-none absolute right-2 top-2 grid h-6 w-6 place-items-center rounded border text-[13px] font-bold shadow ${
+                                    stagedDecision === "confirmed"
+                                      ? "border-emerald-300 bg-emerald-600 text-white"
+                                      : "border-slate-400 bg-black/70 text-transparent"
+                                  }`}
+                                  aria-hidden="true"
+                                >
+                                  ✓
+                                </span>
+                              </button>
+                            ) : null}
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <button
+                                type="button"
+                                disabled={!hasTime}
+                                onClick={() => {
+                                  if (hasTime && selectedVideoId) openVideoAtTime(selectedVideoId, start);
+                                }}
+                                className="min-w-0 text-left disabled:cursor-not-allowed"
+                              >
+                                <div className="truncate text-[11px] font-medium text-slate-100">
+                                  {label}
+                                </div>
+                                <div className="mt-0.5 text-[9px] text-slate-500">
+                                  {hasTime
+                                    ? `${formatTime(start)}-${formatTime(Number.isFinite(end) ? end : start)}`
+                                    : "source time pending"}
+                                  {" / "}
+                                  {hasGeometry ? "BBox/ROI linked" : "geometry pending"}
+                                </div>
+                              </button>
+                              <span className="rounded border border-teal-900/70 bg-[#080b0b] px-2 py-1 text-[9px] text-teal-100">
+                                {Math.round(confidence * 100)}%
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {basis.map((item) => (
+                                <span
+                                  key={`${candidate.candidate_id}:basis:${item}`}
+                                  className="rounded border border-slate-800 bg-[#080b0b] px-1.5 py-0.5 text-[9px] text-slate-400"
+                                >
+                                  {item}
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              <button
+                                type="button"
+                                disabled={!hasTime}
+                                onClick={() => {
+                                  if (hasTime && selectedVideoId) openVideoAtTime(selectedVideoId, start);
+                                }}
+                                className="rounded border border-cyan-800/70 bg-[#080b0b] px-2 py-1 text-[9px] text-cyan-100 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Jump
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!hasTime || !selectedVideoId}
+                                onClick={() => {
+                                  if (!hasTime || !selectedVideoId) return;
+                                  eventBus.emit("openPanelRequest", {
+                                    panelType: "VideoPanel",
+                                    panelProps: {
+                                      videoId: selectedVideoId,
+                                      initialTime: start,
+                                      forceNewPanel: true,
+                                    },
+                                  });
+                                  eventBus.emit("videoTimeLineChanged", start);
+                                }}
+                                className="rounded border border-cyan-800/70 bg-[#080b0b] px-2 py-1 text-[9px] text-cyan-100 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                data-vaa1-meaning-network-matcher-second-screen="true"
+                              >
+                                Open second screen
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  openMeaningNetworkTraceback(
+                                    {
+                                      node_id: candidate.candidate_id,
+                                      node_type: "matcher_candidate",
+                                      label,
+                                      maturity: {
+                                        level: "candidate",
+                                        authority: "matcher_agent",
+                                        confidence,
+                                      },
+                                      evidence_refs: (candidate.evidence_refs || []) as MeaningNetworkEvidenceRef[],
+                                      attributes: {
+                                        matcher_anchor_id: meaningNetworkMatcherQueue.anchorId,
+                                        geometry: candidate.geometry,
+                                        provenance: candidate.provenance,
+                                      },
+                                    },
+                                    "node",
+                                  );
+                                }}
+                                className="rounded border border-amber-800/70 bg-[#080b0b] px-2 py-1 text-[9px] text-amber-100 hover:bg-amber-950/30"
+                              >
+                                Traceback
+                              </button>
+                              {isDecisionCandidate ? (
+                                <>
+                              <button
+                                type="button"
+                                disabled={!hasTime}
+                                onClick={() =>
+                                  setMeaningNetworkMatcherSelections((current) => ({
+                                    ...current,
+                                    [candidate.candidate_id]: "confirmed",
+                                  }))
+                                }
+                                className={`rounded border px-2 py-1 text-[9px] disabled:cursor-not-allowed disabled:opacity-40 ${
+                                  stagedDecision === "confirmed"
+                                    ? "border-emerald-500 bg-emerald-900/40 text-emerald-50"
+                                    : "border-emerald-800/70 bg-[#080b0b] text-emerald-100 hover:bg-emerald-950/30"
+                                }`}
+                              >
+                                Check match
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setMeaningNetworkMatcherSelections((current) => ({
+                                    ...current,
+                                    [candidate.candidate_id]: "canceled",
+                                  }))
+                                }
+                                className={`rounded border px-2 py-1 text-[9px] ${
+                                  stagedDecision === "canceled"
+                                    ? "border-rose-600 bg-rose-950/50 text-rose-50"
+                                    : "border-rose-900/70 bg-[#080b0b] text-rose-100 hover:bg-rose-950/30"
+                                }`}
+                              >
+                                Reject
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setMeaningNetworkMatcherSelections((current) => ({
+                                    ...current,
+                                    [candidate.candidate_id]: "deferred",
+                                  }))
+                                }
+                                className={`rounded border px-2 py-1 text-[9px] ${
+                                  stagedDecision === "deferred"
+                                    ? "border-amber-600 bg-amber-950/40 text-amber-50"
+                                    : "border-slate-700 bg-[#080b0b] text-slate-300 hover:border-teal-700 hover:text-teal-100"
+                                }`}
+                              >
+                                Defer
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMeaningNetworkMatcherSelections((current) => {
+                                    const next = { ...current };
+                                    delete next[candidate.candidate_id];
+                                    return next;
+                                  });
+                                }}
+                                className="rounded border border-slate-800 bg-[#080b0b] px-2 py-1 text-[9px] text-slate-500 hover:text-slate-200"
+                              >
+                                Clear
+                              </button>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
               <div
                 className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
                 data-vaa1-meaning-network-continuity-review-skeleton="true"

@@ -34,8 +34,12 @@ function safeProjectPath(rawPath: string) {
   return resolved;
 }
 
+function analysisRecordPath(analysisId: string) {
+  return path.join(projectRoot(), "outputs", "api_results", analysisId, "analysis_record.json");
+}
+
 async function readRecord(analysisId: string) {
-  const filePath = path.join(projectRoot(), "outputs", "api_results", analysisId, "analysis_record.json");
+  const filePath = analysisRecordPath(analysisId);
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
@@ -63,6 +67,53 @@ export async function GET(
     return NextResponse.json(
       { detail: error instanceof Error ? error.message : "Local artifact unavailable" },
       { status: 404 },
+    );
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ analysisId: string; fileType: string }> },
+) {
+  const { analysisId, fileType } = await params;
+  if (fileType !== "annotation_corrections") {
+    return NextResponse.json({ detail: "Local writes are only supported for annotation corrections" }, { status: 405 });
+  }
+
+  try {
+    const corrections = await request.json();
+    const record = await readRecord(analysisId);
+    const root = projectRoot();
+    const existingOutputPath =
+      typeof record.output_files?.annotation_corrections === "string"
+        ? record.output_files.annotation_corrections
+        : "";
+    const outputPath = existingOutputPath
+      ? safeProjectPath(existingOutputPath)
+      : path.join(root, "outputs", "api_results", analysisId, "annotation_corrections.json");
+    const relativeOutputPath = path.relative(root, outputPath);
+    const updatedRecord = {
+      ...record,
+      annotation_corrections: corrections,
+      output_files: {
+        ...(record.output_files || {}),
+        annotation_corrections: relativeOutputPath,
+      },
+    };
+
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, JSON.stringify(corrections, null, 2), "utf8");
+    await fs.writeFile(analysisRecordPath(analysisId), JSON.stringify(updatedRecord, null, 2), "utf8");
+
+    return NextResponse.json({
+      analysis_id: analysisId,
+      annotation_corrections: corrections,
+      local_fallback: true,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { detail: error instanceof Error ? error.message : "Could not save local annotation corrections" },
+      { status: 500 },
     );
   }
 }

@@ -243,6 +243,7 @@ export interface AnalysisStatus {
     updated_at?: string;
   } | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
+  live_mature_data_proliferation_audit?: Record<string, unknown> | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
@@ -423,6 +424,12 @@ export interface EvidenceProliferationRequest {
 
 export interface EvidenceProliferationCandidate {
   candidate_id: string;
+  candidate_role?:
+    | "anchor_sample"
+    | "identity_candidate"
+    | "context_support"
+    | "conflict"
+    | string;
   evidence_id?: string;
   analysis_id?: string;
   label?: string;
@@ -438,6 +445,12 @@ export interface EvidenceProliferationCandidate {
   allowed_actions?: string[];
   proliferation_allowed?: boolean;
   proliferation_reason?: string;
+  source_verification_class?: "known_verified_sample" | "unknown_similar_candidate" | string;
+  source_navigation?: {
+    has_time?: boolean;
+    has_bbox?: boolean;
+    open_actions?: string[];
+  };
   source_anchors?: Array<Record<string, unknown>>;
   evidence_refs?: Array<Record<string, unknown>>;
   projection_targets?: string[];
@@ -474,6 +487,14 @@ export interface EvidenceProliferationCandidate {
   closest_match?: {
     principle?: "closest_match" | string;
     match_probability?: number;
+    identity_compatibility?:
+      | "direct_identity"
+      | "unknown_person"
+      | "known_identity_option"
+      | "contextual_support"
+      | "incompatible"
+      | "not_applicable"
+      | string;
     components?: Record<string, number | null | undefined>;
     weights?: Record<string, number>;
     source_timesphere?: Record<string, unknown>;
@@ -1074,6 +1095,12 @@ export interface ProliferationDecision {
   decision_id: string;
   candidate_id: string;
   request_id?: string;
+  decision_scope?: "candidate" | "cluster" | "hypothesis" | string;
+  cluster_key?: string;
+  hypothesis_id?: string;
+  target_hypothesis_id?: string;
+  opportunity_id?: string;
+  source_opportunity_id?: string;
   decision: "confirmed" | "canceled" | "deferred" | "inspected" | string;
   authority_level?: string;
   source_panel?: string;
@@ -1664,6 +1691,29 @@ class ApiService {
     return response.json();
   }
 
+  async refreshEvidenceProliferationMatcher(
+    analysisId: string,
+    options: { request_limit?: number; candidate_limit?: number } = {},
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/proliferation/refresh`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Evidence proliferation matcher refresh failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
   async updateCvatLink(analysisId: string, cvatID: number): Promise<any> {
     try {
       const response = await fetch(`${this.baseURL}/api/status/${analysisId}/cvat-link`, {
@@ -1888,18 +1938,43 @@ class ApiService {
     analysisId: string,
     corrections: AnnotationCorrections,
   ): Promise<AnnotationCorrections> {
-    const response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(corrections),
-    });
+    const localSave = async () =>
+      fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(corrections),
+      });
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(corrections),
+      });
+    } catch (error) {
+      console.warn("Backend annotation corrections save failed, trying local analysis save:", error);
+      response = await localSave();
+    }
     if (!response.ok) {
-      const errorText = await response.text();
+      const localResponse = response.url.includes("/api/local-analysis/")
+        ? response
+        : await localSave();
+      if (localResponse.ok) {
+        const result = await localResponse.json();
+        return result.annotation_corrections || {};
+      }
+      const errorText = await localResponse.text();
       throw new Error(
-        `Annotation corrections save failed: ${response.status} ${response.statusText} - ${errorText}`,
+        `Annotation corrections save failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
       );
+    } else if (response.url.includes("/api/local-analysis/")) {
+      const result = await response.json();
+      return result.annotation_corrections || {};
     }
     const result = await response.json();
     return result.annotation_corrections || {};

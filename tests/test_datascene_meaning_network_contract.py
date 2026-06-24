@@ -118,6 +118,105 @@ class DatasceneMeaningNetworkContractTest(unittest.TestCase):
         self.assertIn("visual_profile_comparison_needed", attributes["probable_alternatives"])
         self.assertIn("transcript", attributes["minimum_next_step"].lower())
 
+    def test_open_topology_matcher_projects_traceable_nodes_and_edges(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-open-topology-matcher",
+            {
+                "evidence_proliferation_matches": [
+                    {
+                        "request_id": "matcher-refresh:bond",
+                        "open_topology_som": {
+                            "schema": "vaa1.open_topology_som_traceable.v1",
+                            "topology_mode": "open_topology_som",
+                            "fixed_grid": False,
+                            "diagnostic_only": True,
+                            "nodes": [
+                                {
+                                    "node_id": "seed:manual-bond",
+                                    "node_type": "mature_anchor",
+                                    "label": "James Bond",
+                                    "source_refs": ["manual-bond"],
+                                },
+                                {
+                                    "node_id": "candidate:late-person",
+                                    "node_type": "candidate",
+                                    "label": "Confirm Narrative Agent 93%",
+                                    "cluster_id": "open-topology:character_continuity",
+                                    "source_panel": "objects_panel",
+                                    "source_kind": "bbox_detection",
+                                    "source_time": {"start": 96.0, "end": 96.2},
+                                    "source_anchors": [
+                                        {
+                                            "anchor_type": "media_time_interval",
+                                            "interval": {"start": 96.0, "end": 96.2},
+                                        },
+                                        {
+                                            "anchor_type": "bbox",
+                                            "bbox": {"x": 0.52, "y": 0.12, "w": 0.26, "h": 0.71},
+                                        },
+                                    ],
+                                    "similarity_score": 0.93,
+                                    "review_required": True,
+                                },
+                            ],
+                            "edges": [
+                                {
+                                    "edge_id": "edge:manual-bond:late-person",
+                                    "from_node": "seed:manual-bond",
+                                    "to_node": "candidate:late-person",
+                                    "edge_type": "traceable_similarity",
+                                    "weight": 0.93,
+                                    "match_basis": "cross_scene_continuity, visual candidate",
+                                    "review_required": True,
+                                }
+                            ],
+                            "clusters": [
+                                {
+                                    "cluster_id": "open-topology:character_continuity",
+                                    "candidate_ids": ["candidate:late-person"],
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+            transcript={"segments": []},
+            visual_analysis={"tracked_objects": []},
+        )
+
+        network = artifact["meaning_network"]
+        matcher_nodes = [
+            node for node in network["nodes"]
+            if node["ui"]["display_group"] == "open_topology_som_matcher"
+        ]
+        matcher_edges = [
+            edge for edge in network["edges"]
+            if edge["edge_type"] == "traceable_similarity"
+        ]
+        self.assertGreaterEqual(len(matcher_nodes), 2)
+        self.assertEqual(matcher_edges[0]["maturity"]["authority"], "matcher_agent")
+        self.assertFalse(matcher_nodes[0]["attributes"]["fixed_grid"])
+        candidate_node = next(node for node in matcher_nodes if "late-person" in node["node_id"])
+        self.assertTrue(candidate_node["ui"]["source_navigation_enabled"])
+        self.assertEqual(candidate_node["evidence_refs"][0]["time_range"]["start"], 96.0)
+        self.assertIn("bbox", candidate_node["evidence_refs"][0])
+        self.assertTrue(candidate_node["attributes"]["linked_data_principle"]["node_is_traceable"])
+        self.assertTrue(candidate_node["attributes"]["linked_data_principle"]["source_time_resolved"])
+        self.assertTrue(candidate_node["attributes"]["linked_data_principle"]["bbox_resolved"])
+        self.assertEqual(matcher_edges[0]["evidence_refs"][0]["time_range"]["start"], 96.0)
+        self.assertTrue(
+            any(
+                anchor["anchor_type"] == "open_topology_som_cluster"
+                for anchor in network["continuity_anchors"]
+            )
+        )
+        self.assertTrue(
+            any(
+                confirmation["confirmation_type"] == "matcher_topology_review"
+                for confirmation in network["confirmations"]
+            )
+        )
+
     def test_artifact_writer_persists_datascene_meaning_network(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "datascene_meaning_network.json"

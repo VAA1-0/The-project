@@ -219,6 +219,309 @@ def _edge(
     }
 
 
+def _time_from_source_anchors(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    for anchor in _as_items(item.get("source_anchors")):
+        if anchor.get("anchor_type") != "media_time_interval":
+            continue
+        interval = anchor.get("interval") if isinstance(anchor.get("interval"), dict) else {}
+        interval = interval or anchor
+        resolved = _interval(interval)
+        if resolved.get("start") is not None:
+            return resolved
+    return _interval(item.get("source_time") if isinstance(item.get("source_time"), dict) else item)
+
+
+def _bbox_from_source_anchors(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    for anchor in _as_items(item.get("source_anchors")):
+        if anchor.get("anchor_type") == "bbox":
+            return anchor.get("bbox") if isinstance(anchor.get("bbox"), dict) else anchor
+    return item.get("geometry") if isinstance(item.get("geometry"), dict) else None
+
+
+def _matcher_evidence_ref(
+    evidence_id: str,
+    item: Dict[str, Any],
+    *,
+    source_type: str = "matcher",
+    confidence: Optional[float] = None,
+) -> Dict[str, Any]:
+    ref = _evidence_ref(
+        evidence_id,
+        source_type,
+        _time_from_source_anchors(item),
+        confidence=confidence,
+    )
+    bbox = _bbox_from_source_anchors(item)
+    if bbox:
+        ref["bbox"] = bbox
+    ref["source_refs"] = item.get("source_refs") or item.get("traceback_refs") or []
+    return ref
+
+
+def _projection_node_type(value: Any) -> str:
+    node_type = _safe_text(value, "matcher_candidate").lower()
+    if node_type in {"mature_anchor", "seed"}:
+        return "matcher_anchor"
+    if node_type in {"candidate", "pattern_candidate"}:
+        return "matcher_candidate"
+    return f"matcher_{node_type.replace(' ', '_')}"
+
+
+def _project_matcher_topology_to_meaning_network(
+    status: Dict[str, Any],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Project scanner/matcher topology into the Meaning Network graph.
+
+    The projection is diagnostic: it exposes open-topology SOM nodes and edges
+    as graph material while leaving promotion authority with governed decisions.
+    """
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    anchors: List[Dict[str, Any]] = []
+    confirmations: List[Dict[str, Any]] = []
+    seen_nodes = set()
+    seen_edges = set()
+
+    def add_node(raw_node: Dict[str, Any], *, run_id: str, index: int) -> Optional[str]:
+        raw_id = _safe_text(raw_node.get("node_id"), f"{run_id}:node:{index}")
+        node_id = f"matcher:{raw_id}"
+        if node_id in seen_nodes:
+            return node_id
+        confidence = _safe_float(
+            raw_node.get("similarity_score")
+            or raw_node.get("match_probability")
+            or raw_node.get("confidence"),
+            0.5,
+        )
+        evidence_ref = _matcher_evidence_ref(
+            node_id,
+            raw_node,
+            source_type=_safe_text(raw_node.get("source_panel"), "matcher"),
+            confidence=confidence,
+        )
+        source_time_resolved = evidence_ref.get("time_range", {}).get("start") is not None
+        seen_nodes.add(node_id)
+        nodes.append(
+            _node(
+                node_id,
+                _projection_node_type(raw_node.get("node_type")),
+                _safe_text(raw_node.get("label"), "Matcher candidate"),
+                description=(
+                    "Open-topology SOM matcher projection. Candidate support only; "
+                    "confirm, defer, or reject before mature proliferation."
+                ),
+                attributes={
+                    "run_id": run_id,
+                    "cluster_id": raw_node.get("cluster_id"),
+                    "source_panel": raw_node.get("source_panel"),
+                    "source_kind": raw_node.get("source_kind"),
+                    "source_verification_class": raw_node.get("source_verification_class"),
+                    "review_required": raw_node.get("review_required", True),
+                    "source_navigation": raw_node.get("source_navigation") or {},
+                    "open_topology_som": True,
+                    "fixed_grid": False,
+                    "lane_id": "matcher",
+                    "linked_data_principle": {
+                        "node_is_traceable": True,
+                        "source_time_resolved": source_time_resolved,
+                        "bbox_resolved": bool(evidence_ref.get("bbox")),
+                        "manual_correction_wins": True,
+                    },
+                },
+                maturity=_maturity("candidate", "matcher_agent", confidence),
+                evidence_refs=[evidence_ref],
+                display_group="open_topology_som_matcher",
+            )
+        )
+        return node_id
+
+    def add_edge(raw_edge: Dict[str, Any], *, run_id: str, index: int) -> None:
+        raw_id = _safe_text(raw_edge.get("edge_id"), f"{run_id}:edge:{index}")
+        edge_id = f"matcher:{raw_id}"
+        if edge_id in seen_edges:
+            return
+        source_node_id = f"matcher:{_safe_text(raw_edge.get('from_node') or raw_edge.get('source_node_id'))}"
+        target_node_id = f"matcher:{_safe_text(raw_edge.get('to_node') or raw_edge.get('target_node_id'))}"
+        if not source_node_id or not target_node_id:
+            return
+        seen_edges.add(edge_id)
+        target_node = next(
+            (
+                item for item in nodes
+                if item.get("node_id") == target_node_id
+            ),
+            None,
+        )
+        target_refs = target_node.get("evidence_refs") if isinstance(target_node, dict) else []
+        edge_type = _safe_text(raw_edge.get("edge_type"), "traceable_similarity")
+        weight = _safe_float(raw_edge.get("weight"), 0.5) or 0.5
+        edge_refs = target_refs if target_refs else [
+            _evidence_ref(
+                edge_id,
+                "matcher_edge",
+                {"start": None, "end": None},
+                confidence=weight,
+            )
+        ]
+        edges.append(
+            _edge(
+                edge_id,
+                source_node_id,
+                target_node_id,
+                edge_type,
+                weight=weight,
+                maturity=_maturity("candidate", "matcher_agent", weight),
+                evidence_refs=edge_refs,
+            )
+        )
+        edges[-1]["attributes"] = {
+            "run_id": run_id,
+            "match_basis": raw_edge.get("match_basis"),
+            "review_required": raw_edge.get("review_required", True),
+            "open_topology_som": True,
+            "manual_confirmation_required_for_promotion": True,
+        }
+
+    def add_topology(topology: Dict[str, Any], *, run_id: str) -> None:
+        if not isinstance(topology, dict):
+            return
+        for index, raw_node in enumerate(_as_items(topology.get("nodes"))):
+            add_node(raw_node, run_id=run_id, index=index)
+        for index, raw_edge in enumerate(_as_items(topology.get("edges"))):
+            add_edge(raw_edge, run_id=run_id, index=index)
+        for cluster in _as_items(topology.get("clusters")):
+            anchors.append(
+                {
+                    "anchor_id": f"matcher-cluster:{_safe_text(cluster.get('cluster_id'), run_id)}",
+                    "anchor_type": "open_topology_som_cluster",
+                    "label": _safe_text(cluster.get("cluster_id"), "Matcher cluster"),
+                    "applies_to_node_ids": [
+                        f"matcher:{candidate_id}"
+                        for candidate_id in cluster.get("candidate_ids") or []
+                    ],
+                    "copy_paste_contract": {
+                        "copy_enabled": True,
+                        "paste_to_selected_nodes": True,
+                        "paste_to_scene_coordinate": True,
+                        "create_linked_duplicate": True,
+                        "detach_from_chain": True,
+                        "preserve_source_traceback": True,
+                    },
+                    "maturity": _maturity("candidate", "matcher_agent", 0.5),
+                    "evidence_refs": [],
+                }
+            )
+
+    for index, match in enumerate(_as_items(status.get("evidence_proliferation_matches"))):
+        add_topology(
+            match.get("open_topology_som") if isinstance(match.get("open_topology_som"), dict) else {},
+            run_id=_safe_text(match.get("request_id"), f"matcher-run:{index}"),
+        )
+
+    for index, run in enumerate(_as_items(status.get("open_topology_scanner_refreshes"))):
+        for match_index, match in enumerate(_as_items(run.get("matches"))):
+            add_topology(
+                match.get("open_topology_som") if isinstance(match.get("open_topology_som"), dict) else {},
+                run_id=_safe_text(match.get("request_id"), f"scanner-refresh:{index}:{match_index}"),
+            )
+
+    for index, pattern in enumerate(_as_items(status.get("multimodal_pattern_scanner_candidates"))):
+        support = pattern.get("constellational_support") if isinstance(pattern.get("constellational_support"), dict) else {}
+        seed_id = f"matcher:pattern-seed:{_safe_text(pattern.get('seed_id'), str(index))}"
+        candidate_id = f"matcher:pattern-candidate:{_safe_text(pattern.get('candidate_id'), str(index))}"
+        if seed_id not in seen_nodes:
+            seen_nodes.add(seed_id)
+            nodes.append(
+                _node(
+                    seed_id,
+                    "matcher_anchor",
+                    _safe_text(pattern.get("seed_label"), "Known pattern seed"),
+                    attributes={
+                        "open_topology_som": True,
+                        "pattern_scanner_agent": True,
+                        "lane_id": "matcher",
+                    },
+                    maturity=_maturity("candidate", "matcher_agent", _safe_float(support.get("confidence"), 0.5)),
+                    display_group="open_topology_som_matcher",
+                )
+            )
+        if candidate_id not in seen_nodes:
+            seen_nodes.add(candidate_id)
+            candidate_support = next(
+                (
+                    item for item in support.get("support") or []
+                    if isinstance(item, dict) and item.get("support_type") == "visual_candidate_anchor"
+                ),
+                {},
+            )
+            nodes.append(
+                _node(
+                    candidate_id,
+                    "matcher_candidate",
+                    _safe_text(pattern.get("candidate_label") or candidate_support.get("label"), "Pattern candidate"),
+                    attributes={
+                        "open_topology_som": True,
+                        "pattern_scanner_agent": True,
+                        "lane_id": "matcher",
+                        "support_panels": support.get("support_panels") or [],
+                        "support_count": support.get("support_count"),
+                        "modality_count": support.get("modality_count"),
+                        "match_basis": support.get("match_basis") or [],
+                    },
+                    maturity=_maturity("candidate", "matcher_agent", _safe_float(support.get("confidence"), 0.5)),
+                    evidence_refs=[
+                        _matcher_evidence_ref(
+                            candidate_id,
+                            candidate_support,
+                            source_type=_safe_text(candidate_support.get("source_panel"), "matcher"),
+                            confidence=_safe_float(support.get("confidence"), 0.5),
+                        )
+                    ],
+                    display_group="open_topology_som_matcher",
+                )
+            )
+        edge_id = f"matcher:edge:{seed_id}:pattern:{candidate_id}"
+        if edge_id not in seen_edges:
+            seen_edges.add(edge_id)
+            edges.append(
+                _edge(
+                    edge_id,
+                    seed_id,
+                    candidate_id,
+                    "constellational_match_candidate",
+                    weight=_safe_float(support.get("confidence"), 0.5) or 0.5,
+                    maturity=_maturity("candidate", "matcher_agent", _safe_float(support.get("confidence"), 0.5)),
+                    evidence_refs=[],
+                )
+            )
+
+    if nodes or edges:
+        confirmations.append(
+            {
+                "confirmation_id": "confirmation:open-topology-som-matcher-review",
+                "confirmation_type": "matcher_topology_review",
+                "target_ids": [node["node_id"] for node in nodes[:200]],
+                "maturity_result": _maturity("candidate", "matcher_agent", 0.5),
+                "proliferation_scope": [
+                    "meaning_network_panel",
+                    "data_maturation_panel",
+                    "video_panel",
+                    "traceback_drawer",
+                    "narrative_agent_panel",
+                    "master_schema",
+                ],
+                "notes": "Matcher/SOM projections are source-linked candidate topology. Promote only through analyst or governed decision ledger.",
+            }
+        )
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "continuity_anchors": anchors,
+        "confirmations": confirmations,
+    }
+
+
 def _scene_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
@@ -523,6 +826,12 @@ def build_datascene_meaning_network(
             "notes": "Scene-bounded person/transcript candidates require analyst confirmation before Narrative Agent maturity uplift.",
         }
     )
+
+    matcher_projection = _project_matcher_topology_to_meaning_network(network_status)
+    nodes.extend(matcher_projection["nodes"])
+    edges.extend(matcher_projection["edges"])
+    continuity_anchors.extend(matcher_projection["continuity_anchors"])
+    confirmations.extend(matcher_projection["confirmations"])
 
     return {
         "schema": SCHEMA,

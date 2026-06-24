@@ -1251,14 +1251,69 @@ function isManualProliferationCandidate(candidate: EvidenceProliferationCandidat
     candidate.source_kind === "manual_correction";
 }
 
+function isKnownVerifiedProliferationCandidate(
+  candidate: EvidenceProliferationCandidate,
+): boolean {
+  return (
+    candidate.source_verification_class === "known_verified_sample" ||
+    isManualProliferationCandidate(candidate) ||
+    ["visual_sample_cloud", "audio_panel", "source_samples", "source_media_metadata"].includes(
+      String(candidate.source_panel || ""),
+    )
+  );
+}
+
+function candidateSourceStart(candidate: EvidenceProliferationCandidate): number | null {
+  const direct = Number(candidate.time?.start);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+  for (const anchor of candidate.source_anchors || []) {
+    const interval = anchor.time_interval as
+      | { start_seconds?: number | string; start_ms?: number | string }
+      | undefined;
+    const seconds = Number(interval?.start_seconds);
+    if (Number.isFinite(seconds)) {
+      return seconds;
+    }
+    const ms = Number(interval?.start_ms);
+    if (Number.isFinite(ms)) {
+      return ms / 1000;
+    }
+  }
+  return null;
+}
+
+function candidateHasSourceBBox(candidate: EvidenceProliferationCandidate): boolean {
+  if (candidate.source_navigation?.has_bbox) {
+    return true;
+  }
+  return (candidate.source_anchors || []).some((anchor) => anchor.anchor_type === "bbox");
+}
+
+function candidateVerificationLabel(candidate: EvidenceProliferationCandidate): string {
+  if (isKnownVerifiedProliferationCandidate(candidate)) {
+    return "known verified";
+  }
+  if (candidateSourceStart(candidate) !== null || candidateHasSourceBBox(candidate)) {
+    return "unknown navigable";
+  }
+  return "unknown profile";
+}
+
 function orderVisibleProliferationCandidates(
   candidates: EvidenceProliferationCandidate[],
 ): EvidenceProliferationCandidate[] {
   return [...candidates].sort((left, right) => {
-    const leftManual = isManualProliferationCandidate(left);
-    const rightManual = isManualProliferationCandidate(right);
-    if (leftManual !== rightManual) {
-      return leftManual ? 1 : -1;
+    const leftKnown = isKnownVerifiedProliferationCandidate(left);
+    const rightKnown = isKnownVerifiedProliferationCandidate(right);
+    if (leftKnown !== rightKnown) {
+      return leftKnown ? -1 : 1;
+    }
+    const leftNavigable = candidateSourceStart(left) !== null || candidateHasSourceBBox(left);
+    const rightNavigable = candidateSourceStart(right) !== null || candidateHasSourceBBox(right);
+    if (leftNavigable !== rightNavigable) {
+      return leftNavigable ? -1 : 1;
     }
     return candidateProbability(right) - candidateProbability(left);
   });
@@ -5430,6 +5485,76 @@ export default function VideoPanel() {
     [getOverlayNormalizedBox, updateSelectedOverlayProliferation, videoId],
   );
 
+  const runMatcherRefreshFromOverlay = React.useCallback(
+    (overlay: OverlayBox, edit: SelectedIndicationEdit) => {
+      if (!videoId) {
+        return;
+      }
+      updateSelectedOverlayProliferation(overlay.key, {
+        open: true,
+        requestProgress: 100,
+        matchingProgress: 20,
+        candidateCount: 0,
+        candidates: [],
+        error: undefined,
+        message: "Matcher refresh running from this BBox evidence...",
+      });
+      eventBus.emit("openTopologyMatcherRefreshRequested", {
+        videoId,
+        overlayKey: overlay.key,
+        sourcePanel: "VideoPanel",
+        sourceLabel: edit.label || overlay.label,
+        sourceTimeRange: { start: edit.start, end: edit.end },
+        governance: {
+          diagnostic_only: true,
+          manual_correction_wins: true,
+          candidate_is_not_mature_truth: true,
+        },
+      });
+      void apiService
+        .refreshEvidenceProliferationMatcher(videoId, {
+          request_limit: 12,
+          candidate_limit: 25,
+        })
+        .then((result) => {
+          const candidateCount = Number(result.candidate_count || 0);
+          const matchCount = Number(result.match_count || 0);
+          updateSelectedOverlayProliferation(overlay.key, {
+            open: true,
+            requestProgress: 100,
+            matchingProgress: 100,
+            candidateCount,
+            candidates: [],
+            error: undefined,
+            message: `Matcher refreshed: ${matchCount} run${matchCount === 1 ? "" : "s"}, ${candidateCount} candidate${candidateCount === 1 ? "" : "s"}. Open Maturation > Scanner to review.`,
+          });
+          eventBus.emit("openTopologyMatcherRefreshed", {
+            videoId,
+            overlayKey: overlay.key,
+            result,
+          });
+          eventBus.emit("analysisCorrectionsChanged", { analysisId: videoId });
+        })
+        .catch((error) => {
+          updateSelectedOverlayProliferation(overlay.key, {
+            open: true,
+            requestProgress: 100,
+            matchingProgress: 0,
+            candidateCount: 0,
+            candidates: [],
+            error: error instanceof Error ? error.message : "Matcher refresh failed",
+            message: "Matcher refresh failed.",
+          });
+          eventBus.emit("openTopologyMatcherRefreshFailed", {
+            videoId,
+            overlayKey: overlay.key,
+            error: error instanceof Error ? error.message : "Matcher refresh failed",
+          });
+        });
+    },
+    [updateSelectedOverlayProliferation, videoId],
+  );
+
   const cutSelectedIndicationOut = React.useCallback(
     (overlayKey: string, explicitCutTime?: number) => {
       const cutTime =
@@ -8225,6 +8350,7 @@ export default function VideoPanel() {
                             event.stopPropagation();
                             selectOverlayForEditing(overlay);
                             openTracebackForOverlay(overlay, edit);
+                            runMatcherRefreshFromOverlay(overlay, edit);
                           }}
                           className={`${
                             editableOverlay || !overlapsVideoControls
@@ -9071,6 +9197,18 @@ export default function VideoPanel() {
                                   </button>
                                   <button
                                     type="button"
+                                    title="Run open-topology scanner/matcher refresh from this BBox evidence"
+                                    data-vaa1-bbox-run-matcher-refresh="true"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      runMatcherRefreshFromOverlay(overlay, edit);
+                                    }}
+                                    className="rounded border border-violet-700/70 bg-violet-950/35 px-1.5 py-0.5 text-[10px] text-violet-100 hover:bg-violet-900/55"
+                                  >
+                                    Matcher
+                                  </button>
+                                  <button
+                                    type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       closeSelectedOverlayEditor(overlay.key);
@@ -9227,13 +9365,13 @@ export default function VideoPanel() {
                                                   <span className="rounded bg-cyan-950/80 px-1 text-cyan-100/85">
                                                     closest match
                                                   </span>
-                                                  {isManualProliferationCandidate(candidate) ? (
-                                                    <span className="rounded bg-slate-900 px-1 text-slate-500">
-                                                      manual source
+                                                  {isKnownVerifiedProliferationCandidate(candidate) ? (
+                                                    <span className="rounded bg-emerald-950/70 px-1 text-emerald-100/85">
+                                                      {candidateVerificationLabel(candidate)}
                                                     </span>
                                                   ) : (
-                                                    <span className="rounded bg-emerald-950/60 px-1 text-emerald-100/80">
-                                                      similar profile
+                                                    <span className="rounded bg-amber-950/70 px-1 text-amber-100/85">
+                                                      {candidateVerificationLabel(candidate)}
                                                     </span>
                                                   )}
                                                   <span className="rounded bg-slate-900 px-1">
@@ -9260,13 +9398,18 @@ export default function VideoPanel() {
                                                       can proliferate
                                                     </span>
                                                   ) : null}
+                                                  {candidateHasSourceBBox(candidate) ? (
+                                                    <span className="rounded bg-violet-950/70 px-1 text-violet-100/85">
+                                                      BBox linked
+                                                    </span>
+                                                  ) : null}
                                                 </div>
                                                 {candidate.closest_match?.components ? (
                                                   <div className="mt-0.5 grid grid-cols-3 gap-0.5 text-[8px] text-slate-500">
                                                     {[
                                                       ["time", candidate.closest_match.components.time_proximity],
                                                       ["space", candidate.closest_match.components.spatial_consistency],
-                                                      ["track", candidate.closest_match.components.track_continuity],
+                                                      ["scene", candidate.closest_match.components.cross_scene_continuity],
                                                     ].map(([label, value]) => (
                                                       <span key={String(label)} className="truncate">
                                                         {label}:{" "}
@@ -9275,6 +9418,27 @@ export default function VideoPanel() {
                                                           : "open"}
                                                       </span>
                                                     ))}
+                                                  </div>
+                                                ) : null}
+                                                {candidateSourceStart(candidate) !== null ? (
+                                                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                                                    <button
+                                                      type="button"
+                                                      title="Jump the video to this candidate's source evidence"
+                                                      onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        const sourceTime = candidateSourceStart(candidate);
+                                                        if (sourceTime !== null) {
+                                                          jumpToTime(sourceTime);
+                                                        }
+                                                      }}
+                                                      className="rounded border border-cyan-800/70 bg-black/40 px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950"
+                                                    >
+                                                      Open source
+                                                    </button>
+                                                    <span className="text-[8px] text-slate-500">
+                                                      {formatCandidateTime(candidate)}
+                                                    </span>
                                                   </div>
                                                 ) : null}
                                                 {candidate.decision_required ? (

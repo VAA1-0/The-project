@@ -8,6 +8,7 @@ import {
   FileText,
   Filter,
   GitBranch,
+  RefreshCw,
   Search,
   Video,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   type DatasceneEntityType,
   type VideoMetadata,
 } from "@/lib/video-service";
+import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { useLayoutHost } from "../LayoutHost";
@@ -35,7 +37,7 @@ type SearchCorpusRow = {
   records: DatasceneContentSearchIndexRecord[];
 };
 
-type SearchMode = "all" | "narrative" | "pattern" | "forensic";
+type SearchMode = "all" | "narrative" | "pattern" | "matureData" | "clusters" | "forensic";
 type MaturityFilter = "all" | "mature" | "review";
 
 const SOURCE_LABELS: Record<DatasceneEntitySourceType, string> = {
@@ -47,6 +49,7 @@ const SOURCE_LABELS: Record<DatasceneEntitySourceType, string> = {
   visual_sample_cloud: "Visual samples",
   audio_sample_cloud: "Audio samples",
   audiovisual_narrative_agent_sample: "AV agent samples",
+  mature_data_bus: "Mature Data",
 };
 
 const TYPE_LABELS: Partial<Record<DatasceneEntityType, string>> = {
@@ -69,6 +72,8 @@ const SEARCH_MODES: Array<{ id: SearchMode; label: string }> = [
   { id: "all", label: "All" },
   { id: "narrative", label: "Narrative" },
   { id: "pattern", label: "Pattern" },
+  { id: "matureData", label: "Mature Data" },
+  { id: "clusters", label: "Clusters" },
   { id: "forensic", label: "Forensic" },
 ];
 
@@ -128,6 +133,12 @@ function recordMatchesMode(record: DatasceneContentSearchIndexRecord, mode: Sear
       )
     );
   }
+  if (mode === "matureData") {
+    return record.search_surface === "mature_data";
+  }
+  if (mode === "clusters") {
+    return record.search_surface === "confirmable_cluster";
+  }
   return record.forensic_render_available || record.sources.some((source) => !!source.evidence_ref);
 }
 
@@ -144,11 +155,78 @@ function scoreRecord(record: DatasceneContentSearchIndexRecord, query: string): 
   if (text.includes(needle)) score += 8;
   if (record.maturity_summary.has_manual_confirmation) score += 3;
   if (record.maturity_summary.has_multi_source_support) score += 2;
+  if (record.search_surface === "mature_data") score += 4;
+  if (record.search_surface === "confirmable_cluster") score += 3;
   return score;
 }
 
 function groupResultKey(row: SearchCorpusRow, record: DatasceneContentSearchIndexRecord) {
   return `${row.analysisId}:${record.canonical_entity_id}:${record.start_time}:${record.end_time}:${record.index_id}`;
+}
+
+function withSearchTimeout<T>(promise: Promise<T>, timeoutMs = 9000): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(null), timeoutMs);
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        window.clearTimeout(timer);
+        resolve(null);
+      });
+  });
+}
+
+function sourceMediaFallbackSearchRecord(
+  analysisId: string,
+  metadata: VideoMetadata | null,
+): DatasceneContentSearchIndexRecord {
+  const name = metadata?.name || analysisId;
+  const completedText = metadata?.analysisCompletedAt ? `completed ${metadata.analysisCompletedAt}` : "";
+  const statusText = statusLabel(metadata?.status);
+  const searchableText = [name, statusText, completedText, "source media saved analysis"].filter(Boolean).join(" ");
+  return {
+    index_id: `search-fallback:source-media:${analysisId}`,
+    analysis_id: analysisId,
+    canonical_entity_id: `source-media:${analysisId}`,
+    canonical_name: name,
+    entity_type: "SOURCE_MEDIA_ENTITY",
+    start_time: 0,
+    end_time: 0,
+    searchable_text: searchableText,
+    searchable_keywords: uniqueValues(
+      searchableText
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/)
+        .filter((part) => part.length > 1),
+    ),
+    sources: [
+      {
+        source_type: "metadata",
+        source_id: analysisId,
+        match_text: name,
+        start_time: 0,
+        end_time: 0,
+        confidence: 1,
+        maturity: "raw",
+        authority_status: "single_model_detected",
+        evidence_ref: `source-media:${analysisId}`,
+        traceback_ref: `source-media:${analysisId}`,
+      },
+    ],
+    maturity_summary: {
+      highest_maturity: "raw",
+      has_manual_confirmation: false,
+      has_multi_source_support: false,
+      requires_review: true,
+    },
+    forensic_render_available: false,
+    entity_card_available: true,
+    search_surface: "entity",
+    confidence_percent: 100,
+  };
 }
 
 export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPanelProps) {
@@ -162,6 +240,9 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
   const [sourceFilter, setSourceFilter] = useState<DatasceneEntitySourceType | "all">("all");
   const [typeFilter, setTypeFilter] = useState<DatasceneEntityType | "all">("all");
   const [maturityFilter, setMaturityFilter] = useState<MaturityFilter>("all");
+  const [matcherRefreshing, setMatcherRefreshing] = useState(false);
+  const [matcherRefreshMessage, setMatcherRefreshMessage] = useState("");
+  const [corpusRefreshNonce, setCorpusRefreshNonce] = useState(0);
 
   useEffect(() => {
     const handler = (id: string) => setSelectedVideoId(id);
@@ -208,31 +289,65 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
         return;
       }
       setLoading(true);
-      const rows = await Promise.all(
-        loadIds.map(async (analysisId): Promise<SearchCorpusRow | null> => {
-          const [metadata, analysisData] = await Promise.all([
-            VideoService.get(analysisId).catch(() => null),
-            VideoService.getAnalysis(analysisId).catch(() => null),
-          ]);
-          if (!analysisData) return null;
-          return {
-            analysisId,
-            sourceName: metadata?.name || analysisId,
-            status: metadata?.status,
-            analysisData,
-            records: analysisData.contentSearch?.search_index_records || [],
-          };
-        }),
-      );
-      if (!mounted) return;
-      setCorpus(rows.filter((row): row is SearchCorpusRow => row !== null));
-      setLoading(false);
+      try {
+        const rows = await Promise.all(
+          loadIds.map(async (analysisId): Promise<SearchCorpusRow> => {
+            const [metadata, analysisData] = await Promise.all([
+              withSearchTimeout(VideoService.get(analysisId)),
+              withSearchTimeout(VideoService.getAnalysis(analysisId)),
+            ]);
+            // Governed Content Search remains the primary source: analysisData.contentSearch?.search_index_records.
+            const safeAnalysisData = analysisData || { contentSearch: null };
+            const contentRecords = safeAnalysisData.contentSearch?.search_index_records || [];
+            return {
+              analysisId,
+              sourceName: metadata?.name || analysisData?.metadata?.sourceName || analysisId,
+              status: metadata?.status,
+              analysisData,
+              records: contentRecords.length > 0
+                ? contentRecords
+                : [sourceMediaFallbackSearchRecord(analysisId, metadata)],
+            };
+          }),
+        );
+        if (!mounted) return;
+        setCorpus(rows);
+      } finally {
+        if (mounted) setLoading(false);
+      }
     }
     void loadCorpus();
     return () => {
       mounted = false;
     };
-  }, [loadIds]);
+  }, [corpusRefreshNonce, loadIds]);
+
+  const runMatcherRefresh = async () => {
+    if (!selectedVideoId || selectedVideoId === "__all__" || matcherRefreshing) {
+      return;
+    }
+    setMatcherRefreshing(true);
+    setMatcherRefreshMessage("Matcher refresh running...");
+    try {
+      const result = await apiService.refreshEvidenceProliferationMatcher(selectedVideoId, {
+        request_limit: 12,
+        candidate_limit: 25,
+      });
+      const candidateCount = Number(result.candidate_count || 0);
+      const matchCount = Number(result.match_count || 0);
+      setMatcherRefreshMessage(
+        `Matcher refreshed: ${matchCount} runs, ${candidateCount} candidates`,
+      );
+      setCorpusRefreshNonce((current) => current + 1);
+      eventBus.emit("analysisCorrectionsChanged", { analysisId: selectedVideoId });
+    } catch (error) {
+      setMatcherRefreshMessage(
+        error instanceof Error ? error.message : "Matcher refresh failed",
+      );
+    } finally {
+      setMatcherRefreshing(false);
+    }
+  };
 
   const availableSources = useMemo(
     () =>
@@ -285,6 +400,17 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
       : videos.find((video) => video.id === selectedVideoId)?.name || selectedVideoId || "No analysis";
 
   const totalRecords = corpus.reduce((sum, row) => sum + row.records.length, 0);
+  const matureDataRecords = corpus.reduce(
+    (sum, row) =>
+      sum + row.records.filter((record) => record.search_surface === "mature_data").length,
+    0,
+  );
+  const confirmableClusters = corpus.reduce(
+    (sum, row) =>
+      sum +
+      row.records.filter((record) => record.search_surface === "confirmable_cluster").length,
+    0,
+  );
   const searchableAnalyses = videos.filter(isSearchableAnalysis).length;
 
   return (
@@ -297,7 +423,7 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
               Datascene Search
             </div>
             <div className="mt-1 text-xs text-neutral-400">
-              {selectedVideoName} / {videos.length} analyses surfaced / {searchableAnalyses} searchable / {totalRecords} indexed records
+              {selectedVideoName} / {videos.length} analyses surfaced / {searchableAnalyses} searchable / {totalRecords} indexed records / {matureDataRecords} mature data / {confirmableClusters} confirmable clusters
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -328,8 +454,26 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
               <Database className="h-4 w-4" />
               Maturation
             </button>
+            <button
+              className="inline-flex h-8 items-center gap-2 rounded border border-neutral-700 px-3 text-xs text-neutral-200 hover:border-violet-500 hover:text-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={runMatcherRefresh}
+              disabled={!selectedVideoId || selectedVideoId === "__all__" || matcherRefreshing}
+              title="Run traceable open-topology scanner/matcher refresh for this analysis"
+              data-datascene-search-run-matcher-refresh="true"
+            >
+              <RefreshCw className={`h-4 w-4 ${matcherRefreshing ? "animate-spin" : ""}`} />
+              Matcher
+            </button>
           </div>
         </div>
+        {matcherRefreshMessage ? (
+          <div
+            className="mt-2 rounded border border-violet-900/60 bg-violet-950/20 px-2 py-1 text-[11px] text-violet-100"
+            data-datascene-search-matcher-refresh-status="true"
+          >
+            {matcherRefreshMessage}
+          </div>
+        ) : null}
       </div>
 
       <div className="border-b border-neutral-800 px-4 py-3">
@@ -434,6 +578,16 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
                         >
                           {record.maturity_summary.highest_maturity}
                         </span>
+                        {record.search_surface === "mature_data" ? (
+                          <span className="rounded bg-cyan-950 px-2 py-0.5 text-[11px] text-cyan-200">
+                            Mature Data{record.confidence_percent ? ` ${record.confidence_percent}%` : ""}
+                          </span>
+                        ) : null}
+                        {record.search_surface === "confirmable_cluster" ? (
+                          <span className="rounded bg-violet-950 px-2 py-0.5 text-[11px] text-violet-200">
+                            Confirmable cluster
+                          </span>
+                        ) : null}
                       </div>
                       <div className="mt-1 line-clamp-2 text-xs text-neutral-400">
                         {primarySource?.match_text || primarySource?.detected_class || record.searchable_text}
@@ -451,9 +605,26 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
                           <Boxes className="h-3.5 w-3.5" />
                           {row.sourceName}
                         </span>
+                        {record.cluster_summary ? (
+                          <span className="inline-flex items-center gap-1 text-violet-300">
+                            <GitBranch className="h-3.5 w-3.5" />
+                            {record.cluster_summary.propagation_state}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      {record.search_surface === "mature_data" ||
+                      record.search_surface === "confirmable_cluster" ? (
+                        <button
+                          className="inline-flex h-8 items-center gap-2 rounded border border-neutral-700 px-3 text-xs text-neutral-200 hover:border-amber-500 hover:text-amber-100"
+                          onClick={() => openPanel("DataMaturation", { videoId: row.analysisId })}
+                          title="Review Mature Data proliferation"
+                        >
+                          <Database className="h-4 w-4" />
+                          Review
+                        </button>
+                      ) : null}
                       <button
                         className="inline-flex h-8 items-center gap-2 rounded border border-neutral-700 px-3 text-xs text-neutral-200 hover:border-cyan-500 hover:text-cyan-100"
                         onClick={() => openVideoAtTime(row.analysisId, record.start_time)}

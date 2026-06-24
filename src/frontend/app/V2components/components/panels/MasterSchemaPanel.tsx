@@ -868,6 +868,81 @@ function formatSeconds(value?: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
+function formatNarrativeAgentTimeRange(time: unknown): string {
+  const record = asRecord(time);
+  const start = numberFrom(record.start ?? record.time_start);
+  const end = numberFrom(record.end ?? record.time_end);
+  if (start === undefined) return "source time pending";
+  if (end === undefined || end === start) return formatSeconds(start);
+  return `${formatSeconds(start)}-${formatSeconds(end)}`;
+}
+
+function narrativeAgentProliferationAudit(analysisData: unknown): Record<string, unknown> {
+  const source = asRecord(analysisData);
+  return asRecord(source.liveMatureDataProliferationAudit);
+}
+
+function narrativeAgentIdentityMemories(analysisData: unknown): Record<string, unknown>[] {
+  return arrayFromUnknown(
+    narrativeAgentProliferationAudit(analysisData).narrative_agent_identity_memories,
+  ).map(asRecord);
+}
+
+function narrativeAgentIdentityContinuityCandidates(analysisData: unknown): Record<string, unknown>[] {
+  return arrayFromUnknown(
+    narrativeAgentProliferationAudit(analysisData).identity_continuity_candidates,
+  ).map(asRecord);
+}
+
+function narrativeAgentMemoryMatchesRow(
+  memory: Record<string, unknown>,
+  row: NarrativeAgentPathRow,
+): boolean {
+  const memoryLabels = [
+    memory.canonical_label,
+    ...arrayStringsFromUnknown(memory.aliases),
+  ].map(normalizeAgentKey).filter(Boolean);
+  const rowLabels = [
+    row.label,
+    ...row.aliases,
+    ...row.sourceLabels,
+  ].map(normalizeAgentKey).filter(Boolean);
+  return memoryLabels.some((memoryLabel) =>
+    rowLabels.some((rowLabel) =>
+      memoryLabel === rowLabel ||
+      memoryLabel.includes(rowLabel) ||
+      rowLabel.includes(memoryLabel),
+    ),
+  );
+}
+
+function narrativeAgentIdentityMemoryForRow(
+  analysisData: unknown,
+  row?: NarrativeAgentPathRow,
+): Record<string, unknown> | undefined {
+  const memories = narrativeAgentIdentityMemories(analysisData);
+  if (!row) return memories[0];
+  return memories.find((memory) => narrativeAgentMemoryMatchesRow(memory, row));
+}
+
+function narrativeAgentContinuityCandidatesForMemory(
+  analysisData: unknown,
+  memory?: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const candidates = narrativeAgentIdentityContinuityCandidates(analysisData);
+  if (!memory) return candidates.slice(0, 4);
+  const agentId = stringFrom(memory.agent_id);
+  const label = normalizeAgentKey(memory.canonical_label);
+  return candidates.filter((candidate) => {
+    const candidateAgentId = stringFrom(candidate.agent_id);
+    const candidateLabel = normalizeAgentKey(candidate.candidate_label);
+    return (
+      (agentId && candidateAgentId === agentId) ||
+      (label && candidateLabel === label)
+    );
+  });
+}
+
 function narrativeAgentTimelineHandles(row: NarrativeAgentPathRow): NarrativeAgentTimelineHandle[] {
   const handles: NarrativeAgentTimelineHandle[] = [];
   const sourceItems = row.sourceItems.length ? row.sourceItems : [row.sourceItem].filter(Boolean) as Record<string, unknown>[];
@@ -1989,6 +2064,20 @@ function NarrativeAgentCharacterPathsHome({
     selectedTimelineHandles,
     videoTimelineCursor,
   );
+  const selectedIdentityMemory = narrativeAgentIdentityMemoryForRow(analysisData, selectedRow);
+  const selectedIdentityContinuityCandidates = narrativeAgentContinuityCandidatesForMemory(
+    analysisData,
+    selectedIdentityMemory,
+  );
+  const selectedVisualSampleSlots = arrayFromUnknown(
+    selectedIdentityMemory?.visual_sample_slots,
+  ).map(asRecord);
+  const selectedAudioSampleSlots = arrayFromUnknown(
+    selectedIdentityMemory?.audio_sample_slots,
+  ).map(asRecord);
+  const selectedAudiovisualSampleSlots = arrayFromUnknown(
+    selectedIdentityMemory?.audiovisual_sample_slots,
+  ).map(asRecord);
   useEffect(() => {
     const handler = (time: number) => {
       const next = Number(time);
@@ -2242,6 +2331,118 @@ function NarrativeAgentCharacterPathsHome({
             ))}
           </div>
         ) : null}
+      </div>
+
+      <div
+        className="mt-2 rounded border border-emerald-900/40 bg-emerald-950/10 px-2 py-2"
+        data-vaa1-narrative-agent-proliferation-provenance="true"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-200">
+              Mature Data Proliferation provenance
+            </div>
+            <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+              Manual Narrative Agent confirmations seed audiovisual identity memory, continuity candidates, and source-timed review.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <span className="rounded border border-emerald-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-emerald-100">
+              {selectedIdentityMemory ? "memory linked" : "memory pending"}
+            </span>
+            <span
+              className="rounded border border-cyan-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-cyan-100"
+              data-vaa1-narrative-agent-constellational-matching-governance="true"
+            >
+              constellation governed
+            </span>
+          </div>
+        </div>
+        {selectedIdentityMemory ? (
+          <>
+            <div className="mt-2 grid gap-1.5 md:grid-cols-3">
+              <div
+                className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5"
+                data-vaa1-narrative-agent-multi-visual-samples="true"
+              >
+                <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                  visual samples
+                </div>
+                <div className="mt-1 text-[14px] font-semibold text-slate-100">
+                  {selectedVisualSampleSlots.length}
+                </div>
+                <div className="mt-0.5 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                  multiple looks retained for clothing, lighting, scale, and scene changes
+                </div>
+              </div>
+              <div
+                className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5"
+                data-vaa1-narrative-agent-audiovisual-memory="true"
+              >
+                <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                  audio windows
+                </div>
+                <div className="mt-1 text-[14px] font-semibold text-slate-100">
+                  {selectedAudioSampleSlots.length}
+                </div>
+                <div className="mt-0.5 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                  audiovisual samples pair appearance with voice or source-audio windows
+                </div>
+              </div>
+              <div className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                  continuity candidates
+                </div>
+                <div className="mt-1 text-[14px] font-semibold text-slate-100">
+                  {selectedIdentityContinuityCandidates.length}
+                </div>
+                <div className="mt-0.5 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                  late or unresolved BBoxes stay reviewable until an analyst decision
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {selectedAudiovisualSampleSlots.slice(0, 6).map((slot, index) => {
+                const time = asRecord(slot.time);
+                const start = numberFrom(time.start ?? time.time_start);
+                return (
+                  <button
+                    key={stringFrom(slot.sample_id) || `av-memory:${index}`}
+                    type="button"
+                    className="rounded border border-emerald-800/60 bg-[#101010] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                    title={stringFrom(slot.sample_state) || "audiovisual identity memory"}
+                    onClick={() => {
+                      if (start !== undefined) openVideoAtTime(videoId, start);
+                    }}
+                  >
+                    AV {formatNarrativeAgentTimeRange(slot.time)}
+                  </button>
+                );
+              })}
+              {selectedIdentityContinuityCandidates.slice(0, 4).map((candidate, index) => {
+                const time = asRecord(candidate.target_time);
+                const start = numberFrom(time.start ?? time.time_start);
+                return (
+                  <button
+                    key={stringFrom(candidate.candidate_id) || `continuity:${index}`}
+                    type="button"
+                    className="rounded border border-amber-800/60 bg-amber-950/15 px-1.5 py-0.5 text-[9px] text-amber-100 hover:bg-amber-950/30"
+                    title="Review continuity candidate from Mature Data Proliferation bus"
+                    onClick={() => {
+                      if (start !== undefined) openVideoAtTime(videoId, start);
+                    }}
+                  >
+                    candidate {formatNarrativeAgentTimeRange(candidate.target_time)}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="mt-2 rounded border border-dashed border-slate-800 px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
+            Confirm this agent in a source-time/BBox anchored annotation to create audiovisual identity memory for proliferation.
+          </div>
+        )}
       </div>
 
       <div className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2">

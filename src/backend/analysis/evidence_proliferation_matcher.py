@@ -53,6 +53,8 @@ AUTHORITY_POLICY = {
 TARGET_CATEGORY_HINTS = {
     "character_continuity": {"identification", "person", "character", "face", "speaker"},
     "object": {"object", "ocr", "tool", "gun", "racket", "ball", "clothes"},
+    "named_entity": {"ocr", "text", "name", "person", "place", "org", "organization", "entity"},
+    "scene_setting": {"scene", "setting", "sky", "sea", "forest", "city", "cityscape", "street", "studio"},
     "role": {"role", "character", "person", "speaker"},
     "action": {"action", "movement", "interaction"},
     "interaction": {"interaction", "person", "speaker", "dialogue"},
@@ -64,6 +66,57 @@ TARGET_CATEGORY_HINTS = {
     "ambient_sound": {"ambient", "audio", "sound"},
     "prosody_delivery_pattern": {"prosody", "voice", "speech", "audio"},
     "visual_pattern": {"visual", "object", "person", "expression"},
+}
+
+SETTING_TOKENS = {
+    "sky",
+    "sea",
+    "forest",
+    "city",
+    "cityscape",
+    "street",
+    "studio",
+    "office",
+    "conference",
+    "courtroom",
+    "beach",
+    "interior",
+    "battlefield",
+    "crowd",
+}
+
+CHARACTER_GENERIC_TOKENS = {
+    "agent",
+    "anchor",
+    "bystander",
+    "character",
+    "face",
+    "human",
+    "person",
+    "presenter",
+    "reporter",
+    "speaker",
+    "subject",
+}
+
+CHARACTER_IDENTITY_NOISE_TOKENS = CHARACTER_GENERIC_TOKENS | {
+    "actor",
+    "agent",
+    "analyst",
+    "confirm",
+    "confirmed",
+    "continuity",
+    "dr",
+    "identification",
+    "manual",
+    "metadata",
+    "miss",
+    "mister",
+    "mrs",
+    "ms",
+    "narrative",
+    "profile",
+    "role",
 }
 
 
@@ -98,6 +151,80 @@ def _tokenize(value: Any) -> Set[str]:
         for token in re.split(r"[^a-z0-9]+", text)
         if len(token) >= 2 and token not in {"track", "probable", "candidate"}
     }
+
+
+def _character_identity_tokens(value: Any) -> Set[str]:
+    return {
+        token
+        for token in (_tokenize(value) - CHARACTER_IDENTITY_NOISE_TOKENS)
+        if token.isalpha()
+    }
+
+
+def _character_candidate_compatibility(
+    request: Dict[str, Any],
+    candidate: Dict[str, Any],
+) -> str:
+    if _safe_text(request.get("target")) != "character_continuity":
+        return "not_applicable"
+
+    evidence = request.get("evidence") or {}
+    seed_identity = (
+        _character_identity_tokens(evidence.get("label"))
+        | _character_identity_tokens(evidence.get("source_label"))
+    )
+    candidate_label_tokens = _tokenize(candidate.get("label"))
+    candidate_category_tokens = _tokenize(candidate.get("category"))
+    candidate_raw = candidate.get("raw") if isinstance(candidate.get("raw"), dict) else {}
+    candidate_descriptor_tokens = (
+        candidate_label_tokens
+        | candidate_category_tokens
+        | _tokenize(candidate_raw.get("class"))
+        | _tokenize(candidate_raw.get("subcategory"))
+        | _tokenize(candidate_raw.get("identity_affirmation"))
+    )
+    candidate_identity = (
+        _character_identity_tokens(candidate.get("label"))
+        | _character_identity_tokens(candidate_raw.get("identity_affirmation"))
+    )
+    source_panel = _safe_text(candidate.get("source_panel"))
+
+    if seed_identity and candidate_identity & seed_identity:
+        return "direct_identity"
+
+    is_generic_person = bool(candidate_descriptor_tokens & CHARACTER_GENERIC_TOKENS)
+    if source_panel == "objects_panel":
+        return "unknown_person" if is_generic_person else "incompatible"
+
+    if source_panel == "manual_visual_annotations":
+        is_identity_annotation = bool(
+            candidate_descriptor_tokens
+            & {"identification", "character", "person", "face", "narrative", "agent"}
+        )
+        if not is_identity_annotation:
+            return "incompatible"
+        if not candidate_identity or is_generic_person and not candidate_identity:
+            return "unknown_person"
+        if not seed_identity:
+            return "known_identity_option"
+        # A manually named different person is authoritative evidence of a conflict,
+        # not a high-confidence match to the selected identity.
+        return "incompatible"
+
+    if source_panel in {"visual_sample_cloud", "source_samples"}:
+        return "unknown_person" if is_generic_person else "contextual_support"
+
+    if source_panel in {
+        "transcript_panel",
+        "ocr_panel",
+        "source_media_metadata",
+        "audio_panel",
+        "visual_cues",
+        "cinematic_clues",
+    }:
+        return "contextual_support"
+
+    return "incompatible"
 
 
 def _interval_from_mapping(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
@@ -839,6 +966,18 @@ def _contextual_source_score(request: Dict[str, Any], candidate: Dict[str, Any])
         source_panel == "audio_panel" or category.startswith("audio")
     ):
         return 0.1
+    if target == "named_entity" and source_panel in {
+        "ocr_panel",
+        "transcript_panel",
+        "source_media_metadata",
+        "manual_visual_annotations",
+    }:
+        return 0.1
+    if target == "scene_setting" and (
+        source_panel in {"visual_cues", "cinematic_clues", "source_media_metadata"}
+        or bool(_tokenize(candidate.get("label")) & SETTING_TOKENS)
+    ):
+        return 0.1
     return 0.0
 
 
@@ -847,18 +986,32 @@ def _contextual_probability(request: Dict[str, Any], candidate: Dict[str, Any]) 
     source_panel = _safe_text(candidate.get("source_panel"))
     category = _safe_text(candidate.get("category")).lower()
     if target == "character_continuity":
-        if source_panel in {"manual_visual_annotations", "visual_sample_cloud"}:
+        compatibility = _character_candidate_compatibility(request, candidate)
+        if compatibility == "direct_identity":
             return 0.9
-        if source_panel in {"objects_panel", "transcript_panel", "source_media_metadata", "audio_panel"}:
-            return 0.75
-        if source_panel in {"visual_cues", "cinematic_clues"}:
-            return 0.65
+        if compatibility in {"unknown_person", "known_identity_option"}:
+            return 0.55
+        if compatibility == "contextual_support":
+            return 0.3
+        return 0.0
     if target in {"speaker_voice_continuity", "prosody_delivery_pattern"} and source_panel == "audio_panel":
         return 0.9
     if target in {"action", "interaction", "scene_episode", "visual_pattern"} and (
         "visual" in category or "cinematic" in category or source_panel == "objects_panel"
     ):
         return 0.8
+    if target == "named_entity" and source_panel in {
+        "ocr_panel",
+        "transcript_panel",
+        "source_media_metadata",
+        "manual_visual_annotations",
+    }:
+        return 0.82
+    if target == "scene_setting" and (
+        source_panel in {"visual_cues", "cinematic_clues", "source_media_metadata"}
+        or bool(_tokenize(candidate.get("label")) & SETTING_TOKENS)
+    ):
+        return 0.78
     return 0.35
 
 
@@ -934,8 +1087,79 @@ def _sample_cloud_probability(request: Dict[str, Any], candidate: Dict[str, Any]
     return max(text, confidence)
 
 
+def _is_known_or_sample_anchor(candidate: Dict[str, Any]) -> bool:
+    return _safe_text(candidate.get("source_kind")) in {
+        "manual_correction",
+        "manual_annotation",
+        "visual_sample",
+        "visual_sample_cloud",
+        "audio_sample",
+        "source_sample",
+        "metadata_reference",
+    } or _safe_text(candidate.get("source_panel")) in {
+        "manual_visual_annotations",
+        "visual_sample_cloud",
+        "audio_panel",
+        "source_samples",
+        "source_media_metadata",
+        "master_schema",
+    }
+
+
+def _cross_scene_continuity_probability(request: Dict[str, Any], candidate: Dict[str, Any]) -> float:
+    target = _safe_text(request.get("target"))
+    if target not in {"character_continuity", "speaker_voice_continuity", "object", "visual_pattern"}:
+        return 0.0
+
+    source_kind = _safe_text(candidate.get("source_kind"))
+    source_panel = _safe_text(candidate.get("source_panel"))
+    source_anchors = _candidate_source_anchors(candidate)
+    if not source_anchors:
+        return 0.0
+
+    if target == "character_continuity":
+        compatibility = _character_candidate_compatibility(request, candidate)
+        if compatibility == "incompatible":
+            return 0.0
+        if compatibility == "direct_identity":
+            if source_kind in {"manual_correction", "manual_annotation"}:
+                return 0.95
+            if source_panel in {"visual_sample_cloud", "source_samples"}:
+                return 0.9
+            if source_panel == "source_media_metadata":
+                return 0.72
+        if compatibility in {"unknown_person", "known_identity_option"}:
+            if compatibility == "known_identity_option" and source_kind in {
+                "manual_correction",
+                "manual_annotation",
+            }:
+                return 0.72
+            if _track_continuity_probability(request, candidate) > 0:
+                return 0.82
+            spatial = _spatial_consistency_probability(request, candidate)
+            if spatial is not None and spatial >= 0.58:
+                return 0.62
+        return 0.0
+
+    if source_kind in {"manual_correction", "manual_annotation"}:
+        return 0.95
+    if source_panel in {"visual_sample_cloud", "source_samples"}:
+        return 0.9
+    if source_panel == "audio_panel" and target == "speaker_voice_continuity":
+        return 0.9
+    if source_panel == "source_media_metadata" and target == "character_continuity":
+        return 0.72
+    if _track_continuity_probability(request, candidate) > 0:
+        return 0.82
+    spatial = _spatial_consistency_probability(request, candidate)
+    if spatial is not None and spatial >= 0.58:
+        return 0.62
+    return 0.0
+
+
 def _closest_match_profile(request: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
     spatial = _spatial_consistency_probability(request, candidate)
+    cross_scene = _cross_scene_continuity_probability(request, candidate)
     components = {
         "text_semantic": round(_text_probability(request, candidate), 4),
         "time_proximity": round(_temporal_closeness_probability(request, candidate), 4),
@@ -943,25 +1167,39 @@ def _closest_match_profile(request: Dict[str, Any], candidate: Dict[str, Any]) -
         "track_continuity": round(_track_continuity_probability(request, candidate), 4),
         "contextual_modality": round(_contextual_probability(request, candidate), 4),
         "sample_cloud_support": round(_sample_cloud_probability(request, candidate), 4),
+        "cross_scene_continuity": round(cross_scene, 4),
     }
     weights = {
         "text_semantic": 0.16,
-        "time_proximity": 0.18,
-        "spatial_consistency": 0.26 if spatial is not None else 0.0,
+        "time_proximity": 0.12,
+        "spatial_consistency": 0.22 if spatial is not None else 0.0,
         "track_continuity": 0.18,
         "contextual_modality": 0.12,
         "sample_cloud_support": 0.1,
+        "cross_scene_continuity": 0.22,
     }
-    active_weight = sum(weight for key, weight in weights.items() if components.get(key) is not None)
+    active_weight = sum(
+        weight
+        for key, weight in weights.items()
+        if components.get(key) is not None and float(components.get(key) or 0.0) > 0.0
+    )
     probability = 0.0
     for key, weight in weights.items():
         value = components.get(key)
-        if value is None or active_weight <= 0:
+        if value is None or float(value or 0.0) <= 0.0 or active_weight <= 0:
             continue
         probability += (value * weight) / active_weight
+    compatibility = _character_candidate_compatibility(request, candidate)
+    if compatibility in {"unknown_person", "known_identity_option"}:
+        probability = min(probability, 0.62)
+    elif compatibility == "contextual_support":
+        probability = min(probability, 0.44)
+    elif compatibility == "incompatible":
+        probability = 0.0
     return {
         "principle": "closest_match",
         "match_probability": round(max(0.0, min(1.0, probability)), 4),
+        "identity_compatibility": compatibility,
         "components": components,
         "weights": weights,
         "source_timesphere": candidate.get("source_timesphere"),
@@ -1070,6 +1308,42 @@ def _review_state_for_candidate(candidate: Dict[str, Any], probability: float) -
     return "below_surface_candidate"
 
 
+def _candidate_role_for_match(
+    request: Dict[str, Any],
+    candidate: Dict[str, Any],
+) -> str:
+    if _safe_text(request.get("target")) != "character_continuity":
+        return "identity_candidate"
+
+    compatibility = _character_candidate_compatibility(request, candidate)
+    if _safe_text(candidate.get("source_panel")) in {
+        "transcript_panel",
+        "ocr_panel",
+        "source_media_metadata",
+        "audio_panel",
+        "visual_cues",
+        "cinematic_clues",
+    }:
+        return "context_support"
+    if compatibility == "contextual_support":
+        return "context_support"
+    if compatibility == "incompatible":
+        return "conflict"
+    if compatibility == "direct_identity" and _is_known_or_sample_anchor(candidate):
+        return "anchor_sample"
+    return "identity_candidate"
+
+
+def _allowed_actions_for_candidate_role(role: str) -> List[str]:
+    if role == "identity_candidate":
+        return ["confirm", "cancel", "defer", "inspect_sources"]
+    if role == "anchor_sample":
+        return ["inspect_sources"]
+    if role == "context_support":
+        return ["inspect_sources", "defer"]
+    return ["inspect_sources", "defer"]
+
+
 def _candidate_projection_targets(candidate: Dict[str, Any], request: Dict[str, Any]) -> List[str]:
     targets = set(PROJECTION_TARGETS_BY_SOURCE_PANEL.get(_safe_text(candidate.get("source_panel")), []))
     target = _safe_text(request.get("target"))
@@ -1081,18 +1355,38 @@ def _candidate_projection_targets(candidate: Dict[str, Any], request: Dict[str, 
     return sorted(targets)
 
 
-def _governance_status(candidate: Dict[str, Any], probability: float, source_anchors: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _governance_status(
+    candidate: Dict[str, Any],
+    probability: float,
+    source_anchors: List[Dict[str, Any]],
+    candidate_role: str,
+) -> Dict[str, Any]:
     source_kind = _safe_text(candidate.get("source_kind"))
     manual_authority = source_kind in {"manual_correction", "manual_annotation"}
     very_high = probability >= NEAR_MATCH_PROBABILITY_POLICY["auto_proliferation_allowed_above"]
     has_anchor = bool(source_anchors)
-    proliferation_allowed = bool((manual_authority or very_high) and has_anchor)
-    review_required = not proliferation_allowed
-    if not has_anchor:
+    if candidate_role == "anchor_sample":
+        proliferation_allowed = False
+        review_required = False
+        review_reason = "Known identity sample already has mature authority and is guidance, not a new promotion."
+    elif candidate_role == "context_support":
+        proliferation_allowed = False
+        review_required = False
+        review_reason = "Context supports interpretation but cannot be confirmed as visual identity."
+    elif candidate_role == "conflict":
+        proliferation_allowed = False
+        review_required = True
+        review_reason = "Conflicting identity evidence is inspection-only and cannot be promoted as this identity."
+    elif not has_anchor:
+        proliferation_allowed = False
+        review_required = True
         review_reason = "Candidate lacks a source anchor and cannot proliferate."
-    elif proliferation_allowed:
-        review_reason = "Proliferation allowed by manual authority or very high probability with traceback."
     else:
+        proliferation_allowed = bool((manual_authority or very_high) and has_anchor)
+        review_required = not proliferation_allowed
+    if candidate_role == "identity_candidate" and has_anchor and proliferation_allowed:
+        review_reason = "Proliferation allowed by manual authority or very high probability with traceback."
+    elif candidate_role == "identity_candidate" and has_anchor:
         review_reason = "Near match must be confirmed or canceled before it can proliferate."
     return {
         "active": True,
@@ -1131,15 +1425,17 @@ def _maturity_score_from_match(
         "temporal_spatial_fit": round(temporal_spatial_fit, 4),
         "semantic_fit": round(float(components.get("text_semantic") or 0.0), 4),
         "sample_cloud_support": round(float(components.get("sample_cloud_support") or 0.0), 4),
+        "cross_scene_continuity": round(float(components.get("cross_scene_continuity") or 0.0), 4),
         "metadata_support": 1.0 if candidate.get("source_panel") == "source_media_metadata" else 0.0,
     }
     open_weights = {
         "manual_authority": 0.22,
         "source_traceability": 0.18,
         "cross_modal_support": 0.14,
-        "temporal_spatial_fit": 0.18,
+        "temporal_spatial_fit": 0.14,
         "semantic_fit": 0.12,
         "sample_cloud_support": 0.1,
+        "cross_scene_continuity": 0.14,
         "metadata_support": 0.06,
     }
     return {
@@ -1196,9 +1492,15 @@ def _govern_candidate(
     if probability < NEAR_MATCH_PROBABILITY_POLICY["candidate_floor"]:
         return None
     source_anchors = _candidate_source_anchors(item)
+    candidate_role = _candidate_role_for_match(request, item)
     authority_level = _authority_level_for_candidate(item, probability)
     maturity_state = "probable" if band in {"probable_candidate", "strongly_supported"} else band
-    governance_status = _governance_status(item, probability, source_anchors)
+    governance_status = _governance_status(
+        item,
+        probability,
+        source_anchors,
+        candidate_role,
+    )
     candidate_id = f"{request.get('request_id', 'request')}:{item['evidence_id']}"
     evidence_refs = [
         {
@@ -1209,6 +1511,15 @@ def _govern_candidate(
             "provenance_note": "Evidence surfaced by mature-data proliferation matcher.",
         }
     ]
+    cluster_context = {
+        "cluster_id": f"open-topology:{request.get('target', 'pattern')}:{item.get('source_panel')}:{band}",
+        "cluster_basis": [
+            "source_panel",
+            "probability_band",
+            "target_category",
+        ],
+        "topology_mode": "open_topology_som",
+    }
     return {
         "candidate_id": candidate_id,
         "master_object_projection": {
@@ -1230,17 +1541,50 @@ def _govern_candidate(
         },
         "match_score": probability,
         "match_probability": probability,
+        "similarity_score": probability,
         "probability_band": band,
         "legacy_match_score": score,
         "closest_match": closest_match,
+        "candidate_role": candidate_role,
         "review_state": _review_state_for_candidate(item, probability),
-        "decision_required": governance_status["review_required"],
-        "allowed_actions": ["confirm", "cancel", "defer", "inspect_sources"],
+        "review_required": governance_status["review_required"],
+        "decision_required": candidate_role == "identity_candidate"
+        and governance_status["review_required"],
+        "allowed_actions": _allowed_actions_for_candidate_role(candidate_role),
+        "blocked_actions": [] if governance_status["proliferation_allowed"] else ["auto_promote_without_decision"],
         "proliferation_allowed": governance_status["proliferation_allowed"],
         "proliferation_reason": governance_status["review_reason"],
+        "source_verification_class": "known_verified_sample"
+        if _is_known_or_sample_anchor(item)
+        else "unknown_similar_candidate",
+        "source_navigation": {
+            "has_time": any(
+                anchor.get("anchor_type") == "media_time_interval"
+                for anchor in source_anchors
+                if isinstance(anchor, dict)
+            ),
+            "has_bbox": any(
+                anchor.get("anchor_type") == "bbox"
+                for anchor in source_anchors
+                if isinstance(anchor, dict)
+            ),
+            "open_actions": ["open_source_time", "show_bbox_roi", "open_traceback"],
+        },
         "source_anchors": source_anchors,
+        "source_refs": [
+            anchor.get("anchor_id")
+            for anchor in source_anchors
+            if isinstance(anchor, dict) and anchor.get("anchor_id")
+        ],
         "evidence_refs": evidence_refs,
         "projection_targets": _candidate_projection_targets(item, request),
+        "cluster_context": cluster_context,
+        "reason_for_match": ", ".join(
+            key
+            for key, value in (closest_match.get("components") or {}).items()
+            if isinstance(value, (int, float)) and value > 0
+        )
+        or "open topology candidate support",
         "situational_options": _situational_options_for_candidate(request, item, probability),
         "provenance": {
             "request_id": request.get("request_id"),
@@ -1257,6 +1601,9 @@ def _score_candidate(request: Dict[str, Any], candidate: Dict[str, Any]) -> floa
     evidence = request.get("evidence") or {}
     if candidate.get("evidence_id") == evidence.get("overlay_key"):
         return 0.0
+    compatibility = _character_candidate_compatibility(request, candidate)
+    if compatibility == "incompatible":
+        return 0.0
     seed_tokens = (
         _tokenize(evidence.get("label"))
         | _tokenize(evidence.get("source_label"))
@@ -1271,6 +1618,7 @@ def _score_candidate(request: Dict[str, Any], candidate: Dict[str, Any]) -> floa
     target_hints = TARGET_CATEGORY_HINTS.get(target, set())
     hint_score = 0.2 if target_hints & candidate_tokens else 0.0
     manual_score = 0.15 if candidate.get("source_kind") == "manual_annotation" else 0.0
+    cross_scene_score = 0.2 if _cross_scene_continuity_probability(request, candidate) > 0 else 0.0
     track_score = _track_continuity_score(request, candidate)
     spatial_score = _spatial_consistency_score(request, candidate)
     if (
@@ -1285,6 +1633,7 @@ def _score_candidate(request: Dict[str, Any], candidate: Dict[str, Any]) -> floa
         text_score
         + hint_score
         + manual_score
+        + cross_scene_score
         + track_score
         + (spatial_score or 0.0)
         + temporal_score
@@ -1367,6 +1716,235 @@ def _cluster_same_timespace_candidates(candidates: List[Dict[str, Any]]) -> List
     return clustered
 
 
+def _open_topology_som_for_match(
+    request: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    seed_id = _safe_text((request.get("evidence") or {}).get("overlay_key"), "seed")
+    nodes = [
+        {
+            "node_id": f"seed:{seed_id}",
+            "node_type": "mature_anchor",
+            "label": _safe_text((request.get("evidence") or {}).get("label"), "Mature anchor"),
+            "source_refs": [seed_id],
+            "traceback_refs": [f"request:{request.get('request_id')}"],
+        }
+    ]
+    edges: List[Dict[str, Any]] = []
+    clusters: Dict[str, Dict[str, Any]] = {}
+    for index, candidate in enumerate(candidates):
+        candidate_id = _safe_text(candidate.get("candidate_id"), f"candidate:{index}")
+        cluster_id = _safe_text(
+            (candidate.get("cluster_context") or {}).get("cluster_id"),
+            f"open-topology:{candidate.get('source_panel')}:{candidate.get('probability_band')}",
+        )
+        clusters.setdefault(
+            cluster_id,
+            {
+                "cluster_id": cluster_id,
+                "cluster_type": "open_topology_candidate_cluster",
+                "candidate_ids": [],
+                "source_panels": set(),
+                "probability_bands": set(),
+            },
+        )
+        clusters[cluster_id]["candidate_ids"].append(candidate_id)
+        clusters[cluster_id]["source_panels"].add(_safe_text(candidate.get("source_panel"), "unknown"))
+        clusters[cluster_id]["probability_bands"].add(_safe_text(candidate.get("probability_band"), "unknown"))
+        nodes.append(
+            {
+                "node_id": candidate_id,
+                "node_type": "candidate",
+                "label": _safe_text(candidate.get("label"), "candidate"),
+                "cluster_id": cluster_id,
+                "source_panel": candidate.get("source_panel"),
+                "source_kind": candidate.get("source_kind"),
+                "candidate_role": candidate.get("candidate_role"),
+                "source_time": candidate.get("time"),
+                "source_anchors": candidate.get("source_anchors") or [],
+                "source_refs": candidate.get("source_refs") or [],
+                "similarity_score": candidate.get("similarity_score"),
+                "review_required": candidate.get("review_required"),
+                "traceback_refs": [
+                    f"request:{request.get('request_id')}",
+                    f"candidate:{candidate_id}",
+                ],
+            }
+        )
+        edges.append(
+            {
+                "edge_id": f"edge:{seed_id}:{candidate_id}",
+                "from_node": f"seed:{seed_id}",
+                "to_node": candidate_id,
+                "edge_type": "traceable_similarity",
+                "weight": candidate.get("similarity_score") or candidate.get("match_probability") or 0,
+                "match_basis": candidate.get("reason_for_match"),
+                "review_required": candidate.get("review_required"),
+            }
+        )
+    normalized_clusters = []
+    for cluster in clusters.values():
+        normalized_clusters.append(
+            {
+                **cluster,
+                "source_panels": sorted(cluster["source_panels"]),
+                "probability_bands": sorted(cluster["probability_bands"]),
+                "candidate_count": len(cluster["candidate_ids"]),
+            }
+        )
+    return {
+        "schema": "vaa1.open_topology_som_traceable.v1",
+        "topology_mode": "open_topology_som",
+        "fixed_grid": False,
+        "diagnostic_only": True,
+        "manual_confirmation_required_for_promotion": True,
+        "traceability": {
+            "analysis_scoped": True,
+            "source_anchors_required_for_promotion": True,
+            "manual_correction_wins": True,
+            "candidate_is_not_mature_truth": True,
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "clusters": normalized_clusters,
+    }
+
+
+def _target_for_scanner_seed(seed: Dict[str, Any]) -> str:
+    tokens = _tokenize(seed.get("label")) | _tokenize(seed.get("category"))
+    source_panel = _safe_text(seed.get("source_panel"))
+    source_kind = _safe_text(seed.get("source_kind"))
+    if tokens & {"person", "character", "speaker", "reporter", "presenter", "agent"}:
+        return "character_continuity"
+    if source_panel == "audio_panel" or "audio" in tokens or "voice" in tokens:
+        return "speaker_voice_continuity"
+    if source_panel == "ocr_panel" or source_panel == "transcript_panel" or tokens & {"name", "org", "place", "entity"}:
+        return "named_entity"
+    if tokens & SETTING_TOKENS or source_panel in {"visual_cues", "cinematic_clues"}:
+        return "scene_setting"
+    if source_panel == "objects_panel" or source_kind in {"grouped_detection", "manual_annotation"}:
+        return "object"
+    return "visual_pattern"
+
+
+def _scanner_seed_request(analysis_id: str, seed: Dict[str, Any], index: int) -> Dict[str, Any]:
+    time = seed.get("time") or {}
+    raw = seed.get("raw") if isinstance(seed.get("raw"), dict) else {}
+    return {
+        "request_id": f"matcher-refresh:{index + 1}:{seed.get('evidence_id')}",
+        "created_at": _now_iso(),
+        "video_id": analysis_id,
+        "target": _target_for_scanner_seed(seed),
+        "scope": "same_video_open_topology_refresh",
+        "evidence": {
+            "overlay_key": seed.get("evidence_id"),
+            "label": seed.get("label"),
+            "source_label": seed.get("label"),
+            "category": seed.get("category"),
+            "interval": time,
+            "geometry": seed.get("geometry"),
+            "source_track_id": raw.get("track_id"),
+            "modality": seed.get("source_panel"),
+        },
+        "governance": {
+            "manual_correction_wins": True,
+            "open_topology_som": True,
+            "diagnostic_only": True,
+            "outputs_are_candidates_until_supported_by_evidence": True,
+            "candidate_clusters_require_confirm_cancel_or_defer": True,
+        },
+    }
+
+
+def build_scanner_refresh_requests(
+    analysis_id: str,
+    status: Dict[str, Any],
+    *,
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    evidence = collect_matchable_evidence(analysis_id, status)
+    preferred_panels = {
+        "manual_visual_annotations",
+        "source_samples",
+        "source_media_metadata",
+        "visual_sample_cloud",
+        "audio_panel",
+        "ocr_panel",
+        "objects_panel",
+        "visual_cues",
+        "cinematic_clues",
+    }
+    seeds: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for item in evidence:
+        evidence_id = _safe_text(item.get("evidence_id"))
+        if not evidence_id or evidence_id in seen:
+            continue
+        if item.get("source_panel") not in preferred_panels:
+            continue
+        tokens = _tokenize(item.get("label")) | _tokenize(item.get("category"))
+        if len(tokens) < 1:
+            continue
+        seen.add(evidence_id)
+        seeds.append(item)
+        if len(seeds) >= limit:
+            break
+    return [_scanner_seed_request(analysis_id, seed, index) for index, seed in enumerate(seeds)]
+
+
+def run_open_topology_scanner_refresh(
+    analysis_id: str,
+    status: Dict[str, Any],
+    output_dir: Path,
+    *,
+    request_limit: int = 12,
+    candidate_limit: int = 25,
+) -> Dict[str, Any]:
+    requests = build_scanner_refresh_requests(analysis_id, status, limit=request_limit)
+    matches: List[Dict[str, Any]] = []
+    for request in requests:
+        safe_request_id = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in _safe_text(request.get("request_id"), "matcher-refresh")
+        )[:96]
+        output_json_path = output_dir / f"evidence_proliferation_match_{safe_request_id}.json"
+        result = write_evidence_proliferation_match(
+            analysis_id,
+            status,
+            request,
+            output_json_path,
+            limit=candidate_limit,
+        )
+        matches.append(
+            {
+                "request_id": request.get("request_id"),
+                "target": request.get("target"),
+                "status": result.get("status"),
+                "candidate_count": result.get("candidate_count", 0),
+                "output_json_path": str(output_json_path),
+                "updated_at": _now_iso(),
+                "open_topology_som": result.get("open_topology_som"),
+            }
+        )
+    return {
+        "schema": "vaa1.open_topology_scanner_refresh.v1",
+        "analysis_id": analysis_id,
+        "status": "completed",
+        "created_at": _now_iso(),
+        "request_count": len(requests),
+        "match_count": len(matches),
+        "candidate_count": sum(int(item.get("candidate_count") or 0) for item in matches),
+        "governance": {
+            "diagnostic_only": True,
+            "candidate_is_not_mature_truth": True,
+            "manual_correction_wins": True,
+            "review_ledger": "annotation_corrections.proliferation_decisions",
+        },
+        "requests": requests,
+        "matches": matches,
+    }
+
+
 def build_evidence_proliferation_match(
     analysis_id: str,
     status: Dict[str, Any],
@@ -1396,6 +1974,7 @@ def build_evidence_proliferation_match(
         scored.append(governed)
     scored.sort(key=lambda item: item["match_score"], reverse=True)
     candidates = _cluster_same_timespace_candidates(scored)[:limit]
+    open_topology_som = _open_topology_som_for_match(request, candidates)
     return {
         "schema": SCHEMA,
         "governance_schema": GOVERNANCE_SCHEMA,
@@ -1409,6 +1988,7 @@ def build_evidence_proliferation_match(
         "probability_policy": NEAR_MATCH_PROBABILITY_POLICY,
         "request": request,
         "candidates": candidates,
+        "open_topology_som": open_topology_som,
     }
 
 

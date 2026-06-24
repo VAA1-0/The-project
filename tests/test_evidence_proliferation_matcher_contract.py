@@ -122,6 +122,25 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
                 for candidate in result["candidates"]
             )
         )
+        self.assertEqual(
+            result["open_topology_som"]["schema"],
+            "vaa1.open_topology_som_traceable.v1",
+        )
+        self.assertTrue(result["open_topology_som"]["diagnostic_only"])
+        self.assertFalse(result["open_topology_som"]["fixed_grid"])
+        self.assertGreaterEqual(len(result["open_topology_som"]["nodes"]), 2)
+        self.assertGreaterEqual(len(result["open_topology_som"]["edges"]), 1)
+        self.assertTrue(
+            all(
+                "source_refs" in candidate
+                and "similarity_score" in candidate
+                and "cluster_context" in candidate
+                and "reason_for_match" in candidate
+                and "review_required" in candidate
+                and "blocked_actions" in candidate
+                for candidate in result["candidates"]
+            )
+        )
 
     def test_matcher_writes_json_ledger(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -139,6 +158,108 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
 
             self.assertTrue(output_path.exists())
             self.assertEqual(result["candidate_count"], 1)
+
+    def test_open_topology_refresh_builds_requests_for_agents_objects_entities_and_settings(self):
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "manual-bond",
+                        "category": "Identification",
+                        "label": "James Bond",
+                        "identity_affirmation": "James Bond",
+                        "start_seconds": 1.0,
+                        "end_seconds": 2.0,
+                    },
+                    {
+                        "id": "manual-car",
+                        "category": "OBJ",
+                        "label": "Aston Martin",
+                        "start_seconds": 3.0,
+                        "end_seconds": 4.0,
+                    },
+                ]
+            },
+            "source_media_metadata": {
+                "user_annotations": {
+                    "description": "Bond drives through a cityscape by the sea.",
+                    "location_place": "coastal city",
+                }
+            },
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": [
+                        {
+                            "track_id": "99",
+                            "label": "person",
+                            "class": "person",
+                            "start": 80.0,
+                            "end": 82.0,
+                            "x": 0.4,
+                            "y": 0.1,
+                            "width": 0.2,
+                            "height": 0.7,
+                        },
+                        {
+                            "track_id": "car-2",
+                            "label": "car",
+                            "class": "car",
+                            "start": 12.0,
+                            "end": 14.0,
+                        },
+                    ],
+                    "ocr_results": [
+                        {"id": "ocr-1", "text": "MI6 LONDON", "timestamp": 7.0}
+                    ],
+                }
+            },
+            "summary": {
+                "spatial_tone_scan": [
+                    {"id": "setting-sea", "label": "sea", "start": 20.0, "end": 24.0},
+                    {"id": "setting-city", "label": "cityscape", "start": 25.0, "end": 30.0},
+                ]
+            },
+        }
+
+        requests = matcher.build_scanner_refresh_requests(
+            "analysis-open-topology",
+            status,
+            limit=12,
+        )
+        targets = {request["target"] for request in requests}
+
+        self.assertIn("character_continuity", targets)
+        self.assertIn("object", targets)
+        self.assertIn("named_entity", targets)
+        self.assertIn("scene_setting", targets)
+        self.assertTrue(
+            all(request["governance"]["open_topology_som"] for request in requests)
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = matcher.run_open_topology_scanner_refresh(
+                "analysis-open-topology",
+                status,
+                Path(tmpdir),
+                request_limit=8,
+                candidate_limit=10,
+            )
+
+            self.assertEqual(
+                result["schema"],
+                "vaa1.open_topology_scanner_refresh.v1",
+            )
+            self.assertEqual(result["status"], "completed")
+            self.assertGreaterEqual(result["request_count"], 4)
+            self.assertTrue(result["governance"]["diagnostic_only"])
+            self.assertTrue(result["governance"]["candidate_is_not_mature_truth"])
+            self.assertTrue(
+                all(
+                    match.get("open_topology_som", {}).get("schema")
+                    == "vaa1.open_topology_som_traceable.v1"
+                    for match in result["matches"]
+                )
+            )
 
     def test_matcher_reads_manual_visual_annotation_corrections(self):
         status = {
@@ -192,6 +313,102 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertEqual(candidate["label"], "Sari Multala")
         self.assertEqual(candidate["time"]["start"], 4.367)
         self.assertEqual(candidate["geometry"]["bbox"]["width"], 0.57)
+
+    def test_character_matcher_rejects_objects_and_known_other_identities(self):
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "manual-madeleine-2",
+                        "category": "Identification",
+                        "subcategory": "Character",
+                        "label": "Dr. Madeleine Swann",
+                        "identity_affirmation": "Dr. Madeleine Swann",
+                        "start_seconds": 20.0,
+                        "end_seconds": 21.0,
+                    },
+                    {
+                        "id": "manual-bond",
+                        "category": "Identification",
+                        "subcategory": "Character",
+                        "label": "James Bond",
+                        "identity_affirmation": "James Bond",
+                        "start_seconds": 22.0,
+                        "end_seconds": 23.0,
+                    },
+                    {
+                        "id": "manual-car",
+                        "category": "OBJ",
+                        "label": "Old Aston Martin",
+                        "start_seconds": 24.0,
+                        "end_seconds": 25.0,
+                    },
+                    {
+                        "id": "manual-unknown-person",
+                        "category": "Identification",
+                        "subcategory": "Character",
+                        "label": "person track 5",
+                        "start_seconds": 26.0,
+                        "end_seconds": 27.0,
+                    },
+                ]
+            }
+        }
+        request = {
+            "request_id": "request-madeleine",
+            "target": "character_continuity",
+            "scope": "same_video_open_topology",
+            "evidence": {
+                "overlay_key": "profile:madeleine",
+                "label": "Dr. Madeleine Swann",
+                "source_label": "Dr. Madeleine Swann",
+                "category": "narrative_agent",
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match(
+            "analysis-1",
+            status,
+            request,
+        )
+        labels = {candidate["label"] for candidate in result["candidates"]}
+
+        self.assertIn("Dr. Madeleine Swann", labels)
+        self.assertIn("person track 5", labels)
+        self.assertNotIn("James Bond", labels)
+        self.assertNotIn("Old Aston Martin", labels)
+        unknown_person = next(
+            candidate
+            for candidate in result["candidates"]
+            if candidate["label"] == "person track 5"
+        )
+        self.assertLessEqual(unknown_person["match_probability"], 0.62)
+        self.assertEqual(
+            unknown_person["closest_match"]["identity_compatibility"],
+            "unknown_person",
+        )
+        direct_match = next(
+            candidate
+            for candidate in result["candidates"]
+            if candidate["label"] == "Dr. Madeleine Swann"
+        )
+        self.assertEqual(
+            direct_match["closest_match"]["identity_compatibility"],
+            "direct_identity",
+        )
+        self.assertEqual(direct_match["candidate_role"], "anchor_sample")
+        self.assertFalse(direct_match["decision_required"])
+        self.assertNotIn("confirm", direct_match["allowed_actions"])
+        self.assertEqual(unknown_person["candidate_role"], "identity_candidate")
+        self.assertIn("confirm", unknown_person["allowed_actions"])
+        som_nodes = {
+            node["node_id"]: node
+            for node in result["open_topology_som"]["nodes"]
+        }
+        self.assertEqual(
+            som_nodes[direct_match["candidate_id"]]["candidate_role"],
+            "anchor_sample",
+        )
 
     def test_character_proliferation_triangulates_person_tracks_with_context(self):
         status = {
@@ -475,8 +692,10 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertEqual(result["candidate_count"], 1)
         candidate = result["candidates"][0]
         self.assertEqual(candidate["review_state"], "candidate_manual_source")
-        self.assertTrue(candidate["proliferation_allowed"])
+        self.assertFalse(candidate["proliferation_allowed"])
         self.assertFalse(candidate["decision_required"])
+        self.assertEqual(candidate["candidate_role"], "anchor_sample")
+        self.assertEqual(candidate["allowed_actions"], ["inspect_sources"])
         self.assertGreaterEqual(len(candidate["source_anchors"]), 2)
         self.assertIn("bbox_roi_panel", candidate["projection_targets"])
         self.assertIn("traceback_drawer", candidate["projection_targets"])
@@ -487,6 +706,112 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
             candidate["master_object_projection"]["authority_level"],
             "manual_annotation",
         )
+
+    def test_cross_scene_manual_anchor_surfaces_for_late_character_confirmation(self):
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "manual:bond:early",
+                        "category": "Identification",
+                        "label": "James Bond",
+                        "identity_affirmation": "James Bond",
+                        "coordinates": {"x": 0.32, "y": 0.12, "w": 0.28, "h": 0.68},
+                        "start_seconds": 4.9,
+                        "end_seconds": 6.1,
+                    }
+                ]
+            },
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": [
+                        {
+                            "track_id": 28,
+                            "label": "person",
+                            "start": 96.0,
+                            "end": 96.2,
+                            "x": 0.53,
+                            "y": 0.10,
+                            "width": 0.28,
+                            "height": 0.70,
+                        }
+                    ]
+                }
+            },
+        }
+        request = {
+            "request_id": "request-bond-late",
+            "target": "character_continuity",
+            "scope": "same_video",
+            "evidence": {
+                "overlay_key": "bbox-confirm-late",
+                "label": "Confirm Narrative Agent 93%",
+                "source_label": "person",
+                "category": "Identification",
+                "geometry": {
+                    "geometry_type": "bbox",
+                    "bbox": {"x": 0.53, "y": 0.10, "width": 0.28, "height": 0.70},
+                },
+                "interval": {"start": 96.0, "end": 96.2},
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match("analysis-1", status, request)
+
+        manual_candidate = next(
+            candidate
+            for candidate in result["candidates"]
+            if candidate["evidence_id"] == "manual:bond:early"
+        )
+        self.assertEqual(manual_candidate["label"], "James Bond")
+        self.assertEqual(manual_candidate["source_verification_class"], "known_verified_sample")
+        self.assertTrue(manual_candidate["source_navigation"]["has_time"])
+        self.assertTrue(manual_candidate["source_navigation"]["has_bbox"])
+        self.assertGreaterEqual(
+            manual_candidate["closest_match"]["components"]["cross_scene_continuity"],
+            0.72,
+        )
+        self.assertEqual(
+            manual_candidate["closest_match"]["identity_compatibility"],
+            "known_identity_option",
+        )
+        self.assertGreaterEqual(manual_candidate["match_probability"], 0.35)
+        self.assertEqual(manual_candidate["candidate_role"], "identity_candidate")
+        self.assertIn("confirm", manual_candidate["allowed_actions"])
+
+    def test_character_context_support_is_not_confirmable_identity_evidence(self):
+        status = {
+            "transcript": {
+                "segments": [
+                    {
+                        "id": "transcript:madeleine:1",
+                        "start": 12.0,
+                        "end": 13.0,
+                        "text": "Madeleine arrives at the clinic.",
+                    }
+                ]
+            }
+        }
+        request = {
+            "request_id": "request-madeleine-context",
+            "target": "character_continuity",
+            "scope": "same_video",
+            "evidence": {
+                "overlay_key": "profile:madeleine",
+                "label": "Dr. Madeleine Swann",
+                "source_label": "Dr. Madeleine Swann",
+                "category": "narrative_agent",
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match("analysis-1", status, request)
+
+        self.assertEqual(result["candidate_count"], 1)
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["candidate_role"], "context_support")
+        self.assertFalse(candidate["decision_required"])
+        self.assertFalse(candidate["proliferation_allowed"])
+        self.assertNotIn("confirm", candidate["allowed_actions"])
 
 
 if __name__ == "__main__":

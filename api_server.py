@@ -104,6 +104,7 @@ from src.backend.analysis.agent_persistence import (
 )
 from src.backend.analysis.agent_persistence_manager import AgentPersistenceManager
 from src.backend.analysis.evidence_proliferation_matcher import (
+    run_open_topology_scanner_refresh,
     write_evidence_proliferation_match,
 )
 from src.backend.analysis.saved_analysis_hydration_loader import (
@@ -5733,23 +5734,145 @@ def ensure_live_mature_data_proliferation_audit_for_status(
     internal_artifacts = status.setdefault("internal_artifacts", {})
 
     summary = status.get("live_mature_data_proliferation_audit")
-    if summary and audit_path.exists():
+    summary_counts = summary.get("summary", {}) if isinstance(summary, dict) else {}
+    if (
+        summary
+        and audit_path.exists()
+        and "governed_mature_hypothesis_count" in summary_counts
+        and "scanner_matcher_launch_request_count" in summary_counts
+    ):
         output_files.setdefault("live_mature_data_proliferation_audit", str(audit_path))
         internal_artifacts.setdefault("live_mature_data_proliferation_audit", str(audit_path))
         return summary
 
     payload = write_live_mature_data_proliferation_audit(status, audit_path)
+    auto_launched_matches = auto_launch_confirmation_need_scanner_requests(
+        status,
+        payload,
+    )
+    if auto_launched_matches:
+        payload.setdefault("summary", {})[
+            "auto_launched_scanner_match_count"
+        ] = len(auto_launched_matches)
     output_files["live_mature_data_proliferation_audit"] = str(audit_path)
     internal_artifacts["live_mature_data_proliferation_audit"] = str(audit_path)
     status["live_mature_data_proliferation_audit"] = {
         "schema": payload.get("schema"),
         "status": payload.get("status"),
         "summary": payload.get("summary"),
+        "governed_mature_hypotheses_preview": (
+            payload.get("governed_mature_hypotheses") or []
+        )[:12],
+        "content_derived_mature_observations_preview": [
+            seed
+            for seed in (payload.get("mature_seeds") or [])
+            if isinstance(seed, dict)
+            and seed.get("authority_class") == "content_derived_mature_observation"
+        ][:12],
+        "genre_rule_observations_preview": (
+            payload.get("genre_rule_observations") or []
+        )[:12],
+        "proposed_audiovisual_samples_preview": (
+            payload.get("proposed_audiovisual_samples") or []
+        )[:12],
+        "confirmation_needs_preview": (
+            payload.get("confirmation_needs") or []
+        )[:12],
+        "scanner_matcher_launch_requests_preview": (
+            payload.get("scanner_matcher_launch_requests") or []
+        )[:12],
+        "auto_launched_scanner_matches_preview": auto_launched_matches[:12],
+        "suppressed_candidate_opportunities_preview": (
+            payload.get("suppressed_candidate_opportunities") or []
+        )[:12],
         "next_required_stage": payload.get("next_required_stage"),
         "output_json_path": str(audit_path),
         "updated_at": utc_now_iso(),
     }
+    if auto_launched_matches:
+        persist_analysis_record_for_status(status)
     return payload
+
+
+def auto_launch_confirmation_need_scanner_requests(
+    status: Dict[str, Any],
+    audit_payload: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    if not analysis_id:
+        return []
+
+    existing_request_ids = {
+        str(item.get("request_id"))
+        for item in status.get("evidence_proliferation_matches", [])
+        if isinstance(item, dict) and item.get("request_id")
+    }
+    analysis_dir = RESULTS_DIR / analysis_id
+    launched: List[Dict[str, Any]] = []
+
+    for request_item in (audit_payload.get("scanner_matcher_launch_requests") or [])[:3]:
+        if not isinstance(request_item, dict):
+            continue
+        request = request_item.get("request_payload")
+        if not isinstance(request, dict):
+            continue
+        request_id = str(
+            request.get("request_id")
+            or request_item.get("request_id")
+            or f"auto-confirmation-need-{uuid.uuid4()}"
+        ).strip()
+        if not request_id or request_id in existing_request_ids:
+            continue
+
+        request["request_id"] = request_id
+        safe_request_id = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in request_id
+        )[:96]
+        output_json_path = (
+            analysis_dir / f"evidence_proliferation_match_{safe_request_id}.json"
+        )
+        result = write_evidence_proliferation_match(
+            analysis_id,
+            status,
+            request,
+            output_json_path,
+        )
+        request_record = {
+            "request_id": request_id,
+            "status": result.get("status"),
+            "candidate_count": result.get("candidate_count", 0),
+            "output_json_path": str(output_json_path),
+            "updated_at": utc_now_iso(),
+            "launch_reason": "confirmation_need",
+            "trigger_need_id": request_item.get("trigger_need_id"),
+        }
+        status.setdefault("evidence_proliferation_matches", [])
+        status["evidence_proliferation_matches"] = [
+            request_record,
+            *[
+                item
+                for item in status.get("evidence_proliferation_matches", [])
+                if item.get("request_id") != request_id
+            ],
+        ][:25]
+        status.setdefault("internal_artifacts", {})[
+            f"evidence_proliferation_match:{request_id}"
+        ] = str(output_json_path)
+        append_analysis_event(
+            status,
+            "evidence_proliferation_match_auto_launched",
+            details={
+                "request_id": request_id,
+                "candidate_count": result.get("candidate_count", 0),
+                "output_json_path": str(output_json_path),
+                "trigger_need_id": request_item.get("trigger_need_id"),
+            },
+        )
+        existing_request_ids.add(request_id)
+        launched.append(request_record)
+
+    return launched
 
 
 def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
@@ -7783,6 +7906,7 @@ async def match_evidence_proliferation_endpoint(
         "status": result.get("status"),
         "candidate_count": result.get("candidate_count", 0),
         "output_json_path": str(output_json_path),
+        "open_topology_som": result.get("open_topology_som"),
         "updated_at": utc_now_iso(),
     }
     status.setdefault("evidence_proliferation_matches", [])
@@ -7804,6 +7928,74 @@ async def match_evidence_proliferation_endpoint(
             "request_id": request_id,
             "candidate_count": result.get("candidate_count", 0),
             "output_json_path": str(output_json_path),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+    return make_json_safe(result)
+
+
+@app.post("/api/analysis/{analysis_id}/proliferation/refresh", response_model=dict)
+async def refresh_evidence_proliferation_matcher_endpoint(
+    analysis_id: str,
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    analysis_dir = RESULTS_DIR / analysis_id
+    request_payload = payload if isinstance(payload, dict) else {}
+    request_limit = int(request_payload.get("request_limit") or 12)
+    candidate_limit = int(request_payload.get("candidate_limit") or 25)
+    result = run_open_topology_scanner_refresh(
+        analysis_id,
+        status,
+        analysis_dir,
+        request_limit=max(1, min(request_limit, 24)),
+        candidate_limit=max(1, min(candidate_limit, 50)),
+    )
+
+    match_summaries = [
+        {
+            "request_id": item.get("request_id"),
+            "status": item.get("status"),
+            "candidate_count": item.get("candidate_count", 0),
+            "output_json_path": item.get("output_json_path"),
+            "open_topology_som": item.get("open_topology_som"),
+            "updated_at": item.get("updated_at") or utc_now_iso(),
+        }
+        for item in result.get("matches", [])
+        if isinstance(item, dict)
+    ]
+    existing = [
+        item
+        for item in status.get("evidence_proliferation_matches", [])
+        if isinstance(item, dict)
+        and item.get("request_id") not in {summary.get("request_id") for summary in match_summaries}
+    ]
+    status["evidence_proliferation_matches"] = [*match_summaries, *existing][:50]
+    status.setdefault("internal_artifacts", {})[
+        "open_topology_scanner_refresh"
+    ] = result.get("created_at")
+    status.setdefault("scanner_matcher_refreshes", [])
+    status["scanner_matcher_refreshes"] = [
+        {
+            "created_at": result.get("created_at"),
+            "request_count": result.get("request_count"),
+            "match_count": result.get("match_count"),
+            "candidate_count": result.get("candidate_count"),
+            "governance": result.get("governance"),
+        },
+        *status["scanner_matcher_refreshes"],
+    ][:12]
+    append_analysis_event(
+        status,
+        "open_topology_scanner_matcher_refreshed",
+        details={
+            "request_count": result.get("request_count"),
+            "match_count": result.get("match_count"),
+            "candidate_count": result.get("candidate_count"),
         },
     )
     persist_analysis_record_for_status(status)
