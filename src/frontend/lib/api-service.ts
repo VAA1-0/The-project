@@ -455,6 +455,12 @@ export interface EvidenceProliferationCandidate {
   evidence_refs?: Array<Record<string, unknown>>;
   projection_targets?: string[];
   situational_options?: Array<Record<string, unknown>>;
+  presence_claims?: {
+    visual_presence?: Record<string, unknown>;
+    scene_presence?: Record<string, unknown>;
+    speaking?: Record<string, unknown>;
+    listening?: Record<string, unknown>;
+  };
   master_object_projection?: {
     schema?: string;
     master_object_id?: string;

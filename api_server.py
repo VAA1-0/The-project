@@ -34,7 +34,7 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline, validate_video
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.analysis.audio_prosody import analyze_audio_prosody
-from src.backend.analysis.audio_diarization import write_audio_diarization_scaffold
+from src.backend.analysis.audio_diarization import write_audio_diarization
 from src.backend.analysis.audio_sample_cloud import (
     build_audio_sample_clouds_from_diarization,
     build_audio_sample_clouds_for_narrative_agents,
@@ -3334,12 +3334,7 @@ def write_tracked_objects_fallback_from_yolo_if_needed(status: Dict[str, Any]) -
 def write_iterative_audio_identity_artifacts_for_status(
     status: Dict[str, Any],
 ) -> List[str]:
-    """Backfill derived audio/identity artifacts from existing analysis outputs.
-
-    This deliberately avoids rerunning sensors. It only writes contract artifacts
-    that can be rebuilt from already persisted audio, transcript, prosody, and
-    manual/visual evidence.
-    """
+    """Backfill measured audio and derived identity artifacts from saved media."""
 
     analysis_id = status.get("analysis_id")
     if not analysis_id:
@@ -3361,11 +3356,19 @@ def write_iterative_audio_identity_artifacts_for_status(
         audio_analysis.setdefault("audio_path", str(audio_path))
 
     audio_diarization = audio_analysis.get("audio_diarization")
-    if not output_file_exists(status, "audio_diarization") and transcript and audio_path:
+    persisted_audio_diarization = read_json_artifact_if_available(
+        output_files.get("audio_diarization")
+    )
+    current_audio_diarization = audio_diarization or persisted_audio_diarization or {}
+    needs_measured_diarization = (
+        current_audio_diarization.get("status") != "completed_measured"
+        or not output_file_exists(status, "audio_diarization")
+    )
+    if needs_measured_diarization and transcript and audio_path:
         diarization_path = (
-            TRANSCRIPTS_DIR / f"{analysis_id}_audio_diarization_scaffold.json"
+            TRANSCRIPTS_DIR / f"{analysis_id}_audio_diarization.json"
         )
-        audio_diarization = write_audio_diarization_scaffold(
+        audio_diarization = write_audio_diarization(
             analysis_id,
             audio_path=audio_path,
             output_json_path=diarization_path,
@@ -3376,10 +3379,9 @@ def write_iterative_audio_identity_artifacts_for_status(
         audio_analysis["audio_diarization_path"] = str(diarization_path)
         output_files["audio_diarization"] = str(diarization_path)
         created.append("audio_diarization")
-    elif not audio_diarization:
-        audio_diarization = read_json_artifact_if_available(output_files.get("audio_diarization"))
-        if audio_diarization:
-            audio_analysis["audio_diarization"] = audio_diarization
+    elif not audio_diarization and persisted_audio_diarization:
+        audio_diarization = persisted_audio_diarization
+        audio_analysis["audio_diarization"] = audio_diarization
 
     audio_sample_clouds = audio_analysis.get("audio_sample_clouds")
     existing_audio_sample_clouds = audio_sample_clouds or read_json_artifact_if_available(
@@ -3397,6 +3399,13 @@ def write_iterative_audio_identity_artifacts_for_status(
     should_rebuild_audio_samples = (
         not output_file_exists(status, "audio_sample_clouds")
         or existing_sample_count == 0
+        or "audio_diarization" in created
+        or (
+            audio_diarization
+            and audio_diarization.get("status") == "completed_measured"
+            and (existing_audio_sample_clouds or {}).get("audio_diarization_status")
+            != "completed_measured"
+        )
     )
     if should_rebuild_audio_samples and (audio_diarization or transcript):
         sample_cloud_path = TRANSCRIPTS_DIR / f"{analysis_id}_audio_sample_clouds.json"
@@ -3409,19 +3418,31 @@ def write_iterative_audio_identity_artifacts_for_status(
                 source_audio_path=audio_path,
             )
             if audio_diarization
+            and audio_diarization.get("status") == "completed_measured"
             else None
         )
-        narrative_agent_clouds = build_audio_sample_clouds_for_narrative_agents(
-            analysis_id,
-            transcript=transcript,
-            audio_prosody=audio_prosody,
-            source_media_context=source_media_context,
-            source_audio_path=audio_path,
+        narrative_agent_clouds = (
+            build_audio_sample_clouds_for_narrative_agents(
+                analysis_id,
+                transcript=transcript,
+                audio_prosody=audio_prosody,
+                source_media_context=source_media_context,
+                source_audio_path=audio_path,
+            )
+            if audio_diarization
+            and audio_diarization.get("status") == "completed_measured"
+            else None
         )
         audio_sample_clouds = merge_audio_sample_cloud_payloads(
             analysis_id,
             diarization_clouds,
             narrative_agent_clouds,
+        )
+        audio_sample_clouds["audio_diarization_status"] = (
+            (audio_diarization or {}).get("status")
+        )
+        audio_sample_clouds["audio_measurement_provider"] = (
+            (audio_diarization or {}).get("provider")
         )
         sample_cloud_path.parent.mkdir(parents=True, exist_ok=True)
         sample_cloud_path.write_text(
@@ -7325,7 +7346,7 @@ def run_complete_analysis(
                 transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
-                audio_diarization_filename = f"{analysis_id}_audio_diarization_scaffold.json"
+                audio_diarization_filename = f"{analysis_id}_audio_diarization.json"
                 audio_sample_clouds_filename = f"{analysis_id}_audio_sample_clouds.json"
 
                 organized_audio_path = AUDIO_DIR / audio_filename
@@ -7381,7 +7402,7 @@ def run_complete_analysis(
                     audio_prosody = None
 
                 try:
-                    audio_diarization = write_audio_diarization_scaffold(
+                    audio_diarization = write_audio_diarization(
                         analysis_id,
                         audio_path=organized_audio_path,
                         output_json_path=organized_audio_diarization_path,
@@ -7396,23 +7417,41 @@ def run_complete_analysis(
 
                 try:
                     source_media_context = build_source_media_metadata_payload(status)
-                    diarization_clouds = build_audio_sample_clouds_from_diarization(
-                        analysis_id,
-                        audio_diarization=audio_diarization,
-                        source_media_context=source_media_context,
-                        source_audio_path=organized_audio_path,
+                    measured_audio_ready = bool(
+                        audio_diarization
+                        and audio_diarization.get("status") == "completed_measured"
                     )
-                    narrative_agent_clouds = build_audio_sample_clouds_for_narrative_agents(
-                        analysis_id,
-                        transcript=transcript,
-                        audio_prosody=audio_prosody,
-                        source_media_context=source_media_context,
-                        source_audio_path=organized_audio_path,
+                    diarization_clouds = (
+                        build_audio_sample_clouds_from_diarization(
+                            analysis_id,
+                            audio_diarization=audio_diarization,
+                            source_media_context=source_media_context,
+                            source_audio_path=organized_audio_path,
+                        )
+                        if measured_audio_ready
+                        else None
+                    )
+                    narrative_agent_clouds = (
+                        build_audio_sample_clouds_for_narrative_agents(
+                            analysis_id,
+                            transcript=transcript,
+                            audio_prosody=audio_prosody,
+                            source_media_context=source_media_context,
+                            source_audio_path=organized_audio_path,
+                        )
+                        if measured_audio_ready
+                        else None
                     )
                     audio_sample_clouds = merge_audio_sample_cloud_payloads(
                         analysis_id,
                         diarization_clouds,
                         narrative_agent_clouds,
+                    )
+                    audio_sample_clouds["audio_diarization_status"] = (
+                        (audio_diarization or {}).get("status")
+                    )
+                    audio_sample_clouds["audio_measurement_provider"] = (
+                        (audio_diarization or {}).get("provider")
                     )
                     with open(organized_audio_sample_clouds_path, "w", encoding="utf-8") as f:
                         json.dump(audio_sample_clouds, f, indent=2, ensure_ascii=False)
@@ -8581,7 +8620,7 @@ async def download_file(analysis_id: str, file_type: str):
         "transcript": ("transcript.json", "application/json"),
         "linked_transcript": ("linked_transcript.json", "application/json"),
         "audio_prosody": ("audio_prosody.json", "application/json"),
-        "audio_diarization": ("audio_diarization_scaffold.json", "application/json"),
+        "audio_diarization": ("audio_diarization.json", "application/json"),
         "audio_sample_clouds": ("audio_sample_clouds.json", "application/json"),
         "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
         "dependency_sfl_stage1": ("dependency_sfl_stage1.json", "application/json"),
@@ -8682,7 +8721,7 @@ async def download_bundle(analysis_id: str):
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
-        "audio_diarization": "audio_diarization_scaffold.json",
+        "audio_diarization": "audio_diarization.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",
@@ -8768,7 +8807,7 @@ def build_project_bundle_file(payload: Dict[str, Any]) -> Dict[str, Any]:
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
-        "audio_diarization": "audio_diarization_scaffold.json",
+        "audio_diarization": "audio_diarization.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
         "dependency_sfl_stage1": "dependency_sfl_stage1.json",

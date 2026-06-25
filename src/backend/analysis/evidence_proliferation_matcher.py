@@ -211,7 +211,12 @@ def _character_candidate_compatibility(
         # not a high-confidence match to the selected identity.
         return "incompatible"
 
-    if source_panel in {"visual_sample_cloud", "source_samples"}:
+    if source_panel == "source_samples":
+        # Source samples can support a character constellation, but a sample
+        # created for another named identity is not an unknown visual person.
+        return "contextual_support"
+
+    if source_panel == "visual_sample_cloud":
         return "unknown_person" if is_generic_person else "contextual_support"
 
     if source_panel in {
@@ -232,6 +237,7 @@ def _interval_from_mapping(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
         item.get("start"),
         item.get("start_time"),
         item.get("start_seconds"),
+        item.get("start_timestamp"),
         item.get("time_start"),
         item.get("startTimestamp"),
         item.get("timestamp_seconds"),
@@ -242,6 +248,7 @@ def _interval_from_mapping(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
         item.get("end"),
         item.get("end_time"),
         item.get("end_seconds"),
+        item.get("end_timestamp"),
         item.get("time_end"),
         item.get("endTimestamp"),
     )
@@ -277,6 +284,42 @@ def _geometry_from_mapping(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return {
             "geometry_type": "bbox",
             "bbox": {key: item.get(key) for key in keys},
+        }
+    x1 = _safe_float(item.get("bbox_x1"))
+    y1 = _safe_float(item.get("bbox_y1"))
+    x2 = _safe_float(item.get("bbox_x2"))
+    y2 = _safe_float(item.get("bbox_y2"))
+    if None not in {x1, y1, x2, y2}:
+        frame_width = _safe_float(item.get("frame_width"))
+        frame_height = _safe_float(item.get("frame_height"))
+        if frame_width and frame_height and frame_width > 0 and frame_height > 0:
+            return {
+                "geometry_type": "bbox",
+                "coordinate_system": "normalized",
+                "bbox": {
+                    "x": x1 / frame_width,
+                    "y": y1 / frame_height,
+                    "width": abs(x2 - x1) / frame_width,
+                    "height": abs(y2 - y1) / frame_height,
+                },
+                "source_bbox": {
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "frame_width": frame_width,
+                    "frame_height": frame_height,
+                },
+            }
+        return {
+            "geometry_type": "bbox",
+            "coordinate_system": "source_pixels",
+            "bbox": {
+                "x": x1,
+                "y": y1,
+                "width": abs(x2 - x1),
+                "height": abs(y2 - y1),
+            },
         }
     return None
 
@@ -352,11 +395,20 @@ def _candidate(
                 "id",
                 "label",
                 "class",
+                "class_name",
+                "display_label",
                 "name",
                 "text",
                 "emotion",
                 "confidence",
                 "score",
+                "occurrence_count",
+                "semantic_status",
+                "detector_substrate",
+                "representative_timestamp",
+                "parent_track_interval",
+                "review_sample_duration_seconds",
+                "overlapping_measured_speaker_turns",
             )
             if key in item
         },
@@ -706,8 +758,20 @@ def _walk_annotation_corrections(
 
 
 def _walk_audio_evidence(analysis_id: str, status: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
-    audio_diarization = _first_mapping(status.get("audio_diarization"))
-    for index, item in enumerate(_as_items(audio_diarization.get("speaker_turns"))):
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    nested_audio = (
+        results.get("audio_analysis")
+        if isinstance(results.get("audio_analysis"), dict)
+        else {}
+    )
+    audio_diarization = _first_mapping(
+        status.get("audio_diarization"),
+        nested_audio.get("audio_diarization"),
+    )
+    measured_audio = audio_diarization.get("status") == "completed_measured"
+    for index, item in enumerate(
+        _as_items(audio_diarization.get("speaker_turns")) if measured_audio else []
+    ):
         label = _label_from_fields(
             item,
             ("speaker_label", "text", "transcript_text", "speech_role_hint"),
@@ -723,7 +787,10 @@ def _walk_audio_evidence(analysis_id: str, status: Dict[str, Any]) -> Iterable[D
             item=item,
         )
 
-    audio_sample_clouds = _first_mapping(status.get("audio_sample_clouds"))
+    audio_sample_clouds = _first_mapping(
+        status.get("audio_sample_clouds"),
+        nested_audio.get("audio_sample_clouds"),
+    )
     for cloud_index, cloud in enumerate(_as_items(audio_sample_clouds.get("clouds"))):
         cloud_label = _safe_text(cloud.get("entity_label"), f"Audio cloud {cloud_index + 1}")
         for sample_index, sample in enumerate(_as_items(cloud.get("samples"))):
@@ -746,7 +813,10 @@ def _walk_audio_evidence(analysis_id: str, status: Dict[str, Any]) -> Iterable[D
                 item=sample,
             )
 
-    audio_prosody = _first_mapping(status.get("audio_prosody"))
+    audio_prosody = _first_mapping(
+        status.get("audio_prosody"),
+        nested_audio.get("audio_prosody"),
+    )
     for index, item in enumerate(_as_items(audio_prosody.get("cues") or status.get("audio_prosody"))):
         label = _label_from_fields(
             item,
@@ -773,24 +843,120 @@ def _walk_audio_evidence(analysis_id: str, status: Dict[str, Any]) -> Iterable[D
 
 def _walk_visual_results(analysis_id: str, results: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
     visual = results.get("visual_analysis") or {}
-    for index, item in enumerate(visual.get("tracked_objects") or []):
+    tracked_objects = [
+        item
+        for item in visual.get("tracked_objects") or []
+        if isinstance(item, dict)
+    ]
+    max_x = max(
+        (_safe_float(item.get("bbox_x2"), 0.0) or 0.0 for item in tracked_objects),
+        default=0.0,
+    )
+    max_y = max(
+        (_safe_float(item.get("bbox_y2"), 0.0) or 0.0 for item in tracked_objects),
+        default=0.0,
+    )
+    frame_width = 1280.0 if 1180 <= max_x <= 1320 else max_x
+    frame_height = 720.0 if 650 <= max_y <= 760 else max_y
+    audio_analysis = (
+        results.get("audio_analysis")
+        if isinstance(results.get("audio_analysis"), dict)
+        else {}
+    )
+    audio_diarization = (
+        audio_analysis.get("audio_diarization")
+        if isinstance(audio_analysis.get("audio_diarization"), dict)
+        and audio_analysis.get("audio_diarization", {}).get("status") == "completed_measured"
+        else {}
+    )
+    measured_speaker_turns = [
+        turn
+        for turn in audio_diarization.get("speaker_turns") or []
+        if isinstance(turn, dict)
+    ]
+    for index, item in enumerate(tracked_objects):
         if not isinstance(item, dict):
             continue
+        class_name = (
+            _safe_text(item.get("class_name"))
+            or _safe_text(item.get("class"))
+            or _safe_text(item.get("name"))
+            or "object"
+        )
         label = (
             _safe_text(item.get("label"))
+            or _safe_text(item.get("display_label"))
             or _safe_text(item.get("class"))
+            or _safe_text(item.get("class_name"))
             or _safe_text(item.get("name"))
             or _safe_text(item.get("track_label"))
             or f"track {item.get('track_id', index)}"
         )
+        parent_start = _first_float(
+            item.get("start"),
+            item.get("start_timestamp"),
+            item.get("timestamp"),
+        )
+        parent_end = _first_float(
+            item.get("end"),
+            item.get("end_timestamp"),
+            item.get("timestamp"),
+        )
+        representative_time = _first_float(
+            item.get("timestamp"),
+            parent_start,
+            parent_end,
+        )
+        review_start = max(0.0, (representative_time or 0.0) - 0.25)
+        review_end = (representative_time or review_start) + 0.25
+        overlapping_turns = []
+        for turn in measured_speaker_turns:
+            turn_start = _safe_float(turn.get("start"))
+            turn_end = _safe_float(turn.get("end"), turn_start)
+            if turn_start is None or turn_end is None:
+                continue
+            if turn_end >= review_start and turn_start <= review_end:
+                overlapping_turns.append(
+                    {
+                        "turn_id": turn.get("turn_id"),
+                        "speaker_label": turn.get("speaker_label"),
+                        "start": turn_start,
+                        "end": turn_end,
+                        "text": turn.get("text"),
+                        "diarization_confidence": turn.get("diarization_confidence"),
+                        "measurement_status": turn.get("diarization_status"),
+                    }
+                )
+        normalized_item = {
+            **item,
+            "class": class_name,
+            "label": label,
+            "start": review_start,
+            "end": review_end,
+            "representative_timestamp": representative_time,
+            "parent_track_interval": {
+                "start": parent_start,
+                "end": parent_end,
+            },
+            "review_sample_duration_seconds": round(review_end - review_start, 3),
+            "overlapping_measured_speaker_turns": overlapping_turns,
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "semantic_status": "unresolved_detector_substrate",
+            "detector_substrate": True,
+        }
+        start_key = _safe_float(normalized_item.get("start"), 0.0) or 0.0
         yield _candidate(
             analysis_id=analysis_id,
-            evidence_id=f"object:{item.get('track_id', index)}",
+            evidence_id=(
+                f"detector:{class_name}:{item.get('track_id', index)}:"
+                f"{start_key:.3f}:{index}"
+            ),
             label=label,
-            category="Object",
-            source_kind="grouped_detection",
+            category=f"Detector substrate: {class_name}",
+            source_kind="detector_substrate",
             source_panel="objects_panel",
-            item=item,
+            item=normalized_item,
         )
     for index, item in enumerate(visual.get("ocr_results") or []):
         if not isinstance(item, dict):
@@ -1520,6 +1686,43 @@ def _govern_candidate(
         ],
         "topology_mode": "open_topology_som",
     }
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    parent_track_interval = (
+        raw.get("parent_track_interval")
+        if isinstance(raw.get("parent_track_interval"), dict)
+        else {}
+    )
+    measured_turns = [
+        turn
+        for turn in raw.get("overlapping_measured_speaker_turns") or []
+        if isinstance(turn, dict)
+    ]
+    presence_claims = {
+        "visual_presence": {
+            "status": "confirmable",
+            "time": item.get("time"),
+            "geometry": item.get("geometry"),
+            "evidence_basis": "representative_detector_frame",
+        },
+        "scene_presence": {
+            "status": "review_supported",
+            "time": parent_track_interval or item.get("time"),
+            "evidence_basis": "parent_detector_track",
+            "requires_scene_boundary_join": True,
+        },
+        "speaking": {
+            "status": "review_required" if measured_turns else "audio_evidence_absent",
+            "measured_speaker_turns": measured_turns,
+            "identity_attribution": "unresolved",
+            "evidence_basis": "measured_audio_overlap" if measured_turns else None,
+        },
+        "listening": {
+            "status": "review_required" if measured_turns else "audio_evidence_absent",
+            "measured_speaker_turns": measured_turns,
+            "identity_attribution": "unresolved",
+            "evidence_basis": "visible_during_measured_speech" if measured_turns else None,
+        },
+    }
     return {
         "candidate_id": candidate_id,
         "master_object_projection": {
@@ -1579,6 +1782,7 @@ def _govern_candidate(
         "evidence_refs": evidence_refs,
         "projection_targets": _candidate_projection_targets(item, request),
         "cluster_context": cluster_context,
+        "presence_claims": presence_claims,
         "reason_for_match": ", ".join(
             key
             for key, value in (closest_match.get("components") or {}).items()
@@ -1714,6 +1918,101 @@ def _cluster_same_timespace_candidates(candidates: List[Dict[str, Any]]) -> List
             "raw": raw,
         }
     return clustered
+
+
+def _candidate_review_quality(candidate: Dict[str, Any]) -> float:
+    raw = candidate.get("raw") if isinstance(candidate.get("raw"), dict) else {}
+    confidence = _safe_float(raw.get("confidence"), 0.0) or 0.0
+    occurrence_count = _safe_float(raw.get("occurrence_count"), 1.0) or 1.0
+    box = _bbox_from_geometry(candidate.get("geometry"))
+    area = (box["width"] * box["height"]) if box else 0.0
+    return confidence + min(0.25, occurrence_count * 0.025) + min(0.15, area * 0.25)
+
+
+def _sample_candidates_across_video(
+    candidates: List[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if len(candidates) <= limit:
+        return sorted(
+            candidates,
+            key=lambda item: (
+                _candidate_time_center(item)
+                if _candidate_time_center(item) is not None
+                else float("inf"),
+                -_candidate_review_quality(item),
+            ),
+        )
+    timed = sorted(
+        (
+            item
+            for item in candidates
+            if _candidate_time_center(item) is not None
+        ),
+        key=lambda item: _candidate_time_center(item) or 0.0,
+    )
+    if not timed:
+        return sorted(candidates, key=_candidate_review_quality, reverse=True)[:limit]
+    start = _candidate_time_center(timed[0]) or 0.0
+    end = _candidate_time_center(timed[-1]) or start
+    span = max(0.001, end - start)
+    buckets: List[List[Dict[str, Any]]] = [[] for _ in range(limit)]
+    for candidate in timed:
+        center = _candidate_time_center(candidate) or start
+        bucket_index = min(limit - 1, int(((center - start) / span) * limit))
+        buckets[bucket_index].append(candidate)
+    selected = [
+        max(bucket, key=_candidate_review_quality)
+        for bucket in buckets
+        if bucket
+    ]
+    if len(selected) < limit:
+        selected_ids = {item.get("candidate_id") for item in selected}
+        remaining = sorted(
+            (
+                item
+                for item in timed
+                if item.get("candidate_id") not in selected_ids
+            ),
+            key=_candidate_review_quality,
+            reverse=True,
+        )
+        selected.extend(remaining[: limit - len(selected)])
+    return sorted(
+        selected[:limit],
+        key=lambda item: _candidate_time_center(item) or 0.0,
+    )
+
+
+def _select_governed_candidates(
+    request: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if _safe_text(request.get("target")) != "character_continuity":
+        return sorted(candidates, key=lambda item: item["match_score"], reverse=True)[:limit]
+
+    anchors = [
+        item for item in candidates
+        if item.get("candidate_role") == "anchor_sample"
+    ]
+    identity_candidates = [
+        item for item in candidates
+        if item.get("candidate_role") == "identity_candidate"
+    ]
+    context = [
+        item for item in candidates
+        if item.get("candidate_role") in {"context_support", "conflict"}
+    ]
+    anchor_limit = min(4, len(anchors), limit)
+    context_limit = min(8, len(context), max(0, limit - anchor_limit))
+    identity_limit = max(0, limit - anchor_limit - context_limit)
+    selected = [
+        *sorted(anchors, key=lambda item: item["match_score"], reverse=True)[:anchor_limit],
+        *_sample_candidates_across_video(identity_candidates, identity_limit),
+        *sorted(context, key=lambda item: item["match_score"], reverse=True)[:context_limit],
+    ]
+    return selected[:limit]
 
 
 def _open_topology_som_for_match(
@@ -1973,7 +2272,11 @@ def build_evidence_proliferation_match(
             continue
         scored.append(governed)
     scored.sort(key=lambda item: item["match_score"], reverse=True)
-    candidates = _cluster_same_timespace_candidates(scored)[:limit]
+    candidates = _select_governed_candidates(
+        request,
+        _cluster_same_timespace_candidates(scored),
+        limit,
+    )
     open_topology_som = _open_topology_som_for_match(request, candidates)
     return {
         "schema": SCHEMA,

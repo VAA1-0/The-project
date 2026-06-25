@@ -3198,6 +3198,8 @@ export default function MeaningPlotPanel({
     useState<MeaningNetworkMatcherQueueState | null>(null);
   const [meaningNetworkMatcherSelections, setMeaningNetworkMatcherSelections] =
     useState<Record<string, "confirmed" | "canceled" | "deferred">>({});
+  const [meaningNetworkMatcherPresenceFacets, setMeaningNetworkMatcherPresenceFacets] =
+    useState<Record<string, string[]>>({});
   const [meaningNetworkMatcherView, setMeaningNetworkMatcherView] =
     useState<"visual" | "all">("visual");
   const [meaningNetworkSaveFeedback, setMeaningNetworkSaveFeedback] = useState<{
@@ -4177,6 +4179,7 @@ export default function MeaningPlotPanel({
     const geometry = attributes.geometry || attributes.bbox || attributes.roi || null;
     const requestId = `meaning-network-match:${Date.now()}:${anchorId}`;
     setMeaningNetworkMatcherSelections({});
+    setMeaningNetworkMatcherPresenceFacets({});
     setMeaningNetworkMatcherView("visual");
     setMeaningNetworkMatcherQueue({
       anchorKind: kind,
@@ -4755,11 +4758,14 @@ export default function MeaningPlotPanel({
       .map((candidate) => ({
         candidate,
         decision: meaningNetworkMatcherSelections[candidate.candidate_id],
+        presenceFacets:
+          meaningNetworkMatcherPresenceFacets[candidate.candidate_id] || ["visual_presence"],
       }))
       .filter(
         (item): item is {
           candidate: EvidenceProliferationCandidate;
           decision: "confirmed" | "canceled" | "deferred";
+          presenceFacets: string[];
         } =>
           Boolean(item.decision) &&
           meaningNetworkMatcherCandidateRole(item.candidate) === "identity_candidate",
@@ -4778,7 +4784,7 @@ export default function MeaningPlotPanel({
     ];
     const roundId = `matcher-review-round:${meaningNetworkMatcherQueue.requestId}:${Date.now()}`;
     const proliferationDecisions: ProliferationDecision[] = selectedCandidates.map(
-      ({ candidate, decision }) => {
+      ({ candidate, decision, presenceFacets }) => {
         const start = Number(candidate.time?.start);
         const end = Number(candidate.time?.end ?? candidate.time?.start);
         const hasTime = Number.isFinite(start);
@@ -4835,6 +4841,9 @@ export default function MeaningPlotPanel({
             matcher_anchor_label: meaningNetworkMatcherQueue.anchorLabel,
             match_probability: meaningNetworkMatcherCandidateConfidence(candidate),
             match_basis: meaningNetworkMatcherCandidateBasis(candidate),
+            confirmed_presence_facets:
+              decision === "confirmed" ? presenceFacets : [],
+            presence_claims: candidate.presence_claims || {},
             propagation_required: decision === "confirmed",
             partial_propagation_allowed: false,
             source_verification_status: hasTime ? "source_time_resolved" : "source_anchor_missing",
@@ -4874,6 +4883,7 @@ export default function MeaningPlotPanel({
     const refreshed = await VideoService.refreshAnalysis(selectedVideoId);
     setAnalysisData(refreshed);
     setMeaningNetworkMatcherSelections({});
+    setMeaningNetworkMatcherPresenceFacets({});
     reportMeaningNetworkMaturitySave(
       "Matcher review round saved",
       `${proliferationDecisions.filter((item) => item.decision === "confirmed").length} confirmed, ${
@@ -4891,6 +4901,7 @@ export default function MeaningPlotPanel({
   }, [
     analysisData?.annotationCorrections,
     meaningNetworkMatcherQueue,
+    meaningNetworkMatcherPresenceFacets,
     meaningNetworkMatcherSelections,
     reportMeaningNetworkMaturitySave,
     selectedVideoId,
@@ -7599,6 +7610,7 @@ export default function MeaningPlotPanel({
                         onClick={() => {
                           setMeaningNetworkMatcherQueue(null);
                           setMeaningNetworkMatcherSelections({});
+                          setMeaningNetworkMatcherPresenceFacets({});
                         }}
                         className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[9px] text-slate-300 hover:border-teal-700 hover:text-teal-100"
                       >
@@ -7720,19 +7732,26 @@ export default function MeaningPlotPanel({
                             {hasTime && selectedVideoId ? (
                               <button
                                 type="button"
-                                disabled={!isDecisionCandidate}
-                                onClick={() =>
+                                onClick={() => {
+                                  if (!isDecisionCandidate) {
+                                    openVideoAtTime(selectedVideoId, start);
+                                    return;
+                                  }
                                   setMeaningNetworkMatcherSelections((current) => {
-                                    if (!isDecisionCandidate) return current;
                                     const next = { ...current };
                                     if (next[candidate.candidate_id] === "confirmed") {
                                       delete next[candidate.candidate_id];
                                     } else {
                                       next[candidate.candidate_id] = "confirmed";
+                                      setMeaningNetworkMatcherPresenceFacets((facets) => ({
+                                        ...facets,
+                                        [candidate.candidate_id]:
+                                          facets[candidate.candidate_id] || ["visual_presence"],
+                                      }));
                                     }
                                     return next;
-                                  })
-                                }
+                                  });
+                                }}
                                 className={`group relative mb-2 block aspect-video w-full overflow-hidden rounded border bg-black text-left ${
                                   stagedDecision === "confirmed"
                                     ? "border-emerald-400 ring-2 ring-emerald-500/40"
@@ -7765,6 +7784,15 @@ export default function MeaningPlotPanel({
                                     event.currentTarget.pause();
                                     event.currentTarget.currentTime = start;
                                   }}
+                                  onTimeUpdate={(event) => {
+                                    const previewEnd = Number.isFinite(end)
+                                      ? Math.min(end, start + 0.75)
+                                      : start + 0.75;
+                                    if (event.currentTarget.currentTime >= previewEnd) {
+                                      event.currentTarget.pause();
+                                      event.currentTarget.currentTime = start;
+                                    }
+                                  }}
                                 />
                                 {bbox ? (
                                   <span
@@ -7781,16 +7809,25 @@ export default function MeaningPlotPanel({
                                 <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-cyan-100">
                                   {formatTime(start)} / {isDecisionCandidate ? "click to check" : "known evidence"}
                                 </span>
-                                <span
-                                  className={`pointer-events-none absolute right-2 top-2 grid h-6 w-6 place-items-center rounded border text-[13px] font-bold shadow ${
-                                    stagedDecision === "confirmed"
-                                      ? "border-emerald-300 bg-emerald-600 text-white"
-                                      : "border-slate-400 bg-black/70 text-transparent"
-                                  }`}
-                                  aria-hidden="true"
-                                >
-                                  ✓
-                                </span>
+                                {isDecisionCandidate ? (
+                                  <span
+                                    className={`pointer-events-none absolute right-2 top-2 grid h-6 w-6 place-items-center rounded border text-[13px] font-bold shadow ${
+                                      stagedDecision === "confirmed"
+                                        ? "border-emerald-300 bg-emerald-600 text-white"
+                                        : "border-slate-400 bg-black/70 text-transparent"
+                                    }`}
+                                    aria-hidden="true"
+                                    data-vaa1-meaning-network-matcher-decision-checkbox="true"
+                                  >
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span className="pointer-events-none absolute right-2 top-2 rounded border border-slate-600 bg-black/80 px-1.5 py-0.5 text-[9px] text-slate-300">
+                                    {candidateRole === "anchor_sample"
+                                      ? "Known sample"
+                                      : "Context only"}
+                                  </span>
+                                )}
                               </button>
                             ) : null}
                             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -7827,6 +7864,80 @@ export default function MeaningPlotPanel({
                                 </span>
                               ))}
                             </div>
+                            {isDecisionCandidate ? (
+                              <div
+                                className="mt-2 rounded border border-slate-800 bg-[#080b0b] p-1.5"
+                                data-vaa1-meaning-network-matcher-presence-facets="true"
+                              >
+                                <div className="mb-1 text-[9px] uppercase tracking-[0.1em] text-slate-500">
+                                  Confirmed claim
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {[
+                                    {
+                                      key: "visual_presence",
+                                      label: "On screen",
+                                      enabled: true,
+                                      title: "Identity is visible in this short BBox-linked sample.",
+                                    },
+                                    {
+                                      key: "scene_presence",
+                                      label: "In scene",
+                                      enabled: true,
+                                      title: "Identity participates in the broader detector-track scene context.",
+                                    },
+                                    {
+                                      key: "speaking",
+                                      label: "Speaking",
+                                      enabled:
+                                        candidate.presence_claims?.speaking?.status === "review_required",
+                                      title: "Measured speech overlaps this visual sample; analyst assigns the voice.",
+                                    },
+                                    {
+                                      key: "listening",
+                                      label: "Listening",
+                                      enabled:
+                                        candidate.presence_claims?.listening?.status === "review_required",
+                                      title: "Identity is visible during measured speech by a speaker; analyst confirms listening.",
+                                    },
+                                  ].map((facet) => {
+                                    const selectedFacets =
+                                      meaningNetworkMatcherPresenceFacets[candidate.candidate_id] ||
+                                      ["visual_presence"];
+                                    const active = selectedFacets.includes(facet.key);
+                                    return (
+                                      <button
+                                        key={`${candidate.candidate_id}:facet:${facet.key}`}
+                                        type="button"
+                                        disabled={!facet.enabled}
+                                        title={facet.title}
+                                        onClick={() =>
+                                          setMeaningNetworkMatcherPresenceFacets((current) => {
+                                            const existing = current[candidate.candidate_id] || ["visual_presence"];
+                                            const next = active
+                                              ? existing.filter((item) => item !== facet.key)
+                                              : [...existing, facet.key];
+                                            return {
+                                              ...current,
+                                              [candidate.candidate_id]:
+                                                next.length > 0 ? next : ["visual_presence"],
+                                            };
+                                          })
+                                        }
+                                        className={`rounded border px-2 py-1 text-[9px] ${
+                                          active
+                                            ? "border-teal-500 bg-teal-950/50 text-teal-50"
+                                            : "border-slate-700 text-slate-400 hover:border-teal-800"
+                                        } disabled:cursor-not-allowed disabled:border-slate-900 disabled:text-slate-700`}
+                                      >
+                                        {active ? "✓ " : ""}
+                                        {facet.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
                             <div className="mt-2 flex flex-wrap gap-1">
                               <button
                                 type="button"
@@ -7891,10 +8002,17 @@ export default function MeaningPlotPanel({
                                 type="button"
                                 disabled={!hasTime}
                                 onClick={() =>
-                                  setMeaningNetworkMatcherSelections((current) => ({
-                                    ...current,
-                                    [candidate.candidate_id]: "confirmed",
-                                  }))
+                                  {
+                                    setMeaningNetworkMatcherSelections((current) => ({
+                                      ...current,
+                                      [candidate.candidate_id]: "confirmed",
+                                    }));
+                                    setMeaningNetworkMatcherPresenceFacets((current) => ({
+                                      ...current,
+                                      [candidate.candidate_id]:
+                                        current[candidate.candidate_id] || ["visual_presence"],
+                                    }));
+                                  }
                                 }
                                 className={`rounded border px-2 py-1 text-[9px] disabled:cursor-not-allowed disabled:opacity-40 ${
                                   stagedDecision === "confirmed"

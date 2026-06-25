@@ -435,6 +435,7 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
                 ]
             },
             "audio_diarization": {
+                "status": "completed_measured",
                 "speaker_turns": [
                     {
                         "turn_id": "speaker-turn-1",
@@ -442,6 +443,7 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
                         "start": 3.6,
                         "end": 6.5,
                         "text": "statement",
+                        "diarization_status": "measured_acoustic_cluster",
                     }
                 ]
             },
@@ -583,10 +585,17 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
             )
         )
         self.assertFalse(
-            any(candidate["evidence_id"] == "object:3" for candidate in result["candidates"])
+            any(
+                candidate["source_panel"] == "objects_panel"
+                and str((candidate.get("raw") or {}).get("track_id")) == "3"
+                for candidate in result["candidates"]
+            )
         )
         object_candidate = next(
-            candidate for candidate in result["candidates"] if candidate["evidence_id"] == "object:1"
+            candidate
+            for candidate in result["candidates"]
+            if candidate["source_panel"] == "objects_panel"
+            and str((candidate.get("raw") or {}).get("track_id")) == "1"
         )
         self.assertGreaterEqual(object_candidate["match_probability"], 0.55)
         self.assertEqual(object_candidate["closest_match"]["principle"], "closest_match")
@@ -812,6 +821,96 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertFalse(candidate["decision_required"])
         self.assertFalse(candidate["proliferation_allowed"])
         self.assertNotIn("confirm", candidate["allowed_actions"])
+
+    def test_scene_anchor_surfaces_unresolved_person_detections_across_full_video(self):
+        tracked_objects = []
+        for index in range(40):
+            start = float(index * 3)
+            tracked_objects.append(
+                {
+                    "timestamp": start,
+                    "start_timestamp": start,
+                    "end_timestamp": start + 1.0,
+                    "class_id": 0,
+                    "class_name": "person",
+                    "display_label": f"person track {index + 1}",
+                    "confidence": 0.55 + ((index % 5) * 0.05),
+                    "occurrence_count": (index % 4) + 1,
+                    "track_id": index + 1,
+                    "bbox_x1": 320.0,
+                    "bbox_y1": 72.0,
+                    "bbox_x2": 704.0,
+                    "bbox_y2": 648.0,
+                }
+            )
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "known-scene-madeleine",
+                        "category": "Identification",
+                        "subcategory": "Character",
+                        "label": "Dr. Madeleine Swann",
+                        "identity_affirmation": "Dr. Madeleine Swann",
+                        "start_seconds": 6.0,
+                        "end_seconds": 8.0,
+                        "coordinates": {"x": 0.25, "y": 0.1, "w": 0.4, "h": 0.8},
+                    }
+                ]
+            },
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": tracked_objects,
+                }
+            },
+        }
+        request = {
+            "request_id": "request-scene-anchor-full-video",
+            "target": "character_continuity",
+            "scope": "same_video_open_topology",
+            "evidence": {
+                "overlay_key": "profile:madeleine",
+                "label": "Dr. Madeleine Swann",
+                "source_label": "Dr. Madeleine Swann",
+                "category": "narrative_agent",
+            },
+        }
+
+        result = matcher.build_evidence_proliferation_match(
+            "analysis-1",
+            status,
+            request,
+            limit=12,
+        )
+        identity_candidates = [
+            item
+            for item in result["candidates"]
+            if item["candidate_role"] == "identity_candidate"
+        ]
+        starts = [item["time"]["start"] for item in identity_candidates]
+
+        self.assertEqual(
+            len([item for item in result["candidates"] if item["candidate_role"] == "anchor_sample"]),
+            1,
+        )
+        self.assertGreaterEqual(len(identity_candidates), 8)
+        self.assertTrue(all(item["source_kind"] == "detector_substrate" for item in identity_candidates))
+        self.assertTrue(
+            all(
+                (item.get("raw") or {}).get("semantic_status")
+                == "unresolved_detector_substrate"
+                for item in identity_candidates
+            )
+        )
+        self.assertLess(min(starts), 15.0)
+        self.assertGreater(max(starts), 100.0)
+        self.assertTrue(
+            all(
+                0.0 <= item["geometry"]["bbox"]["x"] <= 1.0
+                and 0.0 < item["geometry"]["bbox"]["width"] <= 1.0
+                for item in identity_candidates
+            )
+        )
 
 
 if __name__ == "__main__":

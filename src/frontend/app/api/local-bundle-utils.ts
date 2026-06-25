@@ -33,7 +33,7 @@ const FILE_MAPPING: Record<string, string> = {
   transcript: "transcript.json",
   linked_transcript: "linked_transcript.json",
   audio_prosody: "audio_prosody.json",
-  audio_diarization: "audio_diarization_scaffold.json",
+  audio_diarization: "audio_diarization.json",
   audio_sample_clouds: "audio_sample_clouds.json",
   identity_triangulation: "identity_triangulation_bundle.json",
   dependency_sfl_stage1: "dependency_sfl_stage1.json",
