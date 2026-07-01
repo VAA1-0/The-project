@@ -1102,6 +1102,32 @@ function candidateProbability(candidate: EvidenceProliferationCandidate): number
   return Number(candidate.match_probability ?? candidate.match_score ?? 0);
 }
 
+function candidateConstellationMemory(
+  candidate?: EvidenceProliferationCandidate | null,
+): {
+  netSupport: number;
+  positiveAnchors: number;
+  negativeAnchors: number;
+  label: string;
+} {
+  const provenance = candidate?.provenance || {};
+  const memory = (
+    candidate?.constellation_memory ||
+    candidate?.closest_match?.constellation_memory ||
+    (provenance.constellation_memory as Record<string, unknown> | undefined)
+  ) as Record<string, unknown> | undefined;
+  if (!memory) {
+    return { netSupport: 0, positiveAnchors: 0, negativeAnchors: 0, label: "" };
+  }
+  const netSupport = Number(memory.net_support || 0);
+  return {
+    netSupport: Number.isFinite(netSupport) ? Math.max(-1, Math.min(1, netSupport)) : 0,
+    positiveAnchors: Number(memory.positive_anchor_count || 0),
+    negativeAnchors: Number(memory.negative_anchor_count || 0),
+    label: String(memory.constellation_label || ""),
+  };
+}
+
 function loadStoredProliferationMatches(): StoredProliferationMatch[] {
   if (typeof window === "undefined") {
     return [];
@@ -1180,6 +1206,10 @@ function resolveReviewCandidateDisplayLabel(
   candidate: EvidenceProliferationCandidate,
 ): string {
   const label = governedOverlayLabel(resolveProliferatedDisplayLabel(candidate)) || "candidate";
+  const memory = candidateConstellationMemory(candidate);
+  if (memory.netSupport > 0) {
+    return `Probable ${label} - verify ${Math.round(candidateProbability(candidate) * 100)}%`;
+  }
   return `Review ${label} ${Math.round(candidateProbability(candidate) * 100)}%`;
 }
 
@@ -4329,6 +4359,9 @@ export default function VideoPanel() {
         const reviewProliferatedOverlayLabel = reviewProliferatedCandidate
           ? resolveReviewCandidateDisplayLabel(reviewProliferatedCandidate)
           : undefined;
+        const reviewProliferatedMemory = candidateConstellationMemory(
+          reviewProliferatedCandidate,
+        );
         const manualOverrideOverlayLabel = manualOverrideActive
           ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
           : undefined;
@@ -4415,7 +4448,12 @@ export default function VideoPanel() {
                   proliferated_review_candidate: reviewProliferatedCandidate,
                   displayLabel: reviewProliferatedOverlayLabel || unresolvedOverlayLabel,
                   narrative_agent_confirmation_required: true,
-                  agent_persistence_labels: ["Review candidate"],
+                  agent_persistence_labels:
+                    reviewProliferatedMemory.netSupport > 0
+                      ? ["Mature memory", "Review candidate"]
+                      : ["Review candidate"],
+                  constellation_memory: reviewProliferatedCandidate.constellation_memory ||
+                    reviewProliferatedCandidate.closest_match?.constellation_memory,
                   traceback:
                     reviewProliferatedCandidate.master_object_projection?.traceback_ref ||
                     reviewProliferatedCandidate.provenance,
@@ -8301,6 +8339,14 @@ export default function VideoPanel() {
                         }),
                       );
                       const visibleOverlayLabel = compactOverlayLabel;
+                      const overlayConstellationMemory =
+                        overlay.sourceItem?.constellation_memory &&
+                        typeof overlay.sourceItem.constellation_memory === "object"
+                          ? (overlay.sourceItem.constellation_memory as Record<string, unknown>)
+                          : null;
+                      const overlayConstellationSupport = Number(
+                        overlayConstellationMemory?.net_support || 0,
+                      );
                       const selectedEditUsesNarrativeAgentPicker =
                         edit.category === "Identification";
                       const proliferationLauncher = {
@@ -8399,6 +8445,15 @@ export default function VideoPanel() {
                           >
                             {visibleOverlayLabel}
                           </div>
+                          {Number.isFinite(overlayConstellationSupport) &&
+                          overlayConstellationSupport > 0 ? (
+                            <div
+                              className="pointer-events-none mt-0.5 inline-block rounded border border-teal-700/70 bg-black/75 px-1 py-0.5 text-[9px] font-medium text-teal-100"
+                              data-vaa1-bbox-roi-constellation-memory="true"
+                            >
+                              Mature memory +{Math.round(overlayConstellationSupport * 100)}%
+                            </div>
+                          ) : null}
                           {(overlay.sourceItem?.traceback ||
                             overlay.sourceItem?.evidence_refs ||
                             overlay.sourceItem?.source_bbox_refs ||

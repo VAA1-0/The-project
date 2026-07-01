@@ -2,7 +2,7 @@
 
 Date: 2026-06-16
 
-Last updated: 2026-06-17
+Last updated: 2026-07-01
 
 Purpose: give a fresh Codex thread a clean, practical entry point into the remaining VAA1 general sprint.
 
@@ -31,6 +31,57 @@ Important current state:
 - The mature-data/search proliferation slice described below is local working-tree work after the latest pushed commit.
 - Do not describe it as pushed until it is committed and pushed on `petteri`.
 - The implementation has passed focused backend/frontend checks, but still needs rendered UI proof and a handout/commit before collaboration handoff.
+
+## 2026-07-01 Delivery Update: Meaning / Plot Lens Graph
+
+The Meaning / Plot panel has moved from a crowded feature-list layout toward a lens-governed analytical workspace.
+
+Delivered in the current working tree:
+
+- The Meaning / Plot header now includes Aristotle, Freytag, Campbell, Frye, Booker, and Boje as operational lens choices.
+- Each lens has a short theory description and a distinct graph layout profile, color track, lane emphasis, and agency weighting.
+- Known scene segments are back in the graph as a source-timed structural spine, so lens changes reinterpret the same video array instead of losing the scene backbone.
+- Each scene segment is treated as a node-bearing structural segment with edges to source evidence, agents, readings, and candidate relations.
+- The structural color track now highlights general changes across the video while stronger agency points are emphasized inside the selected view.
+- Boje no longer depends only on explicit Boje readings; it can surface fragmented, counter-story, conflict, future-bet, hesitation, abrupt-shift, and power-balance evidence as antenarrative candidates when the saved analysis has no formal Boje output.
+- Dense support surfaces are being collapsed behind dropdowns so the graph remains the primary workspace.
+- Graph support buttons now have concrete actions for adding nodes/edges, quick confirmation, copying/pasting anchors, renaming nodes, opening Traceback, and jumping to source time when a selected graph item provides a source anchor.
+- Fullscreen graph workspace entry is present for larger lens inspection.
+
+Verification run for this slice:
+
+```bash
+cd src/frontend && ./node_modules/.bin/tsc --noEmit
+cd src/frontend && npm test
+cd src/frontend && npm run test:e2e
+node --test tests/mature-data-proliferation-feedback-loop.test.mjs tests/manual-annotation-governance.test.mjs
+./.venv/bin/python -m py_compile src/backend/analysis/evidence_proliferation_matcher.py
+git diff --check
+```
+
+Actual commands used equivalent local paths where needed. Results: TypeScript passed, frontend unit tests passed, Playwright passed, focused matcher/manual-governance tests passed, backend matcher compile passed, and diff whitespace passed. Broad `pytest` is still blocked in this local environment because `pytest` is not installed. Broad `npm run lint` still reports the pre-existing repository lint backlog and is not a clean release gate yet.
+
+### Natural-Language Lens Interpretation Delivery Note
+
+Next, Datascene needs a high-quality prose explanation layer for the Meaning / Plot lens views.
+
+The feature should write cohesive natural language explaining how changing the selected framework changes interpretation of represented phenomena and character relations. It must be designed for multimodal analysis, not as a decorative summary. The explanation should name how the lens reweights or reorders:
+
+- source-timed scene segments;
+- visual presence and BBox/ROI evidence;
+- spoken transcript and speaker/listener relations;
+- measured audio/prosody evidence when available;
+- objects, settings, OCR, named entities, and source-media metadata;
+- Meaning Network nodes and edges;
+- mature claims, candidate hypotheses, conflicts, and missing evidence.
+
+Quality bar:
+
+```text
+The prose must explain what changed, why that lens sees it differently, which multimodal evidence supports the reading, and what remains uncertain.
+```
+
+This should likely become part of the Reporter Agent / lens explanation path, but it must preserve Datascene governance: mature claims as findings, candidates as hypotheses, conflicts as conflicts, and absent evidence as absent evidence.
 
 ## Local Worktree Caution
 
@@ -622,13 +673,14 @@ Acceptance:
 Use this if starting fresh:
 
 ```text
-We are on branch petteri. Latest pushed commit is 03d33f0, "Operationalize entity search maturation layer", but there is newer local working-tree work for the Mature Data Proliferation bus. Please read docs/working_handover_handout_2026-06-16_B_general_sprint_remaining.md, docs/vaa1_latest_delivery_note_named_entity_search_maturation_2026-06-16.md, docs/vaa1_remaining_sprint_program_stepwise_2026-06-03.md, and docs/vaa1_general_sprint_regime_remaining_tasks.md. Then begin with the recommended next step: manually or via Playwright verify that the Mature Data bus, Data Maturation panel, and Search panel actually surface governed hypotheses, content-derived mature observations, genre-rule observations, proposed audiovisual samples, Mature Data search records, and confirmable clusters without cross-video bleed. Confirm candidate and cluster drops are saved through the `proliferation_decisions` ledger and suppress active hypotheses after refresh. Also keep the release-tail sprint in scope: source-sample writer, dormant feature audit, systematic Playwright/navigation account, user agreement, optional FFmpeg/YOLOv8 runtime governance, backend hardening, and #0.1 .exe readiness.
+We are on branch petteri. Please read docs/working_handover_handout_2026-06-16_B_general_sprint_remaining.md, docs/vaa1_core_ui_workflow_design_review_2026-06-30.md, docs/vaa1_open_topology_som_matcher_handout_2026-06-22.md, docs/vaa1_narrative_agent_panel_usability_design_contract_2026-06-12.md, docs/vaa1_remaining_sprint_program_stepwise_2026-06-03.md, and docs/vaa1_general_sprint_regime_remaining_tasks.md. The next sprint slice should be governed by the core UI/workflow design review: reorganize Meaning / Plot and Narrative Agent into guided analytical workspaces, make narrative lenses operational, make Narrative Agent lens evidence local instead of redirecting, and make Mature Data Proliferation nearly invisible while matcher candidates surface where the analyst is already working. Keep the release-tail sprint in scope: source-sample writer, dormant feature audit, systematic Playwright/navigation account, user agreement, optional FFmpeg/YOLOv8 runtime governance, backend hardening, and #0.1 .exe readiness.
 ```
 
 ## Fresh Thread Operating Rules
 
 - Start with `git status -sb`.
 - Do not stage unrelated deck, board-meeting, node_modules, or old handover files.
+- Treat `docs/vaa1_core_ui_workflow_design_review_2026-06-30.md` as the governing design direction for the next UI slice.
 - Prefer rendered/manual proof before adding new abstraction.
 - Do not add new Scene Card or Source Media / Metadata fields unless explicitly requested; harvest into existing fields first.
 - Keep SOM/open topology scanner/matcher diagnostic and review-oriented until mature confirmation exists.
@@ -638,6 +690,9 @@ We are on branch petteri. Latest pushed commit is 03d33f0, "Operationalize entit
 - Keep Master time as the shared clock for transcript, BBox/ROI, audio, visual expression, scene presence, and search.
 - Preserve manual analyst authority above raw detections and candidate matches.
 - Do not call a UI feature operational until a manual or Playwright path proves navigation, state, and saved/reloaded authority.
+- Do not let Meaning / Plot or Narrative Agent become feature lists; default views must expose current belief, evidence, next action, and advanced tools in that order.
+- Narrative lens and recognition controls should render local evidence first; cross-panel navigation should be optional drill-down.
+- Mature Data Proliferation should increasingly run as background intelligence; the analyst should mainly see candidates, confirmations, corrections, and propagated results.
 - Treat FFmpeg, YOLOv8/Ultralytics, LLMs, APIs, and licensed scripts as optional activated capabilities with traceback, fallback, or disabled states.
 - Do not package `#0.1 .exe` until consent, runtime configuration, Playwright/browser paths, backend health, and representative analysis smoke tests are either passed or explicitly deferred.
 

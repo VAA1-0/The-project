@@ -912,6 +912,151 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
             )
         )
 
+    def test_confirmed_match_constellation_reduces_uncertainty_for_remaining_raw_detections(self):
+        tracked_object = {
+            "track_id": 42,
+            "label": "person",
+            "class": "person",
+            "start": 40.0,
+            "end": 40.2,
+            "x": 0.34,
+            "y": 0.08,
+            "width": 0.30,
+            "height": 0.70,
+            "confidence": 0.72,
+        }
+        base_status = {
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": [tracked_object],
+                }
+            },
+        }
+        matured_status = {
+            **base_status,
+            "annotation_corrections": {
+                "proliferation_decisions": [
+                    {
+                        "decision_id": "confirmed:madeleine:visual:1",
+                        "candidate_id": "candidate:madeleine:early",
+                        "target_evidence_id": "detector:person:early",
+                        "decision": "confirmed",
+                        "authority_level": "manual_confirmation",
+                        "candidate_label": "person",
+                        "applied_label": "Dr. Madeleine Swann",
+                        "source_anchors": [
+                            {
+                                "start_seconds": 8.0,
+                                "end_seconds": 8.2,
+                                "geometry": {
+                                    "geometry_type": "bbox",
+                                    "bbox": {
+                                        "x": 0.33,
+                                        "y": 0.08,
+                                        "width": 0.31,
+                                        "height": 0.70,
+                                    },
+                                },
+                            }
+                        ],
+                        "governance_status": {
+                            "maturity_result": "user_confirmed_truth",
+                            "confirmed_presence_facets": ["visual_presence"],
+                            "match_probability": 0.91,
+                        },
+                    },
+                    {
+                        "decision_id": "rejected:madeleine:visual:1",
+                        "candidate_id": "candidate:madeleine:false",
+                        "decision": "canceled",
+                        "authority_level": "manual_rejection",
+                        "candidate_label": "person",
+                        "applied_label": "Dr. Madeleine Swann",
+                        "source_anchors": [
+                            {
+                                "start_seconds": 12.0,
+                                "end_seconds": 12.2,
+                                "geometry": {
+                                    "geometry_type": "bbox",
+                                    "bbox": {
+                                        "x": 0.02,
+                                        "y": 0.10,
+                                        "width": 0.18,
+                                        "height": 0.40,
+                                    },
+                                },
+                            }
+                        ],
+                        "governance_status": {
+                            "maturity_result": "analyst_rejected_match",
+                            "match_probability": 0.66,
+                        },
+                    },
+                ],
+            },
+        }
+        request = {
+            "request_id": "request-madeleine-memory",
+            "target": "character_continuity",
+            "scope": "same_video_open_topology",
+            "evidence": {
+                "overlay_key": "profile:madeleine",
+                "label": "Dr. Madeleine Swann",
+                "source_label": "Dr. Madeleine Swann",
+                "category": "narrative_agent",
+            },
+        }
+
+        base_result = matcher.build_evidence_proliferation_match(
+            "analysis-1",
+            base_status,
+            request,
+        )
+        matured_result = matcher.build_evidence_proliferation_match(
+            "analysis-1",
+            matured_status,
+            request,
+        )
+
+        base_candidate = base_result["candidates"][0]
+        matured_candidate = next(
+            candidate
+            for candidate in matured_result["candidates"]
+            if candidate["source_panel"] == "objects_panel"
+        )
+
+        self.assertGreater(
+            matured_candidate["match_probability"],
+            base_candidate["match_probability"],
+        )
+        self.assertIn("mature_constellation_index", matured_result)
+        self.assertEqual(
+            matured_result["mature_constellation_index"]["positive_count"],
+            1,
+        )
+        self.assertEqual(
+            matured_result["mature_constellation_index"]["negative_count"],
+            1,
+        )
+        self.assertGreater(
+            matured_candidate["constellation_memory"]["positive_support"],
+            0.8,
+        )
+        self.assertEqual(
+            matured_candidate["constellation_memory"]["negative_support"],
+            0.0,
+        )
+        self.assertIn(
+            "mature_constellation_memory",
+            matured_candidate["reason_for_match"],
+        )
+        self.assertEqual(
+            matured_candidate["candidate_role"],
+            "identity_candidate",
+        )
+        self.assertTrue(matured_candidate["decision_required"])
+        self.assertFalse(matured_candidate["proliferation_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

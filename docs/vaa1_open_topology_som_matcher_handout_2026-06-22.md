@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Operational update: 2026-06-25
+Operational update: 2026-07-01
 
 Purpose: explain the current scanner/matcher layer for Datascene/VAA1 Mature Data Proliferation: what it is for, what it is made of, how it works in practice, and how it should be developed next.
 
@@ -610,7 +610,62 @@ Every confirmed match can improve future ranking without becoming opaque:
 - expose which samples influenced each match;
 - permit sample removal and cluster rollback.
 
-### 4. Project-level and archive-level topology
+### 4. Iterative mature-constellation memory
+
+The matcher must behave like a puzzle, not like a series of isolated search
+queries.
+
+Every confirmed scanner match should become a new mature anchor that helps
+resolve the remaining non-mature detection array. As the mature constellation
+grows, uncertainty should decrease. A raw detection that is ambiguous before
+confirmation may become easier to place after the system has accumulated
+several confirmed examples of the same character, object, named entity, voice,
+setting, or interaction pattern.
+
+The intended loop is:
+
+```text
+raw detector substrate
+  -> scanner/matcher candidates
+  -> analyst confirm/reject/defer
+  -> mature constellation index
+  -> re-score remaining raw detections
+  -> clearer candidate clusters
+  -> fewer repeated confirmation prompts
+```
+
+Operational consequences:
+
+- a confirmed match is not only a saved decision; it becomes a reusable
+  source-linked anchor;
+- the raw detector item remains preserved as detector substrate and traceback,
+  but no longer has to carry the semantic burden alone;
+- future matching should compare unresolved detections against the whole
+  mature constellation, not only against the original seed;
+- rejected candidates should become negative samples that reduce future false
+  positives;
+- candidate confidence should be recalculated after each review round;
+- BBox confirmation prompts should become more specific as evidence improves,
+  for example `Probable Dr. Madeleine Swann - verify visual presence` instead
+  of generic `Confirm Narrative Agent`;
+- constellations should keep separate claims for visual presence, scene
+  presence, speaking, listening, object identity, named-entity reference, and
+  setting membership.
+
+This is the practical maturation target: more mature data should make the
+remaining raw data easier to classify, not merely add another isolated record.
+
+Implementation requirement:
+
+- maintain a mature constellation index per analysis;
+- store positive and negative samples per entity/object/pattern;
+- track which mature anchors influenced every candidate score;
+- re-run lightweight candidate re-ranking after every matcher review round;
+- project new confidence and cluster state into BBox, Meaning Network,
+  Narrative Agent, Search, Data Maturation, and Traceback;
+- preserve raw detections as linked evidence, never as overwritten truth.
+
+### 5. Project-level and archive-level topology
 
 Current clustering is analysis-scoped. Future scopes may be:
 
@@ -622,7 +677,7 @@ Current clustering is analysis-scoped. Future scopes may be:
 Every expansion must preserve analysis id, source id, time, geometry, consent,
 authority, and deletion boundaries.
 
-### 5. Better topology visualization
+### 6. Better topology visualization
 
 Useful future views:
 
@@ -1077,6 +1132,29 @@ The current implementation is useful because it:
   clusters from the source waveform;
 - preserves the diagnostic/candidate boundary;
 - supports future scanner types without requiring a brand-new panel.
+
+## 2026-07-01 Meaning Network Bridge Update
+
+The Meaning / Plot panel now treats the Meaning Network graph as the primary surface for structural interpretation and source-linked matcher/topology evidence.
+
+Operational bridge changes:
+
+- The graph keeps known source-timed scenes visible as a structural spine.
+- Narrative lenses now reorganize the same graph material rather than replacing the data array with a separate report list.
+- Aristotle, Freytag, Campbell, Frye, Booker, and Boje each provide a different lane order, structural color track, agency emphasis, and theory description.
+- Scene segments are treated as graph segments with nodes and edges, making them available to source jumps, Traceback, graph confirmation, and future matcher refreshes.
+- Boje has a fallback path that can treat fragmented, counter-story, conflictual, future-bet, hesitation, abrupt-shift, and power-balance candidates as antenarrative evidence even before formal Boje readings exist.
+- Dense lists such as continuity lanes, agent appearances, readiness rows, node markers, edge markers, and review queues are being moved behind dropdown support surfaces so the graph remains visually primary.
+
+This bridge matters for the open-topology matcher because confirmed matcher output should not live only in a queue. It should become a traceable graph relation when it has source time, BBox/ROI, scene, agent, object, entity, or setting anchors.
+
+The next high-quality delivery is prose interpretation over the graph:
+
+```text
+When the analyst changes lens, Datascene should explain how the same multimodal evidence now changes the interpretation of phenomena, scene function, agency, conflict, and character relations.
+```
+
+That explanation should use source-timed scene segments, visual/BBox evidence, transcript, measured audio/prosody where available, objects, settings, OCR, named entities, mature claims, candidate hypotheses, and graph edges. It must keep mature truth, candidate support, conflicts, and missing evidence separate.
 
 ## Current Limits
 

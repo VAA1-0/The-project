@@ -490,6 +490,18 @@ export interface EvidenceProliferationCandidate {
   geometry?: Record<string, unknown> | null;
   raw?: Record<string, unknown>;
   source_timesphere?: Record<string, unknown>;
+  constellation_memory?: {
+    schema?: string;
+    constellation_key?: string;
+    constellation_label?: string;
+    positive_anchor_count?: number;
+    negative_anchor_count?: number;
+    positive_support?: number;
+    negative_support?: number;
+    net_support?: number;
+    best_positive_fit?: Record<string, unknown> | null;
+    best_negative_fit?: Record<string, unknown> | null;
+  };
   closest_match?: {
     principle?: "closest_match" | string;
     match_probability?: number;
@@ -505,6 +517,18 @@ export interface EvidenceProliferationCandidate {
     weights?: Record<string, number>;
     source_timesphere?: Record<string, unknown>;
     seed_timesphere?: Record<string, unknown>;
+    constellation_memory?: {
+      schema?: string;
+      constellation_key?: string;
+      constellation_label?: string;
+      positive_anchor_count?: number;
+      negative_anchor_count?: number;
+      positive_support?: number;
+      negative_support?: number;
+      net_support?: number;
+      best_positive_fit?: Record<string, unknown> | null;
+      best_negative_fit?: Record<string, unknown> | null;
+    };
   };
   provenance?: Record<string, unknown>;
 }
@@ -522,6 +546,7 @@ export interface EvidenceProliferationMatch {
   candidate_count?: number;
   governance?: Record<string, unknown>;
   probability_policy?: Record<string, unknown>;
+  mature_constellation_index?: Record<string, unknown>;
   request?: EvidenceProliferationRequest;
   candidates?: EvidenceProliferationCandidate[];
 }

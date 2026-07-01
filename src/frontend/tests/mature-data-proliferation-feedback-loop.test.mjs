@@ -176,6 +176,18 @@ test("BBox/ROI overlays consume mature Master Schema and persistence indicators 
 
   assert.match(
     videoPanel,
+    /Probable \$\{label\} - verify/,
+    "memory-supported BBox/ROI review candidates must become probable identity prompts, not generic raw confirmation prompts",
+  );
+
+  assert.match(
+    videoPanel,
+    /data-vaa1-bbox-roi-constellation-memory="true"/,
+    "BBox/ROI overlays must expose mature constellation memory when confirmed anchors influence review candidates",
+  );
+
+  assert.match(
+    videoPanel,
     /traceback|evidence_refs|source_bbox_refs|source_frame_refs/,
     "VideoPanel overlays must expose or route to traceback/source evidence for governed labels",
   );

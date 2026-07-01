@@ -369,6 +369,140 @@ def _bbox_center_distance(left: Dict[str, float], right: Dict[str, float]) -> fl
     return ((left_cx - right_cx) ** 2 + (left_cy - right_cy) ** 2) ** 0.5
 
 
+def _canonical_constellation_key(value: Any) -> str:
+    tokens = sorted(_character_identity_tokens(value) or _tokenize(value))
+    return " ".join(tokens)
+
+
+def _decision_anchor_time(anchor: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    if not isinstance(anchor, dict):
+        return {"start": None, "end": None}
+    time_interval = anchor.get("time_interval") if isinstance(anchor.get("time_interval"), dict) else {}
+    start = _first_float(
+        anchor.get("start_seconds"),
+        anchor.get("start"),
+        time_interval.get("start_seconds"),
+        time_interval.get("start"),
+    )
+    end = _first_float(
+        anchor.get("end_seconds"),
+        anchor.get("end"),
+        time_interval.get("end_seconds"),
+        time_interval.get("end"),
+    )
+    if end is None:
+        end = start
+    return {"start": start, "end": end}
+
+
+def _decision_anchor_geometry(anchor: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(anchor, dict):
+        return None
+    if isinstance(anchor.get("geometry"), dict):
+        return anchor.get("geometry")
+    if isinstance(anchor.get("bbox"), dict):
+        return {"geometry_type": "bbox", "bbox": anchor.get("bbox")}
+    return None
+
+
+def _decision_source_anchors(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    anchors = [
+        anchor
+        for anchor in decision.get("source_anchors") or []
+        if isinstance(anchor, dict)
+    ]
+    if anchors:
+        return anchors
+    fallback: Dict[str, Any] = {}
+    start = _first_float(decision.get("start_seconds"), decision.get("time_start"))
+    end = _first_float(decision.get("end_seconds"), decision.get("time_end"))
+    if start is not None:
+        fallback["start_seconds"] = start
+        fallback["end_seconds"] = end if end is not None else start
+    geometry = _first_mapping(decision.get("geometry"), decision.get("bbox"))
+    if geometry:
+        fallback["geometry"] = geometry
+    return [fallback] if fallback else []
+
+
+def build_mature_constellation_index(status: Dict[str, Any]) -> Dict[str, Any]:
+    """Build an analysis-local memory of matcher confirmations and rejections."""
+    corrections = status.get("annotation_corrections")
+    if not isinstance(corrections, dict):
+        return {
+            "schema": "vaa1.mature_constellation_index.v1",
+            "positive_count": 0,
+            "negative_count": 0,
+            "constellations": {},
+        }
+
+    constellations: Dict[str, Dict[str, Any]] = {}
+    positive_count = 0
+    negative_count = 0
+    for decision in corrections.get("proliferation_decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        label = (
+            _safe_text(decision.get("applied_label"))
+            or _safe_text(decision.get("target_label"))
+            or _safe_text(decision.get("candidate_label"))
+        )
+        key = _canonical_constellation_key(label)
+        if not key:
+            continue
+        constellation = constellations.setdefault(
+            key,
+            {
+                "label": label,
+                "positive": [],
+                "negative": [],
+                "deferred": [],
+            },
+        )
+        record = {
+            "decision_id": decision.get("decision_id"),
+            "candidate_id": decision.get("candidate_id"),
+            "target_evidence_id": decision.get("target_evidence_id"),
+            "label": label,
+            "source_panel": decision.get("source_panel"),
+            "source_anchors": _decision_source_anchors(decision),
+            "presence_facets": (
+                (decision.get("governance_status") or {}).get("confirmed_presence_facets")
+                or []
+            ),
+            "match_probability": _safe_float(
+                (decision.get("governance_status") or {}).get("match_probability"),
+                0.0,
+            )
+            or 0.0,
+            "created_at": decision.get("created_at"),
+        }
+        decision_value = _safe_text(decision.get("decision")).lower()
+        authority = _safe_text(decision.get("authority_level")).lower()
+        maturity_result = _safe_text(
+            (decision.get("governance_status") or {}).get("maturity_result")
+        ).lower()
+        if (
+            decision_value == "confirmed"
+            or authority == "manual_confirmation"
+            or maturity_result == "user_confirmed_truth"
+        ):
+            constellation["positive"].append(record)
+            positive_count += 1
+        elif decision_value in {"canceled", "rejected"} or "rejected" in maturity_result:
+            constellation["negative"].append(record)
+            negative_count += 1
+        elif decision_value == "deferred":
+            constellation["deferred"].append(record)
+
+    return {
+        "schema": "vaa1.mature_constellation_index.v1",
+        "positive_count": positive_count,
+        "negative_count": negative_count,
+        "constellations": constellations,
+    }
+
+
 def _candidate(
     *,
     analysis_id: str,
@@ -1323,9 +1457,121 @@ def _cross_scene_continuity_probability(request: Dict[str, Any], candidate: Dict
     return 0.0
 
 
-def _closest_match_profile(request: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+def _constellation_anchor_fit(
+    candidate: Dict[str, Any],
+    record: Dict[str, Any],
+) -> Dict[str, Any]:
+    candidate_time = candidate.get("time") or {}
+    candidate_start = _safe_float(candidate_time.get("start"))
+    candidate_end = _safe_float(candidate_time.get("end"), candidate_start)
+    candidate_box = _bbox_from_geometry(candidate.get("geometry"))
+    time_fit = 0.0
+    spatial_fit = 0.0
+    for anchor in record.get("source_anchors") or []:
+        if not isinstance(anchor, dict):
+            continue
+        anchor_time = _decision_anchor_time(anchor)
+        anchor_start = anchor_time.get("start")
+        anchor_end = anchor_time.get("end")
+        if candidate_start is not None and anchor_start is not None:
+            candidate_center = (
+                candidate_start + (candidate_end if candidate_end is not None else candidate_start)
+            ) / 2.0
+            anchor_center = (
+                anchor_start + (anchor_end if anchor_end is not None else anchor_start)
+            ) / 2.0
+            distance = abs(candidate_center - anchor_center)
+            if distance <= 0.25:
+                time_fit = max(time_fit, 1.0)
+            elif distance <= 1.0:
+                time_fit = max(time_fit, 0.85)
+            elif distance <= 4.0:
+                time_fit = max(time_fit, 0.55)
+            elif distance <= 12.0:
+                time_fit = max(time_fit, 0.25)
+        anchor_box = _bbox_from_geometry(_decision_anchor_geometry(anchor))
+        if candidate_box and anchor_box:
+            iou = _bbox_iou(candidate_box, anchor_box)
+            distance = _bbox_center_distance(candidate_box, anchor_box)
+            if iou >= 0.45:
+                spatial_fit = max(spatial_fit, 1.0)
+            elif iou >= 0.25:
+                spatial_fit = max(spatial_fit, 0.82)
+            elif iou >= 0.08:
+                spatial_fit = max(spatial_fit, 0.58)
+            elif distance <= 0.12:
+                spatial_fit = max(spatial_fit, 0.45)
+            elif distance <= 0.18:
+                spatial_fit = max(spatial_fit, 0.3)
+    target_evidence_id = _safe_text(record.get("target_evidence_id"))
+    evidence_id = _safe_text(candidate.get("evidence_id"))
+    candidate_id = _safe_text(candidate.get("candidate_id"))
+    id_fit = 1.0 if target_evidence_id and target_evidence_id in {evidence_id, candidate_id} else 0.0
+    return {
+        "time_fit": round(time_fit, 4),
+        "spatial_fit": round(spatial_fit, 4),
+        "id_fit": round(id_fit, 4),
+        "overall": round(max(time_fit * 0.5 + spatial_fit * 0.5, spatial_fit, id_fit), 4),
+    }
+
+
+def _constellation_memory_profile(
+    request: Dict[str, Any],
+    candidate: Dict[str, Any],
+    constellation_index: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not constellation_index:
+        return {"positive_support": 0.0, "negative_support": 0.0, "net_support": 0.0}
+    evidence = request.get("evidence") or {}
+    key = _canonical_constellation_key(evidence.get("label") or evidence.get("source_label"))
+    constellation = (constellation_index.get("constellations") or {}).get(key)
+    if not constellation:
+        return {"positive_support": 0.0, "negative_support": 0.0, "net_support": 0.0}
+
+    positive_fits = [
+        _constellation_anchor_fit(candidate, record)
+        for record in constellation.get("positive") or []
+        if isinstance(record, dict)
+    ]
+    negative_fits = [
+        _constellation_anchor_fit(candidate, record)
+        for record in constellation.get("negative") or []
+        if isinstance(record, dict)
+    ]
+    positive_support = max((fit["overall"] for fit in positive_fits), default=0.0)
+    negative_support = max((fit["overall"] for fit in negative_fits), default=0.0)
+    positive_count = len(constellation.get("positive") or [])
+    # A larger confirmed constellation should make nearby raw detections easier
+    # to place, but it should not erase the need for source-linked review.
+    density_boost = min(0.18, max(0, positive_count - 1) * 0.035)
+    positive_support = min(1.0, positive_support + density_boost) if positive_support > 0 else 0.0
+    net_support = max(0.0, positive_support - (negative_support * 0.9))
+    return {
+        "schema": "vaa1.mature_constellation_memory_profile.v1",
+        "constellation_key": key,
+        "constellation_label": constellation.get("label"),
+        "positive_anchor_count": positive_count,
+        "negative_anchor_count": len(constellation.get("negative") or []),
+        "positive_support": round(positive_support, 4),
+        "negative_support": round(negative_support, 4),
+        "net_support": round(net_support, 4),
+        "best_positive_fit": max(positive_fits, key=lambda item: item["overall"], default=None),
+        "best_negative_fit": max(negative_fits, key=lambda item: item["overall"], default=None),
+    }
+
+
+def _closest_match_profile(
+    request: Dict[str, Any],
+    candidate: Dict[str, Any],
+    constellation_index: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     spatial = _spatial_consistency_probability(request, candidate)
     cross_scene = _cross_scene_continuity_probability(request, candidate)
+    constellation_memory = _constellation_memory_profile(
+        request,
+        candidate,
+        constellation_index,
+    )
     components = {
         "text_semantic": round(_text_probability(request, candidate), 4),
         "time_proximity": round(_temporal_closeness_probability(request, candidate), 4),
@@ -1355,9 +1601,15 @@ def _closest_match_profile(request: Dict[str, Any], candidate: Dict[str, Any]) -
         if value is None or float(value or 0.0) <= 0.0 or active_weight <= 0:
             continue
         probability += (value * weight) / active_weight
+    memory_support = float(constellation_memory.get("net_support") or 0.0)
+    if memory_support > 0:
+        probability = max(probability, min(0.88, probability + (memory_support * 0.22)))
+    negative_support = float(constellation_memory.get("negative_support") or 0.0)
+    if negative_support > 0:
+        probability = max(0.0, probability - (negative_support * 0.2))
     compatibility = _character_candidate_compatibility(request, candidate)
     if compatibility in {"unknown_person", "known_identity_option"}:
-        probability = min(probability, 0.62)
+        probability = min(probability, 0.86 if memory_support > 0 else 0.62)
     elif compatibility == "contextual_support":
         probability = min(probability, 0.44)
     elif compatibility == "incompatible":
@@ -1368,6 +1620,7 @@ def _closest_match_profile(request: Dict[str, Any], candidate: Dict[str, Any]) -
         "identity_compatibility": compatibility,
         "components": components,
         "weights": weights,
+        "constellation_memory": constellation_memory,
         "source_timesphere": candidate.get("source_timesphere"),
         "seed_timesphere": _timesphere_from_seed(request),
     }
@@ -1697,6 +1950,12 @@ def _govern_candidate(
         for turn in raw.get("overlapping_measured_speaker_turns") or []
         if isinstance(turn, dict)
     ]
+    constellation_memory = closest_match.get("constellation_memory") or {}
+    memory_reason = (
+        "mature_constellation_memory"
+        if float(constellation_memory.get("net_support") or 0.0) > 0
+        else ""
+    )
     presence_claims = {
         "visual_presence": {
             "status": "confirmable",
@@ -1784,11 +2043,17 @@ def _govern_candidate(
         "cluster_context": cluster_context,
         "presence_claims": presence_claims,
         "reason_for_match": ", ".join(
-            key
-            for key, value in (closest_match.get("components") or {}).items()
-            if isinstance(value, (int, float)) and value > 0
+            [
+                *[
+                    key
+                    for key, value in (closest_match.get("components") or {}).items()
+                    if isinstance(value, (int, float)) and value > 0
+                ],
+                *([memory_reason] if memory_reason else []),
+            ]
         )
         or "open topology candidate support",
+        "constellation_memory": constellation_memory,
         "situational_options": _situational_options_for_candidate(request, item, probability),
         "provenance": {
             "request_id": request.get("request_id"),
@@ -1796,6 +2061,7 @@ def _govern_candidate(
             "candidate_evidence_id": item["evidence_id"],
             "candidate_source_kind": item["source_kind"],
             "governance_schema": GOVERNANCE_SCHEMA,
+            "constellation_memory": constellation_memory,
         },
         **item,
     }
@@ -2252,12 +2518,13 @@ def build_evidence_proliferation_match(
     limit: int = 25,
 ) -> Dict[str, Any]:
     evidence_pool = collect_matchable_evidence(analysis_id, status)
+    constellation_index = build_mature_constellation_index(status)
     scored = []
     for item in evidence_pool:
         score = _score_candidate(request, item)
         if score <= 0:
             continue
-        closest_match = _closest_match_profile(request, item)
+        closest_match = _closest_match_profile(request, item, constellation_index)
         probability = closest_match["match_probability"]
         if probability <= 0:
             continue
@@ -2287,6 +2554,7 @@ def build_evidence_proliferation_match(
         "status": "completed",
         "progress": {"request_preparation": 100, "candidate_matching": 100},
         "candidate_count": len(candidates),
+        "mature_constellation_index": constellation_index,
         "governance": AUTHORITY_POLICY,
         "probability_policy": NEAR_MATCH_PROBABILITY_POLICY,
         "request": request,

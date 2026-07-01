@@ -21,7 +21,7 @@ import {
   matureSceneSegmentSourceLabel,
 } from "@/lib/scene-governance";
 
-type PlotLens = "aristotle" | "freytag" | "campbell" | "frye" | "booker";
+type PlotLens = "aristotle" | "freytag" | "campbell" | "frye" | "booker" | "boje";
 type DramaticArchetypeLens =
   | "shakespearean_performativity"
   | "proppian_function"
@@ -718,6 +718,7 @@ const PLOT_LENSES: Array<{ id: PlotLens; label: string }> = [
   { id: "campbell", label: "Campbell" },
   { id: "frye", label: "Frye" },
   { id: "booker", label: "Booker" },
+  { id: "boje", label: "Boje" },
 ];
 
 const MEANING_NETWORK_SFL_LAYERS: Array<{ value: MeaningNetworkSflLayer; label: string }> = [
@@ -2071,16 +2072,52 @@ function meaningNetworkMatcherCandidateRole(
 
 function meaningNetworkMatcherCandidateBasis(candidate: EvidenceProliferationCandidate): string[] {
   const components = candidate.closest_match?.components || {};
+  const memory = meaningNetworkMatcherConstellationMemory(candidate);
   const activeComponents = Object.entries(components)
     .filter(([, value]) => Number(value || 0) > 0)
     .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
     .slice(0, 4)
     .map(([key]) => key.replaceAll("_", " "));
+  if (memory.netSupport > 0) {
+    activeComponents.unshift("mature constellation memory");
+  }
   return activeComponents.length
     ? activeComponents
     : [candidate.source_panel, candidate.source_kind, candidate.probability_band]
         .filter(Boolean)
         .map((value) => String(value).replaceAll("_", " "));
+}
+
+function meaningNetworkMatcherConstellationMemory(candidate: EvidenceProliferationCandidate): {
+  memory: Record<string, unknown> | null;
+  netSupport: number;
+  positiveAnchors: number;
+  negativeAnchors: number;
+  label: string;
+} {
+  const provenance = candidate.provenance || {};
+  const memory = (
+    candidate.constellation_memory ||
+    candidate.closest_match?.constellation_memory ||
+    (provenance.constellation_memory as Record<string, unknown> | undefined)
+  ) as Record<string, unknown> | undefined;
+  if (!memory) {
+    return {
+      memory: null,
+      netSupport: 0,
+      positiveAnchors: 0,
+      negativeAnchors: 0,
+      label: "",
+    };
+  }
+  const netSupport = Number(memory.net_support || 0);
+  return {
+    memory,
+    netSupport: Number.isFinite(netSupport) ? Math.max(-1, Math.min(1, netSupport)) : 0,
+    positiveAnchors: Number(memory.positive_anchor_count || 0),
+    negativeAnchors: Number(memory.negative_anchor_count || 0),
+    label: String(memory.constellation_label || ""),
+  };
 }
 
 function meaningNetworkMatcherCandidateBbox(
@@ -2119,6 +2156,152 @@ function meaningNetworkMatcherCandidateBbox(
   };
 }
 
+type MeaningNetworkLensLayoutProfile = {
+  label: string;
+  description: string;
+  laneOrder: string[];
+  focusTypes: string[];
+  cueTerms: string[];
+  edgeTerms: string[];
+  structuralColor: string;
+  agencyColor: string;
+};
+
+function meaningNetworkLensLayoutProfile(lens: PlotLens): MeaningNetworkLensLayoutProfile {
+  const profiles: Record<PlotLens, MeaningNetworkLensLayoutProfile> = {
+    aristotle: {
+      label: "Aristotle",
+      description: "orders scenes through agent, action, situation, and causal evidence.",
+      laneOrder: ["scene", "on_camera_agents", "spoken_word", "objects", "location", "evidence", "prosody", "matcher", "off_camera_presence", "music", "other"],
+      focusTypes: ["scene", "narrative_agent", "character", "identity", "speaker", "object", "transcript", "spoken_word"],
+      cueTerms: ["action", "actor", "agent", "cause", "causal", "choice", "situation", "foregrounded", "scene"],
+      edgeTerms: ["causal", "supports", "acts", "agent", "object", "foregrounded", "co_occurs"],
+      structuralColor: "#0f766e",
+      agencyColor: "#5eead4",
+    },
+    freytag: {
+      label: "Freytag",
+      description: "foregrounds sequence, escalation, reversal, climax, and resolution pressure.",
+      laneOrder: ["scene", "spoken_word", "on_camera_agents", "evidence", "prosody", "objects", "matcher", "location", "off_camera_presence", "music", "other"],
+      focusTypes: ["scene", "transcript", "spoken_word", "prosody", "narrative_agent", "character", "matcher_candidate", "matcher_anchor"],
+      cueTerms: ["exposition", "rising", "climax", "falling", "reversal", "turn", "abrupt", "tension", "conflict", "setup", "resolution"],
+      edgeTerms: ["sequence", "precedes", "follows", "turn", "reversal", "abrupt", "escalation", "conflict", "transition"],
+      structuralColor: "#7c3aed",
+      agencyColor: "#c4b5fd",
+    },
+    campbell: {
+      label: "Campbell",
+      description: "pulls journey, threshold, guide, ordeal, transformation, and return evidence upward.",
+      laneOrder: ["scene", "on_camera_agents", "location", "objects", "matcher", "spoken_word", "evidence", "off_camera_presence", "prosody", "music", "other"],
+      focusTypes: ["scene", "narrative_agent", "character", "identity", "location", "object", "matcher_candidate", "matcher_anchor"],
+      cueTerms: ["call", "threshold", "journey", "guide", "mentor", "ordeal", "return", "transformation", "crossing", "trial"],
+      edgeTerms: ["threshold", "journey", "guide", "mentor", "transform", "return", "trial", "continuity"],
+      structuralColor: "#0369a1",
+      agencyColor: "#7dd3fc",
+    },
+    frye: {
+      label: "Frye",
+      description: "emphasizes mode, archetype, setting, symbolic object, and tonal field.",
+      laneOrder: ["scene", "location", "music", "on_camera_agents", "objects", "evidence", "spoken_word", "prosody", "matcher", "off_camera_presence", "other"],
+      focusTypes: ["scene", "location", "music", "object", "narrative_agent", "character", "evidence_fragment"],
+      cueTerms: ["archetype", "mode", "symbolic", "romance", "tragedy", "comedy", "irony", "season", "mythic", "setting"],
+      edgeTerms: ["archetype", "symbolic", "mode", "season", "setting", "motif", "co_occurs"],
+      structuralColor: "#15803d",
+      agencyColor: "#86efac",
+    },
+    booker: {
+      label: "Booker",
+      description: "prioritizes plot type, conflict shape, quest, threat, overcoming, and return.",
+      laneOrder: ["scene", "on_camera_agents", "objects", "spoken_word", "prosody", "evidence", "matcher", "location", "off_camera_presence", "music", "other"],
+      focusTypes: ["scene", "narrative_agent", "character", "identity", "object", "transcript", "spoken_word", "matcher_candidate"],
+      cueTerms: ["quest", "voyage", "return", "overcoming", "monster", "rebirth", "comedy", "tragedy", "conflict", "threat"],
+      edgeTerms: ["conflict", "quest", "overcoming", "threat", "return", "opposes", "protects", "supports"],
+      structuralColor: "#b45309",
+      agencyColor: "#fbbf24",
+    },
+    boje: {
+      label: "Boje",
+      description: "surfaces fragmented, polyphonic, counter-story, future-bet, and matcher evidence.",
+      laneOrder: ["spoken_word", "evidence", "matcher", "on_camera_agents", "scene", "prosody", "objects", "location", "off_camera_presence", "music", "other"],
+      focusTypes: ["transcript", "spoken_word", "evidence_fragment", "manual_annotation", "matcher_candidate", "matcher_anchor", "narrative_agent", "character"],
+      cueTerms: ["antenarrative", "fragment", "future", "bet", "counter", "polyphonic", "voice", "storyline", "trace", "candidate"],
+      edgeTerms: ["counter", "polyphonic", "fragment", "constellational_match", "traceable_similarity", "matcher", "som"],
+      structuralColor: "#be123c",
+      agencyColor: "#fda4af",
+    },
+  };
+  return profiles[lens] || profiles.freytag;
+}
+
+function meaningNetworkSearchableText(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).toLowerCase();
+  }
+  if (Array.isArray(value)) {
+    return value.map(meaningNetworkSearchableText).join(" ");
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).map(meaningNetworkSearchableText).join(" ");
+  }
+  return "";
+}
+
+function meaningNetworkTermHits(text: string, terms: string[]): number {
+  if (!text) return 0;
+  return terms.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
+}
+
+function meaningNetworkLensNodeScore(
+  node: MeaningNetworkNode,
+  lens: PlotLens,
+  profile = meaningNetworkLensLayoutProfile(lens),
+): number {
+  const canonicalType = meaningNetworkCanonicalNodeType(node.node_type);
+  const text = meaningNetworkSearchableText([
+    node.node_type,
+    node.label,
+    node.description,
+    node.attributes,
+    node.maturity,
+    node.ui?.display_group,
+  ]);
+  let score = meaningNetworkNodePriority(node) * 100;
+  if (profile.focusTypes.includes(canonicalType)) score -= 42;
+  if (isMatcherSomMeaningNode(node) && profile.focusTypes.some((type) => type.startsWith("matcher"))) score -= 28;
+  score -= Math.min(36, meaningNetworkTermHits(text, profile.cueTerms) * 9);
+  const confidence = Number(node.maturity?.confidence ?? node.attributes?.confidence ?? 0);
+  if (Number.isFinite(confidence) && confidence > 0) score -= Math.min(18, confidence * 18);
+  const maturityText = String(node.maturity?.level || node.maturity?.authority || "").toLowerCase();
+  if (/confirm|manual|mature|resolved/.test(maturityText)) score -= 12;
+  if (meaningNetworkCanonicalNodeType(node.node_type) === "scene") score -= 6;
+  return score;
+}
+
+function meaningNetworkLensEdgeScore(
+  edge: MeaningNetworkEdge,
+  lens: PlotLens,
+  profile = meaningNetworkLensLayoutProfile(lens),
+): number {
+  const text = meaningNetworkSearchableText([
+    edge.edge_type,
+    edge.maturity,
+    edge.evidence_refs,
+    edge.ui,
+    (edge as any).attributes,
+  ]);
+  let score = 100;
+  score -= Math.min(50, meaningNetworkTermHits(text, profile.edgeTerms) * 10);
+  if (isMatcherSomMeaningEdge(edge) && profile.edgeTerms.some((term) => /matcher|som|constellation|similarity/.test(term))) {
+    score -= 22;
+  }
+  const weight = Number(edge.weight ?? edge.maturity?.confidence ?? 0);
+  if (Number.isFinite(weight) && weight > 0) score -= Math.min(20, weight * 20);
+  const maturityText = String(edge.maturity?.level || edge.maturity?.authority || "").toLowerCase();
+  if (/confirm|manual|mature|resolved/.test(maturityText)) score -= 14;
+  return score;
+}
+
 function meaningNetworkGraphLayout(
   nodes: MeaningNetworkNode[],
   edges: MeaningNetworkEdge[],
@@ -2126,13 +2309,21 @@ function meaningNetworkGraphLayout(
   presenceOverrides: Record<string, { start: number; end: number }> = {},
   fallbackUntimedRange: MeaningNetworkTimeRange | null = null,
   timelineDomain: MeaningNetworkTimeRange | null = null,
+  sceneSegments: MeaningSceneSegment[] = [],
+  lens: PlotLens = "freytag",
 ) {
-  const laneNodes = lanes.map((lane) => ({
+  const lensProfile = meaningNetworkLensLayoutProfile(lens);
+  const laneById = new Map(lanes.map((lane) => [lane.lane_id, lane]));
+  const orderedLanes = [
+    ...lensProfile.laneOrder.map((laneId) => laneById.get(laneId)).filter((lane): lane is MeaningNetworkLane => Boolean(lane)),
+    ...lanes.filter((lane) => !lensProfile.laneOrder.includes(lane.lane_id)),
+  ];
+  const laneNodes = orderedLanes.map((lane) => ({
     lane,
-    nodes: nodes.filter((node) => meaningNetworkLaneForNode(node, lanes).lane_id === lane.lane_id),
+    nodes: nodes.filter((node) => meaningNetworkLaneForNode(node, orderedLanes).lane_id === lane.lane_id),
   }));
   const visibleNodes = laneNodes.flatMap((entry) => {
-      const laneLimit =
+    const baseLaneLimit =
       entry.lane.lane_id === "scene"
         ? 24
         : entry.lane.lane_id === "matcher"
@@ -2142,9 +2333,12 @@ function meaningNetworkGraphLayout(
           : entry.lane.lane_id === "spoken_word"
             ? 42
             : 28;
+    const laneLimit = lensProfile.laneOrder.slice(0, 4).includes(entry.lane.lane_id)
+      ? Math.min(96, baseLaneLimit + 18)
+      : baseLaneLimit;
     return [...entry.nodes]
       .sort((left, right) => {
-        const priority = meaningNetworkNodePriority(left) - meaningNetworkNodePriority(right);
+        const priority = meaningNetworkLensNodeScore(left, lens, lensProfile) - meaningNetworkLensNodeScore(right, lens, lensProfile);
         if (priority !== 0) return priority;
         const leftStart = meaningNetworkPresenceRange(left, presenceOverrides, fallbackUntimedRange).start;
         const rightStart = meaningNetworkPresenceRange(right, presenceOverrides, fallbackUntimedRange).start;
@@ -2171,19 +2365,49 @@ function meaningNetworkGraphLayout(
     return gap * (fallbackIndex + 1);
   };
   const sceneNodes = nodes.filter((node) => meaningNetworkCanonicalNodeType(node.node_type) === "scene");
-  const sceneBands = sceneNodes
-    .filter((node) => ordered.includes(node))
+  const sceneNodeByKey = new Map(
+    sceneNodes.map((node, index) => [
+      String(node.attributes?.scene_key || node.attributes?.scene_index || index + 1),
+      node,
+    ]),
+  );
+  const sourceSceneBands = sceneSegments.length > 0
+    ? sceneSegments
+        .filter((scene) => Number.isFinite(Number(scene.start)) || Number.isFinite(Number(scene.end)))
+        .map((scene, index) => {
+          const sceneKey = meaningNetworkSceneKey(scene, index);
+          return sceneNodeByKey.get(sceneKey) || sceneSegmentToMeaningNode(scene, index);
+        })
+    : sceneNodes.filter((node) => ordered.includes(node));
+  const sceneBands = sourceSceneBands
     .map((node, index) => {
-      const start = meaningNetworkEvidenceStart(node.evidence_refs);
-      const end = Math.max(meaningNetworkNodeEnd(node), start + 0.2);
+      const directScene = sceneSegments[index];
+      const directStart = Number(directScene?.start);
+      const directEnd = Number(directScene?.end ?? directScene?.start);
+      const start = Number.isFinite(directStart) ? directStart : meaningNetworkEvidenceStart(node.evidence_refs);
+      const end = Math.max(
+        Number.isFinite(directEnd) ? directEnd : meaningNetworkNodeEnd(node),
+        start + 0.2,
+      );
       const x1 = 80 + ((start - temporalStart) / temporalSpan) * (width - 160);
       const x2 = 80 + ((end - temporalStart) / temporalSpan) * (width - 160);
+      const sceneText = meaningNetworkSearchableText([node.label, node.description, node.attributes]);
+      const cueHits = meaningNetworkTermHits(sceneText, lensProfile.cueTerms);
+      const overlappingAgency = ordered.filter((candidate) => {
+        if (meaningNetworkCanonicalNodeType(candidate.node_type) === "scene") return false;
+        const range = meaningNetworkPresenceRange(candidate, presenceOverrides, fallbackUntimedRange);
+        if (range.end < start || range.start > end) return false;
+        return meaningNetworkLensNodeScore(candidate, lens, lensProfile) < 88;
+      }).length;
+      const agency = cueHits + overlappingAgency;
       return {
         node,
         x: Math.round(Math.min(x1, x2)),
         y: 18 + (index % 2) * 8,
         width: Math.max(44, Math.round(Math.abs(x2 - x1))),
         height: 76,
+        color: agency > 0 ? lensProfile.agencyColor : lensProfile.structuralColor,
+        agency: Math.min(1, agency / 5),
       };
     });
   const laneBands = laneNodes.map((entry, index) => ({
@@ -2228,8 +2452,10 @@ function meaningNetworkGraphLayout(
   const height = maxY;
   const visibleEdges = edges.filter(
     (edge) => positions.has(edge.source_node_id) && positions.has(edge.target_node_id),
-  ).slice(0, 260);
-  return { width, height, nodes: ordered, edges: visibleEdges, positions, sceneBands, nodeBars, laneBands, temporalStart, temporalEnd };
+  )
+    .sort((left, right) => meaningNetworkLensEdgeScore(left, lens, lensProfile) - meaningNetworkLensEdgeScore(right, lens, lensProfile))
+    .slice(0, 260);
+  return { width, height, nodes: ordered, edges: visibleEdges, positions, sceneBands, nodeBars, laneBands, temporalStart, temporalEnd, lensProfile };
 }
 
 function backendLensIdForPlotLens(lens: PlotLens): string {
@@ -2239,6 +2465,7 @@ function backendLensIdForPlotLens(lens: PlotLens): string {
     campbell: "campbellian",
     frye: "fryean",
     booker: "bookerian",
+    boje: "bojean_antenarrative",
   };
   return mapping[lens];
 }
@@ -2280,6 +2507,55 @@ function plotLensTerms(instruction: SecondOrderLabelInstruction, lens: PlotLens)
   const terms = lenses[lens];
   if (Array.isArray(terms) && terms.length > 0) {
     return terms.map(String);
+  }
+  if (lens === "boje") {
+    const bojeTerms = [
+      payload.antenarrative,
+      payload.story_fragment,
+      payload.future_bet,
+      payload.polyphonic_voice,
+      payload.institutional_storyline,
+      payload.counter_storyline,
+    ].filter(Boolean);
+    if (bojeTerms.length > 0) {
+      return bojeTerms.map(String);
+    }
+    const fallbackText = [
+      instruction.target_label_family,
+      instruction.candidate_label,
+      instruction.status,
+      (instruction as any).interpretive_note,
+      (instruction as any).evidence_summary,
+      ...(instruction.participants_involved || []),
+      ...Object.values(payload).flatMap((value) =>
+        Array.isArray(value) ? value.map(String) : [String(value ?? "")],
+      ),
+    ]
+      .join(" ")
+      .toLowerCase();
+    const bojeFallbackTerms = [
+      "candidate",
+      "fragment",
+      "counter",
+      "conflict",
+      "polyphonic",
+      "future",
+      "bet",
+      "hesitation",
+      "abrupt",
+      "word repetition",
+      "power balance",
+      "foregrounded",
+      "scene",
+      "situation",
+      "interaction",
+    ].filter((term) => fallbackText.includes(term));
+    if (bojeFallbackTerms.length > 0) {
+      return bojeFallbackTerms.slice(0, 4);
+    }
+    if (PLOT_FAMILIES.has(instruction.target_label_family) || CHARACTER_FAMILIES.has(instruction.target_label_family)) {
+      return [instruction.candidate_label];
+    }
   }
   if (lens === "freytag" && (PLOT_FAMILIES.has(instruction.target_label_family) || CHARACTER_FAMILIES.has(instruction.target_label_family))) {
     return [instruction.candidate_label];
@@ -3030,27 +3306,22 @@ function MeaningPlotConfirmationStrip({ analysisData }: { analysisData: Analysis
   );
   if (!program && !anchor) return null;
   return (
-    <section className="mb-3 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
-            Anchor-Aware Meaning Confirmation
-          </div>
-          <div className="mt-0.5 max-w-3xl text-[10px] text-slate-500">
-            Meaning and plot candidates should consult user-confirmed corrections before wider
-            proliferation.
-          </div>
-        </div>
-        <span className="shrink-0 rounded border border-cyan-700/60 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100">
-          {program?.consults_user_confirmed_anchor ? "Anchor consulted" : "Anchor pending"}
-        </span>
-      </div>
+    <section className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-1.5">
+      <span
+        className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200"
+        title="Anchor-Aware Meaning Confirmation"
+      >
+        Anchor-Aware Meaning Confirmation
+      </span>
+      <span className="rounded border border-cyan-700/60 bg-[#101010] px-1.5 py-0.5 text-[9px] text-cyan-100">
+        {program?.consults_user_confirmed_anchor ? "anchor consulted" : "anchor pending"}
+      </span>
       {families.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="flex min-w-0 flex-wrap gap-1">
           {families.map((family) => (
             <span
               key={family}
-              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-200"
+              className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
             >
               {formatAuditLabel(family)}
             </span>
@@ -3222,6 +3493,13 @@ export default function MeaningPlotPanel({
   const [selectedMeaningNetworkNodeId, setSelectedMeaningNetworkNodeId] = useState<string | null>(null);
   const [meaningNetworkViewMode, setMeaningNetworkViewMode] = useState<MeaningNetworkViewMode>(initialMeaningNetworkViewMode);
   const [meaningNetworkExpanded, setMeaningNetworkExpanded] = useState(initialMeaningNetworkExpanded);
+  const [meaningNetworkAdvancedToolsOpen, setMeaningNetworkAdvancedToolsOpen] = useState(false);
+  const [meaningPlotWorkQueue, setMeaningPlotWorkQueue] =
+    useState<"overview" | "plot" | "characters">("overview");
+  const [meaningPlotCharacterTool, setMeaningPlotCharacterTool] =
+    useState<"scene_agents" | "characters_by_scene" | "dramatic_archetypes" | "participant_ranking">("scene_agents");
+  const [meaningNetworkSupportSurface, setMeaningNetworkSupportSurface] =
+    useState<"none" | "continuity" | "appearances" | "semantic" | "nodes" | "edges" | "review">("none");
   const [meaningNetworkZoom, setMeaningNetworkZoom] = useState(1);
   const [meaningNetworkCursorSeconds, setMeaningNetworkCursorSeconds] = useState(0);
   const [focusedMeaningNetworkSceneKey, setFocusedMeaningNetworkSceneKey] = useState<string | null>(null);
@@ -3241,6 +3519,23 @@ export default function MeaningPlotPanel({
       });
     },
     [],
+  );
+
+  const openMeaningPlotWorkQueue = useCallback(
+    (
+      queue: "plot" | "characters",
+      target?: React.RefObject<HTMLDivElement | null>,
+      characterTool?: "scene_agents" | "characters_by_scene" | "dramatic_archetypes" | "participant_ranking",
+    ) => {
+      setMeaningPlotWorkQueue(queue);
+      if (characterTool) {
+        setMeaningPlotCharacterTool(characterTool);
+      }
+      if (target && typeof window !== "undefined") {
+        window.setTimeout(() => scrollCharacterPathSection(target), 0);
+      }
+    },
+    [scrollCharacterPathSection],
   );
 
   useEffect(() => {
@@ -3282,12 +3577,12 @@ export default function MeaningPlotPanel({
     const handler = (lens: DramaticArchetypeLens) => {
       if (DRAMATIC_ARCHETYPE_LENSES.some((item) => item.id === lens)) {
         setActiveArchetypeLens(lens);
-        scrollCharacterPathSection(dramaticArchetypeReadingsRef);
+        openMeaningPlotWorkQueue("characters", dramaticArchetypeReadingsRef, "dramatic_archetypes");
       }
     };
     eventBus.on("meaningPlotArchetypeLensRequested", handler);
     return () => eventBus.off("meaningPlotArchetypeLensRequested", handler);
-  }, [scrollCharacterPathSection]);
+  }, [openMeaningPlotWorkQueue]);
 
   useEffect(() => {
     if (!selectedVideoId) {
@@ -3806,8 +4101,10 @@ export default function MeaningPlotPanel({
       meaningNetworkPresenceOverrides,
       meaningNetworkLayoutSceneFallback,
       { start: 0, end: meaningNetworkTimelineDuration },
+      meaningNetworkSceneSegments,
+      activeLens,
     ),
-    [meaningNetworkLanes, meaningNetworkLayoutSceneFallback, meaningNetworkPresenceOverrides, meaningNetworkTimelineDuration, visibleMeaningNetworkEdges, visibleMeaningNetworkNodes],
+    [activeLens, meaningNetworkLanes, meaningNetworkLayoutSceneFallback, meaningNetworkPresenceOverrides, meaningNetworkSceneSegments, meaningNetworkTimelineDuration, visibleMeaningNetworkEdges, visibleMeaningNetworkNodes],
   );
   const meaningNetworkCursorX = useMemo(() => {
     const span = Math.max(0.001, meaningNetworkGraph.temporalEnd - meaningNetworkGraph.temporalStart);
@@ -5745,6 +6042,144 @@ export default function MeaningPlotPanel({
     });
   }, [renamedMeaningNetworkMarkers, selectedVideoId]);
 
+  const runMeaningNetworkSupportAction = useCallback((actionRaw: string) => {
+    const action = String(actionRaw);
+    const selectedNode = selectedMeaningNetworkNodeId
+      ? meaningNetworkNodes.find((node) => node.node_id === selectedMeaningNetworkNodeId)
+      : null;
+    const selectedEdge = meaningNetworkSheet?.kind === "edge" ? meaningNetworkSheet.edge : null;
+    const fallbackNode =
+      meaningNetworkGraph.nodes.find((node) => meaningNetworkCanonicalNodeType(node.node_type) !== "scene") ||
+      meaningNetworkGraph.nodes[0] ||
+      meaningNetworkNodes[0] ||
+      null;
+    const fallbackEdge = meaningNetworkGraph.edges[0] || meaningNetworkEdges[0] || null;
+    const activeNode = selectedNode || fallbackNode;
+    const activeEdge = selectedEdge || fallbackEdge;
+
+    if (action === "add_node") {
+      addMeaningNetworkNodeAtScene("meaning_candidate");
+      return;
+    }
+
+    if (action === "add_edge") {
+      if (!activeNode) return;
+      const scene = activeMeaningNetworkScene || activeScene;
+      const sceneNode = scene ? sceneSegmentToMeaningNode(scene, Number(scene.scene_index || 1) - 1) : null;
+      const targetNode = sceneNode && sceneNode.node_id !== activeNode.node_id
+        ? sceneNode
+        : meaningNetworkGraph.nodes.find((node) => node.node_id !== activeNode.node_id) || null;
+      if (!targetNode) return;
+      const timeRange =
+        meaningNetworkEvidenceTimeRange(activeNode.evidence_refs) ||
+        meaningNetworkEvidenceTimeRange(targetNode.evidence_refs) ||
+        (scene ? { start: Number(scene.start || 0), end: Number(scene.end || scene.start || 0) } : undefined);
+      const edge: MeaningNetworkEdge = {
+        edge_id: `draft:edge:${activeNode.node_id}:${targetNode.node_id}:${Date.now()}`,
+        source_node_id: activeNode.node_id,
+        target_node_id: targetNode.node_id,
+        edge_type: "analyst_structural_link",
+        weight: 1,
+        maturity: { level: "analyst_reviewed", authority: "analyst", confidence: 1 },
+        evidence_refs: [
+          {
+            evidence_id: `manual:edge:${Date.now()}`,
+            source_type: "manual_annotation",
+            time_range: timeRange,
+            traceback_record_id: `traceback:manual-edge:${activeNode.node_id}`,
+          },
+        ],
+        ui: {
+          quick_confirm_enabled: true,
+          copy_paste_enabled: true,
+          update_enabled: true,
+          source_navigation_enabled: true,
+        },
+      };
+      setDraftMeaningNetworkEdges((current) => [edge, ...current]);
+      setMeaningNetworkSheet({ kind: "edge", edge });
+      eventBus.emit("meaningNetworkEdgeAdded", {
+        videoId: selectedVideoId,
+        edge,
+        source_panel: "MeaningNetwork",
+      });
+      return;
+    }
+
+    if (action === "quick_confirm") {
+      if (activeNode) {
+        void quickConfirmMeaningNetworkNode(activeNode);
+        return;
+      }
+      if (activeEdge) {
+        void persistMeaningNetworkEdgeDecision(activeEdge, "confirmed");
+      }
+      return;
+    }
+
+    if (action === "copy_anchor") {
+      if (activeNode) {
+        copyMeaningNetworkNode(activeNode);
+      } else if (activeEdge) {
+        copyMeaningNetworkEdge(activeEdge);
+      }
+      return;
+    }
+
+    if (action === "paste_anchor") {
+      if (copiedMeaningNetworkNode) {
+        pasteMeaningNetworkNodeAtScene();
+      } else if (copiedMeaningNetworkEdge) {
+        pasteMeaningNetworkEdgeDuplicate();
+      }
+      return;
+    }
+
+    if (action === "rename_node") {
+      if (activeNode) renameMeaningNetworkNode(activeNode);
+      return;
+    }
+
+    if (action === "jump_to_video_time") {
+      if (activeNode) {
+        navigateToMeaningNetworkEvidence(activeNode);
+      } else if (activeEdge) {
+        navigateToMeaningNetworkEvidence(activeEdge);
+      }
+      return;
+    }
+
+    if (action === "open_traceback_drawer") {
+      if (activeNode) {
+        openMeaningNetworkTraceback(activeNode, "node");
+      } else if (activeEdge) {
+        openMeaningNetworkTraceback(activeEdge, "edge");
+      }
+    }
+  }, [
+    activeMeaningNetworkScene,
+    activeScene,
+    addMeaningNetworkNodeAtScene,
+    copiedMeaningNetworkEdge,
+    copiedMeaningNetworkNode,
+    copyMeaningNetworkEdge,
+    copyMeaningNetworkNode,
+    meaningNetworkEdges,
+    meaningNetworkGraph.edges,
+    meaningNetworkGraph.nodes,
+    meaningNetworkNodes,
+    meaningNetworkSheet,
+    navigateToMeaningNetworkEvidence,
+    openMeaningNetworkTraceback,
+    pasteMeaningNetworkEdgeDuplicate,
+    pasteMeaningNetworkNodeAtScene,
+    persistMeaningNetworkEdgeDecision,
+    quickConfirmMeaningNetworkNode,
+    renameMeaningNetworkNode,
+    selectedMeaningNetworkNodeId,
+    selectedVideoId,
+  ]);
+
   const participantGroups = useMemo(
     () =>
       sortParticipantGroupsByArchetype(
@@ -6081,6 +6516,7 @@ export default function MeaningPlotPanel({
               key={lens.id}
               type="button"
               onClick={() => setActiveLens(lens.id)}
+              title={meaningNetworkLensLayoutProfile(lens.id).description}
               className={`rounded border px-2 py-1 text-[11px] ${
                 activeLens === lens.id
                   ? "border-cyan-600/60 bg-cyan-950/35 text-cyan-100"
@@ -6090,6 +6526,9 @@ export default function MeaningPlotPanel({
               {lens.label}
             </button>
           ))}
+        </div>
+        <div className="mt-1 text-[10px] leading-relaxed text-slate-500" data-vaa1-meaning-plot-lens-description="true">
+          {meaningNetworkGraph.lensProfile.label}: {meaningNetworkGraph.lensProfile.description}
         </div>
       </div>
 
@@ -6146,37 +6585,46 @@ export default function MeaningPlotPanel({
         ) : (
           <div className="flex min-h-full min-w-[980px] flex-col gap-3">
             <section
-              className="rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-2"
+              className="rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-1.5"
               data-vaa1-meaning-plot-operational-workbench="true"
+              data-vaa1-meaning-plot-guided-workspace="true"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
-                    Analyst moves
-                  </div>
-                  <div className="mt-0.5 max-w-3xl text-[10px] leading-relaxed text-slate-400">
-                    Treat candidates as reviewable claims: inspect the source, compare lens fit,
-                    check agent scene presence, then confirm, correct, or leave as tentative support.
-                  </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-slate-300">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-cyan-200">
+                    {PLOT_LENSES.find((lens) => lens.id === activeLens)?.label}
+                  </span>
+                  <span className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5">
+                    {meaningNetworkGraph.nodes.length} nodes / {meaningNetworkGraph.edges.length} edges
+                  </span>
+                  <span className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5">
+                    {activeNarrativeLensReadings.length || plotInstructions.length} readings
+                  </span>
+                  <span className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5">
+                    {sceneSegments.length} scenes
+                  </span>
+                  <span className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5">
+                    {characterPathReadings.length || characterSceneGovernanceRows.length} agent paths
+                  </span>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1">
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(plotPathRef)}
+                    onClick={() => openMeaningPlotWorkQueue("plot", plotPathRef)}
                     className="rounded border border-cyan-700/60 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
                   >
                     Review plot claims
                   </button>
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(sceneAgentBrowserRef)}
+                    onClick={() => openMeaningPlotWorkQueue("characters", sceneAgentBrowserRef, "scene_agents")}
                     className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
                   >
                     Check scene agents
                   </button>
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(dramaticArchetypeReadingsRef)}
+                    onClick={() => openMeaningPlotWorkQueue("characters", dramaticArchetypeReadingsRef, "dramatic_archetypes")}
                     className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
                   >
                     Test archetypes
@@ -6220,30 +6668,6 @@ export default function MeaningPlotPanel({
                   </div>
                 </div>
               ) : null}
-              <div className="mt-2 grid gap-1.5 md:grid-cols-4">
-                <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">current lens</div>
-                  <div className="mt-0.5 text-[11px] text-slate-200">
-                    {PLOT_LENSES.find((lens) => lens.id === activeLens)?.label}
-                  </div>
-                </div>
-                <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">review queue</div>
-                  <div className="mt-0.5 text-[11px] text-slate-200">
-                    {activeNarrativeLensReadings.length || plotInstructions.length} plot readings
-                  </div>
-                </div>
-                <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">scene grounding</div>
-                  <div className="mt-0.5 text-[11px] text-slate-200">{sceneSegments.length} governed scenes</div>
-                </div>
-                <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">agent context</div>
-                  <div className="mt-0.5 text-[11px] text-slate-200">
-                    {characterPathReadings.length || characterSceneGovernanceRows.length} paths
-                  </div>
-                </div>
-              </div>
             </section>
 
             <section
@@ -6316,6 +6740,7 @@ export default function MeaningPlotPanel({
                         panelType: "MeaningNetwork",
                         panelProps: {
                           videoId: selectedVideoId,
+                          dedicatedMeaningNetworkPanel: true,
                           initialMeaningNetworkExpanded: true,
                           initialMeaningNetworkViewMode: "graph",
                           forceNewPanel: true,
@@ -6324,9 +6749,25 @@ export default function MeaningPlotPanel({
                     }}
                     className="rounded border border-cyan-700/70 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/25"
                     data-vaa1-meaning-network-open-own-panel="true"
+                    title="Open a draggable dedicated Meaning Network workspace"
                   >
-                    Open workspace
+                    Fullscreen workspace
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setMeaningNetworkAdvancedToolsOpen((value) => !value)}
+                    className={`rounded border px-2 py-1 text-[10px] ${
+                      meaningNetworkAdvancedToolsOpen
+                        ? "border-amber-700/70 bg-amber-950/20 text-amber-100"
+                        : "border-slate-700 bg-[#101010] text-slate-300 hover:border-amber-700 hover:text-amber-100"
+                    }`}
+                    data-vaa1-meaning-network-advanced-tools-toggle="true"
+                    aria-expanded={meaningNetworkAdvancedToolsOpen}
+                  >
+                    {meaningNetworkAdvancedToolsOpen ? "Hide advanced tools" : "Advanced tools"}
+                  </button>
+                  {meaningNetworkAdvancedToolsOpen ? (
+                    <>
                   <button
                     type="button"
                     onClick={() => setFocusedMeaningNetworkSceneKey(null)}
@@ -6392,6 +6833,8 @@ export default function MeaningPlotPanel({
                   >
                     Paste copied node
                   </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
               <div
@@ -6443,6 +6886,12 @@ export default function MeaningPlotPanel({
                       data-vaa1-meaning-network-synced-cursor-readout="true"
                     >
                       Cursor {formatTime(meaningNetworkCursorSeconds)}
+                    </div>
+                    <div
+                      className="rounded border border-cyan-900/60 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100"
+                      data-vaa1-meaning-network-lens-layout="true"
+                    >
+                      {meaningNetworkGraph.lensProfile.label}: {meaningNetworkGraph.lensProfile.description}
                     </div>
                   </div>
                 )}
@@ -6524,15 +6973,17 @@ export default function MeaningPlotPanel({
                           rx={4}
                           fill={focusedMeaningNetworkSceneKey === String(band.node.attributes?.scene_key)
                             ? "#134e4a"
-                            : "#0f172a"}
+                            : band.color}
                           stroke={focusedMeaningNetworkSceneKey === String(band.node.attributes?.scene_key)
                             ? "#5eead4"
-                            : "#164e63"}
-                          strokeWidth={1.5}
-                          opacity={0.55}
+                            : band.color}
+                          strokeWidth={band.agency > 0 ? 2.4 : 1.5}
+                          opacity={band.agency > 0 ? 0.68 : 0.34}
+                          data-vaa1-meaning-network-structural-change-node="true"
+                          data-vaa1-meaning-network-lens-agency={band.agency > 0 ? "true" : "false"}
                         />
-                        <rect x={band.x} y={band.y} width={5} height={band.height} fill="#2dd4bf" opacity={0.8} />
-                        <rect x={band.x + band.width - 5} y={band.y} width={5} height={band.height} fill="#2dd4bf" opacity={0.8} />
+                        <rect x={band.x} y={band.y} width={5} height={band.height} fill={meaningNetworkGraph.lensProfile.agencyColor} opacity={0.8} />
+                        <rect x={band.x + band.width - 5} y={band.y} width={5} height={band.height} fill={meaningNetworkGraph.lensProfile.agencyColor} opacity={0.8} />
                         <text x={band.x + 8} y={band.y + 14} className="fill-cyan-100 text-[9px]">
                           {meaningNetworkShortLabel(band.node.label, 18)}
                         </text>
@@ -6543,7 +6994,15 @@ export default function MeaningPlotPanel({
                       const confirmed = confirmedMeaningNetworkMarkers[bar.node.node_id];
                       const selected = selectedMeaningNetworkNodeId === bar.node.node_id;
                       const isObject = bar.node.node_type === "object";
-                      const stroke = confirmed ? "#34d399" : isObject ? "#f59e0b" : "#2dd4bf";
+                      const agencyScore = meaningNetworkLensNodeScore(bar.node, activeLens, meaningNetworkGraph.lensProfile);
+                      const highAgency = agencyScore < 40;
+                      const stroke = highAgency
+                        ? meaningNetworkGraph.lensProfile.agencyColor
+                        : confirmed
+                          ? "#34d399"
+                          : isObject
+                            ? "#f59e0b"
+                            : "#2dd4bf";
                       const fill = confirmed ? "#064e3b" : isObject ? "#451a03" : "#0f172a";
                       return (
                         <g
@@ -6583,8 +7042,9 @@ export default function MeaningPlotPanel({
                             rx={5}
                             fill={fill}
                             stroke={selected ? "#e0f2fe" : stroke}
-                            strokeWidth={selected ? 2.4 : 1.4}
-                            opacity={bar.sourceTimed ? 0.78 : 0.56}
+                            strokeWidth={selected ? 2.4 : highAgency ? 2 : 1.4}
+                            opacity={bar.sourceTimed ? (highAgency ? 0.92 : 0.78) : 0.56}
+                            data-vaa1-meaning-network-lens-agency={highAgency ? "true" : "false"}
                           />
                           <rect
                             x={bar.x - 3}
@@ -6676,6 +7136,7 @@ export default function MeaningPlotPanel({
                       const from = meaningNetworkGraph.positions.get(edge.source_node_id);
                       const to = meaningNetworkGraph.positions.get(edge.target_node_id);
                       if (!from || !to) return null;
+                      const edgeAgency = meaningNetworkLensEdgeScore(edge, activeLens, meaningNetworkGraph.lensProfile) < 60;
                       return (
                         <g
                           key={`graph-edge:${edge.edge_id}`}
@@ -6709,9 +7170,14 @@ export default function MeaningPlotPanel({
                             y1={from.y}
                             x2={to.x}
                             y2={to.y}
-                            stroke={edge.edge_type === "co_occurs_with" ? "#2dd4bf" : "#334155"}
-                            strokeWidth={edge.edge_type === "co_occurs_with" ? 2 : 1}
-                            strokeOpacity={0.75}
+                            stroke={edgeAgency
+                              ? meaningNetworkGraph.lensProfile.agencyColor
+                              : edge.edge_type === "co_occurs_with"
+                                ? "#2dd4bf"
+                                : "#334155"}
+                            strokeWidth={edgeAgency ? 2.4 : edge.edge_type === "co_occurs_with" ? 2 : 1}
+                            strokeOpacity={edgeAgency ? 0.9 : 0.75}
+                            data-vaa1-meaning-network-lens-agency={edgeAgency ? "true" : "false"}
                           />
                         </g>
                       );
@@ -6723,6 +7189,7 @@ export default function MeaningPlotPanel({
                       const selected = selectedMeaningNetworkNodeId === node.node_id;
                       const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
                       const rawLike = node.node_type === "evidence_fragment";
+                      const nodeAgency = meaningNetworkLensNodeScore(node, activeLens, meaningNetworkGraph.lensProfile) < 40;
                       return (
                         <g
                           key={`graph-node:${node.node_id}`}
@@ -6763,10 +7230,19 @@ export default function MeaningPlotPanel({
                           <circle
                             cx={point.x}
                             cy={point.y}
-                            r={confirmed ? 14 : 11}
+                            r={confirmed ? 14 : nodeAgency ? 13 : 11}
                             fill={confirmed ? "#064e3b" : rawLike ? "#422006" : "#0f172a"}
-                            stroke={selected ? "#e0f2fe" : confirmed ? "#34d399" : rawLike ? "#f59e0b" : "#2dd4bf"}
-                            strokeWidth={selected ? 3 : 2}
+                            stroke={selected
+                              ? "#e0f2fe"
+                              : nodeAgency
+                                ? meaningNetworkGraph.lensProfile.agencyColor
+                                : confirmed
+                                  ? "#34d399"
+                                  : rawLike
+                                    ? "#f59e0b"
+                                    : "#2dd4bf"}
+                            strokeWidth={selected ? 3 : nodeAgency ? 2.8 : 2}
+                            data-vaa1-meaning-network-lens-agency={nodeAgency ? "true" : "false"}
                           />
                           {selected && !meaningNetworkGraph.nodeBars.some((bar) => bar.node.node_id === node.node_id) ? (
                             <>
@@ -7706,6 +8182,8 @@ export default function MeaningPlotPanel({
                         const label = meaningNetworkMatcherCandidateLabel(candidate);
                         const confidence = meaningNetworkMatcherCandidateConfidence(candidate);
                         const basis = meaningNetworkMatcherCandidateBasis(candidate);
+                        const constellationMemory =
+                          meaningNetworkMatcherConstellationMemory(candidate);
                         const candidateRole = meaningNetworkMatcherCandidateRole(candidate);
                         const isDecisionCandidate = candidateRole === "identity_candidate";
                         const start = Number(candidate.time?.start);
@@ -7864,6 +8342,28 @@ export default function MeaningPlotPanel({
                                 </span>
                               ))}
                             </div>
+                            {constellationMemory.netSupport > 0 ? (
+                              <div
+                                className="mt-1 rounded border border-teal-800/70 bg-teal-950/20 px-2 py-1 text-[9px] text-teal-100"
+                                data-vaa1-meaning-network-matcher-constellation-memory="true"
+                              >
+                                <div className="font-medium">
+                                  Mature constellation memory +{Math.round(
+                                    constellationMemory.netSupport * 100,
+                                  )}
+                                  % support
+                                </div>
+                                <div className="mt-0.5 text-teal-200/80">
+                                  {constellationMemory.positiveAnchors} confirmed anchors
+                                  {constellationMemory.negativeAnchors
+                                    ? ` / ${constellationMemory.negativeAnchors} rejected neighbors`
+                                    : ""}
+                                  {constellationMemory.label
+                                    ? ` / ${constellationMemory.label}`
+                                    : ""}
+                                </div>
+                              </div>
+                            ) : null}
                             {isDecisionCandidate ? (
                               <div
                                 className="mt-2 rounded border border-slate-800 bg-[#080b0b] p-1.5"
@@ -8081,11 +8581,60 @@ export default function MeaningPlotPanel({
                 </section>
               ) : null}
               <div
-                className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                className="mt-2 flex flex-wrap items-end justify-between gap-2 rounded border border-slate-800 bg-[#080b0b] px-2 py-1.5"
+                data-vaa1-meaning-network-support-surface-selector="true"
+              >
+                <div className="min-w-0">
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
+                    Graph support
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    Keep the graph primary; open one verification list only when needed.
+                  </div>
+                </div>
+                <label className="min-w-[260px]">
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Support surface</div>
+                  <select
+                    value={meaningNetworkSupportSurface}
+                    onChange={(event) =>
+                      setMeaningNetworkSupportSurface(
+                        event.target.value as
+                          | "none"
+                          | "continuity"
+                          | "appearances"
+                          | "semantic"
+                          | "nodes"
+                          | "edges"
+                          | "review",
+                      )
+                    }
+                    className="mt-1 w-full rounded border border-slate-700 bg-[#101010] px-2 py-1.5 text-[11px] text-slate-100 outline-none focus:border-teal-600"
+                    data-vaa1-meaning-network-support-surface-select="true"
+                  >
+                    <option value="none">Graph only</option>
+                    <option value="continuity">Continuity lane ({continuityLaneRows.length})</option>
+                    <option value="appearances">Narrative Agent appearances ({narrativeAgentAppearanceRows.length})</option>
+                    <option value="semantic">Narrative Agent semantic readiness ({narrativeAgentSemanticReadinessRows.length})</option>
+                    <option value="nodes">Node markers ({reviewableMeaningNetworkNodes.length})</option>
+                    <option value="edges">Edge markers ({reviewableMeaningNetworkEdges.length})</option>
+                    <option value="review">Review work queue</option>
+                  </select>
+                </label>
+              </div>
+              <div
+                className={
+                  ["continuity", "appearances", "semantic"].includes(meaningNetworkSupportSurface)
+                    ? "mt-2 grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                    : "hidden"
+                }
                 data-vaa1-meaning-network-continuity-review-skeleton="true"
               >
                 <section
-                  className="rounded border border-slate-800 bg-[#101010] p-2"
+                  className={
+                    meaningNetworkSupportSurface === "continuity"
+                      ? "rounded border border-slate-800 bg-[#101010] p-2 xl:col-span-2"
+                      : "hidden"
+                  }
                   data-vaa1-meaning-network-continuity-lane="true"
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
@@ -8140,7 +8689,11 @@ export default function MeaningPlotPanel({
                 </section>
 
                 <section
-                  className="rounded border border-slate-800 bg-[#101010] p-2"
+                  className={
+                    meaningNetworkSupportSurface === "appearances"
+                      ? "rounded border border-slate-800 bg-[#101010] p-2 xl:col-span-2"
+                      : "hidden"
+                  }
                   data-vaa1-narrative-agent-appearance-table="true"
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
@@ -8195,7 +8748,11 @@ export default function MeaningPlotPanel({
                 </section>
 
                 <section
-                  className="rounded border border-slate-800 bg-[#101010] p-2 xl:col-span-2"
+                  className={
+                    meaningNetworkSupportSurface === "semantic"
+                      ? "rounded border border-slate-800 bg-[#101010] p-2 xl:col-span-2"
+                      : "hidden"
+                  }
                   data-vaa1-narrative-agent-semantic-readiness="true"
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
@@ -8307,8 +8864,20 @@ export default function MeaningPlotPanel({
                   </div>
                 </section>
               </div>
-              <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <div className="min-h-0 rounded border border-slate-800 bg-[#101010]">
+              <div
+                className={
+                  ["nodes", "edges"].includes(meaningNetworkSupportSurface)
+                    ? "mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                    : "hidden"
+                }
+              >
+                <div
+                  className={
+                    meaningNetworkSupportSurface === "nodes"
+                      ? "min-h-0 rounded border border-slate-800 bg-[#101010] md:col-span-2"
+                      : "hidden"
+                  }
+                >
                   <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-2 py-1.5">
                     <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
                       Node markers
@@ -8381,7 +8950,13 @@ export default function MeaningPlotPanel({
                     )}
                   </div>
                 </div>
-                <div className="min-h-0 rounded border border-slate-800 bg-[#101010]">
+                <div
+                  className={
+                    meaningNetworkSupportSurface === "edges"
+                      ? "min-h-0 rounded border border-slate-800 bg-[#101010] md:col-span-2"
+                      : "hidden"
+                  }
+                >
                   <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-2 py-1.5">
                     <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
                       Edge markers
@@ -8426,21 +9001,97 @@ export default function MeaningPlotPanel({
                     ["add_node", "add_edge", "quick_confirm", "copy_anchor", "paste_anchor", "rename_node", "jump_to_video_time", "open_traceback_drawer"].includes(String(item)),
                   )
                   .slice(0, 8)
-                  .map((item: unknown) => (
-                    <span
-                      key={`meaning-network-affordance:${String(item)}`}
-                      className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5"
+                  .map((item: unknown) => {
+                    const action = String(item);
+                    const pasteDisabled = action === "paste_anchor" && !copiedMeaningNetworkNode && !copiedMeaningNetworkEdge;
+                    return (
+                    <button
+                      key={`meaning-network-affordance:${action}`}
+                      type="button"
+                      onClick={() => runMeaningNetworkSupportAction(action)}
+                      disabled={pasteDisabled}
+                      className="rounded border border-slate-800 bg-[#101010] px-1.5 py-0.5 text-slate-400 hover:border-cyan-700 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      data-vaa1-meaning-network-support-action={action}
                     >
-                      {String(item).replaceAll("_", " ")}
-                    </span>
-                  ))}
+                      {action.replaceAll("_", " ")}
+                    </button>
+                    );
+                  })}
               </div>
             </section>
 
-            <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3 overflow-hidden">
+            <section
+              className={
+                meaningNetworkSupportSurface === "review"
+                  ? "rounded border border-cyan-900/40 bg-cyan-950/10 px-3 py-2"
+                  : "hidden"
+              }
+              data-vaa1-meaning-plot-work-queue-selector="true"
+            >
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                    Review work queue
+                  </div>
+                  <div className="mt-0.5 max-w-3xl text-[10px] leading-relaxed text-slate-400">
+                    Choose one review surface at a time. Dense lists stay collapsed until the analyst asks for them.
+                  </div>
+                </div>
+                <label className="min-w-[220px]">
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Open queue</div>
+                  <select
+                    value={meaningPlotWorkQueue}
+                    onChange={(event) =>
+                      setMeaningPlotWorkQueue(event.target.value as "overview" | "plot" | "characters")
+                    }
+                    className="mt-1 w-full rounded border border-slate-700 bg-[#101010] px-2 py-1.5 text-[11px] text-slate-100 outline-none focus:border-cyan-600"
+                  >
+                    <option value="overview">Overview only</option>
+                    <option value="plot">Plot review queue ({activeNarrativeLensReadings.length || plotInstructions.length})</option>
+                    <option value="characters">Character paths ({characterPathReadings.length || characterSceneGovernanceRows.length})</option>
+                  </select>
+                </label>
+              </div>
+              {meaningPlotWorkQueue === "overview" ? (
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => openMeaningPlotWorkQueue("plot", plotPathRef)}
+                    className="rounded border border-slate-800 bg-[#101010] px-2 py-2 text-left hover:border-cyan-700/60"
+                  >
+                    <div className="text-[10px] font-medium text-slate-100">Plot review queue</div>
+                    <div className="mt-0.5 text-[10px] text-slate-500">
+                      {activeNarrativeLensReadings.length || plotInstructions.length} source-linked readings and plot candidates.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openMeaningPlotWorkQueue("characters", sceneAgentBrowserRef, "scene_agents")}
+                    className="rounded border border-slate-800 bg-[#101010] px-2 py-2 text-left hover:border-cyan-700/60"
+                  >
+                    <div className="text-[10px] font-medium text-slate-100">Character paths</div>
+                    <div className="mt-0.5 text-[10px] text-slate-500">
+                      {characterPathReadings.length || characterSceneGovernanceRows.length} agent path, scene, archetype, and ranking surfaces.
+                    </div>
+                  </button>
+                </div>
+              ) : null}
+            </section>
+
+            <div
+              className={
+                meaningPlotWorkQueue === "overview"
+                  ? "hidden"
+                  : "grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3 overflow-hidden"
+              }
+            >
             <section
               ref={plotPathRef}
-              className="scroll-mt-2 flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]"
+              className={
+                meaningPlotWorkQueue === "plot"
+                  ? "scroll-mt-2 flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]"
+                  : "hidden"
+              }
               data-vaa1-meaning-plot-review-queue="true"
             >
               <div className="border-b border-white/8 px-3 py-2">
@@ -8484,7 +9135,13 @@ export default function MeaningPlotPanel({
               </div>
             </section>
 
-            <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
+            <section
+              className={
+                meaningPlotWorkQueue === "characters"
+                  ? "flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]"
+                  : "hidden"
+              }
+            >
               <div className="border-b border-white/8 px-3 py-2">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400">
                   Character Paths
@@ -8492,34 +9149,54 @@ export default function MeaningPlotPanel({
                 <div className="mt-1 text-[11px] text-slate-500">
                   Operational triage for scene presence, relation cues, and archetype readings.
                 </div>
+                <label className="mt-2 block max-w-xs">
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">Character tool</div>
+                  <select
+                    value={meaningPlotCharacterTool}
+                    onChange={(event) =>
+                      setMeaningPlotCharacterTool(
+                        event.target.value as "scene_agents" | "characters_by_scene" | "dramatic_archetypes" | "participant_ranking",
+                      )
+                    }
+                    className="mt-1 w-full rounded border border-slate-700 bg-[#101010] px-2 py-1.5 text-[11px] text-slate-100 outline-none focus:border-cyan-600"
+                  >
+                    <option value="scene_agents">Scene agent browser</option>
+                    <option value="characters_by_scene">Characters by scene</option>
+                    <option value="dramatic_archetypes">Dramatic archetypes</option>
+                    <option value="participant_ranking">Participant ranking</option>
+                  </select>
+                </label>
                 <div
                   className="mt-2 flex flex-wrap gap-1"
                   data-vaa1-meaning-plot-section-jumps="true"
                 >
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(sceneAgentBrowserRef)}
+                    onClick={() => openMeaningPlotWorkQueue("characters", sceneAgentBrowserRef, "scene_agents")}
                     className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
                   >
                     Scene agents
                   </button>
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(characterSceneListRef)}
+                    onClick={() => openMeaningPlotWorkQueue("characters", characterSceneListRef, "characters_by_scene")}
                     className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
                   >
                     Characters by scene
                   </button>
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(dramaticArchetypeReadingsRef)}
+                    onClick={() => {
+                      openMeaningPlotWorkQueue("characters", dramaticArchetypeReadingsRef, "dramatic_archetypes");
+                      scrollCharacterPathSection(dramaticArchetypeReadingsRef);
+                    }}
                     className="rounded border border-cyan-700/60 bg-cyan-950/20 px-1.5 py-0.5 text-[10px] text-cyan-100 hover:bg-cyan-950/35"
                   >
                     Dramatic archetypes
                   </button>
                   <button
                     type="button"
-                    onClick={() => scrollCharacterPathSection(participantRankingRef)}
+                    onClick={() => openMeaningPlotWorkQueue("characters", participantRankingRef, "participant_ranking")}
                     className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-cyan-800/60 hover:text-cyan-100"
                   >
                     Participant ranking
@@ -8632,7 +9309,11 @@ export default function MeaningPlotPanel({
                 {sceneSegments.length > 0 && (
                   <div
                     ref={sceneAgentBrowserRef}
-                    className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                    className={
+                      meaningPlotCharacterTool === "scene_agents"
+                        ? "scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                        : "hidden"
+                    }
                     data-vaa1-meaning-plot-scene-agent-browser="true"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -8799,7 +9480,11 @@ export default function MeaningPlotPanel({
                 {characterSceneGovernanceRows.length > 0 && (
                   <div
                     ref={characterSceneListRef}
-                    className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                    className={
+                      meaningPlotCharacterTool === "characters_by_scene"
+                        ? "scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                        : "hidden"
+                    }
                     data-vaa1-meaning-plot-character-scene-list="true"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -8952,7 +9637,11 @@ export default function MeaningPlotPanel({
                 )}
                 <div
                   ref={dramaticArchetypeReadingsRef}
-                  className="scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                  className={
+                    meaningPlotCharacterTool === "dramatic_archetypes"
+                      ? "scroll-mt-2 mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2"
+                      : "hidden"
+                  }
                   data-vaa1-meaning-plot-dramatic-archetypes="true"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -9014,7 +9703,11 @@ export default function MeaningPlotPanel({
               </div>
               <div
                 ref={participantRankingRef}
-                className="scroll-mt-2 min-h-0 flex-1 space-y-3 overflow-auto p-2"
+                className={
+                  meaningPlotCharacterTool === "participant_ranking"
+                    ? "scroll-mt-2 min-h-0 flex-1 space-y-3 overflow-auto p-2"
+                    : "hidden"
+                }
                 data-vaa1-meaning-plot-participant-ranking="true"
               >
                 {participantGroups.length ? (

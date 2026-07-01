@@ -2881,6 +2881,12 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     meaningPlotPanel,
+    /data-vaa1-meaning-network-matcher-constellation-memory="true"/,
+    "Matcher review must expose mature constellation memory when confirmed anchors affect candidate confidence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
     /meaningNetworkMatcherCandidateRole\(item\.candidate\) === "identity_candidate"/,
     "Only explicit identity candidates may enter the governed matcher decision ledger",
   );
