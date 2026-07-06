@@ -37,6 +37,8 @@ const layoutHost = read("app/V2components/components/LayoutHost.tsx");
 const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const dataMaturationPanel = read("app/V2components/components/panels/DataMaturationPanel.tsx");
+const statsKitPanel = read("app/V2components/components/panels/StatsKitPanel.tsx");
+const adminObservabilityPanel = read("app/V2components/components/panels/AdminObservabilityPanel.tsx");
 const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
 const tracebackDrawerPanel = read("app/V2components/components/panels/TracebackDrawerPanel.tsx");
 const secondOrderAffirmations = read(
@@ -47,6 +49,8 @@ const evidenceAuthority = read("lib/evidence-authority.ts");
 const bboxAuthority = read("lib/bbox-authority.ts");
 const annotationCorrections = read("lib/annotation-corrections.ts");
 const sceneGovernance = read("lib/scene-governance.ts");
+const statsKitAgent = read("../backend/analysis/statskit_agent.py");
+const apiServer = read("../../api_server.py");
 
 function manualCategoryUnion() {
   const block = apiService.match(
@@ -1292,8 +1296,8 @@ test("Master Schema surfaces the user-confirmed anchor confirmation program", ()
 
   assert.match(
     masterSchemaPanel,
-    /User Confirmed Anchor/,
-    "Master Schema panel must name user-confirmed evidence as the analysis anchor",
+    /Analyst Confirmations/,
+    "Master Schema panel must name user-confirmed evidence in analyst-facing language",
   );
 
   assert.match(
@@ -1348,8 +1352,8 @@ test("Master Schema is the mature subject source for narrative agents", () => {
 
   assert.match(
     masterSchemaPanel,
-    /Master Schema Subject Authority/,
-    "Master Schema panel must visibly surface governed subject authority",
+    /Known Character Profiles/,
+    "Master Schema panel must visibly surface governed character profiles",
   );
 
   assert.match(
@@ -1546,14 +1550,14 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /Agent-centered continuity, scenes, evidence, and dramatic readings live here/,
-    "Character Paths must be described as agent-centered in the Narrative Agent panel",
+    /Start with one character, then inspect what Datascene knows, what is missing, and what should be confirmed next/,
+    "Character Paths must be described as a character-first Narrative Agent workspace",
   );
 
   assert.match(
     masterSchemaPanel,
-    /Meaning \/ Plot remains the cross-agent plot map/,
-    "Narrative Agent panel must preserve Meaning / Plot as the cross-agent plot map",
+    /Open plot map/,
+    "Narrative Agent panel must keep Meaning / Plot available as an optional map action",
   );
 
   assert.match(
@@ -1572,6 +1576,413 @@ test("Narrative Agent panel owns Character Paths home", () => {
     masterSchemaPanel,
     /data-vaa1-narrative-agent-profile-dropdown="true"/,
     "Narrative Agent panel must use a dropdown to select one canonical agent profile",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-statskit-significance-relevance-surface="true"/,
+    "Narrative Agent panel must surface StatsKit, SignificanceKit, and RelevanceRadar for the selected character",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-statskit-source-signals="true"/,
+    "StatsKit surface must expose concrete source, manual, sample, and graph signals instead of a decorative shell",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Source handles[\s\S]*Manual anchors[\s\S]*Samples[\s\S]*Graph support/,
+    "StatsKit source signals must name the concrete evidence counts used by the surface",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-relevance-radar-dimensions="true"/,
+    "RelevanceRadar must expose traceable relevance dimensions for the selected character",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /task_fit[\s\S]*source_strength[\s\S]*comparative_value[\s\S]*interpretive_value/,
+    "RelevanceRadar dimensions must include task, source, comparison, and interpretation scores",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-significancekit-claims="true"/,
+    "SignificanceKit must expose a character significance claim surface",
+  );
+  assert.match(
+    masterSchemaPanel,
+    /Macro[\s\S]*Meso[\s\S]*Micro/,
+    "SignificanceKit must expose macro, meso, and micro character significance claims",
+  );
+
+  assert.match(
+    layoutHost,
+    /import StatsKitPanel from "\.\/panels\/StatsKitPanel"/,
+    "StatsKit must be imported as a first-class panel",
+  );
+
+  assert.match(
+    layoutHost,
+    /StatsKit:\s*"StatsKit"/,
+    "StatsKit must have a panel title in LayoutHost",
+  );
+
+  assert.match(
+    layoutHost,
+    /registerComponentFactoryFunction\(\s*"StatsKit"/,
+    "StatsKit must be registered as an openable GoldenLayout panel",
+  );
+
+  assert.match(
+    layoutHost,
+    /import AdminObservabilityPanel from "\.\/panels\/AdminObservabilityPanel"/,
+    "Admin Observability must be imported as the under-the-hood developer leaf",
+  );
+
+  assert.match(
+    layoutHost,
+    /AdminObservability:\s*"Admin \/ Observability"[\s\S]*registerComponentFactoryFunction\(\s*"AdminObservability"/,
+    "Admin Observability must be registered as an openable GoldenLayout panel",
+  );
+
+  assert.match(
+    toolsPanel,
+    /data-vaa1-open-statskit-panel="true"/,
+    "Tools panel must expose a program-level StatsKit entry point",
+  );
+
+  assert.match(
+    toolsPanel,
+    /data-vaa1-open-admin-observability="true"[\s\S]*openPanel\("AdminObservability"/,
+    "Tools panel must expose the under-the-hood Admin Observability entry point",
+  );
+
+  assert.match(
+    menuBar,
+    /label:\s*"StatsKit"[\s\S]*openSourceLinkedPanel\("StatsKit"\)/,
+    "Upper menu must expose StatsKit as a first-class source-linked panel",
+  );
+
+  assert.match(
+    menuBar,
+    /label:\s*"Admin \/ Observability"[\s\S]*openSourceLinkedPanel\("AdminObservability"\)/,
+    "Upper menu must expose Admin Observability as a developer-facing leaf",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-panel="true"/,
+    "StatsKit panel must expose a stable program-level surface",
+  );
+
+  assert.match(
+    adminObservabilityPanel,
+    /data-vaa1-admin-observability-panel="true"[\s\S]*data-vaa1-admin-observability-navigation-contract="true"/,
+    "Admin Observability panel must expose a stable under-the-hood navigation surface",
+  );
+
+  assert.match(
+    adminObservabilityPanel,
+    /data-vaa1-admin-performance-observability-contract="true"[\s\S]*data-vaa1-admin-maturation-economics-contract="true"/,
+    "Admin Observability must pair performance observability with data maturation economics",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /getSourceMediaMetadata[\s\S]*runStatsKit/,
+    "StatsKit panel must load real source metadata and call the backend StatsKit route",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /VideoService\.getAnalysis[\s\S]*buildMasterSchemaStatsAudit/,
+    "StatsKit must load full analysis data and derive category counts through the Master Schema audit",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-master-schema-category-audit="true"/,
+    "StatsKit must expose which listed categories were found in Master Schema, entity registry, or raw substrate",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /rawDetectedObjects\[class_name=person\][\s\S]*persons detected/,
+    "StatsKit person counts must audit raw person detections instead of reporting zero when detections exist",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /scene\/transition proxy count, not a finished shot-boundary count/,
+    "StatsKit camera shot rows must not pretend sparse scene proxies are true trailer shot-boundary counts",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /speechDurationSeconds[\s\S]*median\(timedTranscriptDurations\(analysisData\)\)/,
+    "StatsKit must compute speech duration and median speaking turn from timed transcript intervals when available",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /variance\(speakingTempoValues\(analysisData\)\)[\s\S]*variance\(expressionToneValues\(analysisData\)\)[\s\S]*variance\(motionIntensityValues\(analysisData\)\)/,
+    "StatsKit must compute variance from existing tempo, expression, and motion time series instead of leaving all Level I variation rows empty",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /stdDev\(speakerDurationValues\(analysisData\)\)[\s\S]*stdDev\(shotDurationValues\(analysisData\)\)[\s\S]*stdDev\(motionIntensityValues\(analysisData\)\)/,
+    "StatsKit must compute standard deviation from existing speaker, shot/scene, and motion distributions",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /audioProsody\.sound_environment\[music\/song\/score\][\s\S]*spatialToneScan zone tone\/brightness\/saturation/,
+    "StatsKit color and music rows must inspect existing spatial tone and audio environment layers before claiming zero",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-source-layer-delivery-plan="true"/,
+    "StatsKit must expose the required source-layer delivery plan, not only missing-data symptoms",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /True shot-boundary intervals[\s\S]*Audio event intervals: speech \/ silence \/ noise \/ music[\s\S]*Music and sound classifier output over time[\s\S]*Color \/ brightness \/ contrast frame-window extraction[\s\S]*Speaker-linked diarization turns/,
+    "StatsKit delivery plan must name the true shot, audio event, sound/music, color, and speaker-linked diarization layers",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /shot duration distributions[\s\S]*speech\/silence\/noise\/music ratios[\s\S]*music intensity x emotion[\s\S]*brightness distributions[\s\S]*speaker dominance/,
+    "StatsKit delivery plan must connect missing layers to StatsKit, SignificanceKit, and RelevanceRadar outputs",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /buildSignificanceRelevanceSchemaBundle[\s\S]*StatsKit[\s\S]*SignificanceKit[\s\S]*RelevanceRadar/,
+    "StatsKit panel must build the actual SignificanceKit and RelevanceRadar JSON contract objects",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-selectable-row="true"/,
+    "StatsKit workbench rows must be selectable visualization subjects",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-workbench-table-uses-panel-height="true"/,
+    "StatsKit workbench table must use the visible panel height instead of an artificially short inner scroll area",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-workbench-collapsible="true"/,
+    "StatsKit workbench table must be collapsible when the analyst is focused on other panel surfaces",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-row-plot-checkbox="true"/,
+    "StatsKit rows must expose checkboxes for plotting more than one statistic on the same visualization",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /selectedStatsForVisualization[\s\S]*selectedVisualizationData\(visualizationRows, visualization, visibleStatsRows\)/,
+    "StatsKit visualization must be driven by the checked multi-row selection, with active-row fallback",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-column-controls="true"[\s\S]*data-vaa1-statskit-column-width-slider="true"/,
+    "StatsKit workbench columns must expose adjustable width controls",
+  );
+
+  assert.doesNotMatch(
+    statsKitPanel,
+    /max-h-\[520px\]/,
+    "StatsKit workbench table must not be capped at the old short 520px height",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-selected-stat-inspector="true"/,
+    "StatsKit must expose a selected-stat inspector with method, evidence, required layer, and visualization eligibility",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-missing-data-audit="true"[\s\S]*Why not surfaced[\s\S]*Next data action/,
+    "StatsKit must audit missing data layers and explain why rows have not surfaced",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /requiredLayer[\s\S]*visualizationTypes[\s\S]*sourceAction/,
+    "StatsKit row records must carry required source layer, visualization eligibility, and source navigation action",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-significance-relevance-json-schema-bundle="true"/,
+    "StatsKit panel must visibly expose the Significance/Relevance JSON schema object bundle",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-visualization="true"[\s\S]*data-vaa1-statskit-box-collapsible="true"/,
+    "StatsKit visualization must be collapsible even when it is justified as an open working surface",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-ordered-workbench-layout="true"[\s\S]*data-vaa1-statskit-layout-slot="A"[\s\S]*data-vaa1-statskit-layout-slot="right-visualization"[\s\S]*data-vaa1-statskit-layout-slot="C"[\s\S]*data-vaa1-statskit-layout-slot="D"[\s\S]*data-vaa1-statskit-layout-slot="B"/,
+    "StatsKit must declare ordered layout slots for Stats, Significance, Relevance, Metadata, and the right-column visualization",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /xl:col-start-1 xl:row-start-2[\s\S]*data-vaa1-statskit-layout-slot="B"[\s\S]*Significance workbench/,
+    "Significance workbench must occupy the second left-column dropdown slot",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /xl:sticky xl:top-2 xl:col-start-2 xl:row-span-4[\s\S]*data-vaa1-statskit-layout-slot="right-visualization"/,
+    "Visualization must stay in the right column beside the ordered dropdown stack",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-check-all="true"/,
+    "Stats workbench must expose a check-all control",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-significance-workbench-check-all="true"/,
+    "Significance workbench must expose a check-all control",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-relevance-scanner-check-all="true"/,
+    "Relevance scanner must expose a check-all control",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-check-all="true"[\s\S]*data-vaa1-relevance-scanner-check-all="true"[\s\S]*data-vaa1-significance-workbench-check-all="true"/,
+    "Stats, Significance, and Relevance dropdowns must all expose check-all controls",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-row-plot-checkbox="true"[\s\S]*data-vaa1-relevance-scanner-row-checkbox="true"[\s\S]*data-vaa1-significance-workbench-row-checkbox="true"/,
+    "Stats, Significance, and Relevance rows must all expose plot checkboxes for visualization selection",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-visualization-target-selector="true"[\s\S]*Stats workbench[\s\S]*Significance workbench[\s\S]*Relevance scanner/,
+    "StatsKit visualization modes must be targetable to Stats, Significance, and Relevance data",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-operational-visualization-renderer="true"[\s\S]*data-vaa1-visualization-target=\{visualizationTarget\}/,
+    "StatsKit must use one operational renderer instead of a bar-chart-only visualization block",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-visualization-mode-table="true"[\s\S]*data-vaa1-visualization-mode-histogram="true"[\s\S]*data-vaa1-visualization-mode-boxplot="true"[\s\S]*data-vaa1-visualization-mode-heatmap="true"[\s\S]*data-vaa1-visualization-mode-timeline="true"[\s\S]*data-vaa1-visualization-mode-network="true"[\s\S]*data-vaa1-visualization-mode-bars="true"/,
+    "StatsKit must operationalize every visualization mode, not only bar charts",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-stats-metadata-view="true"[\s\S]*schema coverage, audits, source-layer plan, and JSON contracts[\s\S]*data-vaa1-statskit-master-schema-category-audit="true"[\s\S]*data-vaa1-statskit-schema-coverage="true"[\s\S]*data-vaa1-significance-relevance-delivery-audit="true"/,
+    "StatsKit audit and schema surfaces must be grouped under one Stats metadata view rather than competing with operational workbenches",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-relevance-scanner="true"[\s\S]*data-vaa1-relevance-scanner-default-collapsed="true"/,
+    "Relevance scanner must default collapsed until it delivers operational review value",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-relevance-scanner-selectable-row="true"[\s\S]*data-vaa1-relevance-scanner-row-inspector="true"/,
+    "Relevance scanner rows must be selectable and expose evidence/status inspection instead of a static metadata parade",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-significance-relevance-delivery-audit="true"/,
+    "StatsKit must visibly audit why SignificanceKit and RelevanceRadar are only partially delivered",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /counter_evidence[\s\S]*click_dimension_to_filter_results[\s\S]*schema-shaped but not yet fully operational/,
+    "StatsKit must name the missing SignificanceKit/RelevanceRadar schema behavior instead of presenting empty shells as substance",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /type SignificancePerspective[\s\S]*position:[\s\S]*orientation:[\s\S]*expression:[\s\S]*audience_profile:/,
+    "SignificanceKit claims must carry the schema's perspective, orientation, expression, and audience fields",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /significance_vector:[\s\S]*evidence_support:[\s\S]*primaryEvidenceCount[\s\S]*counterEvidenceCount/,
+    "SignificanceKit claims must expose significance vector and evidence support substance",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /Significance workbench[\s\S]*data-vaa1-significance-workbench-filters="true"[\s\S]*Perspective[\s\S]*Orientation[\s\S]*Expression[\s\S]*Dimension/,
+    "SignificanceKit must be operationalized as a filterable schema workbench, not only a claim table",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-significance-workbench-row="true"[\s\S]*data-vaa1-significance-workbench-inspector="true"[\s\S]*SignificanceClaim\.scope \/ perspective \/ significance_vector \/ evidence_support/,
+    "Significance workbench rows must be selectable and inspect the actual SignificanceClaim schema paths",
+  );
+
+  assert.doesNotMatch(
+    statsKitPanel,
+    /DEMO_/,
+    "StatsKit panel must not use demo-only evidence constants",
+  );
+
+  assert.match(
+    apiService,
+    /async runStatsKit/,
+    "Frontend API service must expose the StatsKit run endpoint",
+  );
+
+  assert.match(
+    apiServer,
+    /@app\.post\("\/api\/analysis\/\{analysis_id\}\/statskit\/run"/,
+    "Backend must expose the program-level StatsKit run endpoint",
+  );
+
+  assert.match(
+    statsKitAgent,
+    /outputs"\)\s*\/\s*"transcripts"/,
+    "StatsKit agent must look in the shared transcript output directory",
   );
 
   assert.match(
@@ -1600,8 +2011,8 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /Agent semantics are source-linked and Master-time governed[\s\S]*Meaning Network for continuity review/,
-    "Narrative Agent review compass must orient semantics to source evidence and route continuity to Meaning Network",
+    /Switch between overview, evidence, semantics, continuity, and scene checks without leaving this panel/,
+    "Narrative Agent review modes must keep character analysis in place",
   );
 
   assert.match(
@@ -1840,8 +2251,62 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /Cross-tradition readings, not imposed as Narrative Agent labels/,
+    /const \[activeNarrativeAgentArchetypeLens, setActiveNarrativeAgentArchetypeLens\]/,
+    "Narrative Agent archetype readings must be local panel state, not navigation-only buttons",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /buildNarrativeAgentGraphModel\(selectedRow, selectedTimelineHandles, activeNarrativeAgentArchetypeLens\)/,
+    "Narrative Agent graph must rebuild from the selected dramatic archetype lens",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-active-lens=\{activeNarrativeAgentArchetypeLens\}/,
+    "Narrative Agent graph must expose the active archetype lens as a stable UI contract",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /setActiveNarrativeAgentArchetypeLens\(lens\.id\)[\s\S]*narrativeAgentArchetypeLensChanged[\s\S]*focus_panel_changed:\s*false/,
+    "Dramatic archetype buttons must update the Narrative Agent panel in place without changing panel focus",
+  );
+
+  assert.doesNotMatch(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-archetype-local-control="true"[\s\S]{0,900}openPanel\("MeaningPlot"/,
+    "Dramatic archetype local controls must not throw the analyst into Meaning / Plot",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /Interpretive readings stay separate from agent identity/,
     "Dramatic archetypes must stay interpretive readings, not agent identity labels",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /function PanelDropdownSection[\s\S]*data-vaa1-headline-dropdown="true"/,
+    "Narrative Agent list-heavy work areas must share a headline dropdown primitive",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /title="Evidence Reliability"[\s\S]*title="Analyst Confirmations"[\s\S]*title="Known Character Profiles"[\s\S]*title="Suggested Matches"/,
+    "Narrative Agent support evidence areas must collapse under plain-language headline dropdowns",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /title="Suggested Labels"[\s\S]*title="Character Candidates"[\s\S]*title=\{category === "Identification" \? "Source Annotations"/,
+    "Narrative Agent lower review, candidate, and manual annotation lists must be individually collapsible",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /title="Choose Character"[\s\S]*title="Recommended Next Steps"[\s\S]*title="Review Modes"[\s\S]*title="Matching Memory"[\s\S]*title="Interpretation Lenses"[\s\S]*title="Character Evidence Graph"/,
+    "Narrative Agent primary work areas must start character-first and each have their own focused dropdown headline",
   );
 
   assert.match(
@@ -2070,6 +2535,87 @@ test("Narrative Agent Profiles expose agent narrative analytic layers", () => {
     sourceMediaPanel,
     /Narrative Agent refs/,
     "Narrative Agent Profile evidence trails should not expose identification-first wording",
+  );
+});
+
+test("Narrative Agent lens workspace exposes source-bound agency annotation governance", () => {
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-lens-matrix="true"/,
+    "Narrative Agent lenses must expose an operational interpretation matrix inside the panel",
+  );
+
+  for (const expected of [
+    "Macro narrative agency",
+    "Meso scene agency",
+    "Micro situational agency",
+    "Intrinsic",
+    "External",
+    "Implicit",
+    "Explicit",
+    "Agent POV",
+    "Other agents' POV",
+    "Viewer POV",
+  ]) {
+    assert.match(
+      meaningPlotPanel,
+      new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `Narrative Agent lens matrix must surface ${expected}`,
+    );
+  }
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-character-annotation-toolkit="true"/,
+    "Narrative Agent panel must expose a compact character annotation toolkit",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /node-level annotation - identity, role, motive, affect/,
+    "Character annotation toolkit must include node-level annotation capacity",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /edge-level annotation - relation, power, conflict, help/,
+    "Character annotation toolkit must include edge-level annotation capacity",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /source-bound annotation - time, BBox\/ROI, transcript, audio/,
+    "Character annotation toolkit must preserve source-bound Datascene evidence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-negative-evidence="true"/,
+    "Narrative Agent panel must make negative and absent evidence first-class",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /misdetected \/ not this agent/,
+    "Narrative Agent panel must let analysts mark misdetections",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /absent but structurally relevant/,
+    "Narrative Agent panel must let analysts track structural absence",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-dossier="true"/,
+    "Narrative Agent panel must expose dossier-style mature evidence summaries",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /data-vaa1-narrative-agent-confidence-provenance="true"/,
+    "Narrative Agent panel must surface confidence and provenance governance",
   );
 });
 
@@ -4115,8 +4661,8 @@ test("Master Schema Narrative Agent authority surfaces are navigable evidence an
 
   assert.match(
     masterSchemaPanel,
-    /openConfirmationFamily[\s\S]*concise_pattern_confirmation[\s\S]*emitEvidenceTraceback/,
-    "Concise Pattern Confirmation chips must open their supporting traceback evidence",
+    /openConfirmationFamily[\s\S]*concise_pattern_confirmation[\s\S]*setLocalInspection/,
+    "Concise Pattern Confirmation chips must inspect locally before optional traceback evidence",
   );
 
   assert.match(

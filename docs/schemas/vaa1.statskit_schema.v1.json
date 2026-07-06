@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1.statskit_schema.v1.json",
+  "title": "Datascene / VAA1 StatsKit Schema",
+  "schema_name": "Datascene StatsKit",
+  "schema_version": "0.1.0",
+  "purpose": "Exploratory quantitative social science methods for multimodal video, source-linked interpretation, visualization, and traceback.",
+  "core_principle": "Every statistic must remain traceable to source evidence, timestamp, modality, method, and interpretation context.",
+  "type": "object",
+  "required": ["statskit"],
+  "properties": {
+    "statskit": {
+      "type": "object",
+      "required": ["schema_name", "schema_version", "purpose", "core_principle", "objects", "method_library", "governance_rules"],
+      "properties": {
+        "schema_name": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "purpose": { "type": "string" },
+        "core_principle": { "type": "string" },
+
+        "objects": {
+          "type": "object",
+          "properties": {
+            "StatsProject": {
+              "type": "object",
+              "properties": {
+                "project_id": { "type": "string" },
+                "title": { "type": "string" },
+                "description": { "type": "string" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "analyst_ids": { "type": "array", "items": { "type": "string" } },
+                "source_collection_ids": { "type": "array", "items": { "type": "string" } },
+                "stats_runs": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsRun" } }
+              },
+              "required": ["project_id", "title", "created_at"]
+            },
+
+            "SourceCollection": {
+              "type": "object",
+              "properties": {
+                "collection_id": { "type": "string" },
+                "title": { "type": "string" },
+                "description": { "type": "string" },
+                "source_video_ids": { "type": "array", "items": { "type": "string" } },
+                "collection_type": { "type": "string", "enum": ["single_video", "corpus", "comparative_set", "archive_sample", "research_dataset"] },
+                "comparative_dimensions": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["collection_id", "title", "collection_type"]
+            },
+
+            "SourceVideo": {
+              "type": "object",
+              "properties": {
+                "video_id": { "type": "string" },
+                "title": { "type": "string" },
+                "source_uri": { "type": "string", "format": "uri" },
+                "duration_seconds": { "type": "number" },
+                "metadata": {
+                  "type": "object",
+                  "properties": {
+                    "creator": { "type": "string" },
+                    "date": { "type": "string", "format": "date" },
+                    "language": { "type": "string" },
+                    "genre": { "type": "string" },
+                    "institution": { "type": "string" },
+                    "rights_status": { "type": "string" }
+                  }
+                },
+                "linked_modal_layers": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["video_id", "title", "source_uri", "duration_seconds"]
+            },
+
+            "StatsRun": {
+              "type": "object",
+              "properties": {
+                "run_id": { "type": "string" },
+                "run_name": { "type": "string" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "created_by": { "type": "string" },
+                "input_scope": {
+                  "type": "object",
+                  "properties": {
+                    "scope_type": { "type": "string", "enum": ["scene", "segment", "video", "collection", "comparative_corpus"] },
+                    "video_ids": { "type": "array", "items": { "type": "string" } },
+                    "scene_ids": { "type": "array", "items": { "type": "string" } },
+                    "time_window": {
+                      "type": "object",
+                      "properties": {
+                        "start_seconds": { "type": "number" },
+                        "end_seconds": { "type": "number" }
+                      }
+                    }
+                  },
+                  "required": ["scope_type"]
+                },
+                "selected_methods": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsMethod" } },
+                "generated_results": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsResult" } },
+                "generated_visualizations": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsVisualization" } },
+                "generated_interpretations": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsInterpretation" } },
+                "provenance": { "$ref": "#/properties/statskit/properties/objects/properties/StatsProvenance" }
+              },
+              "required": ["run_id", "run_name", "created_at", "created_by", "input_scope"]
+            },
+
+            "StatsMethod": {
+              "type": "object",
+              "properties": {
+                "method_id": { "type": "string" },
+                "method_family": { "type": "string", "enum": ["descriptive", "distributional", "cross_tabulation", "correlation", "temporal", "comparative", "network", "narrative", "linguistic", "visual", "audio", "multimodal"] },
+                "method_name": { "type": "string" },
+                "description": { "type": "string" },
+                "input_variables": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/StatsVariable" } },
+                "output_type": { "type": "string", "enum": ["count", "percentage", "duration", "mean", "median", "variance", "standard_deviation", "distribution", "correlation_matrix", "network_measure", "timeline", "comparison_table"] },
+                "appropriate_use": { "type": "string" },
+                "limitations": { "type": "string" },
+                "requires_human_review": { "type": "boolean" }
+              },
+              "required": ["method_id", "method_family", "method_name", "output_type"]
+            },
+
+            "StatsVariable": {
+              "type": "object",
+              "properties": {
+                "variable_id": { "type": "string" },
+                "variable_name": { "type": "string" },
+                "modality": { "type": "string", "enum": ["transcript", "visual", "audio", "scene", "narrative", "network", "metadata", "multimodal"] },
+                "measurement_level": { "type": "string", "enum": ["nominal", "ordinal", "interval", "ratio", "temporal", "relational"] },
+                "unit": { "type": "string", "enum": ["count", "seconds", "percentage", "score", "category", "token", "edge", "node"] },
+                "source_field": { "type": "string" },
+                "allowed_values": { "type": "array", "items": { "type": "string" } },
+                "missing_data_policy": { "type": "string", "enum": ["ignore", "flag", "impute", "analyst_review"] }
+              },
+              "required": ["variable_id", "variable_name", "modality", "measurement_level", "unit", "source_field"]
+            },
+
+            "StatsResult": {
+              "type": "object",
+              "properties": {
+                "result_id": { "type": "string" },
+                "method_id": { "type": "string" },
+                "result_label": { "type": "string" },
+                "result_type": { "type": "string", "enum": ["scalar", "table", "matrix", "time_series", "network", "distribution", "model_summary"] },
+                "value": { "type": ["number", "string", "object", "array"] },
+                "confidence": {
+                  "type": "object",
+                  "properties": {
+                    "confidence_score": { "type": "number" },
+                    "confidence_basis": { "type": "string", "enum": ["manual", "model", "mixed", "inferred"] }
+                  },
+                  "required": ["confidence_score", "confidence_basis"]
+                },
+                "linked_evidence": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/EvidenceLink" } },
+                "interpretation_status": { "type": "string", "enum": ["raw", "candidate", "reviewed", "accepted", "disputed", "rejected"] },
+                "analyst_notes": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["result_id", "method_id", "result_label", "result_type", "value"]
+            },
+
+            "EvidenceLink": {
+              "type": "object",
+              "properties": {
+                "evidence_id": { "type": "string" },
+                "video_id": { "type": "string" },
+                "scene_id": { "type": "string" },
+                "timestamp": {
+                  "type": "object",
+                  "properties": {
+                    "start_seconds": { "type": "number" },
+                    "end_seconds": { "type": "number" }
+                  },
+                  "required": ["start_seconds", "end_seconds"]
+                },
+                "modality": { "type": "string", "enum": ["transcript", "visual", "audio", "metadata", "manual_annotation", "multimodal"] },
+                "source_object_id": { "type": "string" },
+                "bbox_id": { "type": "string" },
+                "transcript_span_id": { "type": "string" },
+                "speaker_id": { "type": "string" },
+                "annotation_id": { "type": "string" },
+                "forensic_render_available": { "type": "boolean" },
+                "open_source_action": {
+                  "type": "object",
+                  "properties": {
+                    "action_type": { "type": "string", "enum": ["jump_to_video", "open_scene_card", "open_bbox", "open_transcript_span", "open_audio_event", "open_network_node"] },
+                    "target_uri": { "type": "string", "format": "uri" }
+                  },
+                  "required": ["action_type", "target_uri"]
+                }
+              },
+              "required": ["evidence_id", "video_id", "timestamp", "modality"]
+            },
+
+            "StatsVisualization": {
+              "type": "object",
+              "properties": {
+                "visualization_id": { "type": "string" },
+                "title": { "type": "string" },
+                "visualization_type": { "type": "string", "enum": ["bar_chart", "line_chart", "histogram", "boxplot", "scatterplot", "heatmap", "timeline", "network_graph", "sankey", "matrix", "dashboard_card"] },
+                "input_result_ids": { "type": "array", "items": { "type": "string" } },
+                "interactive_features": {
+                  "type": "object",
+                  "properties": {
+                    "click_to_source": { "type": "boolean" },
+                    "hover_to_evidence": { "type": "boolean" },
+                    "brush_time_window": { "type": "boolean" },
+                    "filter_by_modality": { "type": "boolean" },
+                    "compare_sources": { "type": "boolean" },
+                    "export_selection": { "type": "boolean" }
+                  }
+                },
+                "linked_views": { "type": "array", "items": { "type": "string" } },
+                "traceback_policy": {
+                  "type": "object",
+                  "properties": {
+                    "every_visual_mark_links_to_evidence": { "type": "boolean" },
+                    "aggregate_values_show_constituent_items": { "type": "boolean" },
+                    "analyst_can_expand_from_statistic_to_source": { "type": "boolean" }
+                  }
+                }
+              },
+              "required": ["visualization_id", "title", "visualization_type", "input_result_ids"]
+            },
+
+            "StatsInterpretation": {
+              "type": "object",
+              "properties": {
+                "interpretation_id": { "type": "string" },
+                "title": { "type": "string" },
+                "claim": { "type": "string" },
+                "claim_type": { "type": "string", "enum": ["descriptive", "comparative", "relational", "temporal", "narrative", "methodological"] },
+                "based_on_result_ids": { "type": "array", "items": { "type": "string" } },
+                "based_on_visualization_ids": { "type": "array", "items": { "type": "string" } },
+                "linked_evidence": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/EvidenceLink" } },
+                "interpretive_strength": { "type": "string", "enum": ["weak", "moderate", "strong", "contested"] },
+                "analyst_status": { "type": "string", "enum": ["draft", "reviewed", "accepted", "rejected"] },
+                "counter_evidence": { "type": "array", "items": { "$ref": "#/properties/statskit/properties/objects/properties/EvidenceLink" } },
+                "traceback": {
+                  "type": "object",
+                  "properties": {
+                    "source_results": { "type": "array", "items": { "type": "string" } },
+                    "source_methods": { "type": "array", "items": { "type": "string" } },
+                    "source_variables": { "type": "array", "items": { "type": "string" } },
+                    "source_evidence": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              },
+              "required": ["interpretation_id", "title", "claim", "claim_type"]
+            },
+
+            "StatsProvenance": {
+              "type": "object",
+              "properties": {
+                "provenance_id": { "type": "string" },
+                "pipeline_version": { "type": "string" },
+                "model_versions": { "type": "array", "items": { "type": "string" } },
+                "manual_annotation_versions": { "type": "array", "items": { "type": "string" } },
+                "data_sources_used": { "type": "array", "items": { "type": "string" } },
+                "excluded_sources": { "type": "array", "items": { "type": "string" } },
+                "processing_log": { "type": "array", "items": { "type": "string" } },
+                "known_limitations": { "type": "array", "items": { "type": "string" } },
+                "reproducibility_package": {
+                  "type": "object",
+                  "properties": {
+                    "exportable": { "type": "boolean" },
+                    "includes_data_dictionary": { "type": "boolean" },
+                    "includes_method_config": { "type": "boolean" },
+                    "includes_visualization_config": { "type": "boolean" },
+                    "includes_evidence_links": { "type": "boolean" }
+                  }
+                }
+              },
+              "required": ["provenance_id", "pipeline_version"]
+            }
+          }
+        },
+
+        "method_library": {
+          "type": "object",
+          "properties": {
+            "descriptive_statistics": { "type": "array", "items": { "type": "string" } },
+            "distributional_statistics": { "type": "array", "items": { "type": "string" } },
+            "cross_tabulation": { "type": "array", "items": { "type": "string" } },
+            "correlation": { "type": "array", "items": { "type": "string" } },
+            "temporal_analysis": { "type": "array", "items": { "type": "string" } },
+            "network_statistics": { "type": "array", "items": { "type": "string" } },
+            "narrative_statistics": { "type": "array", "items": { "type": "string" } },
+            "linguistic_statistics": { "type": "array", "items": { "type": "string" } },
+            "visual_statistics": { "type": "array", "items": { "type": "string" } },
+            "audio_statistics": { "type": "array", "items": { "type": "string" } },
+            "comparative_statistics": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "governance_rules": {
+          "type": "object",
+          "properties": {
+            "manual_correction_wins": { "type": "boolean" },
+            "statistics_must_link_to_source": { "type": "boolean" },
+            "visualizations_must_be_clickable_to_evidence": { "type": "boolean" },
+            "interpretations_must_expose_traceback": { "type": "boolean" },
+            "aggregate_values_must_expand_to_constituent_items": { "type": "boolean" },
+            "uncertain_model_outputs_must_be_flagged": { "type": "boolean" },
+            "comparisons_must_report_missing_data": { "type": "boolean" },
+            "export_must_include_methods_and_provenance": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

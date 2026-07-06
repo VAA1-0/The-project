@@ -2295,6 +2295,28 @@ class ApiService {
     return data.source_media_metadata || data || {};
   }
 
+  async runStatsKit(
+    analysisId: string,
+    payload: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/statskit/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `StatsKit run failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+
+    return response.json();
+  }
+
   async updateSourceMediaMetadata(
     analysisId: string,
     payload: {

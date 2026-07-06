@@ -177,38 +177,87 @@ type NarrativeAgentGraphModel = {
   edges: NarrativeAgentGraphEdge[];
 };
 
+type NarrativeAgentRelevanceDimension = {
+  id:
+    | "task_fit"
+    | "source_strength"
+    | "novelty"
+    | "comparative_value"
+    | "interpretive_value"
+    | "actionability";
+  label: string;
+  score: number;
+  reason: string;
+  evidenceCount: number;
+  sourceTime?: number;
+};
+
+type NarrativeAgentSignificanceClaim = {
+  level: "Macro" | "Meso" | "Micro";
+  title: string;
+  text: string;
+  evidenceCount: number;
+  sourceTime?: number;
+};
+
+type NarrativeAgentRelevanceSurface = {
+  overallScore: number;
+  context: {
+    analystGoal: string;
+    targetAudience: string;
+    scope: string;
+    activeLens: string;
+  };
+  statsSignals: Array<{
+    label: string;
+    value: string | number;
+    detail: string;
+  }>;
+  dimensions: NarrativeAgentRelevanceDimension[];
+  significanceClaims: NarrativeAgentSignificanceClaim[];
+  firstSourceTime?: number;
+};
+
 const NARRATIVE_AGENT_ARCHETYPE_LENSES = [
   {
     id: "shakespearean_performativity",
     label: "Performed agency",
     tradition: "Shakespearean",
     description: "Public role, private motive, status pressure, and rhetorical agency.",
+    graphDescription: "Macro role and public action sit near the agent; private motive and scene pressure stay inspectable below.",
   },
   {
     id: "proppian_function",
     label: "Narrative function",
     tradition: "Proppian",
     description: "Helper, opponent, donor, dispatcher, false hero, or task relation.",
+    graphDescription: "Scene and occurrence nodes are arranged as task functions around helper, opponent, and quest movement.",
   },
   {
     id: "jungian_symbolic",
     label: "Symbolic shadow",
     tradition: "Jungian / Mythic",
     description: "Shadow, mentor, trickster, mask, projection, or symbolic relation.",
+    graphDescription: "Cue nodes are pulled forward as symbolic signals while source and scene anchors remain traceable.",
   },
   {
     id: "greimasian_actant",
     label: "Actant relation",
     tradition: "Greimasian",
     description: "Subject, object, sender, receiver, helper, opponent, and goal structure.",
+    graphDescription: "Relations spread into actant lanes so helpers, opponents, sender/receiver pressure, and object pursuit can be compared.",
   },
   {
     id: "burkean_motive",
     label: "Motive scene",
     tradition: "Burkean / Dramatistic",
     description: "Act, scene, agent, agency, purpose, guilt, and motive.",
+    graphDescription: "Act, scene, agency, and purpose cues are separated so motive can be read against situation.",
   },
 ];
+
+type NarrativeAgentArchetypeLens = typeof NARRATIVE_AGENT_ARCHETYPE_LENSES[number];
+type NarrativeAgentArchetypeLensId = typeof NARRATIVE_AGENT_ARCHETYPE_LENSES[number]["id"];
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -1051,6 +1100,54 @@ function narrativeAgentGraphNodeTone(kind: NarrativeAgentGraphNode["kind"]): str
   return "border-amber-500 bg-amber-950 text-amber-100";
 }
 
+function narrativeAgentArchetypeLensById(lensId: NarrativeAgentArchetypeLensId) {
+  return NARRATIVE_AGENT_ARCHETYPE_LENSES.find((lens) => lens.id === lensId) ||
+    NARRATIVE_AGENT_ARCHETYPE_LENSES[0];
+}
+
+function narrativeAgentLensY(
+  lensId: NarrativeAgentArchetypeLensId,
+  kind: NarrativeAgentGraphNode["kind"],
+  index: number,
+): number {
+  if (lensId === "shakespearean_performativity") {
+    if (kind === "agent") return 48;
+    if (kind === "scene") return 20;
+    if (kind === "source") return 66;
+    if (kind === "cue") return 82;
+    return index % 2 === 0 ? 36 : 58;
+  }
+  if (lensId === "proppian_function") {
+    if (kind === "agent") return 44;
+    if (kind === "scene") return 18;
+    if (kind === "source") return 78;
+    if (kind === "cue") return 62;
+    return 32 + (index % 3) * 16;
+  }
+  if (lensId === "jungian_symbolic") {
+    if (kind === "agent") return 54;
+    if (kind === "scene") return 72;
+    if (kind === "source") return 82;
+    if (kind === "cue") return 24 + (index % 2) * 10;
+    return 44;
+  }
+  if (lensId === "greimasian_actant") {
+    if (kind === "agent") return 50;
+    if (kind === "scene") return 18 + (index % 2) * 12;
+    if (kind === "source") return 82;
+    if (kind === "cue") return 68;
+    return 34 + (index % 4) * 10;
+  }
+  if (lensId === "burkean_motive") {
+    if (kind === "agent") return 46;
+    if (kind === "scene") return 30;
+    if (kind === "source") return 76;
+    if (kind === "cue") return 62;
+    return index % 2 === 0 ? 18 : 86;
+  }
+  return kind === "agent" ? 50 : kind === "scene" ? 22 : kind === "source" ? 66 : kind === "cue" ? 82 : 72;
+}
+
 function narrativeAgentGraphNodeShortLabel(node: NarrativeAgentGraphNode): string {
   if (node.kind === "agent") return "Agent";
   if (node.kind === "scene") return node.label.replace(/^S/i, "S");
@@ -1079,6 +1176,7 @@ function seekNarrativeAgentGraphSource(videoId: string, time: number) {
 function buildNarrativeAgentGraphModel(
   row: NarrativeAgentPathRow,
   handles: NarrativeAgentTimelineHandle[],
+  activeLensId: NarrativeAgentArchetypeLensId = "shakespearean_performativity",
 ): NarrativeAgentGraphModel {
   const agentNodeId = `agent:${row.key}`;
   const nodes: NarrativeAgentGraphNode[] = [{
@@ -1086,7 +1184,7 @@ function buildNarrativeAgentGraphModel(
     label: row.label,
     kind: "agent",
     x: 50,
-    y: 50,
+    y: narrativeAgentLensY(activeLensId, "agent", 0),
     time: row.start,
     end: row.end,
   }];
@@ -1111,7 +1209,7 @@ function buildNarrativeAgentGraphModel(
         label: scene.sceneLabel,
         kind: "scene",
         x,
-        y: 22,
+        y: narrativeAgentLensY(activeLensId, "scene", index),
         time: scene.start,
         end: scene.end,
         scene,
@@ -1128,7 +1226,12 @@ function buildNarrativeAgentGraphModel(
     .slice(0, 10)
     .forEach((handle, index, selectedHandles) => {
       const x = 10 + index * (80 / Math.max(1, selectedHandles.length - 1));
-      const y = handle.kind === "cue" ? 82 : handle.kind === "source" ? 66 : 72;
+      const nodeKind = handle.kind === "source"
+        ? "source"
+        : handle.kind === "cue"
+          ? "cue"
+          : "occurrence";
+      const y = narrativeAgentLensY(activeLensId, nodeKind, index);
       const kind = handle.kind === "source"
         ? "source_anchor"
         : handle.kind === "cue"
@@ -1153,6 +1256,190 @@ function buildNarrativeAgentGraphModel(
     });
 
   return { nodes, edges };
+}
+
+function clampNarrativeAgentScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function formatNarrativeAgentScore(value: number): string {
+  return `${Math.round(clampNarrativeAgentScore(value) * 100)}%`;
+}
+
+function narrativeAgentPlural(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function buildNarrativeAgentRelevanceSurface({
+  row,
+  activeLens,
+  graphModel,
+  timelineHandles,
+  visualSampleSlots,
+  audioSampleSlots,
+  audiovisualSampleSlots,
+  continuityCandidates,
+  recommendationsCount,
+}: {
+  row: NarrativeAgentPathRow;
+  activeLens: NarrativeAgentArchetypeLens;
+  graphModel: NarrativeAgentGraphModel;
+  timelineHandles: NarrativeAgentTimelineHandle[];
+  visualSampleSlots: Record<string, unknown>[];
+  audioSampleSlots: Record<string, unknown>[];
+  audiovisualSampleSlots: Record<string, unknown>[];
+  continuityCandidates: Record<string, unknown>[];
+  recommendationsCount: number;
+}): NarrativeAgentRelevanceSurface {
+  const sceneCount = Math.max(row.sceneCount || 0, row.scenePresence.length);
+  const manualCount = Math.max(row.manualCount || 0, row.sourceItems.length);
+  const cueCount = Math.max(row.cueCount || 0, row.cues.length);
+  const sampleCount = visualSampleSlots.length + audioSampleSlots.length + audiovisualSampleSlots.length;
+  const sourceHandleCount = timelineHandles.length;
+  const graphEvidenceCount = graphModel.nodes.length + graphModel.edges.length;
+  const firstSourceTime = numberFrom(
+    row.start ??
+      row.scenePresence[0]?.start ??
+      timelineHandles[0]?.time ??
+      asRecord(visualSampleSlots[0]?.time).start ??
+      asRecord(audioSampleSlots[0]?.time).start ??
+      asRecord(audiovisualSampleSlots[0]?.time).start,
+  );
+  const taskFit = clampNarrativeAgentScore(
+    0.2 + sceneCount * 0.09 + cueCount * 0.035 + graphModel.edges.length * 0.025,
+  );
+  const sourceStrength = clampNarrativeAgentScore(
+    0.12 + manualCount * 0.12 + sourceHandleCount * 0.04 + sampleCount * 0.08,
+  );
+  const novelty = clampNarrativeAgentScore(
+    0.35 + continuityCandidates.length * 0.08 + Math.max(0, row.sourceLabels.length - 1) * 0.05,
+  );
+  const comparativeValue = clampNarrativeAgentScore(
+    0.2 + row.sourceLabels.length * 0.06 + sceneCount * 0.06 + continuityCandidates.length * 0.06,
+  );
+  const interpretiveValue = clampNarrativeAgentScore(
+    0.18 + cueCount * 0.05 + sceneCount * 0.08 + graphEvidenceCount * 0.015,
+  );
+  const actionability = clampNarrativeAgentScore(
+    recommendationsCount > 0 ? 0.72 + recommendationsCount * 0.035 : 0.88,
+  );
+  const dimensions: NarrativeAgentRelevanceDimension[] = [
+    {
+      id: "task_fit",
+      label: "Task fit",
+      score: taskFit,
+      reason: `${row.label} has ${narrativeAgentPlural(sceneCount, "scene")} and ${narrativeAgentPlural(cueCount, "cue")} available for narrative analysis.`,
+      evidenceCount: sceneCount + cueCount,
+      sourceTime: firstSourceTime,
+    },
+    {
+      id: "source_strength",
+      label: "Source strength",
+      score: sourceStrength,
+      reason: `${narrativeAgentPlural(sourceHandleCount, "source handle")} and ${narrativeAgentPlural(manualCount, "confirmed item")} support this profile.`,
+      evidenceCount: sourceHandleCount + manualCount,
+      sourceTime: firstSourceTime,
+    },
+    {
+      id: "novelty",
+      label: "Novelty",
+      score: novelty,
+      reason: `${narrativeAgentPlural(continuityCandidates.length, "continuity candidate")} can change what Datascene knows about this character.`,
+      evidenceCount: continuityCandidates.length,
+      sourceTime: firstSourceTime,
+    },
+    {
+      id: "comparative_value",
+      label: "Comparative value",
+      score: comparativeValue,
+      reason: `${narrativeAgentPlural(row.sourceLabels.length, "label")} and ${narrativeAgentPlural(sceneCount, "scene")} allow comparison across appearances.`,
+      evidenceCount: row.sourceLabels.length + sceneCount,
+      sourceTime: firstSourceTime,
+    },
+    {
+      id: "interpretive_value",
+      label: "Interpretive value",
+      score: interpretiveValue,
+      reason: `${activeLens.tradition} currently reads this character through ${activeLens.description.toLowerCase()}`,
+      evidenceCount: cueCount + graphEvidenceCount,
+      sourceTime: firstSourceTime,
+    },
+    {
+      id: "actionability",
+      label: "Actionability",
+      score: actionability,
+      reason: recommendationsCount > 0
+        ? `${narrativeAgentPlural(recommendationsCount, "next step")} can strengthen the profile.`
+        : "The basic profile is ready for first-pass interpretation.",
+      evidenceCount: recommendationsCount,
+      sourceTime: firstSourceTime,
+    },
+  ];
+  const overallScore = clampNarrativeAgentScore(
+    dimensions.reduce((sum, dimension) => sum + dimension.score, 0) / Math.max(1, dimensions.length),
+  );
+  return {
+    overallScore,
+    context: {
+      analystGoal: "narrative analysis",
+      targetAudience: "analyst",
+      scope: "video",
+      activeLens: activeLens.tradition,
+    },
+    statsSignals: [
+      {
+        label: "Source handles",
+        value: sourceHandleCount,
+        detail: "time-linked scene, cue, and source anchors",
+      },
+      {
+        label: "Manual anchors",
+        value: manualCount,
+        detail: "confirmed or governed character evidence",
+      },
+      {
+        label: "Samples",
+        value: `${visualSampleSlots.length}/${audioSampleSlots.length}/${audiovisualSampleSlots.length}`,
+        detail: "visual / audio / audiovisual memory slots",
+      },
+      {
+        label: "Graph support",
+        value: `${graphModel.nodes.length}/${graphModel.edges.length}`,
+        detail: "nodes / edges in this character view",
+      },
+      {
+        label: "Candidates",
+        value: continuityCandidates.length,
+        detail: "reviewable continuity candidates",
+      },
+    ],
+    dimensions,
+    significanceClaims: [
+      {
+        level: "Macro",
+        title: "Narrative agency",
+        text: `${row.label} is represented as a character-level agent across ${narrativeAgentPlural(sceneCount, "scene")}.`,
+        evidenceCount: sceneCount + manualCount,
+        sourceTime: firstSourceTime,
+      },
+      {
+        level: "Meso",
+        title: "Scene agency",
+        text: `The selected lens organizes this character through ${activeLens.tradition} scene relations and source-linked handles.`,
+        evidenceCount: graphModel.edges.length,
+        sourceTime: firstSourceTime,
+      },
+      {
+        level: "Micro",
+        title: "Situational agency",
+        text: `${narrativeAgentPlural(cueCount, "cue")} and ${narrativeAgentPlural(sourceHandleCount, "handle")} can anchor speaking, listening, looking, and action claims.`,
+        evidenceCount: cueCount + sourceHandleCount,
+        sourceTime: firstSourceTime,
+      },
+    ],
+    firstSourceTime,
+  };
 }
 
 function narrativeAgentPathProfileId(row: NarrativeAgentPathRow): string | undefined {
@@ -1630,7 +1917,7 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-200">
-            Mature Evidence View
+            Evidence reliability
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
             Master Schema first-read layer; raw repositories remain preserved.
@@ -1704,6 +1991,15 @@ function ConfirmationProgramStrip({
   analysisData: AnalysisData | null;
   videoId: string;
 }) {
+  const [localInspection, setLocalInspection] = useState<{
+    id: string;
+    label: string;
+    kind: "anchor" | "family" | "program";
+    status?: string;
+    route?: string;
+    note: string;
+    target: EvidenceNavigationTarget;
+  } | null>(null);
   const audit = analysisData?.metadata?.masterSchemaMaturityAudit;
   const anchor = audit?.user_confirmed_anchor;
   const program = audit?.confirmation_program;
@@ -1722,10 +2018,15 @@ function ConfirmationProgramStrip({
       sourceRefs: { media_id: videoId, metadata_id: surface.route || surface.surface || null },
       sourceItem: surface as Record<string, unknown>,
     };
-    openEvidenceNavigation(videoId, target);
-    if (navigation.panelType === "TracebackDrawer") {
-      emitEvidenceTraceback(videoId, target);
-    }
+    setLocalInspection({
+      id: target.id,
+      label: navigation.label,
+      kind: "anchor",
+      status: surface.status || "pending",
+      route: surface.route || surface.surface,
+      note: "This tells Datascene which analyst-confirmed evidence can be trusted before wider matching or character interpretation.",
+      target,
+    });
   };
   const openConfirmationFamily = (family: string) => {
     const target: EvidenceNavigationTarget = {
@@ -1741,14 +2042,44 @@ function ConfirmationProgramStrip({
         consults_user_confirmed_anchor: program?.consults_user_confirmed_anchor,
       },
     };
-    emitEvidenceTraceback(videoId, target);
+    setLocalInspection({
+      id: target.id,
+      label: formatAuditLabel(family),
+      kind: "family",
+      status: program?.consults_user_confirmed_anchor ? "uses confirmed anchors" : "anchor consultation pending",
+      route: family,
+      note: "This confirmation family describes what kind of character evidence should consult already-confirmed anchors before becoming mature data.",
+      target,
+    });
+  };
+  const inspectProgram = () => {
+    const target: EvidenceNavigationTarget = {
+      id: "user_confirmed_anchor",
+      label: program?.consults_user_confirmed_anchor
+        ? "Confirmed anchors are active"
+        : "Anchor consultation pending",
+      evidenceType: "user_confirmed_anchor",
+      sourcePanel: "MasterSchema",
+      focusSurface: "user_confirmed_anchor",
+      sourceRefs: { media_id: videoId, metadata_id: "user_confirmed_anchor" },
+      sourceItem: asRecord(audit),
+    };
+    setLocalInspection({
+      id: target.id,
+      label: target.label,
+      kind: "program",
+      status: program?.consults_user_confirmed_anchor ? "active" : "pending",
+      route: "user_confirmed_anchor",
+      note: anchor?.principle || "User confirmed corrections and annotations anchor mature sense-making.",
+      target,
+    });
   };
   return (
     <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
-            User Confirmed Anchor
+            Analyst confirmations
           </div>
           <div className="mt-0.5 max-w-3xl text-[10px] text-[var(--ui-passive-text)]">
             {anchor?.principle ||
@@ -1758,24 +2089,70 @@ function ConfirmationProgramStrip({
         <button
           type="button"
           className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:border-cyan-400/80 hover:bg-cyan-950/30"
-          onClick={() =>
-            emitEvidenceTraceback(videoId, {
-              id: "user_confirmed_anchor",
-              label: program?.consults_user_confirmed_anchor
-                ? "Confirmations consult anchors"
-                : "Anchor consultation pending",
-              evidenceType: "user_confirmed_anchor",
-              sourcePanel: "MasterSchema",
-              sourceRefs: { media_id: videoId, metadata_id: "user_confirmed_anchor" },
-              sourceItem: asRecord(audit),
-            })
-          }
+          onClick={inspectProgram}
         >
           {program?.consults_user_confirmed_anchor
-            ? "Confirmations consult anchors"
+            ? "Inspect confirmed anchors"
             : "Anchor consultation pending"}
         </button>
       </div>
+      {localInspection ? (
+        <div
+          className="mt-2 rounded border border-cyan-800/60 bg-cyan-950/20 px-2 py-2"
+          data-vaa1-user-confirmed-anchor-local-inspection="true"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[10px] font-semibold text-cyan-100">
+                {localInspection.label}
+              </div>
+              <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+                {localInspection.note}
+              </div>
+            </div>
+            <span className="shrink-0 rounded border border-cyan-700/60 bg-[#101010] px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-100">
+              {localInspection.status || localInspection.kind}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+            <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1">
+              <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">What this is</div>
+              <div className="mt-0.5 text-[10px] text-slate-200">{localInspection.kind}</div>
+            </div>
+            <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1">
+              <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">Where it applies</div>
+              <div className="mt-0.5 truncate text-[10px] text-slate-200">{localInspection.route || "anchor program"}</div>
+            </div>
+            <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1">
+              <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">Panel behavior</div>
+              <div className="mt-0.5 text-[10px] text-slate-200">stays here unless opened</div>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              className="rounded border border-cyan-700/70 bg-[#101010] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/30"
+              onClick={() => openEvidenceNavigation(videoId, localInspection.target)}
+            >
+              Open linked source
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-200 hover:border-cyan-700"
+              onClick={() => emitEvidenceTraceback(videoId, localInspection.target)}
+            >
+              Open Traceback
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-700 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:border-slate-500"
+              onClick={() => setLocalInspection(null)}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      ) : null}
       {anchorSurfaces.length > 0 && (
         <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
           {anchorSurfaces.map((surface) => {
@@ -1880,7 +2257,7 @@ function MasterSchemaSubjectStrip({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
-            Master Schema Subject Authority
+            Known character profiles
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
             Governed Narrative Agent Profiles and character-role metadata are the mature subject source for downstream panels.
@@ -1947,7 +2324,7 @@ function MatureProliferationMatchStrip({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-200">
-            Proliferation Candidate Matches
+            Suggested matches
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
             Mature evidence matches remain candidate support until source evidence confirms them.
@@ -2005,6 +2382,49 @@ function MatureProliferationMatchStrip({
   );
 }
 
+function PanelDropdownSection({
+  title,
+  summary,
+  count,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  count?: string | number;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      className="mb-2 rounded border border-slate-800 bg-slate-950/20"
+      open={defaultOpen}
+      data-vaa1-headline-dropdown="true"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2 text-[11px] font-semibold text-slate-200 marker:content-none">
+        <span className="min-w-0">
+          <span className="block uppercase tracking-[0.12em] text-cyan-200">
+            {title}
+          </span>
+          {summary ? (
+            <span className="mt-0.5 block text-[9px] font-normal normal-case leading-relaxed text-[var(--ui-passive-text)]">
+              {summary}
+            </span>
+          ) : null}
+        </span>
+        {count !== undefined ? (
+          <span className="shrink-0 rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] font-normal text-slate-300">
+            {count}
+          </span>
+        ) : null}
+      </summary>
+      <div className="p-2" data-vaa1-headline-dropdown-body="true">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function NarrativeAgentCharacterPathsHome({
   analysisData,
   videoId,
@@ -2021,6 +2441,8 @@ function NarrativeAgentCharacterPathsHome({
     [analysisData],
   );
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
+  const [activeNarrativeAgentArchetypeLens, setActiveNarrativeAgentArchetypeLens] =
+    useState<NarrativeAgentArchetypeLensId>("shakespearean_performativity");
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("");
   const [graphDurationDrafts, setGraphDurationDrafts] = useState<Record<string, { start: number; end: number }>>({});
   const [graphNodeHandleDrag, setGraphNodeHandleDrag] = useState<{
@@ -2044,8 +2466,9 @@ function NarrativeAgentCharacterPathsHome({
   }, [rows, selectedAgentKey]);
   const selectedRow = rows.find((row) => row.key === selectedAgentKey) || rows[0];
   const selectedTimelineHandles = selectedRow ? narrativeAgentTimelineHandles(selectedRow) : [];
+  const activeNarrativeAgentArchetype = narrativeAgentArchetypeLensById(activeNarrativeAgentArchetypeLens);
   const selectedGraphModel = selectedRow
-    ? buildNarrativeAgentGraphModel(selectedRow, selectedTimelineHandles)
+    ? buildNarrativeAgentGraphModel(selectedRow, selectedTimelineHandles, activeNarrativeAgentArchetypeLens)
     : { nodes: [], edges: [] };
   const selectedGraphNode =
     selectedGraphModel.nodes.find((node) => node.id === selectedGraphNodeId) ||
@@ -2078,6 +2501,49 @@ function NarrativeAgentCharacterPathsHome({
   const selectedAudiovisualSampleSlots = arrayFromUnknown(
     selectedIdentityMemory?.audiovisual_sample_slots,
   ).map(asRecord);
+  const selectedCharacterRecommendations = selectedRow ? [
+    ...(!selectedIdentityMemory ? [{
+      title: "Create identity memory",
+      detail: "Confirm this character on a time and BBox/ROI anchored source sample so future matches have a trusted reference.",
+      action: "Use a visible source handle or BBox confirmation.",
+    }] : []),
+    ...(selectedVisualSampleSlots.length === 0 ? [{
+      title: "Add visual samples",
+      detail: "The character needs one or more source-linked visual samples, especially if clothing or setting changes between scenes.",
+      action: "Open a source moment where the face or body is visible.",
+    }] : []),
+    ...(selectedAudioSampleSlots.length === 0 ? [{
+      title: "Add audio samples",
+      detail: "Voice and speech evidence should participate in character continuity, not only visual matching.",
+      action: "Use a speaking moment or transcript-linked audio cue.",
+    }] : []),
+    ...(selectedRow.scenePresence.length === 0 ? [{
+      title: "Mark scene presence",
+      detail: "Scene-level presence helps Datascene understand where the character matters even before every BBox is resolved.",
+      action: "Confirm the character in at least one governed scene.",
+    }] : []),
+    ...(selectedRow.manualCount === 0 ? [{
+      title: "Add analyst confirmation",
+      detail: "No manual confirmation is attached to this profile yet. A single good confirmation can strengthen downstream matching.",
+      action: "Confirm a source-time annotation for this character.",
+    }] : []),
+    ...(selectedIdentityContinuityCandidates.length > 0 ? [{
+      title: "Review possible matches",
+      detail: `${selectedIdentityContinuityCandidates.length} continuity candidate${selectedIdentityContinuityCandidates.length === 1 ? "" : "s"} can be checked against this character.`,
+      action: "Open the graph/source handles and compare candidates.",
+    }] : []),
+  ].slice(0, 4) : [];
+  const selectedRelevanceSurface = selectedRow ? buildNarrativeAgentRelevanceSurface({
+    row: selectedRow,
+    activeLens: activeNarrativeAgentArchetype,
+    graphModel: selectedGraphModel,
+    timelineHandles: selectedTimelineHandles,
+    visualSampleSlots: selectedVisualSampleSlots,
+    audioSampleSlots: selectedAudioSampleSlots,
+    audiovisualSampleSlots: selectedAudiovisualSampleSlots,
+    continuityCandidates: selectedIdentityContinuityCandidates,
+    recommendationsCount: selectedCharacterRecommendations.length,
+  }) : null;
   useEffect(() => {
     const handler = (time: number) => {
       const next = Number(time);
@@ -2232,11 +2698,10 @@ function NarrativeAgentCharacterPathsHome({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
-            Narrative Agent Character Paths
+            Character workspace
           </div>
           <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
-            Agent-centered continuity, scenes, evidence, and dramatic readings live here.
-            Meaning / Plot remains the cross-agent plot map.
+            Start with one character, then inspect what Datascene knows, what is missing, and what should be confirmed next.
           </div>
         </div>
         <button
@@ -2244,50 +2709,21 @@ function NarrativeAgentCharacterPathsHome({
           className="rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/30"
           onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
         >
-          Meaning / Plot map
+          Open plot map
         </button>
       </div>
 
-      <div
-        className="mt-2 rounded border border-slate-800 bg-[#111214] px-2 py-2"
-        data-vaa1-narrative-agent-review-compass="true"
+      <PanelDropdownSection
+        title="Choose Character"
+        summary="Pick one character to inspect. Everything below follows this selection."
+        count={`${rows.length} profiles`}
+        defaultOpen
       >
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
-              Narrative Agent review compass
-            </div>
-            <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
-              Agent semantics are source-linked and Master-time governed. Use this panel for one-agent understanding; use Meaning Network for continuity review.
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1" data-vaa1-narrative-agent-review-modes="true">
-            {[
-              "Overview",
-              "Evidence",
-              "Semantics",
-              "Continuity",
-              "Scenes",
-            ].map((mode) => (
-              <span
-                key={`narrative-agent-review-mode:${mode}`}
-                className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
-              >
-                {mode}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div
-        className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2"
-        data-vaa1-narrative-agent-single-profile-selector="true"
-      >
+      <div data-vaa1-narrative-agent-single-profile-selector="true">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <label className="min-w-[220px] flex-1">
             <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
-              Narrative Agent view
+              Character
             </span>
             <select
               className="mt-1 w-full rounded border border-slate-700 bg-[#0c0d0f] px-2 py-1 text-[11px] text-slate-100 outline-none focus:border-cyan-600"
@@ -2310,7 +2746,7 @@ function NarrativeAgentCharacterPathsHome({
           <div className="text-right text-[9px] text-[var(--ui-passive-text)]">
             {rows.length} canonical profile{rows.length === 1 ? "" : "s"}
             <br />
-            Single-agent view; continuity review stays in Meaning Network.
+            One-character view
           </div>
         </div>
         {selectedRow && selectedRow.sourceLabels.length > 1 ? (
@@ -2332,15 +2768,225 @@ function NarrativeAgentCharacterPathsHome({
           </div>
         ) : null}
       </div>
+      </PanelDropdownSection>
 
-      <div
-        className="mt-2 rounded border border-emerald-900/40 bg-emerald-950/10 px-2 py-2"
-        data-vaa1-narrative-agent-proliferation-provenance="true"
+      <PanelDropdownSection
+        title="StatsKit + Significance + Relevance"
+        summary="Ranks this character's source-linked evidence for the current analyst task."
+        count={selectedRelevanceSurface ? `${formatNarrativeAgentScore(selectedRelevanceSurface.overallScore)} relevance` : "pending"}
+        defaultOpen
       >
+        {selectedRelevanceSurface ? (
+          <div
+            className="space-y-2"
+            data-vaa1-statskit-significance-relevance-surface="true"
+            data-vaa1-relevance-radar-selected-character={selectedRow?.label || ""}
+          >
+            <div className="grid gap-1.5 md:grid-cols-4">
+              <div className="rounded border border-cyan-800/60 bg-cyan-950/20 px-2 py-1.5">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-300">
+                  Analyst goal
+                </div>
+                <div className="mt-0.5 text-[10px] text-slate-100">
+                  {selectedRelevanceSurface.context.analystGoal}
+                </div>
+              </div>
+              <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
+                  Active lens
+                </div>
+                <div className="mt-0.5 text-[10px] text-slate-100">
+                  {selectedRelevanceSurface.context.activeLens}
+                </div>
+              </div>
+              <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
+                <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
+                  Scope
+                </div>
+                <div className="mt-0.5 text-[10px] text-slate-100">
+                  {selectedRelevanceSurface.context.scope}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={selectedRelevanceSurface.firstSourceTime === undefined}
+                className="rounded border border-cyan-800/60 bg-[#101010] px-2 py-1.5 text-left text-[10px] text-cyan-100 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  if (selectedRelevanceSurface.firstSourceTime !== undefined) {
+                    openVideoAtTime(videoId, selectedRelevanceSurface.firstSourceTime);
+                  }
+                }}
+              >
+                Source {selectedRelevanceSurface.firstSourceTime !== undefined
+                  ? formatSeconds(selectedRelevanceSurface.firstSourceTime)
+                  : "pending"}
+              </button>
+            </div>
+
+            <div className="grid gap-1.5 md:grid-cols-5" data-vaa1-statskit-source-signals="true">
+              {selectedRelevanceSurface.statsSignals.map((signal) => (
+                <div
+                  key={`statskit-signal:${signal.label}`}
+                  className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+                >
+                  <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
+                    {signal.label}
+                  </div>
+                  <div className="mt-0.5 text-[14px] font-semibold text-slate-100">
+                    {signal.value}
+                  </div>
+                  <div className="mt-0.5 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                    {signal.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-1.5 lg:grid-cols-2" data-vaa1-relevance-radar-dimensions="true">
+              {selectedRelevanceSurface.dimensions.map((dimension) => (
+                <button
+                  key={`relevance-radar-dimension:${dimension.id}`}
+                  type="button"
+                  disabled={dimension.sourceTime === undefined}
+                  className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5 text-left hover:border-cyan-500/70 hover:bg-cyan-950/20 disabled:cursor-not-allowed disabled:opacity-70"
+                  data-vaa1-relevance-radar-dimension={dimension.id}
+                  onClick={() => {
+                    if (dimension.sourceTime !== undefined) {
+                      openVideoAtTime(videoId, dimension.sourceTime);
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-100">
+                      {dimension.label}
+                    </span>
+                    <span className="rounded border border-cyan-800/60 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                      {formatNarrativeAgentScore(dimension.score)}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-900">
+                    <div
+                      className="h-full rounded bg-cyan-400/80"
+                      style={{ width: `${Math.round(clampNarrativeAgentScore(dimension.score) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                    {dimension.reason}
+                  </div>
+                  <div className="mt-1 text-[8px] uppercase tracking-[0.12em] text-slate-500">
+                    {dimension.evidenceCount} evidence signal{dimension.evidenceCount === 1 ? "" : "s"}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="grid gap-1.5 md:grid-cols-3" data-vaa1-significancekit-claims="true">
+              {selectedRelevanceSurface.significanceClaims.map((claim) => (
+                <button
+                  key={`significance-claim:${claim.level}:${claim.title}`}
+                  type="button"
+                  disabled={claim.sourceTime === undefined}
+                  className="rounded border border-emerald-900/60 bg-emerald-950/10 px-2 py-1.5 text-left hover:border-emerald-500/70 hover:bg-emerald-950/20 disabled:cursor-not-allowed disabled:opacity-70"
+                  data-vaa1-significancekit-scope={claim.level.toLowerCase()}
+                  onClick={() => {
+                    if (claim.sourceTime !== undefined) {
+                      openVideoAtTime(videoId, claim.sourceTime);
+                    }
+                  }}
+                >
+                  <div className="text-[8px] uppercase tracking-[0.12em] text-emerald-300">
+                    {claim.level}
+                  </div>
+                  <div className="mt-0.5 text-[10px] font-semibold text-slate-100">
+                    {claim.title}
+                  </div>
+                  <div className="mt-1 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
+                    {claim.text}
+                  </div>
+                  <div className="mt-1 text-[8px] uppercase tracking-[0.12em] text-emerald-200/70">
+                    {claim.evidenceCount} linked signal{claim.evidenceCount === 1 ? "" : "s"}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
+            Select a governed character profile to calculate source-linked relevance and significance.
+          </div>
+        )}
+      </PanelDropdownSection>
+
+      <PanelDropdownSection
+        title="Recommended Next Steps"
+        summary="Practical checks that would make this character more useful for analysis and matching."
+        count={selectedCharacterRecommendations.length || "ready"}
+        defaultOpen
+      >
+        {selectedCharacterRecommendations.length > 0 ? (
+          <div className="grid gap-1.5 md:grid-cols-2" data-vaa1-narrative-agent-recommendations="true">
+            {selectedCharacterRecommendations.map((recommendation) => (
+              <div
+                key={`${selectedRow?.key}:recommendation:${recommendation.title}`}
+                className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+              >
+                <div className="text-[10px] font-semibold text-cyan-100">
+                  {recommendation.title}
+                </div>
+                <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+                  {recommendation.detail}
+                </div>
+                <div className="mt-1 rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                  {recommendation.action}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded border border-emerald-800/50 bg-emerald-950/10 px-2 py-1.5 text-[10px] text-emerald-100">
+            This character already has the basic source-linked evidence needed for first-pass interpretation.
+          </div>
+        )}
+      </PanelDropdownSection>
+
+      <PanelDropdownSection
+        title="Review Modes"
+        summary="Switch between overview, evidence, semantics, continuity, and scene checks without leaving this panel."
+        count="5 modes"
+      >
+        <div
+          className="flex flex-wrap items-start justify-between gap-2"
+          data-vaa1-narrative-agent-review-compass="true"
+        >
+          <div className="flex flex-wrap gap-1" data-vaa1-narrative-agent-review-modes="true">
+            {[
+              "Overview",
+              "Evidence",
+              "Semantics",
+              "Continuity",
+              "Scenes",
+            ].map((mode) => (
+              <span
+                key={`narrative-agent-review-mode:${mode}`}
+                className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
+              >
+                {mode}
+              </span>
+            ))}
+          </div>
+        </div>
+      </PanelDropdownSection>
+
+      <PanelDropdownSection
+        title="Matching Memory"
+        summary="Shows whether this character has source-linked visual/audio samples that can support future matching."
+        count={selectedIdentityMemory ? "memory linked" : "memory pending"}
+      >
+      <div data-vaa1-narrative-agent-proliferation-provenance="true">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-200">
-              Mature Data Proliferation provenance
+              Matching memory
             </div>
             <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
               Manual Narrative Agent confirmations seed audiovisual identity memory, continuity candidates, and source-timed review.
@@ -2444,34 +3090,61 @@ function NarrativeAgentCharacterPathsHome({
           </div>
         )}
       </div>
+      </PanelDropdownSection>
 
-      <div className="mt-2 rounded border border-cyan-900/40 bg-[#111214] px-2 py-2">
-        <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
-          Dramatic Archetype Readings
+      <PanelDropdownSection
+        title="Interpretation Lenses"
+        summary="Optional theory views for reading the character. These do not overwrite source evidence or identity labels."
+        count={activeNarrativeAgentArchetype.tradition}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="max-w-3xl text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+            <span className="font-semibold text-cyan-100">
+              {activeNarrativeAgentArchetype.label} / {activeNarrativeAgentArchetype.tradition}.
+            </span>{" "}
+            {activeNarrativeAgentArchetype.description} {activeNarrativeAgentArchetype.graphDescription}
+            <span className="ml-1 text-slate-500">
+              Interpretive readings stay separate from agent identity.
+            </span>
+          </div>
         </div>
-        <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
-          Cross-tradition readings, not imposed as Narrative Agent labels.
+        <div className="mt-2 flex flex-wrap gap-1" data-vaa1-narrative-agent-local-archetype-lenses="true">
+          {NARRATIVE_AGENT_ARCHETYPE_LENSES.map((lens) => {
+            const active = lens.id === activeNarrativeAgentArchetypeLens;
+            return (
+              <button
+                key={lens.label}
+                type="button"
+                className={`rounded border px-1.5 py-0.5 text-[9px] ${
+                  active
+                    ? "border-cyan-400 bg-cyan-950/50 text-cyan-100"
+                    : "border-slate-700 bg-[#101010] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                }`}
+                title={lens.description}
+                data-vaa1-narrative-agent-archetype-local-control="true"
+                onClick={() => {
+                  setActiveNarrativeAgentArchetypeLens(lens.id);
+                  eventBus.emit("narrativeAgentArchetypeLensChanged", {
+                    videoId,
+                    lens_id: lens.id,
+                    source_panel: "NarrativeAgentPanel",
+                    focus_panel_changed: false,
+                  });
+                }}
+              >
+                {lens.label} / {lens.tradition}
+              </button>
+            );
+          })}
         </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {NARRATIVE_AGENT_ARCHETYPE_LENSES.map((lens) => (
-            <button
-              key={lens.label}
-              type="button"
-              className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
-              title={lens.description}
-              data-vaa1-narrative-agent-archetype-navigation="true"
-              onClick={() => {
-                eventBus.emit("meaningPlotArchetypeLensRequested", lens.id);
-                openPanel("MeaningPlot", videoId ? { videoId } : {});
-              }}
-            >
-              {lens.label} / {lens.tradition}
-            </button>
-          ))}
-        </div>
-      </div>
+      </PanelDropdownSection>
 
-      <div className="mt-2 space-y-1.5">
+      <PanelDropdownSection
+        title="Character Evidence Graph"
+        summary="Trace source moments, scene presence, cues, and quick confirmations for the selected character."
+        count={selectedGraphModel.nodes.length ? `${selectedGraphModel.nodes.length} nodes` : "no graph"}
+      >
+      <div className="space-y-1.5">
         {rows.length === 0 ? (
           <div className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
             No governed Narrative Agent paths yet. Confirm or name an agent to seed this home.
@@ -2636,14 +3309,15 @@ function NarrativeAgentCharacterPathsHome({
               <div
                 className="mt-2 rounded border border-cyan-900/40 bg-[#0c0d0f] px-2 py-2"
                 data-vaa1-narrative-agent-operational-graph="true"
+                data-vaa1-narrative-agent-graph-active-lens={activeNarrativeAgentArchetypeLens}
               >
                 <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-200">
-                      Agent graph
+                      Agent graph / {activeNarrativeAgentArchetype.tradition}
                     </div>
                     <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
-                      One-agent graph for source, scene, cue, and occurrence navigation.
+                      {activeNarrativeAgentArchetype.graphDescription}
                     </div>
                   </div>
                   <button
@@ -2865,6 +3539,7 @@ function NarrativeAgentCharacterPathsHome({
             </div>
         ) : null}
       </div>
+      </PanelDropdownSection>
     </section>
   );
 }
@@ -3364,13 +4039,6 @@ export default function MasterSchemaPanel({
                 Refreshing in background...
               </div>
             ) : null}
-            <MatureEvidenceStrip analysisData={analysisData} />
-            <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
-            <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
-            <MatureProliferationMatchStrip
-              matches={analysisData?.evidenceProliferationMatches}
-              videoId={videoId}
-            />
             {category === "Identification" && (
               <NarrativeAgentCharacterPathsHome
                 analysisData={analysisData}
@@ -3381,21 +4049,108 @@ export default function MasterSchemaPanel({
                 }}
               />
             )}
-            <SecondOrderLabelReviewTray
-              plan={analysisData?.secondOrderLabelProliferation}
-            />
-            <AutomaticEvidenceSection
-              category={category}
-              analysisData={analysisData}
-          videoId={videoId}
-          identityLedger={identityLedger}
-          identityActionMessage={identityActionMessage}
-          isIdentityActionBusy={isIdentityActionBusy}
-          identityDrafts={identityDrafts}
-          onCreateIdentityCandidates={createIdentityCandidates}
-          onIdentityDraftChange={updateIdentityDraft}
-          onPromoteIdentityCandidate={promoteIdentityCandidate}
-        />
+            {category === "Identification" ? (
+              <>
+                <PanelDropdownSection
+                  title="Evidence Reliability"
+                  summary="Shows how much evidence is analyst-confirmed, interpreted, triangulated, or still raw."
+                  defaultOpen={false}
+                >
+                  <MatureEvidenceStrip analysisData={analysisData} />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title="Analyst Confirmations"
+                  summary="Shows which confirmed annotations Datascene can trust before wider matching."
+                  defaultOpen={false}
+                >
+                  <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title="Known Character Profiles"
+                  summary="Confirmed or governed character records available to this analysis."
+                  defaultOpen={false}
+                >
+                  <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title="Suggested Matches"
+                  summary="Matcher results that may help confirm more appearances of known characters."
+                  count={Array.isArray(analysisData?.evidenceProliferationMatches) ? analysisData.evidenceProliferationMatches.length : undefined}
+                  defaultOpen={false}
+                >
+                  <MatureProliferationMatchStrip
+                    matches={analysisData?.evidenceProliferationMatches}
+                    videoId={videoId}
+                  />
+                </PanelDropdownSection>
+              </>
+            ) : (
+              <>
+                <MatureEvidenceStrip analysisData={analysisData} />
+                <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
+                <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
+                <MatureProliferationMatchStrip
+                  matches={analysisData?.evidenceProliferationMatches}
+                  videoId={videoId}
+                />
+              </>
+            )}
+            {category === "Identification" ? (
+              <>
+                <PanelDropdownSection
+                  title="Suggested Labels"
+                  summary="Candidate meanings and labels that can be reviewed before becoming mature evidence."
+                  defaultOpen={false}
+                >
+                  <SecondOrderLabelReviewTray
+                    plan={analysisData?.secondOrderLabelProliferation}
+                  />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title="Character Candidates"
+                  summary="Possible character identity candidates that can be refreshed and promoted."
+                  count={identityLedger?.candidates?.length ?? 0}
+                  defaultOpen={false}
+                >
+                  <AutomaticEvidenceSection
+                    category={category}
+                    analysisData={analysisData}
+                    videoId={videoId}
+                    identityLedger={identityLedger}
+                    identityActionMessage={identityActionMessage}
+                    isIdentityActionBusy={isIdentityActionBusy}
+                    identityDrafts={identityDrafts}
+                    onCreateIdentityCandidates={createIdentityCandidates}
+                    onIdentityDraftChange={updateIdentityDraft}
+                    onPromoteIdentityCandidate={promoteIdentityCandidate}
+                  />
+                </PanelDropdownSection>
+              </>
+            ) : (
+              <>
+                <SecondOrderLabelReviewTray
+                  plan={analysisData?.secondOrderLabelProliferation}
+                />
+                <AutomaticEvidenceSection
+                  category={category}
+                  analysisData={analysisData}
+                  videoId={videoId}
+                  identityLedger={identityLedger}
+                  identityActionMessage={identityActionMessage}
+                  isIdentityActionBusy={isIdentityActionBusy}
+                  identityDrafts={identityDrafts}
+                  onCreateIdentityCandidates={createIdentityCandidates}
+                  onIdentityDraftChange={updateIdentityDraft}
+                  onPromoteIdentityCandidate={promoteIdentityCandidate}
+                />
+              </>
+            )}
+            <PanelDropdownSection
+              title={category === "Identification" ? "Source Annotations" : "Manual Annotations"}
+              summary="Source-time and BBox/ROI anchored analyst annotations."
+              count={totalAnnotations}
+              defaultOpen={category !== "Identification"}
+            >
             {groupedAnnotations.length === 0 ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
             No manual annotations in this schema view yet.
@@ -3707,6 +4462,7 @@ export default function MasterSchemaPanel({
             ))}
           </div>
             )}
+            </PanelDropdownSection>
             {leafActionMessage ? (
               <div className="mt-2 rounded border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-[11px] text-emerald-100">
                 {leafActionMessage}

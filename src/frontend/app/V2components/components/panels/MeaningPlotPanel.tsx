@@ -31,6 +31,10 @@ type DramaticArchetypeLens =
   | "burkean_motive"
   | "bojean_antenarrative";
 
+type NarrativeAgentAgencyScale = "macro" | "meso" | "micro";
+type NarrativeAgentEvidenceDimension = "intrinsic" | "external" | "implicit" | "explicit";
+type NarrativeAgentPovLayer = "agent_pov" | "other_agents_pov" | "viewer_pov";
+
 type NarrativeAgentProfile = NonNullable<
   NonNullable<SourceMediaMetadata["user_annotations"]>["narrative_agent_profiles"]
 >[number];
@@ -704,6 +708,43 @@ const MEANING_NETWORK_DEFAULT_LANES: MeaningNetworkLane[] = [
   { lane_id: "other", label: "Other meaning tracks" },
 ];
 
+const NARRATIVE_AGENT_AGENCY_SCALE_LABELS: Record<NarrativeAgentAgencyScale, string> = {
+  macro: "Macro narrative agency",
+  meso: "Meso scene agency",
+  micro: "Micro situational agency",
+};
+
+const NARRATIVE_AGENT_EVIDENCE_DIMENSION_LABELS: Record<NarrativeAgentEvidenceDimension, string> = {
+  intrinsic: "Intrinsic",
+  external: "External",
+  implicit: "Implicit",
+  explicit: "Explicit",
+};
+
+const NARRATIVE_AGENT_POV_LAYER_LABELS: Record<NarrativeAgentPovLayer, string> = {
+  agent_pov: "Agent POV",
+  other_agents_pov: "Other agents' POV",
+  viewer_pov: "Viewer POV",
+};
+
+const NARRATIVE_AGENT_EVIDENCE_STATE_LABELS = [
+  "visibly present",
+  "scene-present / off-screen",
+  "named or referenced",
+  "speaking",
+  "listening",
+  "silent visual reaction",
+  "misdetected / not this agent",
+  "absent but structurally relevant",
+];
+
+const CHARACTER_ANNOTATION_TOOLKIT_OPTIONS = [
+  "node-level annotation - identity, role, motive, affect",
+  "edge-level annotation - relation, power, conflict, help",
+  "source-bound annotation - time, BBox/ROI, transcript, audio",
+  "negative evidence - absent, misdetected, named off-screen",
+];
+
 const INTERPRETIVE_READING_UI_CONFIG = {
   minVisibleSupport: 0.35,
   maxPlotReadingsPerLens: 12,
@@ -970,6 +1011,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
   insight: string;
   cues: string[];
   signalKeywords: string[];
+  agencyScale: NarrativeAgentAgencyScale[];
+  evidenceDimensions: NarrativeAgentEvidenceDimension[];
+  povLayers: NarrativeAgentPovLayer[];
 }> = [
   {
     id: "shakespearean_performativity",
@@ -977,6 +1021,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Shakespearean",
     insight: "Agency shifts through public role, private motive, status pressure, and rhetoric.",
     cues: ["role shift", "status pressure", "double speech"],
+    agencyScale: ["macro", "meso", "micro"],
+    evidenceDimensions: ["intrinsic", "external", "implicit", "explicit"],
+    povLayers: ["agent_pov", "other_agents_pov", "viewer_pov"],
     signalKeywords: [
       "role",
       "status",
@@ -995,6 +1042,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Proppian",
     insight: "Agents are read through plot work: helper, opponent, donor, dispatcher, false hero.",
     cues: ["helper/opponent", "task", "false hero"],
+    agencyScale: ["macro", "meso"],
+    evidenceDimensions: ["external", "explicit", "implicit"],
+    povLayers: ["viewer_pov", "other_agents_pov"],
     signalKeywords: [
       "helper",
       "opponent",
@@ -1014,6 +1064,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Jungian / Mythic",
     insight: "Agents are read as symbolic functions: shadow, mentor, trickster, anima/animus, self.",
     cues: ["shadow", "mentor", "trickster"],
+    agencyScale: ["macro", "micro"],
+    evidenceDimensions: ["intrinsic", "implicit"],
+    povLayers: ["agent_pov", "viewer_pov"],
     signalKeywords: [
       "shadow",
       "mentor",
@@ -1033,6 +1086,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Campbellian",
     insight: "Agents are read through transformation phases, thresholds, tests, ordeal, return.",
     cues: ["threshold", "test", "transformation"],
+    agencyScale: ["macro", "meso"],
+    evidenceDimensions: ["external", "implicit", "explicit"],
+    povLayers: ["viewer_pov", "agent_pov"],
     signalKeywords: [
       "threshold",
       "journey",
@@ -1052,6 +1108,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Greimasian",
     insight: "Agents are read by structural relation: subject, object, sender, receiver, helper, opponent.",
     cues: ["subject/object", "helper/opponent", "sender/receiver"],
+    agencyScale: ["macro", "meso", "micro"],
+    evidenceDimensions: ["external", "explicit", "implicit"],
+    povLayers: ["other_agents_pov", "viewer_pov"],
     signalKeywords: [
       "subject",
       "object",
@@ -1071,6 +1130,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Burkean / Dramatistic",
     insight: "Agents are read through act, scene, agent, agency, purpose, guilt, and motive.",
     cues: ["act/scene", "agency", "purpose"],
+    agencyScale: ["meso", "micro"],
+    evidenceDimensions: ["intrinsic", "external", "implicit", "explicit"],
+    povLayers: ["agent_pov", "other_agents_pov", "viewer_pov"],
     signalKeywords: [
       "act",
       "scene",
@@ -1090,6 +1152,9 @@ const DRAMATIC_ARCHETYPE_LENSES: Array<{
     tradition: "Bojean",
     insight: "Agents and scenes are read through fragmentation, suppressed voices, and speculative bets on the future.",
     cues: ["speculative bet", "suppressed voice", "rhizomatic link"],
+    agencyScale: ["macro", "meso", "micro"],
+    evidenceDimensions: ["external", "implicit"],
+    povLayers: ["other_agents_pov", "viewer_pov"],
     signalKeywords: [
       "bet",
       "speculation",
@@ -2608,6 +2673,40 @@ function matchedArchetypeCues(
   const cues = DRAMATIC_ARCHETYPE_LENSES.find((entry) => entry.id === lens)?.signalKeywords || [];
   const signalText = instructions.map(archetypeSignalText).join(" ");
   return cues.filter((cue) => signalText.includes(cue)).slice(0, 4);
+}
+
+function narrativeAgentLensMatrixSummary(lens: (typeof DRAMATIC_ARCHETYPE_LENSES)[number]): string {
+  const scales = lens.agencyScale.map((scale) => NARRATIVE_AGENT_AGENCY_SCALE_LABELS[scale]).join(", ");
+  const dimensions = lens.evidenceDimensions.map((dimension) => NARRATIVE_AGENT_EVIDENCE_DIMENSION_LABELS[dimension]).join(", ");
+  const povs = lens.povLayers.map((pov) => NARRATIVE_AGENT_POV_LAYER_LABELS[pov]).join(", ");
+  return `${lens.tradition} reads ${scales}; emphasizes ${dimensions}; compares ${povs}.`;
+}
+
+function narrativeAgentDossierRows(rows: CharacterSceneGovernanceRow[]) {
+  return rows
+    .map((row) => {
+      const surfacedScenes = row.scenes.filter((scene) => scene.surfaced || scene.staged);
+      const manual = row.scenes.reduce((count, scene) => count + scene.manualAnnotations.length, 0);
+      const transcript = row.scenes.reduce((count, scene) => count + scene.lines.length, 0);
+      const audio = row.scenes.reduce((count, scene) => count + scene.audioProsody.length, 0);
+      const samples = row.scenes.reduce((count, scene) => count + scene.sourceSamples.length, 0);
+      const persistence = row.scenes.reduce((count, scene) => count + scene.persistenceSignals.length, 0);
+      const sceneClaims = row.scenes.reduce((count, scene) => count + scene.sceneInstructions.length, 0);
+      return {
+        ...row,
+        surfacedScenes: surfacedScenes.length,
+        manual,
+        transcript,
+        audio,
+        samples,
+        persistence,
+        sceneClaims,
+        evidenceTotal: manual + transcript + audio + samples + persistence + sceneClaims,
+      };
+    })
+    .filter((row) => row.evidenceTotal > 0 || row.surfacedScenes > 0)
+    .sort((left, right) => right.evidenceTotal - left.evidenceTotal || left.label.localeCompare(right.label))
+    .slice(0, 4);
 }
 
 function groupByParticipant(instructions: SecondOrderLabelInstruction[]) {
@@ -6480,6 +6579,11 @@ export default function MeaningPlotPanel({
     stagedSceneAgents,
   ]);
 
+  const narrativeAgentDossiers = useMemo(
+    () => narrativeAgentDossierRows(characterSceneGovernanceRows),
+    [characterSceneGovernanceRows],
+  );
+
   const toggleCharacterSceneProfile = useCallback((profileKey: string) => {
     setOpenCharacterSceneProfiles((current) => ({
       ...current,
@@ -9698,6 +9802,138 @@ export default function MeaningPlotPanel({
                         {cue}
                       </span>
                     ))}
+                  </div>
+                  <div
+                    className="mt-2 rounded border border-slate-800 bg-[#0b0f10] px-2 py-2"
+                    data-vaa1-narrative-agent-lens-matrix="true"
+                    data-vaa1-narrative-agent-agency-scale="macro-meso-micro"
+                    data-vaa1-narrative-agent-pov-layers="agent-other-viewer"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                        Lens-specific agent interpretation
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {narrativeAgentLensMatrixSummary(activeArchetype)}
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                      <div>
+                        <div className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Agency scale</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {activeArchetype.agencyScale.map((scale) => (
+                            <span key={scale} className="rounded border border-cyan-900/60 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                              {NARRATIVE_AGENT_AGENCY_SCALE_LABELS[scale]}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Evidence dimension</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {activeArchetype.evidenceDimensions.map((dimension) => (
+                            <span key={dimension} className="rounded border border-slate-700 bg-[#121212] px-1.5 py-0.5 text-[9px] text-slate-300">
+                              {NARRATIVE_AGENT_EVIDENCE_DIMENSION_LABELS[dimension]}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Point of view</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {activeArchetype.povLayers.map((pov) => (
+                            <span key={pov} className="rounded border border-slate-700 bg-[#121212] px-1.5 py-0.5 text-[9px] text-slate-300">
+                              {NARRATIVE_AGENT_POV_LAYER_LABELS[pov]}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className="mt-2 rounded border border-slate-800 bg-[#101010]/80 px-2 py-2"
+                    data-vaa1-narrative-agent-character-annotation-toolkit="true"
+                    data-vaa1-narrative-agent-negative-evidence="true"
+                    data-vaa1-narrative-agent-confidence-provenance="true"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                        Character annotation toolkit
+                      </div>
+                      <select
+                        className="min-w-[260px] rounded border border-slate-700 bg-[#070707] px-2 py-1 text-[10px] text-slate-200"
+                        aria-label="Character annotation toolkit"
+                        defaultValue={CHARACTER_ANNOTATION_TOOLKIT_OPTIONS[0]}
+                      >
+                        {CHARACTER_ANNOTATION_TOOLKIT_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => openMeaningPlotWorkQueue("characters", characterSceneListRef, "characters_by_scene")}
+                        className="rounded border border-cyan-700/60 bg-cyan-950/30 px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-900/40"
+                      >
+                        Open scene evidence
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openMeaningPlotWorkQueue("characters", participantRankingRef, "participant_ranking")}
+                        className="rounded border border-slate-700 bg-[#121212] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
+                      >
+                        Open relation evidence
+                      </button>
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-slate-500">
+                      Source-bound annotations keep source time, BBox/ROI, transcript, audio, matcher, and manual provenance attached.
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {NARRATIVE_AGENT_EVIDENCE_STATE_LABELS.map((state) => (
+                        <span key={state} className="rounded border border-slate-800 bg-[#070707] px-1.5 py-0.5 text-[9px] text-slate-400">
+                          {state}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div
+                    className="mt-2 rounded border border-slate-800 bg-[#0b0f10] px-2 py-2"
+                    data-vaa1-narrative-agent-dossier="true"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                        Agent dossiers
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Identity, appearances, relations, lens roles, unanswered questions, samples, and provenance.
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      {narrativeAgentDossiers.length ? (
+                        narrativeAgentDossiers.map((row) => (
+                          <div key={row.profileKey} className="rounded border border-slate-800 bg-[#121212] px-2 py-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="truncate text-[10px] font-medium text-slate-200">{row.label}</div>
+                              <span className="rounded border border-cyan-900/60 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                                {row.surfacedScenes} scenes
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1 text-[9px] text-slate-400">
+                              <span>manual {row.manual}</span>
+                              <span>transcript {row.transcript}</span>
+                              <span>audio {row.audio}</span>
+                              <span>samples {row.samples}</span>
+                              <span>matcher/proximity {row.persistence}</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded border border-slate-800 bg-[#121212] px-2 py-1.5 text-[10px] text-slate-500">
+                          No source-linked agent dossier rows are available yet.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

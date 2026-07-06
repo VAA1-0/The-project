@@ -2609,6 +2609,42 @@ export default function ToolsPanel() {
                           >
                             Open maturation governance
                           </Button>
+                          <Button
+                            type="button"
+                            data-vaa1-open-statskit-panel="true"
+                            onClick={() => {
+                              if (videoId) {
+                                eventBus.emit("videoIdChanged", videoId);
+                              }
+                              openPanel("StatsKit", videoId ? { videoId, analysisId: videoId } : {});
+                              if (videoId) {
+                                window.setTimeout(() => {
+                                  eventBus.emit("videoIdChanged", videoId);
+                                }, 0);
+                              }
+                            }}
+                            className="mt-2 h-8 w-full justify-start border border-emerald-400/25 bg-emerald-500/10 text-[11px] text-emerald-100 hover:bg-emerald-500/20"
+                          >
+                            Open StatsKit
+                          </Button>
+                          <Button
+                            type="button"
+                            data-vaa1-open-admin-observability="true"
+                            onClick={() => {
+                              if (videoId) {
+                                eventBus.emit("videoIdChanged", videoId);
+                              }
+                              openPanel("AdminObservability", videoId ? { videoId, analysisId: videoId } : {});
+                              if (videoId) {
+                                window.setTimeout(() => {
+                                  eventBus.emit("videoIdChanged", videoId);
+                                }, 0);
+                              }
+                            }}
+                            className="mt-2 h-8 w-full justify-start border border-amber-300/25 bg-amber-400/10 text-[11px] text-amber-100 hover:bg-amber-400/20"
+                          >
+                            Open Admin / Observability
+                          </Button>
                         </div>
                       </div>
                       <div className="rounded border border-white/10 bg-[#141414] px-3 py-3">

@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.io/schemas/vaa1/data_maturation_economics.schema.json",
+  "title": "Datascene VAA1 Data Maturation Economics",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "economics_session",
+    "analysis_target",
+    "maturation_scope",
+    "cost_observations",
+    "yield_observations",
+    "iteration_observations",
+    "reuse_observations",
+    "economic_verdict"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "economics_session": {
+      "type": "object",
+      "required": ["session_id", "analysis_id", "started_at", "ended_at", "mode"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "analysis_id": { "type": "string" },
+        "observability_session_id": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "mode": {
+          "type": "string",
+          "enum": ["development", "benchmark", "production", "diagnostic", "manual_review"]
+        },
+        "operator": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "analysis_target": {
+      "type": "object",
+      "required": ["source_id", "source_type", "duration_seconds"],
+      "properties": {
+        "source_id": { "type": "string" },
+        "source_type": {
+          "type": "string",
+          "enum": ["single_video", "feature_film", "multi_video_batch", "archive_batch", "test_fixture"]
+        },
+        "duration_seconds": { "type": "number" },
+        "source_count": { "type": "integer" },
+        "corpus_id": { "type": "string" }
+      }
+    },
+    "maturation_scope": {
+      "type": "object",
+      "required": ["scope_id", "scope_type", "candidate_families"],
+      "properties": {
+        "scope_id": { "type": "string" },
+        "scope_type": {
+          "type": "string",
+          "enum": [
+            "upload",
+            "quick_sweep",
+            "science_scan",
+            "forensic_scan",
+            "manual_program_use",
+            "data_maturation",
+            "iteration",
+            "statskit",
+            "significancekit",
+            "relevancekit",
+            "matcher",
+            "export"
+          ]
+        },
+        "candidate_families": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "person",
+              "speaker",
+              "object",
+              "place",
+              "organization",
+              "scene",
+              "shot",
+              "audio_event",
+              "music",
+              "color",
+              "action",
+              "topic",
+              "emotion",
+              "meaning_node",
+              "meaning_edge",
+              "narrative_agent",
+              "significance_claim",
+              "relevance_lane",
+              "other"
+            ]
+          }
+        },
+        "authority_target": {
+          "type": "string",
+          "enum": ["candidate", "analyst_reviewed", "confirmed", "mature", "export_ready"]
+        }
+      }
+    },
+    "cost_observations": {
+      "type": "object",
+      "required": ["compute_seconds", "storage_mb_written", "analyst_minutes"],
+      "properties": {
+        "compute_seconds": { "type": "number" },
+        "gpu_seconds": { "type": "number" },
+        "storage_mb_written": { "type": "number" },
+        "storage_mb_retained": { "type": "number" },
+        "database_writes": { "type": "integer" },
+        "cache_misses": { "type": "integer" },
+        "remote_api_calls": { "type": "integer" },
+        "remote_api_cost_estimate": { "type": "number" },
+        "analyst_minutes": { "type": "number" },
+        "review_actions": { "type": "integer" },
+        "correction_actions": { "type": "integer" },
+        "blocked_minutes": { "type": "number" },
+        "cost_notes": { "type": "string" }
+      }
+    },
+    "yield_observations": {
+      "type": "object",
+      "required": [
+        "candidate_items",
+        "reviewed_items",
+        "mature_items",
+        "rejected_items",
+        "orphan_items"
+      ],
+      "properties": {
+        "candidate_items": { "type": "integer" },
+        "reviewed_items": { "type": "integer" },
+        "confirmed_items": { "type": "integer" },
+        "mature_items": { "type": "integer" },
+        "rejected_items": { "type": "integer" },
+        "deferred_items": { "type": "integer" },
+        "orphan_items": { "type": "integer" },
+        "false_positive_items": { "type": "integer" },
+        "false_negative_items_discovered": { "type": "integer" },
+        "maturation_rate": { "type": "number" },
+        "noise_ratio": { "type": "number" },
+        "analyst_cost_per_mature_item_minutes": { "type": "number" },
+        "compute_cost_per_mature_item_seconds": { "type": "number" }
+      }
+    },
+    "iteration_observations": {
+      "type": "object",
+      "properties": {
+        "iteration_index": { "type": "integer" },
+        "previous_session_id": { "type": "string" },
+        "new_mature_items": { "type": "integer" },
+        "new_source_links": { "type": "integer" },
+        "new_projection_targets_updated": { "type": "integer" },
+        "ambiguities_reduced": { "type": "integer" },
+        "regressions_introduced": { "type": "integer" },
+        "manual_corrections_reused": { "type": "integer" },
+        "marginal_mature_items_change_percent": { "type": "number" },
+        "marginal_cost_change_percent": { "type": "number" },
+        "diminishing_return_flag": { "type": "boolean" },
+        "iteration_roi_score": { "type": "number" }
+      }
+    },
+    "reuse_observations": {
+      "type": "object",
+      "properties": {
+        "downstream_surfaces_updated": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "master_schema",
+              "bbox_roi",
+              "transcript",
+              "audio",
+              "objects",
+              "scene_cards",
+              "meaning_network",
+              "narrative_agent",
+              "search",
+              "statskit",
+              "significancekit",
+              "relevancekit",
+              "traceback",
+              "report_export",
+              "other"
+            ]
+          }
+        },
+        "projection_count": { "type": "integer" },
+        "future_ambiguities_reduced": { "type": "integer" },
+        "reuse_multiplier": { "type": "number" },
+        "source_link_completeness": { "type": "number" },
+        "traceback_completeness": { "type": "number" }
+      }
+    },
+    "economic_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "severity", "finding_type", "evidence", "recommended_action"],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "low", "medium", "high", "critical"]
+          },
+          "finding_type": {
+            "type": "string",
+            "enum": [
+              "high_yield",
+              "low_yield",
+              "high_noise",
+              "high_analyst_cost",
+              "high_compute_cost",
+              "strong_reuse",
+              "weak_reuse",
+              "orphan_data",
+              "diminishing_returns",
+              "missing_source_layer",
+              "profitable_iteration",
+              "unprofitable_iteration"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "recommended_action": {
+            "type": "string",
+            "enum": [
+              "continue_iteration",
+              "tighten_candidate_thresholds",
+              "loosen_candidate_thresholds",
+              "add_source_layer",
+              "improve_matcher",
+              "improve_review_ui",
+              "cache_or_batch",
+              "stop_iteration",
+              "defer_feature",
+              "profile_deeper",
+              "no_action"
+            ]
+          },
+          "engineering_note": { "type": "string" }
+        }
+      }
+    },
+    "economic_verdict": {
+      "type": "object",
+      "required": [
+        "maturation_economically_sound",
+        "iteration_should_continue",
+        "developer_attention_required"
+      ],
+      "properties": {
+        "maturation_economically_sound": { "type": "boolean" },
+        "iteration_should_continue": { "type": "boolean" },
+        "developer_attention_required": { "type": "boolean" },
+        "blocking_issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_required_sprint": {
+          "type": "string",
+          "enum": [
+            "candidate_quality",
+            "review_ui",
+            "source_layer_extraction",
+            "matcher_tuning",
+            "cache_batching",
+            "storage_pruning",
+            "traceback_repair",
+            "benchmark_iteration",
+            "production_cost_model",
+            "no_action"
+          ]
+        },
+        "summary": { "type": "string" }
+      }
+    }
+  }
+}

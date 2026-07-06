@@ -648,6 +648,21 @@ export function MenuBar() {
     }
   };
 
+  const openSourceLinkedPanel = (panelType: string) => {
+    if (selectedVideoId) {
+      eventBus.emit("videoIdChanged", selectedVideoId);
+    }
+    openPanel(
+      panelType,
+      selectedVideoId ? { videoId: selectedVideoId, analysisId: selectedVideoId } : {},
+    );
+    if (selectedVideoId) {
+      window.setTimeout(() => {
+        eventBus.emit("videoIdChanged", selectedVideoId);
+      }, 0);
+    }
+  };
+
   const openAnnotationWorkspace = () => {
     eventBus.emit("workspacePresetRequest", "annotation");
 
@@ -953,6 +968,12 @@ export function MenuBar() {
           },
         },
         {
+          label: "StatsKit",
+          onClick: () => {
+            openSourceLinkedPanel("StatsKit");
+          },
+        },
+        {
           label: "OBJ Detection Lens",
           onClick: () => {
             openPanel("OBJDetection");
@@ -1056,6 +1077,18 @@ export function MenuBar() {
           },
         },
         {
+          label: "StatsKit",
+          onClick: () => {
+            openSourceLinkedPanel("StatsKit");
+          },
+        },
+        {
+          label: "Admin / Observability",
+          onClick: () => {
+            openSourceLinkedPanel("AdminObservability");
+          },
+        },
+        {
           label: "Time Bank",
           onClick: () => {
             openPanel("TimeBank", selectedVideoId ? { videoId: selectedVideoId } : {});
@@ -1118,6 +1151,12 @@ export function MenuBar() {
           label: "Visual cues",
           onClick: () => {
             openToolsSection("visual");
+          },
+        },
+        {
+          label: "Admin / Observability",
+          onClick: () => {
+            openSourceLinkedPanel("AdminObservability");
           },
         },
       ],

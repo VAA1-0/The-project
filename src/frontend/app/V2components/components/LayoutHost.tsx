@@ -28,6 +28,8 @@ import SceneCardPanel from "./panels/SceneCardPanel";
 import SearchPanel from "./panels/SearchPanel";
 import MasterSchemaPanel from "./panels/MasterSchemaPanel";
 import DataMaturationPanel from "./panels/DataMaturationPanel";
+import StatsKitPanel from "./panels/StatsKitPanel";
+import AdminObservabilityPanel from "./panels/AdminObservabilityPanel";
 import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -45,6 +47,8 @@ const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
 
 const RIGHT_STACK_ANCHOR_TYPES = [
   "TracebackDrawer",
+  "AdminObservability",
+  "StatsKit",
   "MasterSchema",
   "DataMaturation",
   "ManualScene",
@@ -419,6 +423,8 @@ export default function LayoutHost({
     SceneCards: "Scene Cards",
     MasterSchema: "Master Schema",
     DataMaturation: "Maturation",
+    StatsKit: "StatsKit",
+    AdminObservability: "Admin / Observability",
     TracebackDrawer: "Traceback",
     ...Object.fromEntries(
       MANUAL_LEAF_PANEL_CONFIGS.map((item) => [item.componentType, item.title]),
@@ -803,6 +809,30 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           DataMaturationPanel,
+          (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "StatsKit",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          StatsKitPanel,
+          (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "AdminObservability",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          AdminObservabilityPanel,
           (state as Record<string, unknown>) || {},
           ContextWrapper,
         );

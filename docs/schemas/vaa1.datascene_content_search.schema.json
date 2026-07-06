@@ -29,7 +29,10 @@
     "motion_patterns": true,
     "scene_cards": true,
     "meaning_network": true,
-    "master_schema": true
+    "master_schema": true,
+    "stats_results": true,
+    "stats_visualizations": true,
+    "stats_interpretations": true
   },
   "legacy_aliases": {
     "character_search": "narrative_agent_search",
@@ -160,7 +163,10 @@
                 "motion_patterns",
                 "scene_cards",
                 "meaning_network",
-                "master_schema"
+                "master_schema",
+                "stats_results",
+                "stats_visualizations",
+                "stats_interpretations"
               ]
             }
           },
@@ -470,6 +476,9 @@
           "open_scene_card": { "type": "boolean" },
           "open_entity_card": { "type": "boolean" },
           "open_pattern_card": { "type": "boolean" },
+          "open_stats_run": { "type": "boolean" },
+          "open_stats_result": { "type": "boolean" },
+          "open_stats_interpretation": { "type": "boolean" },
           "open_forensic_render": { "type": "boolean" },
           "promote_to_mature_data_candidate": { "type": "boolean" },
           "export_result": { "type": "boolean" }

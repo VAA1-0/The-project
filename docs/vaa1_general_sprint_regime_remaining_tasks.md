@@ -6,12 +6,19 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 
 ## Non-Droppable Release Tracks
 
-Two tracks must remain visible in every sprint review and release-readiness discussion:
+Four tracks must remain visible in every sprint review and release-readiness discussion:
 
 1. **Mature Data Proliferation Regime.** Confirmed analyst work may proliferate as mature data only through governed source anchors, authority state, maturity state, projection targets, traceback, and canonical saved decisions. Candidates, near matches, raw detections, model suggestions, and inferred graph matches must remain reviewable until confirmed.
 2. **Licensed software optionality and user activation.** FFmpeg, YOLOv8/Ultralytics, licensed scripts, optional APIs, remote providers, premium tools, and external services must be detected, explained, activated by explicit user choice, and recorded in traceback. Release must include alternatives, disabled-state workflows, or explicit deferrals for license-sensitive dependencies.
+3. **Performance observability.** Uploading, quick sweeps, science scan, forensic scan, data maturation/iteration, manual program use, export, and UI rendering must write developer-facing observability records under the hood. This is not an analyst panel. It is a full internal view for developers, with later product work deciding what subset, if any, should be shared externally.
+4. **Data maturation economics.** Datascene must understand the cost, yield, reuse, waste, and diminishing returns of each maturation and iteration pass. Runtime success is not enough; the program must know whether a pass created mature, source-linked value worth the compute, storage, and analyst attention it consumed.
 
 These tracks are not polish. They are release gates.
+
+Relevant contracts:
+
+- `docs/schemas/vaa1.performance_observability_layer.schema.json`
+- `docs/schemas/vaa1.data_maturation_economics.schema.json`
 
 ## 1. Data maturity proliferation regime
 
@@ -92,6 +99,20 @@ Acceptance:
 - Make audio samples and visual patterns navigable, editable, droppable, replaceable, mergeable, splittable, assignable, unassignable, referenceable, and false-match aware.
 - Preserve dropped, rejected, replaced, and false-match evidence as inactive traceback history.
 - Block orphan semantic candidates or mark them explicitly unattached with a reason.
+- Deliver the source layers required for StatsKit, SignificanceKit, and RelevanceRadar to become actual analytical tooling rather than missing-data placeholders:
+  - true shot-boundary intervals, not only scene segments or shot-size samples;
+  - audio event intervals for speech, silence, noise, and music;
+  - music and sound classifier output over time;
+  - color, brightness, and contrast extraction from sampled frames or frame windows;
+  - speaker-linked diarization turns so speaker dominance can be computed beyond transcript speaker labels.
+- Persist each of these layers through the Master Schema / governed evidence path with source time, method, runtime/tool provenance, confidence or maturity state, and traceback.
+- Make StatsKit consume these layers through Master Schema or governed analysis projections, not panel-local guesses.
+
+Acceptance:
+
+- StatsKit can compute shot duration distributions, speech/silence/music/noise ratios, music/sound timelines, color/brightness/contrast statistics, and speaker-dominance statistics from persisted source-linked records.
+- Missing-data diagnostics can name the exact absent layer and route the analyst to the relevant extraction or review action.
+- SignificanceKit and RelevanceRadar claims that depend on these measurements remain candidate until linked evidence and method provenance are present.
 
 ## 8. Governance matrix, traceback, and quality agent
 
@@ -99,6 +120,26 @@ Acceptance:
 - Add a Quality Agent review tray in audit-only mode.
 - Add traceback drawer coverage for visible claims.
 - Create review tickets for missing source anchors, stale projections, panel divergence, conflicting labels, and orphan evidence.
+
+## 8A. Performance observability and maturation economics
+
+- Deliver the complete performance observability layer as a program-level developer substrate, not as a normal analysis panel.
+- Capture upload, video probe, frame extraction, audio extraction, quick sweep, science scan, forensic scan, speech-to-text, speaker diarization, object detection, face detection, OCR, feature extraction, embedding generation, similarity search, scene segmentation, scene card generation, knowledge graph build, provenance linking, BBox tracking, manual annotation sync, data maturation, iteration, proliferation matching, export, UI render, and manual program use.
+- Persist observability artifacts under the active analysis or run output, with session id, analysis id, runtime environment, source target, stage observations, resource observations, bottleneck findings, provenance integrity, benchmark result, and operational verdict.
+- Keep the developer view full-fidelity: timings, resource peaks, stage-level input/output volumes, cache behavior, database behavior, UI responsiveness, errors, bottlenecks, and recommended engineering actions should be visible internally.
+- Do not expose this as a distracting analyst panel. The first UI surface should be an under-the-hood developer/diagnostic view. Later product decisions may choose a smaller user-facing subset for trust, export, or enterprise governance.
+- Pair performance observability with data maturation economics for each relevant pass.
+- Track compute seconds, GPU seconds, storage written/retained, database writes, cache misses, remote/API cost estimates, analyst minutes, review actions, correction actions, and blocked minutes.
+- Track candidate yield, reviewed yield, confirmed yield, mature yield, rejected/deferred/orphan counts, false positives, false negatives discovered, maturation rate, noise ratio, analyst cost per mature item, and compute cost per mature item.
+- Track iteration economics: new mature items, new source links, projection targets updated, ambiguities reduced, regressions introduced, manual corrections reused, marginal mature-item change, marginal cost change, diminishing-return flag, and iteration ROI.
+- Track reuse value across Master Schema, BBox/ROI, transcript, audio, objects, scene cards, Meaning Network, Narrative Agent, Search, StatsKit, SignificanceKit, RelevanceKit, Traceback, and report/export.
+
+Acceptance:
+
+- Developers can answer "what broke, where, and why?" across every major Datascene program path.
+- Developers can answer "was this maturation or iteration pass worth it?" using cost, yield, noise, reuse, and diminishing-return evidence.
+- Observability and economics records remain under the hood by default and do not become a metadata parade in analyst-facing workbenches.
+- Operational verdicts can distinguish laptop readiness, feature-length readiness, multi-film readiness, HPC/cloud readiness, commercial cost readiness, and maturation economic soundness.
 
 ## 9. User agreement and data-location governance
 

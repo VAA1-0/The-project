@@ -36,6 +36,10 @@
       "description": "Visual entity seeds detected from computer-vision object models.",
       "examples": ["person", "car", "building", "weapon", "flag", "microphone", "document"]
     },
+    "stats_result": {
+      "description": "Entities derived from statistical analysis results, such as significant terms or identified clusters.",
+      "examples": ["frequent_word_cluster", "high_correlation_pair"]
+    },
     "visual_sample_cloud": {
       "description": "Reusable visual sample substrate for a subject, object, symbol, place, or Narrative Agent.",
       "examples": ["James Bond visual sample", "police car visual sample", "flag sample"]
@@ -186,6 +190,7 @@
               "annotation",
               "metadata",
               "object_detection",
+              "stats_result",
               "visual_sample_cloud",
               "audio_sample_cloud",
               "audiovisual_narrative_agent_sample"

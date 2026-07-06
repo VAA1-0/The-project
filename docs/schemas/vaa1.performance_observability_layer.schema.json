@@ -1,0 +1,524 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.io/schemas/vaa1/performance_observability_layer.schema.json",
+  "title": "Datascene VAA1 Complete Performance Observability Layer",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "observability_session",
+    "runtime_environment",
+    "analysis_target",
+    "pipeline_observations",
+    "resource_observations",
+    "bottleneck_findings",
+    "operational_verdict"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "observability_session": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "analysis_id",
+        "started_at",
+        "ended_at",
+        "observer_mode"
+      ],
+      "properties": {
+        "session_id": { "type": "string" },
+        "analysis_id": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "observer_mode": {
+          "type": "string",
+          "enum": ["development", "benchmark", "production", "diagnostic", "crash_recovery"]
+        },
+        "git_commit": { "type": "string" },
+        "branch": { "type": "string" },
+        "operator": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "runtime_environment": {
+      "type": "object",
+      "required": [
+        "machine_profile",
+        "software_stack",
+        "execution_backend"
+      ],
+      "properties": {
+        "machine_profile": {
+          "type": "object",
+          "properties": {
+            "device_class": {
+              "type": "string",
+              "enum": ["basic_laptop", "developer_laptop", "workstation", "gpu_server", "hpc_node", "cloud_instance"]
+            },
+            "os": { "type": "string" },
+            "cpu_model": { "type": "string" },
+            "cpu_cores": { "type": "integer" },
+            "ram_gb": { "type": "number" },
+            "gpu_model": { "type": "string" },
+            "vram_gb": { "type": "number" },
+            "storage_type": {
+              "type": "string",
+              "enum": ["hdd", "ssd", "nvme", "network_storage", "unknown"]
+            },
+            "free_disk_gb_at_start": { "type": "number" }
+          }
+        },
+        "software_stack": {
+          "type": "object",
+          "properties": {
+            "python_version": { "type": "string" },
+            "node_version": { "type": "string" },
+            "ffmpeg_version": { "type": "string" },
+            "opencv_version": { "type": "string" },
+            "torch_version": { "type": "string" },
+            "cuda_version": { "type": "string" },
+            "database_engine": { "type": "string" },
+            "frontend_framework": { "type": "string" }
+          }
+        },
+        "execution_backend": {
+          "type": "object",
+          "properties": {
+            "backend_type": {
+              "type": "string",
+              "enum": ["local_cpu", "local_gpu", "docker", "remote_server", "hpc_batch", "cloud_worker"]
+            },
+            "parallelism_enabled": { "type": "boolean" },
+            "worker_count": { "type": "integer" },
+            "batch_size": { "type": "integer" },
+            "cache_enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "analysis_target": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_type",
+        "duration_seconds",
+        "file_size_gb"
+      ],
+      "properties": {
+        "source_id": { "type": "string" },
+        "source_type": {
+          "type": "string",
+          "enum": ["single_video", "feature_film", "multi_video_batch", "archive_batch", "test_fixture"]
+        },
+        "duration_seconds": { "type": "number" },
+        "file_size_gb": { "type": "number" },
+        "resolution": { "type": "string" },
+        "fps": { "type": "number" },
+        "audio_channels": { "type": "integer" },
+        "codec_video": { "type": "string" },
+        "codec_audio": { "type": "string" },
+        "language_hint": { "type": "string" }
+      }
+    },
+    "pipeline_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage_id",
+          "stage_name",
+          "stage_type",
+          "started_at",
+          "ended_at",
+          "duration_ms",
+          "status",
+          "input_volume",
+          "output_volume",
+          "resource_usage"
+        ],
+        "properties": {
+          "stage_id": { "type": "string" },
+          "stage_name": {
+            "type": "string",
+            "enum": [
+              "upload",
+              "video_probe",
+              "frame_extraction",
+              "audio_extraction",
+              "speech_to_text",
+              "speaker_diarization",
+              "object_detection",
+              "face_detection",
+              "ocr",
+              "audio_feature_extraction",
+              "visual_feature_extraction",
+              "motion_feature_extraction",
+              "embedding_generation",
+              "similarity_search",
+              "scene_segmentation",
+              "scene_card_generation",
+              "knowledge_graph_build",
+              "provenance_linking",
+              "bbox_tracking",
+              "manual_annotation_sync",
+              "proliferation_match",
+              "quick_sweep",
+              "science_scan",
+              "forensic_scan",
+              "data_maturation",
+              "manual_program_use",
+              "export",
+              "ui_render",
+              "other"
+            ]
+          },
+          "stage_type": {
+            "type": "string",
+            "enum": ["offline_preprocessing", "interactive", "database", "frontend", "export", "diagnostic"]
+          },
+          "started_at": { "type": "string", "format": "date-time" },
+          "ended_at": { "type": "string", "format": "date-time" },
+          "duration_ms": { "type": "number" },
+          "status": {
+            "type": "string",
+            "enum": ["success", "warning", "failed", "skipped", "timeout", "cancelled"]
+          },
+          "input_volume": {
+            "type": "object",
+            "properties": {
+              "frames_in": { "type": "integer" },
+              "audio_seconds_in": { "type": "number" },
+              "objects_in": { "type": "integer" },
+              "vectors_in": { "type": "integer" },
+              "graph_nodes_in": { "type": "integer" },
+              "graph_edges_in": { "type": "integer" },
+              "bytes_in": { "type": "integer" }
+            }
+          },
+          "output_volume": {
+            "type": "object",
+            "properties": {
+              "frames_out": { "type": "integer" },
+              "detections_out": { "type": "integer" },
+              "objects_out": { "type": "integer" },
+              "vectors_out": { "type": "integer" },
+              "embeddings_out": { "type": "integer" },
+              "scene_cards_out": { "type": "integer" },
+              "graph_nodes_out": { "type": "integer" },
+              "graph_edges_out": { "type": "integer" },
+              "bytes_out": { "type": "integer" }
+            }
+          },
+          "algorithm_profile": {
+            "type": "object",
+            "properties": {
+              "algorithm_name": { "type": "string" },
+              "expected_complexity": {
+                "type": "string",
+                "enum": ["O(1)", "O(log n)", "O(n)", "O(n log n)", "O(nk)", "O(n^2)", "O(n^3)", "unknown"]
+              },
+              "observed_scaling_warning": { "type": "boolean" },
+              "pairwise_comparison_count": { "type": "integer" },
+              "index_used": { "type": "boolean" },
+              "index_type": {
+                "type": "string",
+                "enum": ["none", "ann", "faiss", "hnsw", "som_codebook", "kmeans_codebook", "database_index", "custom"]
+              }
+            }
+          },
+          "resource_usage": {
+            "$ref": "#/$defs/resource_usage_snapshot"
+          },
+          "errors": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/error_event" }
+          }
+        }
+      }
+    },
+    "resource_observations": {
+      "type": "object",
+      "required": [
+        "peak_usage",
+        "timeline_samples"
+      ],
+      "properties": {
+        "peak_usage": {
+          "$ref": "#/$defs/resource_usage_snapshot"
+        },
+        "timeline_samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["timestamp", "resource_usage"],
+            "properties": {
+              "timestamp": { "type": "string", "format": "date-time" },
+              "active_stage_id": { "type": "string" },
+              "resource_usage": {
+                "$ref": "#/$defs/resource_usage_snapshot"
+              }
+            }
+          }
+        }
+      }
+    },
+    "data_growth_observations": {
+      "type": "object",
+      "properties": {
+        "per_video_minute": {
+          "type": "object",
+          "properties": {
+            "frames": { "type": "number" },
+            "detections": { "type": "number" },
+            "objects": { "type": "number" },
+            "feature_vectors": { "type": "number" },
+            "embeddings": { "type": "number" },
+            "scene_cards": { "type": "number" },
+            "graph_nodes": { "type": "number" },
+            "graph_edges": { "type": "number" },
+            "annotations": { "type": "number" },
+            "storage_mb": { "type": "number" }
+          }
+        },
+        "growth_risk": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical", "unknown"]
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "cache_observations": {
+      "type": "object",
+      "properties": {
+        "cache_enabled": { "type": "boolean" },
+        "cache_hit_rate": { "type": "number" },
+        "cache_miss_rate": { "type": "number" },
+        "recomputed_artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stale_cache_events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/error_event" }
+        }
+      }
+    },
+    "ui_responsiveness": {
+      "type": "object",
+      "properties": {
+        "average_frame_render_ms": { "type": "number" },
+        "max_frame_render_ms": { "type": "number" },
+        "interaction_latency_ms_p50": { "type": "number" },
+        "interaction_latency_ms_p95": { "type": "number" },
+        "interaction_latency_ms_p99": { "type": "number" },
+        "frozen_ui_events": { "type": "integer" },
+        "long_task_count": { "type": "integer" },
+        "user_visible_lag": {
+          "type": "string",
+          "enum": ["none", "minor", "moderate", "severe", "blocking"]
+        }
+      }
+    },
+    "database_observations": {
+      "type": "object",
+      "properties": {
+        "query_count": { "type": "integer" },
+        "slow_query_count": { "type": "integer" },
+        "slowest_query_ms": { "type": "number" },
+        "write_count": { "type": "integer" },
+        "read_count": { "type": "integer" },
+        "transaction_failures": { "type": "integer" },
+        "index_missing_warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "provenance_integrity": {
+      "type": "object",
+      "properties": {
+        "traceback_complete": { "type": "boolean" },
+        "orphan_nodes": { "type": "integer" },
+        "orphan_annotations": { "type": "integer" },
+        "unlinked_detections": { "type": "integer" },
+        "manual_override_conflicts": { "type": "integer" },
+        "scene_boundary_conflicts": { "type": "integer" },
+        "bbox_identity_rewrite_events": { "type": "integer" },
+        "integrity_verdict": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail", "unknown"]
+        }
+      }
+    },
+    "bottleneck_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "severity",
+          "bottleneck_type",
+          "affected_stage",
+          "evidence",
+          "recommended_action"
+        ],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "low", "medium", "high", "critical"]
+          },
+          "bottleneck_type": {
+            "type": "string",
+            "enum": [
+              "cpu_bound",
+              "gpu_bound",
+              "memory_bound",
+              "vram_bound",
+              "disk_io_bound",
+              "database_bound",
+              "network_bound",
+              "algorithmic_complexity",
+              "ui_render_bound",
+              "serialization_bound",
+              "cache_failure",
+              "data_integrity_failure",
+              "unknown"
+            ]
+          },
+          "affected_stage": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "recommended_action": {
+            "type": "string",
+            "enum": [
+              "profile_deeper",
+              "replace_algorithm",
+              "add_index",
+              "move_to_batch_preprocessing",
+              "reduce_memory_duplication",
+              "stream_data",
+              "enable_cache",
+              "optimize_database",
+              "split_pipeline_stage",
+              "offload_to_gpu",
+              "offload_to_hpc",
+              "defer_feature",
+              "fix_data_integrity",
+              "no_action"
+            ]
+          },
+          "engineering_note": { "type": "string" }
+        }
+      }
+    },
+    "operational_verdict": {
+      "type": "object",
+      "required": [
+        "laptop_ready",
+        "feature_length_ready",
+        "multi_film_ready",
+        "hpc_ready",
+        "cloud_ready",
+        "commercial_cost_ready"
+      ],
+      "properties": {
+        "laptop_ready": { "type": "boolean" },
+        "feature_length_ready": { "type": "boolean" },
+        "multi_film_ready": { "type": "boolean" },
+        "hpc_ready": { "type": "boolean" },
+        "cloud_ready": { "type": "boolean" },
+        "commercial_cost_ready": { "type": "boolean" },
+        "blocking_issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_required_sprint": {
+          "type": "string",
+          "enum": [
+            "performance_baseline",
+            "complexity_audit",
+            "memory_audit",
+            "feature_store",
+            "batch_interactive_split",
+            "similarity_indexing",
+            "som_experiment",
+            "hpc_port",
+            "cloud_cost_model",
+            "production_hardening"
+          ]
+        },
+        "summary": { "type": "string" }
+      }
+    },
+    "benchmark_result": {
+      "type": "object",
+      "properties": {
+        "benchmark_name": { "type": "string" },
+        "benchmark_class": {
+          "type": "string",
+          "enum": ["5_min", "30_min", "60_min", "120_min", "feature_film", "multi_feature_batch"]
+        },
+        "passed": { "type": "boolean" },
+        "failure_reason": { "type": "string" },
+        "comparison_to_previous_run": {
+          "type": "object",
+          "properties": {
+            "runtime_change_percent": { "type": "number" },
+            "memory_change_percent": { "type": "number" },
+            "storage_change_percent": { "type": "number" },
+            "accuracy_change_percent": { "type": "number" },
+            "regression_detected": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resource_usage_snapshot": {
+      "type": "object",
+      "properties": {
+        "cpu_percent_avg": { "type": "number" },
+        "cpu_percent_peak": { "type": "number" },
+        "ram_mb_avg": { "type": "number" },
+        "ram_mb_peak": { "type": "number" },
+        "gpu_percent_avg": { "type": "number" },
+        "gpu_percent_peak": { "type": "number" },
+        "vram_mb_avg": { "type": "number" },
+        "vram_mb_peak": { "type": "number" },
+        "disk_read_mb": { "type": "number" },
+        "disk_write_mb": { "type": "number" },
+        "disk_read_mb_per_sec_peak": { "type": "number" },
+        "disk_write_mb_per_sec_peak": { "type": "number" },
+        "network_read_mb": { "type": "number" },
+        "network_write_mb": { "type": "number" },
+        "open_file_handles": { "type": "integer" },
+        "thread_count": { "type": "integer" },
+        "process_count": { "type": "integer" }
+      }
+    },
+    "error_event": {
+      "type": "object",
+      "required": [
+        "timestamp",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "error", "critical"]
+        },
+        "message": { "type": "string" },
+        "stack_trace": { "type": "string" },
+        "affected_component": { "type": "string" },
+        "recoverable": { "type": "boolean" }
+      }
+    }
+  }
+}

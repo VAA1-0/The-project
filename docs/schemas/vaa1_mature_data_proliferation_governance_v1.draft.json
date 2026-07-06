@@ -370,7 +370,9 @@
         "SecondOrderLabel",
         "ReportClaim",
         "ForensicObservation",
-        "MetadataSubject",
+        "StatsRun",
+        "StatsResult",
+        "StatsInterpretation",
         "TracebackNode"
       ]
     },
@@ -415,7 +417,10 @@
         "meaning_plot_panel",
         "narrative_agent_panel",
         "traceback_drawer",
-        "evidence_graph",
+        "stats_kit_panel",
+        "stats_results_panel",
+        "stats_visualizations_panel",
+        "stats_interpretations_panel",
         "governance_matrix",
         "search_index",
         "report_writer",
@@ -572,7 +577,10 @@
             "scene_card",
             "second_order_label",
             "traceback_node",
-            "report_claim"
+            "report_claim",
+            "stats_run_config",
+            "stats_result",
+            "stats_interpretation"
           ]
         },
         "authority_level": { "oneOf": [{ "$ref": "#/$defs/authority_level" }, { "type": "null" }] },

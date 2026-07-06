@@ -1,0 +1,511 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.vaa1/schemas/vaa1.significance_relevance_radar.schema.json",
+  "title": "Datascene / VAA1 SignificanceKit and RelevanceRadar Schema",
+  "schema_name": "Datascene SignificanceKit + RelevanceRadar",
+  "schema_version": "0.1.0",
+  "purpose": "Traceable significance and relevance claims for Datascene evidence, statistics, patterns, scenes, actors, and interpretations.",
+  "core_principle": "Significance and relevance are assistive, perspectival, and source-linked. They rank and explain evidence; they do not overwrite mature source truth.",
+  "type": "object",
+  "required": ["StatsKit", "SignificanceKit", "RelevanceRadar"],
+  "properties": {
+    "StatsKit": {
+      "type": "object",
+      "description": "Bridge to Datascene StatsKit. Concrete StatsRun, StatsResult, StatsInterpretation, and EvidenceLink objects remain governed by vaa1.statskit_schema.v1.json.",
+      "properties": {
+        "schema_ref": {
+          "type": "string",
+          "default": "docs/schemas/vaa1.statskit_schema.v1.json"
+        },
+        "source_stats_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StatsRunRef" }
+        },
+        "source_results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StatsResultRef" }
+        },
+        "source_interpretations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StatsInterpretationRef" }
+        },
+        "source_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        }
+      }
+    },
+    "SignificanceKit": {
+      "type": "object",
+      "required": ["schema_name", "schema_version", "purpose", "core_principle", "claims", "profiles", "comparisons", "governance_rules"],
+      "properties": {
+        "schema_name": {
+          "type": "string",
+          "default": "Datascene SignificanceKit"
+        },
+        "schema_version": {
+          "type": "string",
+          "default": "0.1.0"
+        },
+        "purpose": {
+          "type": "string",
+          "default": "To support traceable significance claims about Datascene evidence, statistics, patterns, scenes, actors, and interpretations."
+        },
+        "core_principle": {
+          "type": "string",
+          "default": "Significance is multidimensional, perspectival, and always linked back to source evidence."
+        },
+        "claims": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SignificanceClaim" }
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SignificanceProfile" }
+        },
+        "comparisons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SignificanceComparison" }
+        },
+        "governance_rules": { "$ref": "#/$defs/SignificanceGovernanceRules" }
+      }
+    },
+    "RelevanceRadar": {
+      "type": "object",
+      "required": ["radar_id", "schema_version", "purpose", "relevance_context", "relevance_scores", "radar_dimensions", "ui_behavior", "traceback"],
+      "properties": {
+        "radar_id": { "type": "string" },
+        "schema_version": {
+          "type": "string",
+          "default": "0.1.0"
+        },
+        "purpose": {
+          "type": "string",
+          "default": "Rank and explain the relevance of Datascene evidence, patterns, scenes, actors, and interpretations for a defined analyst task."
+        },
+        "relevance_context": { "$ref": "#/$defs/RelevanceContext" },
+        "relevance_scores": { "$ref": "#/$defs/RelevanceScores" },
+        "radar_dimensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RadarDimension" },
+          "minItems": 1
+        },
+        "ui_behavior": { "$ref": "#/$defs/RelevanceRadarUiBehavior" },
+        "traceback": { "$ref": "#/$defs/RelevanceRadarTraceback" }
+      }
+    }
+  },
+  "$defs": {
+    "EvidenceLink": {
+      "type": "object",
+      "description": "Source-linked evidence. Compatible with StatsKit EvidenceLink and Datascene source navigation.",
+      "required": ["evidence_id", "video_id", "timestamp", "modality"],
+      "properties": {
+        "evidence_id": { "type": "string" },
+        "video_id": { "type": "string" },
+        "scene_id": { "type": "string" },
+        "timestamp": {
+          "type": "object",
+          "required": ["start_seconds", "end_seconds"],
+          "properties": {
+            "start_seconds": { "type": "number" },
+            "end_seconds": { "type": "number" }
+          }
+        },
+        "modality": {
+          "type": "string",
+          "enum": ["transcript", "visual", "audio", "metadata", "manual_annotation", "network", "multimodal"]
+        },
+        "source_object_id": { "type": "string" },
+        "bbox_id": { "type": "string" },
+        "transcript_span_id": { "type": "string" },
+        "speaker_id": { "type": "string" },
+        "annotation_id": { "type": "string" },
+        "stats_result_id": { "type": "string" },
+        "forensic_render_available": { "type": "boolean" },
+        "open_source_action": {
+          "type": "object",
+          "properties": {
+            "action_type": {
+              "type": "string",
+              "enum": ["jump_to_video", "open_scene_card", "open_bbox", "open_transcript_span", "open_audio_event", "open_network_node", "open_traceback"]
+            },
+            "target_uri": { "type": "string" }
+          }
+        }
+      }
+    },
+    "StatsRunRef": {
+      "type": "object",
+      "required": ["run_id"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "run_name": { "type": "string" },
+        "artifact_path": { "type": "string" }
+      }
+    },
+    "StatsResultRef": {
+      "type": "object",
+      "required": ["result_id"],
+      "properties": {
+        "result_id": { "type": "string" },
+        "method_id": { "type": "string" },
+        "result_label": { "type": "string" },
+        "confidence_score": { "type": "number" }
+      }
+    },
+    "StatsInterpretationRef": {
+      "type": "object",
+      "required": ["interpretation_id"],
+      "properties": {
+        "interpretation_id": { "type": "string" },
+        "claim": { "type": "string" },
+        "interpretive_strength": {
+          "type": "string",
+          "enum": ["weak", "moderate", "strong", "contested"]
+        }
+      }
+    },
+    "TimeWindow": {
+      "type": "object",
+      "required": ["start_seconds", "end_seconds"],
+      "properties": {
+        "start_seconds": { "type": "number" },
+        "end_seconds": { "type": "number" }
+      }
+    },
+    "SignificanceScope": {
+      "type": "object",
+      "required": ["level", "object_type", "object_ids"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["micro", "meso", "macro"]
+        },
+        "object_type": {
+          "type": "string",
+          "enum": ["scene", "segment", "video", "collection", "actor", "event", "theme", "network", "corpus"]
+        },
+        "object_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "time_window": { "$ref": "#/$defs/TimeWindow" }
+      }
+    },
+    "SignificancePerspective": {
+      "type": "object",
+      "required": ["position", "orientation", "expression", "audience_profile"],
+      "properties": {
+        "position": {
+          "type": "string",
+          "enum": ["first_person", "second_person", "third_person", "social_context", "viewer", "analyst", "institutional", "comparative"]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["intrinsic", "external"]
+        },
+        "expression": {
+          "type": "string",
+          "enum": ["explicit", "implicit", "inferred"]
+        },
+        "audience_profile": {
+          "type": "string",
+          "enum": ["researcher", "archivist", "journalist", "policymaker", "curator", "editor", "public", "custom"]
+        },
+        "research_question": { "type": "string" }
+      }
+    },
+    "SignificanceDimension": {
+      "type": "object",
+      "required": ["score", "basis", "summary"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "basis": { "type": "string" },
+        "summary": { "type": "string" },
+        "linked_stats_results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StatsResultRef" }
+        },
+        "linked_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        }
+      }
+    },
+    "SignificanceVector": {
+      "type": "object",
+      "properties": {
+        "statistical": { "$ref": "#/$defs/SignificanceDimension" },
+        "practical": { "$ref": "#/$defs/SignificanceDimension" },
+        "social": { "$ref": "#/$defs/SignificanceDimension" },
+        "cultural": { "$ref": "#/$defs/SignificanceDimension" },
+        "strategic": { "$ref": "#/$defs/SignificanceDimension" },
+        "narrative": { "$ref": "#/$defs/SignificanceDimension" },
+        "emotional": { "$ref": "#/$defs/SignificanceDimension" },
+        "informational": { "$ref": "#/$defs/SignificanceDimension" }
+      }
+    },
+    "EvidenceSupport": {
+      "type": "object",
+      "properties": {
+        "primary_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        },
+        "secondary_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        },
+        "counter_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_strength": {
+          "type": "string",
+          "enum": ["weak", "moderate", "strong", "contested"]
+        }
+      }
+    },
+    "SignificanceClaim": {
+      "type": "object",
+      "required": ["claim_id", "title", "claim_text", "claim_status", "claim_type", "scope", "perspective", "significance_vector", "evidence_support", "traceback"],
+      "properties": {
+        "claim_id": { "type": "string" },
+        "title": { "type": "string" },
+        "claim_text": { "type": "string" },
+        "claim_status": {
+          "type": "string",
+          "enum": ["draft", "candidate", "reviewed", "accepted", "disputed", "rejected"]
+        },
+        "claim_type": {
+          "type": "string",
+          "enum": ["statistical", "practical", "social", "cultural", "strategic", "narrative", "emotional", "informational", "mixed"]
+        },
+        "scope": { "$ref": "#/$defs/SignificanceScope" },
+        "perspective": { "$ref": "#/$defs/SignificancePerspective" },
+        "significance_vector": { "$ref": "#/$defs/SignificanceVector" },
+        "evidence_support": { "$ref": "#/$defs/EvidenceSupport" },
+        "interpretive_reasoning": {
+          "type": "object",
+          "properties": {
+            "reasoning_summary": { "type": "string" },
+            "assumptions": { "type": "array", "items": { "type": "string" } },
+            "alternative_interpretations": { "type": "array", "items": { "type": "string" } },
+            "uncertainties": { "type": "array", "items": { "type": "string" } },
+            "requires_human_review": { "type": "boolean" }
+          }
+        },
+        "traceback": {
+          "type": "object",
+          "properties": {
+            "source_video_ids": { "type": "array", "items": { "type": "string" } },
+            "scene_ids": { "type": "array", "items": { "type": "string" } },
+            "stats_result_ids": { "type": "array", "items": { "type": "string" } },
+            "visualization_ids": { "type": "array", "items": { "type": "string" } },
+            "annotation_ids": { "type": "array", "items": { "type": "string" } },
+            "method_ids": { "type": "array", "items": { "type": "string" } },
+            "forensic_render_ids": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "ui_behavior": {
+          "type": "object",
+          "properties": {
+            "show_as_badge": { "type": "boolean" },
+            "show_as_radar_vector": { "type": "boolean" },
+            "show_on_timeline": { "type": "boolean" },
+            "allow_click_to_source": { "type": "boolean" },
+            "allow_expand_reasoning": { "type": "boolean" },
+            "allow_show_counter_evidence": { "type": "boolean" },
+            "allow_compare_perspectives": { "type": "boolean" },
+            "allow_export_claim_card": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "SignificanceProfile": {
+      "type": "object",
+      "required": ["profile_id", "profile_name", "intended_use", "dimension_weights", "default_perspective"],
+      "properties": {
+        "profile_id": { "type": "string" },
+        "profile_name": { "type": "string" },
+        "description": { "type": "string" },
+        "intended_use": {
+          "type": "string",
+          "enum": ["exploratory_analysis", "archive_description", "journalistic_review", "policy_analysis", "narrative_analysis", "cultural_analysis", "strategic_analysis", "academic_research"]
+        },
+        "dimension_weights": { "$ref": "#/$defs/SignificanceWeights" },
+        "default_perspective": {
+          "type": "object",
+          "properties": {
+            "level": { "type": "string", "enum": ["micro", "meso", "macro"] },
+            "position": { "type": "string", "enum": ["first_person", "social_context", "viewer", "analyst", "institutional"] },
+            "orientation": { "type": "string", "enum": ["intrinsic", "external"] },
+            "expression": { "type": "string", "enum": ["explicit", "implicit", "inferred"] }
+          }
+        }
+      }
+    },
+    "SignificanceWeights": {
+      "type": "object",
+      "properties": {
+        "statistical": { "type": "number", "minimum": 0, "maximum": 1 },
+        "practical": { "type": "number", "minimum": 0, "maximum": 1 },
+        "social": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cultural": { "type": "number", "minimum": 0, "maximum": 1 },
+        "strategic": { "type": "number", "minimum": 0, "maximum": 1 },
+        "narrative": { "type": "number", "minimum": 0, "maximum": 1 },
+        "emotional": { "type": "number", "minimum": 0, "maximum": 1 },
+        "informational": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "SignificanceComparison": {
+      "type": "object",
+      "required": ["comparison_id", "comparison_type", "objects_compared", "dimensions_compared"],
+      "properties": {
+        "comparison_id": { "type": "string" },
+        "comparison_type": {
+          "type": "string",
+          "enum": ["within_video", "between_videos", "between_collections", "between_perspectives", "before_after", "group_comparison"]
+        },
+        "objects_compared": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["object_type", "object_id"],
+            "properties": {
+              "object_type": { "type": "string", "enum": ["scene", "video", "actor", "topic", "institution", "collection"] },
+              "object_id": { "type": "string" }
+            }
+          }
+        },
+        "dimensions_compared": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["statistical", "practical", "social", "cultural", "strategic", "narrative", "emotional", "informational"]
+          }
+        },
+        "comparison_result": {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" },
+            "largest_difference": { "type": "string" },
+            "most_significant_object_id": { "type": "string" },
+            "linked_claims": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/SignificanceClaim" }
+            }
+          }
+        }
+      }
+    },
+    "SignificanceGovernanceRules": {
+      "type": "object",
+      "properties": {
+        "no_significance_without_evidence": { "type": "boolean", "default": true },
+        "statistical_significance_must_report_method": { "type": "boolean", "default": true },
+        "interpretive_significance_requires_reasoning_summary": { "type": "boolean", "default": true },
+        "all_claims_must_support_counter_evidence": { "type": "boolean", "default": true },
+        "manual_review_required_for_high_level_claims": { "type": "boolean", "default": true },
+        "aggregate_claims_must_expand_to_source_evidence": { "type": "boolean", "default": true },
+        "perspective_must_be_explicit": { "type": "boolean", "default": true },
+        "significance_scores_are_assistive_not_authoritative": { "type": "boolean", "default": true }
+      }
+    },
+    "RelevanceContext": {
+      "type": "object",
+      "required": ["research_question", "analyst_goal", "target_audience", "scope", "active_lens"],
+      "properties": {
+        "research_question": { "type": "string" },
+        "analyst_goal": {
+          "type": "string",
+          "enum": ["exploration", "comparison", "verification", "retrieval", "narrative_analysis", "strategic_analysis", "reporting"]
+        },
+        "target_audience": {
+          "type": "string",
+          "enum": ["researcher", "archivist", "journalist", "curator", "policymaker", "editor", "public"]
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["scene", "video", "collection", "corpus"]
+        },
+        "active_lens": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["statistical", "practical", "cultural", "social", "strategic", "narrative", "emotional", "informational"]
+          }
+        }
+      }
+    },
+    "RelevanceScores": {
+      "type": "object",
+      "required": ["overall_relevance", "task_relevance", "evidence_relevance", "novelty_relevance", "comparative_relevance", "interpretive_relevance", "source_relevance", "viewer_relevance"],
+      "properties": {
+        "overall_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "task_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "novelty_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "comparative_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "interpretive_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source_relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "viewer_relevance": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "RadarDimension": {
+      "type": "object",
+      "required": ["dimension", "score", "reason", "linked_evidence"],
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "enum": ["task_fit", "source_strength", "novelty", "comparative_value", "interpretive_value", "actionability"]
+        },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason": { "type": "string" },
+        "linked_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        }
+      }
+    },
+    "RelevanceRadarUiBehavior": {
+      "type": "object",
+      "properties": {
+        "visualization_type": {
+          "type": "string",
+          "enum": ["radar_chart", "ranked_list", "heatmap", "timeline_overlay"]
+        },
+        "click_dimension_to_filter_results": { "type": "boolean" },
+        "click_score_to_open_evidence": { "type": "boolean" },
+        "show_why_this_matters": { "type": "boolean" },
+        "show_counter_evidence": { "type": "boolean" },
+        "allow_analyst_weighting": { "type": "boolean" },
+        "allow_audience_profile_switching": { "type": "boolean" }
+      }
+    },
+    "RelevanceRadarTraceback": {
+      "type": "object",
+      "properties": {
+        "source_results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StatsResultRef" }
+        },
+        "source_significance_claims": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SignificanceClaim" }
+        },
+        "source_evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceLink" }
+        },
+        "calculation_method": { "type": "string" },
+        "analyst_weighting_profile": { "type": "string" }
+      }
+    }
+  }
+}

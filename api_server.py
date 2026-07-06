@@ -122,6 +122,7 @@ from src.backend.analysis.ai_agent_feature_starters import (
     render_report_markdown,
     write_feature_starter_manifest,
 )
+from src.backend.analysis.statskit_agent import StatsKitAgent, StatsKitAgentError
 from fastapi import Form
 
 
@@ -9203,6 +9204,32 @@ async def save_pos_matrix_snapshot(analysis_id: str, payload: Dict[str, Any] = B
         "path": str(matrix_path),
     }
 
+@app.post("/api/analysis/{analysis_id}/statskit/run", response_model=dict)
+async def run_statskit_analysis(
+    analysis_id: str,
+    stats_run_config: Dict[str, Any] = Body(...),
+) -> dict:
+    """
+    Execute a StatsKit analysis run based on the provided configuration.
+    """
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    try:
+        analysis_dir = RESULTS_DIR / analysis_id
+        agent = StatsKitAgent(analysis_id, analysis_dir)
+        result_artifact = agent.run_stats_analysis(stats_run_config)
+        return make_json_safe(result_artifact)
+    except StatsKitAgentError as exc:
+        logger.error("StatsKit run failed for analysis %s: %s", analysis_id, exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected error during StatsKit run for analysis %s", analysis_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred during the StatsKit run: {exc}",
+        )
 
 @app.get("/api/source-media/{analysis_id}", response_model=dict)
 async def get_source_media_metadata(analysis_id: str) -> dict:

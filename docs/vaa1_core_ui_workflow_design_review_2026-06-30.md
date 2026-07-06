@@ -44,6 +44,15 @@ The default panel should be organized as:
    - Framework switcher: Aristotle, Freytag, Campbell, Frye, Booker, Boje.
    - Compact summary of the current structural reading.
 
+2. **Key Figures**
+   - A compact, non-widgety summary of the analytical landscape.
+   - **N scenes:** Total number of scenes.
+   - **N agents:** Total number of identified Narrative Agents.
+   - **N nodes / edges:** Count of meaningful graph nodes and edges.
+   - **N claims (mature/candidate):** Count of mature vs. candidate interpretive claims.
+   - **N StatsResults (raw/reviewed):** Count of raw vs. reviewed statistical results.
+   - This provides immediate statistical context for the interpretation.
+
 2. **Current reading**
    - Main plot / meaning hypotheses.
    - Turning points.
@@ -144,6 +153,12 @@ Default structure:
    - who Datascene believes this agent is;
    - where they appear;
    - when they are visibly present;
+   - key statistical proportions:
+     - **N appearances (confirmed/candidate):** Total count of appearances, broken down by maturity.
+     - **Visual Presence:** Total duration in seconds and as a percentage of the source media.
+     - **Speaking Time:** Total duration in seconds and as a percentage of all detected speech.
+     - **Scene Participation:** Count of associated scenes.
+     - **Evidence Mentions:** Count of mentions in transcript, OCR, and metadata.
    - when they speak;
    - when they listen;
    - which claims are mature, candidate, conflicted, or rejected.
@@ -359,6 +374,14 @@ Mature Data Proliferation should become nearly invisible:
 ### Analyst Experience
 
 The analyst should experience the bus as:
+
+```text
+Datascene found 112 likely related evidence items.
+Here are the 12 best verifiable candidates for "James Bond".
+Confirm the ones that match.
+Rejected candidates will reduce future noise.
+Confirmed candidates will propagate across panels.
+```
 
 ```text
 Datascene found likely related evidence.

@@ -39,7 +39,7 @@ Operational or first-working areas include:
 - downloads and bundles,
 - optional CVAT bridge.
 
-The program is not yet release-hardened. The main remaining work is governance, projection consistency, rendered validation, data-location consent, runtime configuration, and package-readiness.
+The program is not yet release-hardened. The main remaining work is governance, projection consistency, rendered validation, performance observability, data maturation economics, data-location consent, runtime configuration, and package-readiness.
 
 ## DRY Sprint Operating Pattern
 
@@ -66,6 +66,8 @@ Shared self-review gates for every step:
 - Traceback: can the analyst inspect the source chain, old states, and correction history?
 - Candidate safety: are weak, inferred, or near-match outputs shown as candidates until confirmed?
 - Runtime safety: are optional, licensed, remote, or unavailable tools handled by explicit user choice and fallback?
+- Observability: can developers inspect timing, resource use, bottlenecks, data growth, cache/database behavior, and provenance integrity for the path that just ran?
+- Maturation economics: did the pass create mature reusable value worth the compute, storage, and analyst attention it consumed?
 - Validation: is there a source-level, contract-level, rendered, or manual smoke test appropriate to the risk?
 - Residual risk: what still has to be watched before the next step proceeds?
 
@@ -286,10 +288,14 @@ Tasks:
 - Verify Whisper and diarization runtime reliability.
 - Support speaker-agent linking, audio sample cloud governance, prosody timeline tracks, source jumps, editable samples, and mature audio evidence propagation.
 - Preserve transcript corrections as user authority.
+- Deliver timed audio event intervals for speech, silence, noise, and music, with method/runtime provenance and traceback.
+- Deliver music and sound classifier output over time so audio statistics, RelevanceRadar, and SignificanceKit do not rely on placeholder audio readiness flags.
+- Deliver speaker-linked diarization turns so speaker dominance, median speaking turns, overlap, and dialogue-balance statistics can compute from actual intervals rather than transcript labels alone.
 
 Acceptance:
 
 - Voice, sound, prosody, and transcript can support mature narrative and scene meaning without becoming detached text gadgets.
+- StatsKit can compute speech/silence/music/noise ratios, speaking-turn distributions, speaker dominance, overlap, tempo, and acoustic-diversity measures from source-linked audio records.
 
 Self-review focus:
 
@@ -426,6 +432,8 @@ Goal: make analysis outputs reliable enough for representative release testing.
 Tasks:
 
 - Finish detector calibration for motion, scene, person, object, genre-sensitive sampling, and dense/adaptive sampling.
+- Deliver true shot-boundary intervals, not only scene segments, transition proxies, or shot-size samples.
+- Deliver color, brightness, and contrast extraction from sampled frames or frame windows, with source times and reproducible method metadata.
 - Verify full-duration transcript coverage.
 - Add fallback retranscription strategy for degraded audio.
 - Separate real backend test failures from environment/runtime failures.
@@ -434,12 +442,38 @@ Tasks:
 Acceptance:
 
 - Representative media runs produce complete, inspectable outputs or clear fallback/error states.
+- StatsKit can compute shot-duration distributions, camera/motion variation, color/brightness/contrast statistics, and temporal change-point candidates from persisted visual/cinematic layers.
 
 Self-review focus:
 
 - Are calibration and fallback decisions recorded once in analysis/runtime metadata instead of hidden in module-specific behavior?
 
-## Step 16. Playwright, DOM, And Release Testing
+## Step 16. Program Observability And Data Maturation Economics
+
+Goal: let developers inspect the full internal cost, performance, and yield behavior of Datascene without turning analyst workbenches into metadata surfaces.
+
+Tasks:
+
+- Implement the complete performance observability layer from `docs/schemas/vaa1.performance_observability_layer.schema.json`.
+- Implement the companion data maturation economics layer from `docs/schemas/vaa1.data_maturation_economics.schema.json`.
+- Cover uploading, quick sweeps, science scan, forensic scan, data maturation/iteration, manual program use, StatsKit/SignificanceKit/RelevanceKit maturation, matcher/proliferation runs, export, and UI render behavior.
+- Persist developer-facing observability artifacts under the active analysis/run output, with session id, runtime environment, analysis target, stage observations, resource observations, bottleneck findings, provenance integrity, benchmark result, and operational verdict.
+- Persist economics artifacts that record compute/storage/analyst cost, candidate yield, mature yield, rejected/deferred/orphan yield, noise ratio, analyst cost per mature item, compute cost per mature item, reuse multiplier, iteration ROI, and diminishing-return flags.
+- Keep the first UI surface as an under-the-hood developer/diagnostic view, not a normal analyst analysis panel.
+- Decide later which subset, if any, should be shared with users, enterprise customers, or exported reports.
+
+Acceptance:
+
+- Developers can answer where runtime breaks, where data growth becomes dangerous, and whether a scan or maturation pass is laptop-ready, feature-length-ready, multi-film-ready, HPC/cloud-ready, and commercially cost-ready.
+- Developers can answer whether a maturation iteration should continue, stop, change thresholds, add source layers, improve matcher quality, improve review UI, or batch/cache the work.
+- Analyst-facing panels remain professional tools: operational data first, metadata under the hood.
+
+Self-review focus:
+
+- Are observability and economics records generated from actual run behavior, or are they static readiness claims?
+- Does the economics layer measure reusable mature value, not only raw candidate volume?
+
+## Step 17. Playwright, DOM, And Release Testing
 
 Goal: prove rendered behavior, not only source contracts.
 
@@ -458,7 +492,7 @@ Self-review focus:
 
 - Do rendered tests assert user-visible authority behavior rather than only checking that components mount?
 
-## Step 17. Packaging And `#0.1 .exe`
+## Step 18. Packaging And `#0.1 .exe`
 
 Goal: package only after governance and release gates are satisfied or explicitly deferred.
 
@@ -489,7 +523,8 @@ The next implementation sequence should be:
 4. Panel projection migration for manual corrections and Narrative Agent labels.
 5. Meaning Network dedicated workbench and source navigation hardening.
 6. Narrative Agent/Character Path operationalization.
-7. Playwright release-readiness coverage.
+7. Program observability and data maturation economics baseline.
+8. Playwright release-readiness coverage.
 
 ## Current Checkpoint
 
