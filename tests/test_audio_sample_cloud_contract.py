@@ -129,6 +129,64 @@ class AudioSampleCloudContractTest(unittest.TestCase):
         self.assertEqual(speaker_one["entity_type"], "speaker")
         self.assertEqual(speaker_one["cloud_summary"]["sample_count"], 2)
 
+    def test_audio_sample_clouds_preserve_timing_authority_from_diarization_turns(self):
+        payload = audio_sample_cloud.build_audio_sample_clouds_from_diarization(
+            "analysis-1",
+            audio_diarization={
+                "diarization_fingerprint": "dia-fp-1",
+                "speaker_turns": [
+                    {
+                        "turn_id": "turn_0001",
+                        "speaker_label": "SPEAKER_01",
+                        "start": 6.4,
+                        "end": 8.4,
+                        "source_start": 0.0,
+                        "source_end": 2.0,
+                        "text": "Why would I betray you?",
+                        "timing_status": "anchor_verified",
+                        "timing_authority": "anchored_vad_timing_repair",
+                        "timing_source": "manual anchor",
+                        "transcript_fingerprint": "transcript-fp",
+                        "audio_fingerprint": "audio-fp",
+                        "diarization_fingerprint": "dia-fp-1",
+                        "valid_for_confirmation": True,
+                    }
+                ],
+            },
+        )
+
+        sample = payload["clouds"][0]["samples"][0]
+        self.assertEqual(sample["time_start"], 6.4)
+        self.assertEqual(sample["source_start"], 0.0)
+        self.assertEqual(sample["timing_status"], "anchor_verified")
+        self.assertEqual(sample["diarization_fingerprint"], "dia-fp-1")
+        self.assertTrue(sample["valid_for_confirmation"])
+
+    def test_stale_sample_cloud_is_quarantined_until_rebuilt(self):
+        payload = audio_sample_cloud.build_audio_sample_clouds_from_diarization(
+            "analysis-1",
+            audio_diarization={
+                "speaker_turns": [
+                    {
+                        "turn_id": "turn_0001",
+                        "speaker_label": "SPEAKER_01",
+                        "start": 0.0,
+                        "end": 2.0,
+                        "text": "Stale row",
+                        "is_stale": True,
+                        "stale_reason": "transcript_fingerprint_mismatch",
+                        "valid_for_confirmation": False,
+                    }
+                ],
+            },
+        )
+
+        sample = payload["clouds"][0]["samples"][0]
+        self.assertTrue(payload["clouds"][0]["is_stale"])
+        self.assertTrue(sample["is_stale"])
+        self.assertFalse(sample["valid_for_confirmation"])
+        self.assertEqual(sample["stale_reason"], "transcript_fingerprint_mismatch")
+
     def test_narrative_agent_transcript_mentions_create_audio_pattern_clouds(self):
         payload = audio_sample_cloud.build_audio_sample_clouds_for_narrative_agents(
             "analysis-bond",

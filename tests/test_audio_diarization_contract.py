@@ -98,6 +98,118 @@ class AudioDiarizationContractTest(unittest.TestCase):
                 16000,
             )
 
+    def test_repaired_transcript_timing_status_is_carried_into_speaker_turns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "voices.wav"
+            write_test_wave(audio_path, duration=6.0)
+            payload = audio_diarization.build_audio_diarization(
+                "analysis-1",
+                audio_path=audio_path,
+                transcript={
+                    "transcription_strategy": "anchored_vad_timing_repair",
+                    "timing_repair": {
+                        "status": "partially_repaired",
+                        "reason": "degraded_scaffold_clock_repaired_with_anchored_vad_timing",
+                    },
+                    "segments": [
+                        {
+                            "start": 1.0,
+                            "end": 2.0,
+                            "source_start": 0.0,
+                            "source_end": 1.0,
+                            "text": "Anchor",
+                            "timing_status": "anchor_verified",
+                            "timing_authority": "anchored_vad_timing_repair",
+                            "timing_source": "annotation_corrections.transcript_clock_offset_seconds",
+                        },
+                        {
+                            "start": 3.0,
+                            "end": 4.2,
+                            "source_start": 2.0,
+                            "source_end": 3.2,
+                            "text": "Measured drift anchor",
+                            "timing_status": "vad_anchor_verified",
+                            "timing_authority": "anchored_vad_timing_repair",
+                            "timing_source": "audio_diarization.vad_segments",
+                        },
+                    ],
+                },
+            )
+
+        authority = payload["measurement"]["transcript_timing_authority"]
+        self.assertEqual(authority["status"], "partially_repaired")
+        self.assertEqual(authority["strategy"], "anchored_vad_timing_repair")
+        self.assertEqual(payload["speaker_turns"][0]["timing_status"], "anchor_verified")
+        self.assertEqual(payload["speaker_turns"][1]["timing_status"], "vad_anchor_verified")
+        self.assertEqual(
+            payload["speaker_turns"][1]["timing_authority"],
+            "anchored_vad_timing_repair",
+        )
+
+    def test_completed_measured_diarization_is_stale_if_transcript_clock_changed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "voices.wav"
+            write_test_wave(audio_path, duration=8.0)
+            original_transcript = {
+                "segments": [
+                    {"start": 0.0, "end": 2.0, "text": "Why would I betray you?"},
+                    {"start": 2.0, "end": 4.0, "text": "We all have our secrets."},
+                ]
+            }
+            payload = audio_diarization.build_audio_diarization(
+                "analysis-1",
+                audio_path=audio_path,
+                transcript=original_transcript,
+            )
+            repaired_transcript = {
+                "segments": [
+                    {"start": 6.4, "end": 8.4, "text": "Why would I betray you?"},
+                    {"start": 8.4, "end": 10.4, "text": "We all have our secrets."},
+                ]
+            }
+
+            health = audio_diarization.audio_diarization_staleness(
+                payload,
+                repaired_transcript,
+                audio_path,
+            )
+
+        self.assertTrue(health["is_stale"])
+        self.assertIn("mismatch", health["stale_reason"])
+
+    def test_verified_speaker_turns_survive_rebuild_with_correct_global_time(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "voices.wav"
+            write_test_wave(audio_path, duration=24.0)
+            payload = audio_diarization.build_audio_diarization(
+                "analysis-bond",
+                audio_path=audio_path,
+                transcript={
+                    "transcription_strategy": "anchored_vad_timing_repair",
+                    "segments": [
+                        {
+                            "start": 6.4,
+                            "end": 8.4,
+                            "text": "Why would I betray you?",
+                            "timing_status": "anchor_verified",
+                            "timing_authority": "anchored_vad_timing_repair",
+                        },
+                        {
+                            "start": 20.96,
+                            "end": 22.215,
+                            "text": "The world is arming faster than we can respond.",
+                            "timing_status": "vad_anchor_verified",
+                            "timing_authority": "anchored_vad_timing_repair",
+                        },
+                    ],
+                },
+            )
+
+        self.assertEqual(payload["speaker_turns"][0]["start"], 6.4)
+        self.assertEqual(payload["speaker_turns"][1]["start"], 20.96)
+        self.assertTrue(payload["speaker_turns"][0]["valid_for_confirmation"])
+        self.assertFalse(payload["is_stale"])
+
 
 if __name__ == "__main__":
     unittest.main()

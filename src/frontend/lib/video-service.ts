@@ -113,6 +113,11 @@ export interface TranscriptSegment {
   sourceEnd?: number;
   segmentType?: string;
   synthetic?: boolean;
+  timingStatus?: string;
+  timingAuthority?: string;
+  timingSource?: string;
+  sourceTimingStatus?: string;
+  sourceTimeValid?: boolean;
   status?: "confirmed" | "unconfirmed";
   correctionSource?: "transcript" | "manual";
   targetId?: string;
@@ -345,11 +350,16 @@ export interface MasterSchemaResolvedEvidenceRecord {
     | "ocr"
     | "expression"
     | "manual_annotation"
-      | "identity"
-      | "narrative_agent_profile"
-      | "character_role"
-      | "proliferation_match"
-      | "second_order";
+    | "identity"
+    | "narrative_agent_profile"
+    | "character_role"
+    | "proliferation_match"
+    | "second_order"
+    | "audio_event"
+    | "shot_boundary"
+    | "music_analysis"
+    | "lyric_match"
+    | "speaker_diarization";
   label: string;
   authority: MatureEvidenceAuthority;
   sourcePanel: string;
@@ -810,7 +820,9 @@ function applyAnnotationCorrectionsToTranscript(
   corrections?: AnnotationCorrections | null,
 ): TranscriptSegment[] {
   const textRules = corrections?.text_substitutions || [];
-  const transcriptClockOffset = Number(corrections?.transcript_clock_offset_seconds || 0);
+  const transcriptClockOffset = shouldApplyTranscriptClockOffset(transcript)
+    ? Number(corrections?.transcript_clock_offset_seconds || 0)
+    : 0;
   const correctedBase = transcript.map((segment) => {
     const baseText = String(segment.text || "").trim();
     const normalizedEmpty =
@@ -856,6 +868,192 @@ function applyAnnotationCorrectionsToTranscript(
   });
 }
 
+function segmentHasRepairedTimingAuthority(segment: TranscriptSegment): boolean {
+  const status = String(segment.timingStatus || segment.sourceTimingStatus || "").trim();
+  const authority = String(segment.timingAuthority || "").trim();
+  if (
+    authority === "manual_correction" ||
+    authority === "original_whisper_timecode" ||
+    authority === "full_pass" ||
+    authority === "anchored_vad_timing_repair" ||
+    authority === "vad_anchor_verified"
+  ) {
+    return true;
+  }
+  return [
+    "manual_correction",
+    "original_whisper_timecode",
+    "anchored_vad_timing_repair",
+    "vad_anchor_verified",
+  ].includes(status);
+}
+
+function shouldApplyTranscriptClockOffset(transcript: TranscriptSegment[]): boolean {
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    return true;
+  }
+  return !transcript.some(segmentHasRepairedTimingAuthority);
+}
+
+function rawTranscriptPayloadHasTimingAuthority(payload: any): boolean {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const timingAuthority = payload.timing_authority || payload.timingAuthority || {};
+  const operationalAuthority = String(
+    timingAuthority?.operational_authority || timingAuthority?.operationalAuthority || "",
+  );
+  if (
+    operationalAuthority === "original_whisper_timecode" ||
+    operationalAuthority === "manual_correction" ||
+    operationalAuthority === "manual_correction_for_verified_rows"
+  ) {
+    return true;
+  }
+  const timingRepair = payload.timing_repair;
+  if (
+    timingRepair &&
+    typeof timingRepair === "object" &&
+    timingRepair.strategy === "original_whisper_timecode"
+  ) {
+    return true;
+  }
+  const segments = Array.isArray(payload.segments) ? payload.segments : [];
+  return segments.some((segment: any) => {
+    if (!segment || typeof segment !== "object") {
+      return false;
+    }
+    const authority = String(segment.timing_authority || segment.timingAuthority || "");
+    const status = String(segment.timing_status || segment.timingStatus || "");
+    return (
+      authority === "manual_correction" ||
+      authority === "original_whisper_timecode" ||
+      authority === "full_pass" ||
+      [
+        "manual_correction",
+        "original_whisper_timecode",
+      ].includes(status)
+    );
+  });
+}
+
+function normalizeTextForClockMatch(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isManualTranscriptClockRow(segment: any): boolean {
+  const authority = String(segment?.timing_authority || segment?.timingAuthority || "");
+  const source = String(segment?.timing_source || segment?.timingSource || "");
+  const status = String(segment?.timing_status || segment?.timingStatus || "");
+  return (
+    authority === "manual_correction" ||
+    status === "manual_correction" ||
+    source.startsWith("annotation_corrections.")
+  );
+}
+
+function buildWhisperClockPayloadWithMatureAnnotations(payload: any): any {
+  const rawWhisperSegments = Array.isArray(payload?.raw_whisper_segments)
+    ? payload.raw_whisper_segments
+    : Array.isArray(payload?.original_whisper_segments)
+      ? payload.original_whisper_segments
+      : Array.isArray(payload?.whisper_timecode_segments)
+        ? payload.whisper_timecode_segments
+        : [];
+  const candidateSegments = rawWhisperSegments.filter((segment: any) => {
+    const authority = String(segment?.timing_authority || segment?.timingAuthority || "");
+    const status = String(segment?.timing_status || segment?.timingStatus || "");
+    return (
+      authority === "original_whisper_timecode" ||
+      authority === "full_pass" ||
+      status === "original_whisper_timecode" ||
+      Array.isArray(segment?.words)
+    );
+  });
+  const matureSegments = Array.isArray(payload?.segments) ? payload.segments : [];
+  if (!candidateSegments.length || !matureSegments.length) {
+    return payload;
+  }
+
+  const candidatePool = candidateSegments
+    .map((segment: any, index: number) => ({
+      ...segment,
+      __clockIndex: index,
+      __clockText: normalizeTextForClockMatch(segment?.text),
+      __clockStart: Number(segment?.start ?? 0),
+    }))
+    .filter((segment: any) => segment.__clockText);
+  const usedCandidateIndexes = new Set<number>();
+
+  const mergedSegments = matureSegments.map((segment: any) => {
+    if (isManualTranscriptClockRow(segment)) {
+      return {
+        ...segment,
+        timing_authority: "manual_correction",
+        source_time_valid: true,
+      };
+    }
+    const text = normalizeTextForClockMatch(segment?.text);
+    const currentStart = Number(segment?.start ?? 0);
+    const candidates = candidatePool.filter(
+      (candidate: any) =>
+        candidate.__clockText === text && !usedCandidateIndexes.has(candidate.__clockIndex),
+    );
+    const best = candidates.sort(
+      (left: any, right: any) =>
+        Math.abs(left.__clockStart - currentStart) -
+        Math.abs(right.__clockStart - currentStart),
+    )[0];
+    if (!best) {
+      return segment;
+    }
+    usedCandidateIndexes.add(best.__clockIndex);
+    const { __clockIndex, __clockText, __clockStart, ...clockSegment } = best;
+    return {
+      ...segment,
+      start: clockSegment.start,
+      end: clockSegment.end,
+      source_start: clockSegment.start,
+      source_end: clockSegment.end,
+      timing_status: "automatic_transcript_timestamp",
+      timing_authority: "original_whisper_timecode",
+      timing_source: "whisper_timecode",
+      source_time_valid: true,
+    };
+  });
+
+  return {
+    ...payload,
+    segments: mergedSegments,
+    timeline_segments: undefined,
+    transcription_strategy: "quick_sweep_transcript_priority",
+    timing_authority: {
+      ...(payload.timing_authority || {}),
+      operational_authority: "original_whisper_timecode",
+      matured_annotation_policy: "matured_annotations_layered_over_whisper_clock",
+      manual_correction_policy: "manual_corrections_override_whisper_clock",
+      vad_policy: "auxiliary_only_not_transcript_clock",
+      source_time_operational: true,
+    },
+  };
+}
+
+function rawTranscriptPayloadLooksLikeScaffold(payload: any): boolean {
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  if (segments.length < 4) {
+    return false;
+  }
+  const firstStarts = segments.slice(0, 4).map((segment: any) => Number(segment?.start));
+  return firstStarts.every(
+    (value: number, index: number) =>
+      Number.isFinite(value) && Math.abs(value - index * 2) <= 0.01,
+  );
+}
+
 function transcriptQualityForDisplay(
   transcriptData: PromiseSettledResult<TranscriptDataBundle>,
   status: AnalysisStatus,
@@ -869,10 +1067,25 @@ function transcriptQualityForDisplay(
   return repairQuality as TranscriptDataBundle["quality"] | undefined;
 }
 
+function transcriptTimingRepairCacheKey(status: AnalysisStatus): string {
+  const repairState = status.transcript_timing_repair || {};
+  return JSON.stringify({
+    status: repairState.status || null,
+    reason: repairState.reason || null,
+    backupPath: repairState.backup_path || null,
+    qualityAfter: repairState.quality_after || null,
+    quality: repairState.quality || null,
+  });
+}
+
 function applyTranscriptClockOffsetToAudioProsody(
   cues: AudioProsodyCue[],
   corrections?: AnnotationCorrections | null,
+  transcript: TranscriptSegment[] = [],
 ): AudioProsodyCue[] {
+  if (!shouldApplyTranscriptClockOffset(transcript)) {
+    return cues;
+  }
   const offset = Number(corrections?.transcript_clock_offset_seconds || 0);
   if (!Number.isFinite(offset) || offset === 0) {
     return cues;
@@ -1624,6 +1837,116 @@ function masterSchemaMaturityAudit(masterSchema: unknown): MasterSchemaMaturityA
   return audit ? (audit as unknown as MasterSchemaMaturityAudit) : undefined;
 }
 
+function masterSchemaTemporalSegments(masterSchema: unknown): LooseRecord[] {
+  const schema = asLooseRecord(masterSchema);
+  return Array.isArray(schema?.temporal_segments)
+    ? schema.temporal_segments.filter((segment): segment is LooseRecord => Boolean(asLooseRecord(segment)))
+    : [];
+}
+
+function temporalSegmentStartEnd(segment: LooseRecord): { start?: number; end?: number } {
+  const interval = asLooseRecord(segment.interval);
+  const startRaw = segment.start ?? segment.start_seconds ?? interval?.start_seconds;
+  const endRaw = segment.end ?? segment.end_seconds ?? interval?.end_seconds;
+  const start = Number(startRaw);
+  const end = Number(endRaw);
+  return {
+    start: Number.isFinite(start) ? start : undefined,
+    end: Number.isFinite(end) ? end : undefined,
+  };
+}
+
+function masterSchemaAudioEventIntervals(masterSchema: unknown): NonNullable<AnalysisData["metadata"]>["audioEventIntervals"] | undefined {
+  const intervals: Array<{
+    event_id?: string;
+    event_type?: string;
+    start: number;
+    end: number;
+    duration?: number;
+    confidence?: number;
+    review_state?: string;
+  }> = [];
+  masterSchemaTemporalSegments(masterSchema)
+    .filter((segment) => segment.event_family === "audio_event_interval")
+    .forEach((segment, index) => {
+      const { start, end } = temporalSegmentStartEnd(segment);
+      if (start === undefined || end === undefined) return;
+      intervals.push({
+        event_id: String(segment.segment_id || `audio-event:${index}`),
+        event_type: String(segment.audio_event_type || segment.event_label || "audio_event"),
+        start,
+        end,
+        duration: Math.max(0, end - start),
+        confidence: Number.isFinite(Number(segment.confidence)) ? Number(segment.confidence) : undefined,
+        review_state: typeof segment.review_state === "string" ? segment.review_state : undefined,
+      });
+    });
+  if (!intervals.length) return undefined;
+  const durations = intervals.reduce<Record<string, number>>((acc, interval) => {
+    const key = interval.event_type || "audio_event";
+    acc[key] = (acc[key] || 0) + Number(interval.duration || 0);
+    return acc;
+  }, {});
+  const total = Object.values(durations).reduce((sum, value) => sum + value, 0);
+  return {
+    schema: "vaa1.audio_event_intervals.v1",
+    status: "available",
+    method: "Master Schema temporal_segments[event_family=audio_event_interval]",
+    duration_seconds: total || undefined,
+    intervals,
+    summary: {
+      counts: intervals.reduce<Record<string, number>>((acc, interval) => {
+        const key = interval.event_type || "audio_event";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {}),
+      durations,
+      ratios: Object.fromEntries(
+        Object.entries(durations).map(([key, value]) => [key, total ? value / total : 0]),
+      ),
+    },
+  };
+}
+
+function masterSchemaShotBoundaries(masterSchema: unknown): NonNullable<NonNullable<AnalysisData["metadata"]>["motionSceneBasis"]>["shotBoundaries"] | undefined {
+  const segments = masterSchemaTemporalSegments(masterSchema).filter(
+    (segment) => segment.event_family === "shot_boundary_interval",
+  );
+  const intervals: Array<{
+    shot_id?: string;
+    start: number;
+    end: number;
+    duration?: number;
+    confidence?: number;
+    review_state?: string;
+  }> = [];
+  segments.forEach((segment, index) => {
+    const { start, end } = temporalSegmentStartEnd(segment);
+    if (start === undefined || end === undefined) return;
+    intervals.push({
+      shot_id: String(segment.shot_id || segment.segment_id || `shot:${index}`),
+      start,
+      end,
+      duration: Math.max(0, end - start),
+      confidence: Number.isFinite(Number(segment.confidence)) ? Number(segment.confidence) : undefined,
+      review_state: typeof segment.review_state === "string" ? segment.review_state : undefined,
+    });
+  });
+  if (!intervals.length) return undefined;
+  return {
+    method: "Master Schema temporal_segments[event_family=shot_boundary_interval]",
+    source: "vaa1_annotation_master_schema",
+    true_boundary_intervals: segments.some((segment) => Boolean(segment.true_boundary_interval)),
+    intervals,
+    summary: {
+      shot_count: intervals.length,
+      true_boundary_rows: segments.filter((segment) => Boolean(segment.true_boundary_interval)).length,
+      mean_shot_duration:
+        intervals.reduce((sum, interval) => sum + Number(interval.duration || 0), 0) / intervals.length,
+    },
+  };
+}
+
 function buildMasterSchemaResolvedEvidenceView({
   transcript,
   objects,
@@ -1798,6 +2121,46 @@ function buildMasterSchemaResolvedEvidenceView({
           ? Number(candidate.time_span.end_ms) / 1000
           : undefined),
       targetId: candidate.instruction_id,
+    });
+  });
+
+  masterSchemaTemporalSegments(masterSchema).forEach((segment, index) => {
+    const family = String(segment.event_family || "");
+    const temporalCategory =
+      family === "audio_event_interval"
+        ? "audio_event"
+        : family === "shot_boundary_interval"
+          ? "shot_boundary"
+          : family === "music_analysis"
+            ? "music_analysis"
+            : family === "lyric_transcript_match"
+              ? "lyric_match"
+              : family === "speaker_diarization_turn"
+                ? "speaker_diarization"
+                : null;
+    if (!temporalCategory) return;
+    const { start, end } = temporalSegmentStartEnd(segment);
+    records.push({
+      id: String(segment.segment_id || `${family}:${index}`),
+      category: temporalCategory,
+      label: String(segment.event_label || segment.speaker_label || segment.audio_event_type || segment.shot_id || family),
+      authority:
+        segment.authority === "interpreted_automatic_detection"
+          ? "interpreted_detection"
+          : segment.authority === "manual_annotation"
+            ? "manual_annotation"
+            : "raw_detection",
+      sourcePanel: "MasterSchema",
+      start,
+      end,
+      targetId: String(segment.shot_id || segment.segment_id || `${family}:${index}`),
+      maturityRoute: typeof segment.maturity_route === "string" ? segment.maturity_route : undefined,
+      metadata: {
+        event_family: family,
+        source_schema: segment.source_schema,
+        review_state: segment.review_state,
+        true_boundary_interval: segment.true_boundary_interval,
+      },
     });
   });
 
@@ -3586,6 +3949,7 @@ export interface AnalysisData {
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
   audioDiarization?: AudioDiarizationScaffold | null;
+  audioSampleClouds?: Record<string, unknown> | null;
   summary: string;
   rawCsv: string;
   rawJson?: any;
@@ -3750,6 +4114,41 @@ export interface AnalysisData {
           scene_count?: number;
           mean_scene_duration?: number;
         };
+      };
+      shotBoundaries?: {
+        method?: string;
+        source?: string;
+        true_boundary_intervals?: boolean;
+        intervals?: Array<{
+          shot_id?: string;
+          start: number;
+          end: number;
+          duration?: number;
+          confidence?: number;
+          review_state?: string;
+        }>;
+        summary?: Record<string, unknown>;
+      };
+    };
+    foundationalSourceLayers?: Record<string, unknown>;
+    audioEventIntervals?: {
+      schema?: string;
+      method?: string;
+      status?: string;
+      duration_seconds?: number;
+      intervals?: Array<{
+        event_id?: string;
+        event_type?: string;
+        start: number;
+        end: number;
+        duration?: number;
+        confidence?: number;
+        review_state?: string;
+      }>;
+      summary?: {
+        counts?: Record<string, number>;
+        durations?: Record<string, number>;
+        ratios?: Record<string, number>;
       };
     };
     audioSegments?: number;
@@ -4473,6 +4872,20 @@ export interface AnalysisStatus {
         mean_scene_duration?: number;
       };
     };
+    shot_boundaries?: {
+      method?: string;
+      source?: string;
+      true_boundary_intervals?: boolean;
+      intervals?: Array<{
+        shot_id?: string;
+        start: number;
+        end: number;
+        duration?: number;
+        confidence?: number;
+        review_state?: string;
+      }>;
+      summary?: Record<string, unknown>;
+    };
     expression_samples?: number;
     expression_status?: "completed" | "failed" | "not_run";
     expression_error?: string;
@@ -4620,7 +5033,12 @@ export class VideoService {
   private static readonly MAX_CSV_PREVIEW_LINES = 50;
   private static readonly analysisCache = new Map<
     string,
-    { completedAt?: string; correctionUpdatedAt?: string; data: AnalysisData }
+    {
+      completedAt?: string;
+      correctionUpdatedAt?: string;
+      transcriptTimingRepairKey?: string;
+      data: AnalysisData;
+    }
   >();
   private static readonly analysisPromiseCache = new Map<
     string,
@@ -4774,6 +5192,7 @@ export class VideoService {
         correctionUpdatedAt =
           fetchedCorrections?.updated_at || correctionUpdatedAt;
       } catch {}
+      const timingRepairCacheKey = transcriptTimingRepairCacheKey(status);
 
       // If analysis is not complete, return minimal data
       if (status.status !== "completed") {
@@ -4806,6 +5225,7 @@ export class VideoService {
         status.analysis_completed_at &&
         cached.completedAt === status.analysis_completed_at &&
         (cached.correctionUpdatedAt || null) === (correctionUpdatedAt || null) &&
+        (cached.transcriptTimingRepairKey || null) === timingRepairCacheKey &&
         (
           !cached.data.audioProsody?.length ||
           Boolean(
@@ -4886,7 +5306,11 @@ export class VideoService {
           : [];
       const correctedAudioProsody =
         audioProsodyData.status === "fulfilled"
-          ? applyTranscriptClockOffsetToAudioProsody(audioProsodyData.value, corrections)
+          ? applyTranscriptClockOffsetToAudioProsody(
+              audioProsodyData.value,
+              corrections,
+              correctedTranscript,
+            )
           : [];
       const manualVisualObjects = buildManualVisualObjects(corrections);
       const manualAnnotationsByCategory =
@@ -4974,6 +5398,30 @@ export class VideoService {
         masterSchema: status.vaa1_annotation_master_schema,
         analysisId: id,
       });
+      const masterSchemaAudioEvents = masterSchemaAudioEventIntervals(status.vaa1_annotation_master_schema);
+      const masterSchemaShotIntervals = masterSchemaShotBoundaries(status.vaa1_annotation_master_schema);
+      const masterSchemaFoundationalLayers = asLooseRecord(
+        asLooseRecord(status.vaa1_annotation_master_schema)?.foundational_source_layers,
+      );
+      const audioAnalysisStatus = asLooseRecord(
+        asLooseRecord((status as unknown as LooseRecord).results)?.audio_analysis,
+      );
+      const audioDiarizationStatus = asLooseRecord(
+        status.audio_diarization ||
+        audioAnalysisStatus?.audio_diarization ||
+        null,
+      );
+      const audioSampleCloudsStatus = asLooseRecord(
+        (status as unknown as LooseRecord).audio_sample_clouds ||
+        audioAnalysisStatus?.audio_sample_clouds ||
+        null,
+      );
+      const audioDiarizationTurnCountRaw =
+        audioDiarizationStatus?.turn_count ??
+        (Array.isArray(audioDiarizationStatus?.speaker_turns)
+          ? audioDiarizationStatus.speaker_turns.length
+          : undefined);
+      const audioDiarizationTurnCount = Number(audioDiarizationTurnCountRaw);
       const entityRegistry = buildDatasceneEntityRegistryView({
         analysisId: id,
         transcript: correctedTranscript,
@@ -5024,7 +5472,8 @@ export class VideoService {
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         liveMatureDataProliferationAudit:
           status.live_mature_data_proliferation_audit || null,
-        audioDiarization: status.audio_diarization || null,
+        audioDiarization: audioDiarizationStatus,
+        audioSampleClouds: audioSampleCloudsStatus,
         summary: this.generateSummary(status),
         rawCsv: csvData.status === "fulfilled" ? csvData.value : "",
         rawJson: {
@@ -5061,7 +5510,7 @@ export class VideoService {
               }
             : undefined,
           motionSceneBasis:
-            status.summary?.motion_evidence || status.summary?.scene_segments
+            status.summary?.motion_evidence || status.summary?.scene_segments || masterSchemaShotIntervals
               ? {
                   motionEvidence: status.summary?.motion_evidence
                     ? {
@@ -5078,8 +5527,20 @@ export class VideoService {
                         summary: status.summary.scene_segments.summary,
                       }
                     : undefined,
+                  shotBoundaries: masterSchemaShotIntervals ||
+                    (status.summary?.shot_boundaries
+                      ? {
+                          method: status.summary.shot_boundaries.method,
+                          source: status.summary.shot_boundaries.source,
+                          true_boundary_intervals: status.summary.shot_boundaries.true_boundary_intervals,
+                          intervals: status.summary.shot_boundaries.intervals,
+                          summary: status.summary.shot_boundaries.summary,
+                        }
+                      : undefined),
                 }
               : undefined,
+          foundationalSourceLayers: masterSchemaFoundationalLayers || undefined,
+          audioEventIntervals: masterSchemaAudioEvents,
           audioSegments: status.summary?.audio_segments,
           audioProsodyCues: status.summary?.audio_prosody_cues,
           audioLanguage:
@@ -5105,7 +5566,9 @@ export class VideoService {
           audioError: status.summary?.audio_error,
           audioProsodyError: status.summary?.audio_prosody_error,
           audioDiarizationError: status.summary?.audio_diarization_error,
-          audioDiarizationTurns: status.audio_diarization?.turn_count,
+          audioDiarizationTurns: Number.isFinite(audioDiarizationTurnCount)
+            ? audioDiarizationTurnCount
+            : undefined,
           posError: status.summary?.pos_error,
           quantError: status.summary?.quan_error,
           languageSupport:
@@ -5131,6 +5594,7 @@ export class VideoService {
       this.analysisCache.set(id, {
         completedAt: status.analysis_completed_at,
         correctionUpdatedAt: correctionUpdatedAt || undefined,
+        transcriptTimingRepairKey: timingRepairCacheKey,
         data: analysisData,
       });
       return analysisData;
@@ -5375,7 +5839,28 @@ export class VideoService {
     try {
       const transcriptBlob = await apiService.downloadFile(id, "transcript");
       const transcriptText = await transcriptBlob.text();
-      const transcriptData = JSON.parse(transcriptText);
+      let transcriptData = JSON.parse(transcriptText);
+      if (
+        !rawTranscriptPayloadHasTimingAuthority(transcriptData) &&
+        rawTranscriptPayloadLooksLikeScaffold(transcriptData)
+      ) {
+        try {
+          const noCacheToken = Date.now().toString(36);
+          const localResponse = await fetch(
+            `/api/local-analysis/${id}/download/transcript?_=${noCacheToken}`,
+            { cache: "no-store" },
+          );
+          if (localResponse.ok) {
+            const localTranscriptData = await localResponse.json();
+            if (rawTranscriptPayloadHasTimingAuthority(localTranscriptData)) {
+              transcriptData = localTranscriptData;
+            }
+          }
+        } catch (fallbackError) {
+          console.warn("Authoritative local transcript fallback failed:", fallbackError);
+        }
+      }
+      transcriptData = buildWhisperClockPayloadWithMatureAnnotations(transcriptData);
       const normalizeSegment = (seg: any): TranscriptSegment => {
         const timing = normalizeTranscriptSegmentTiming(seg || {});
         return {
@@ -5383,10 +5868,15 @@ export class VideoService {
           text: seg.text || "",
           rawText: seg.raw_text || seg.rawText || seg.text || "",
           speaker: seg.speaker || seg.speaker_label || "Speaker 1",
-          sourceStart: timing.start,
-          sourceEnd: timing.end,
+          sourceStart: Number(seg.source_start ?? seg.sourceStart ?? timing.start),
+          sourceEnd: Number(seg.source_end ?? seg.sourceEnd ?? timing.end),
           segmentType: seg.segment_type || "utterance",
           synthetic: Boolean(seg.synthetic),
+          timingStatus: seg.timing_status || seg.timingStatus,
+          timingAuthority: seg.timing_authority || seg.timingAuthority,
+          timingSource: seg.timing_source || seg.timingSource,
+          sourceTimingStatus: seg.source_timing_status || seg.sourceTimingStatus,
+          sourceTimeValid: seg.source_time_valid ?? seg.sourceTimeValid,
         };
       };
 

@@ -31,6 +31,7 @@ import DataMaturationPanel from "./panels/DataMaturationPanel";
 import StatsKitPanel from "./panels/StatsKitPanel";
 import AdminObservabilityPanel from "./panels/AdminObservabilityPanel";
 import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
+import AudioPanel from "./panels/AudioPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
@@ -623,8 +624,8 @@ export default function LayoutHost({
       (container, state: JsonValue | undefined) => {
         new ReactComponentWrapper(
           container,
-          SpeechToTextPanel,
-          { ...(state as Record<string, unknown> || {}), panelMode: "audio" },
+          AudioPanel,
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },

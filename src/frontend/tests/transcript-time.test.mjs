@@ -71,3 +71,22 @@ test("transcript clock offset preserves raw source timestamps after repeated app
   assert.equal(shifted.sourceStart, 0);
   assert.equal(shifted.sourceEnd, 2);
 });
+
+test("zero clock offset does not let provenance timestamps overwrite repaired global clock", () => {
+  const repaired = applyTranscriptClockOffset(
+    {
+      t: "6.4s",
+      start: 6.4,
+      end: 8.4,
+      sourceStart: 0,
+      sourceEnd: 2,
+      timingAuthority: "anchored_vad_timing_repair",
+    },
+    0,
+  );
+
+  assert.equal(repaired.start, 6.4);
+  assert.equal(repaired.end, 8.4);
+  assert.equal(repaired.sourceStart, 0);
+  assert.equal(repaired.sourceEnd, 2);
+});

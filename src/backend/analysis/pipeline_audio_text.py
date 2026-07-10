@@ -4,20 +4,30 @@ Audio → Text Transcription Pipeline
 Handles:
  - Audio file validation and preprocessing
  - Transcription using OpenAI Whisper or compatible model
+ - Speaker diarization using pyannote.audio
  - Output structured transcript JSON (timestamps + text)
 """
 
 import os
 import json
+import shutil
 import tempfile
 import wave
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 import whisper
 from src.backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+try:
+    import torch
+    from pyannote.audio import Pipeline as PyannotePipeline, Audio as PyannoteAudio
+    PYANNOTE_AVAILABLE = True
+except ImportError:
+    PYANNOTE_AVAILABLE = False
+    logger.warning("pyannote.audio not installed. Diarization will be limited.")
 
 SUPPORTED_AUDIO_FORMATS = [".wav", ".mp3", ".m4a"]
 
@@ -32,6 +42,19 @@ class AudioTranscriptionPipeline:
         if self.audio_path.suffix.lower() not in SUPPORTED_AUDIO_FORMATS:
             raise ValueError(f"Unsupported audio format: {self.audio_path.suffix}")
 
+        self.diarization_pipeline = None
+        if PYANNOTE_AVAILABLE:
+            try:
+                # NOTE: In a production environment, use a real Hugging Face access token.
+                # This can be set as an environment variable, e.g., HUGGING_FACE_HUB_TOKEN.
+                hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
+                self.diarization_pipeline = PyannotePipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize pyannote.audio pipeline: {e}. Diarization will be limited.")
+                self.diarization_pipeline = None
+
         self.output_dir = self.audio_path.parent / "transcripts"
         self.output_dir.mkdir(exist_ok=True)
 
@@ -41,12 +64,14 @@ class AudioTranscriptionPipeline:
         *,
         strategy: str = "full_pass",
         fallback_used: bool = False,
+        diarization: Optional[Any] = None,
     ) -> dict[str, Any]:
         return {
             "audio_file": str(self.audio_path),
             "language": result.get("language", "unknown"),
             "segments": [
                 {
+                    "speaker": "UNKNOWN",  # Placeholder for diarization result
                     "start": round(seg["start"], 2),
                     "end": round(seg["end"], 2),
                     "text": seg["text"].strip(),
@@ -56,6 +81,7 @@ class AudioTranscriptionPipeline:
             "created_at": datetime.utcnow().isoformat(),
             "transcription_strategy": strategy,
             "fallback_used": fallback_used,
+            "diarization_source": "pyannote" if diarization else "none",
         }
 
     def _write_transcript_file(self, transcript_data: dict[str, Any]) -> None:
@@ -64,9 +90,36 @@ class AudioTranscriptionPipeline:
             json.dump(transcript_data, f, indent=2, ensure_ascii=False)
         logger.info(f"Transcription saved: {output_file}")
 
-    def _transcribe_with_model(self, model: Any, audio_path: Path | str) -> dict[str, Any]:
+    def _assign_speakers(self, transcript: Dict[str, Any], diarization: Any) -> Dict[str, Any]:
+        if not PYANNOTE_AVAILABLE or not diarization:
+            return transcript
+
+        from pyannote.core import Segment
+
+        for segment in transcript["segments"]:
+            # Create a pyannote Segment for the whisper segment
+            whisper_segment = Segment(segment["start"], segment["end"])
+
+            # Find speaker turn that has the largest intersection with the whisper segment
+            try:
+                speaker_turns = diarization.crop(whisper_segment)
+                if speaker_turns:
+                    # Get the speaker with the maximum overlap
+                    main_speaker = max(speaker_turns.labels(), key=lambda spk: speaker_turns.label_duration(spk))
+                    segment["speaker"] = main_speaker
+            except Exception:
+                # This can happen if a segment is outside the diarized range
+                pass
+        return transcript
+
+    def _transcribe_with_model(self, model: Any, audio_path: Path | str, diarization: Optional[Any] = None) -> dict[str, Any]:
         result = model.transcribe(str(audio_path), fp16=False)
-        return self._build_transcript_data(result)
+        transcript = self._build_transcript_data(result, diarization=diarization)
+        # Align speakers even if diarization is from a separate step
+        if diarization is not None:
+            transcript = self._assign_speakers(transcript, diarization)
+
+        return transcript
 
     def _get_wav_duration_seconds(self) -> Optional[float]:
         if self.audio_path.suffix.lower() != ".wav":
@@ -257,10 +310,24 @@ class AudioTranscriptionPipeline:
         """Transcribe the audio file using Whisper model."""
         logger.info(f"Starting transcription for: {self.audio_path}")
 
+        diarization = None
+        if self.diarization_pipeline and PYANNOTE_AVAILABLE:
+            logger.info("Running speaker diarization with pyannote.audio...")
+            try:
+                # For GPU, you would add: self.diarization_pipeline.to(torch.device("cuda"))
+                diarization = self.diarization_pipeline(str(self.audio_path))
+                logger.info("Diarization complete.")
+            except Exception as e:
+                logger.error(f"pyannote.audio diarization failed: {e}")
+                diarization = None
+
         model = whisper.load_model(self.model_name)
-        transcript_data = self._transcribe_with_model(model, self.audio_path)
+        transcript_data = self._transcribe_with_model(model, self.audio_path, diarization=diarization)
         transcript_data["transcription_strategy"] = "full_pass"
         transcript_data["fallback_used"] = False
+        if diarization:
+            # Add the full diarization timeline to the artifact for other modules to use
+            transcript_data["diarization_timeline"] = diarization.for_json()
         self._write_transcript_file(transcript_data)
         return transcript_data
 
@@ -292,6 +359,15 @@ class AudioTranscriptionPipeline:
         fallback_end = self._last_segment_end_seconds(fallback)
         improvement = fallback_end - primary_end
         chosen = fallback if improvement >= minimum_improvement_seconds else primary
+        if chosen is primary and fallback.get("segments"):
+            chosen["automatic_fallback_candidate"] = {
+                "transcription_strategy": fallback.get("transcription_strategy"),
+                "fallback_used": fallback.get("fallback_used"),
+                "chunking": fallback.get("chunking"),
+                "segments": fallback.get("segments", []),
+                "created_at": fallback.get("created_at"),
+                "candidate_reason": "automatic_chunked_transcript_available_but_coverage_threshold_not_met",
+            }
         chosen["fallback_considered"] = True
         chosen["fallback_comparison"] = {
             "primary_last_end_seconds": round(primary_end, 3),

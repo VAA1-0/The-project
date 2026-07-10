@@ -5,6 +5,7 @@ import {
   VideoService,
   type AnalysisData,
   type MasterSchemaResolvedEvidenceRecord,
+  type VideoMetadata,
 } from "@/lib/video-service";
 
 type StatsKitPanelProps = {
@@ -175,7 +176,7 @@ type MissingDataRow = {
   nextAction: string;
 };
 
-type VisualizationTarget = "stats" | "significance" | "relevance";
+type VisualizationTarget = "stats" | "significance" | "relevance" | "comparison";
 
 type VisualizationDatum = {
   id: string;
@@ -227,7 +228,7 @@ type MasterSchemaStatsCategory =
   | "objects"
   | "actions"
   | "topics"
-  | "emotions"
+  | "expressions"
   | "cameraShots"
   | "speakers"
   | "sounds"
@@ -257,6 +258,48 @@ type StatsKitSourceLayerDeliverable = {
   nextAction: string;
 };
 
+type ComparisonCorpusVideo = {
+  analysisId: string;
+  sourceName: string;
+  metadata: SourceMediaMetadata | null;
+  analysisData: AnalysisData | null;
+  statsRows: StatsTableRow[];
+};
+
+type ComparisonFeatureRow = {
+  analysisId: string;
+  sourceName: string;
+  value: number | null;
+  displayValue: string;
+  status: StatsTableRow["status"] | "missing";
+  evidence: string;
+};
+
+type StudioWorkflowStep =
+  | "corpus"
+  | "unit"
+  | "variables"
+  | "matrix"
+  | "quality"
+  | "analyses"
+  | "diagnostics"
+  | "variants"
+  | "interpretation"
+  | "traceback"
+  | "export";
+
+type StatsComparisonStudioPackage = {
+  StatsComparisonStudio: {
+    schema_name: "Datascene Stats Comparison Studio";
+    schema_version: "0.1.0";
+    purpose: string;
+    workflow: StudioWorkflowStep[];
+    runtime_policy: typeof LOCAL_STATS_COMPARISON_POLICY;
+    core_objects: Record<string, unknown>;
+    v1_supported_methods: Record<string, string[]>;
+  };
+};
+
 type StatsFamily =
   | "descriptive"
   | "cross_tabulation"
@@ -283,7 +326,7 @@ type VisualizationMode =
 
 const STAT_FAMILY_OPTIONS: Array<{ id: StatsFamily; label: string; description: string }> = [
   { id: "descriptive", label: "Level I / Descriptive", description: "Counts, percentages, durations, means, medians, variance, and standard deviation." },
-  { id: "cross_tabulation", label: "Level II / Cross-tabs", description: "Relationships between categorical variables such as speaker x topic or location x emotion." },
+  { id: "cross_tabulation", label: "Level II / Cross-tabs", description: "Relationships between categorical variables such as speaker x topic or location x expression." },
   { id: "correlation", label: "Level III / Correlation", description: "Variables that move together, visualized as matrices or heatmaps." },
   { id: "comparative", label: "Level IV / Comparative", description: "Comparisons across videos, scenes, genres, outlets, or collections." },
   { id: "distribution", label: "Level V / Distribution", description: "Histograms, boxplots, percentiles, quartiles, and outliers." },
@@ -370,6 +413,24 @@ function countManualCategory(analysisData: AnalysisData | null, category: string
   }).length;
 }
 
+function audioSampleCloudRows(analysisData: AnalysisData | null): Array<Record<string, unknown>> {
+  const clouds = Array.isArray(analysisData?.audioSampleClouds?.clouds)
+    ? analysisData.audioSampleClouds.clouds as Array<Record<string, unknown>>
+    : [];
+  const flattened = clouds.flatMap((cloud) => {
+    const samples = Array.isArray(cloud.samples) ? cloud.samples as Array<Record<string, unknown>> : [];
+    return samples.map((sample) => ({ ...sample, cloud_label: cloud.entity_label, cloud_type: cloud.entity_type }));
+  });
+  const directSamples = Array.isArray(analysisData?.audioSampleClouds?.samples)
+    ? analysisData.audioSampleClouds.samples as Array<Record<string, unknown>>
+    : [];
+  return [...flattened, ...directSamples];
+}
+
+function sourceTextHas(pattern: RegExp, ...values: unknown[]): number {
+  return values.some((value) => pattern.test(JSON.stringify(value || ""))) ? 1 : 0;
+}
+
 function masterAuditStatus(row: Omit<MasterSchemaStatsAuditRow, "status">): MasterSchemaStatsAuditRow["status"] {
   if (row.masterSchemaCount > 0) return "master_schema";
   if (row.entityRegistryCount > 0) return "governed_candidate";
@@ -406,6 +467,8 @@ function buildMasterSchemaStatsAudit(
   const posRows = analysisData?.posAnalysis || [];
   const quantRows = analysisData?.quantAnalysis || [];
   const sceneSegments = analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [];
+  const shotBoundaryIntervals = analysisData?.metadata?.motionSceneBasis?.shotBoundaries?.intervals || [];
+  const audioEventIntervals = analysisData?.metadata?.audioEventIntervals?.intervals || [];
   const shotSamples = analysisData?.metadata?.cinematicClues?.shotSize?.samples || [];
   const transitionSamples = analysisData?.metadata?.cinematicClues?.transitionClues?.samples || [];
   const spatialToneSamples = analysisData?.metadata?.spatialToneScan?.samples || [];
@@ -415,8 +478,30 @@ function buildMasterSchemaStatsAudit(
   const personRawCount = rawObjects.filter((item) => normalizedText(item.class_name || item.raw_class_name) === "person").length;
   const objectRawCount = Math.max(objects.length, rawObjects.length, objectCountFromMetadata);
   const speakerNames = new Set(transcript.map((segment) => segment.speaker).filter((speaker) => speaker && speaker !== "Unknown"));
+  const diarizationTurns = analysisData?.audioDiarization?.speaker_turns || [];
+  const diarizationSpeakerLabels = new Set(
+    diarizationTurns
+      .map((turn) => turn.speaker_label)
+      .filter((speaker): speaker is string => Boolean(speaker && speaker !== "Unknown")),
+  );
+  const diarizationSpeakerCount = Math.max(
+    num(analysisData?.audioDiarization?.turn_count) ? diarizationSpeakerLabels.size : 0,
+    num((analysisData?.audioDiarization as any)?.measurement?.speaker_cluster_count),
+  );
   const soundEnvironmentCount = audioProsody.filter((cue) => cue.sound_environment?.label).length;
+  const soundIntervalCount = audioEventIntervals.filter((interval) => interval.event_type).length;
+  const audioSampleRows = audioSampleCloudRows(analysisData);
+  const audioSampleSoundCount = audioSampleRows.length;
   const musicProsodyCount = audioProsody.filter((cue) => /music|song|score|soundtrack/i.test(cue.sound_environment?.label || "")).length;
+  const musicIntervalCount = audioEventIntervals.filter((interval) => /music|song|score|soundtrack/i.test(interval.event_type || "")).length;
+  const musicSampleCount = audioSampleRows.filter((sample) =>
+    /music|song|score|soundtrack/i.test(JSON.stringify(sample)),
+  ).length;
+  const sourceMusicMetadataCount = sourceTextHas(
+    /music by|composer|score|soundtrack|song/i,
+    metadata,
+    analysisData?.audioSampleClouds,
+  );
   const musicManualCount = countManualCategory(analysisData, "Audio", /music/i);
   const colorToneCount = spatialToneSamples.reduce((sum, sample) => {
     const zones = Object.values(sample.zones || {});
@@ -481,9 +566,9 @@ function buildMasterSchemaStatsAudit(
       sourcePath: "entityRegistry[CONCEPT/EVENT] + Quant/POS/meaning evidence",
     }),
     makeMasterAuditRow({
-      id: "emotions",
-      label: "Emotions",
-      statLabel: "emotions detected",
+      id: "expressions",
+      label: "Expressions",
+      statLabel: "expressions detected",
       masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "expression") + countManualCategory(analysisData, "Expressions"),
       entityRegistryCount: countEntities(analysisData, (entity) => entity.entity_type === "AUDIOVISUAL_NARRATIVE_AGENT"),
       rawSubstrateCount: expressions.length,
@@ -493,40 +578,57 @@ function buildMasterSchemaStatsAudit(
       id: "cameraShots",
       label: "Camera shots",
       statLabel: "camera shots detected",
-      masterSchemaCount: countManualCategory(analysisData, "Cinematic Cues") + countManualCategory(analysisData, "Scene"),
+      masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "shot_boundary") + countManualCategory(analysisData, "Cinematic Cues") + countManualCategory(analysisData, "Scene"),
       entityRegistryCount: 0,
-      rawSubstrateCount: Math.max(sceneSegments.length, shotSamples.length, transitionSamples.length, sumCounts(evidenceCounts, [/shot/i, /scene_segment/i, /scene_card/i, /camera/i])),
-      sourcePath: "motionSceneBasis.sceneSegments + cinematicClues.transitionClues/shotSize + manual Cinematic Cues",
-      note: sceneSegments.length && sceneSegments.length <= 10
-        ? "This is a scene/transition proxy count, not a finished shot-boundary count. A trailer can have many more cuts than this."
-        : undefined,
+      rawSubstrateCount: Math.max(shotBoundaryIntervals.length, sceneSegments.length, shotSamples.length, transitionSamples.length, sumCounts(evidenceCounts, [/shot/i, /scene_segment/i, /scene_card/i, /camera/i])),
+      sourcePath: "Master Schema shot_boundary_interval segments + motionSceneBasis.sceneSegments + cinematicClues.transitionClues/shotSize + manual Cinematic Cues",
+      note: shotBoundaryIntervals.length
+        ? "Shot count comes from governed Master Schema shot-boundary intervals."
+        : sceneSegments.length && sceneSegments.length <= 10
+          ? "This is a scene/transition proxy count, not a finished shot-boundary count. A trailer can have many more cuts than this."
+          : undefined,
     }),
     makeMasterAuditRow({
       id: "speakers",
       label: "Speakers",
       statLabel: "speakers detected",
-      masterSchemaCount: countManualCategory(analysisData, "Transcription") + countManualCategory(analysisData, "Audio", /speaker/i),
+      masterSchemaCount: countMasterRecords(analysisData, (record) => /speaker|diarization|speaker_turn/i.test(`${record.category} ${record.label}`)) + countManualCategory(analysisData, "Audio", /speaker/i),
       entityRegistryCount: 0,
-      rawSubstrateCount: Math.max(speakerNames.size, num(analysisData?.metadata?.audioDiarizationTurns)),
-      sourcePath: "transcript speakers + audioDiarization.turn_count + manual speaker annotations",
+      rawSubstrateCount: Math.max(
+        diarizationSpeakerCount,
+        countMasterRecords(analysisData, (record) => record.category === "speaker_diarization"),
+        speakerNames.size > 1 ? speakerNames.size : 0,
+        num(analysisData?.metadata?.audioDiarizationTurns) > 1 ? num(analysisData?.metadata?.audioDiarizationTurns) : 0,
+      ),
+      sourcePath: "Master Schema temporal_segments[event_family=speaker_diarization_turn] + audioDiarization.speaker_turns/clusters + transcript speakers + manual speaker annotations",
+      note: diarizationSpeakerCount === 1
+        ? "One measured diarization speaker cluster is visible. Surface it as a candidate audio speaker, but review because single-speaker results across dialogue-heavy material are a red flag."
+        : speakerNames.size === 1 && !num(analysisData?.metadata?.audioDiarizationTurns)
+          ? "Only one transcript speaker label is visible; treated as an unresolved transcript proxy, not a speaker-recognition result."
+          : undefined,
     }),
     makeMasterAuditRow({
       id: "sounds",
       label: "Sounds",
       statLabel: "sounds detected",
-      masterSchemaCount: countManualCategory(analysisData, "Audio"),
+      masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "audio_event") + countManualCategory(analysisData, "Audio"),
       entityRegistryCount: countEntities(analysisData, (entity) => entity.entity_type === "AUDIO_ENTITY"),
-      rawSubstrateCount: Math.max(soundEnvironmentCount, sumCounts(evidenceCounts, [/sound/i, /audio/i, /prosody/i, /noise/i])),
-      sourcePath: "audioProsody.sound_environment + audio sample/entity registry + manual Audio annotations",
+      rawSubstrateCount: Math.max(audioSampleSoundCount, soundIntervalCount, soundEnvironmentCount, sumCounts(evidenceCounts, [/sound/i, /audio/i, /prosody/i, /noise/i])),
+      sourcePath: "Master Schema audio_event_interval segments + audioProsody.sound_environment + audio_sample_clouds + audio sample/entity registry + manual Audio annotations",
     }),
     makeMasterAuditRow({
       id: "music",
       label: "Music",
       statLabel: "music detected",
-      masterSchemaCount: musicManualCount,
+      masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "audio_event" && /music|song|score|soundtrack/i.test(record.label)) + musicManualCount,
       entityRegistryCount: countEntities(analysisData, (entity) => entity.entity_type === "AUDIO_ENTITY" && /music|song/i.test(entity.canonical_name)),
-      rawSubstrateCount: Math.max(musicProsodyCount, sumCounts(evidenceCounts, [/music/i, /song/i])),
-      sourcePath: "audioProsody.sound_environment[music/song/score] + manual Audio/Music annotations + audio entities",
+      rawSubstrateCount: Math.max(musicIntervalCount, musicProsodyCount, musicSampleCount, sourceMusicMetadataCount, sumCounts(evidenceCounts, [/music/i, /song/i])),
+      sourcePath: "Master Schema audio_event_interval[music] + audioProsody.sound_environment[music/song/score] + audio_sample_clouds/source media music metadata + manual Audio/Music annotations + audio entities",
+      note: musicIntervalCount || musicProsodyCount
+        ? undefined
+        : sourceMusicMetadataCount
+          ? "Music is visible as source-media metadata substrate; timed music detection still requires a music/sound classifier interval layer."
+          : undefined,
     }),
     makeMasterAuditRow({
       id: "colors",
@@ -589,10 +691,26 @@ function timedTranscriptDurations(analysisData: AnalysisData | null): number[] {
 }
 
 function speechDurationSeconds(analysisData: AnalysisData | null): number {
+  const speechEvents = analysisData?.metadata?.audioEventIntervals?.intervals?.filter((interval) =>
+    /speech|voice|dialogue/i.test(interval.event_type || ""),
+  ) || [];
+  if (speechEvents.length) {
+    return speechEvents.reduce((sum, interval) => sum + intervalDuration(interval.start, interval.end), 0);
+  }
   return timedTranscriptDurations(analysisData).reduce((sum, value) => sum + value, 0);
 }
 
+function audioEventDurationSeconds(analysisData: AnalysisData | null, pattern: RegExp): number | null {
+  const events = analysisData?.metadata?.audioEventIntervals?.intervals?.filter((interval) =>
+    pattern.test(interval.event_type || ""),
+  ) || [];
+  if (!events.length) return null;
+  return events.reduce((sum, interval) => sum + intervalDuration(interval.start, interval.end), 0);
+}
+
 function musicDurationSeconds(analysisData: AnalysisData | null): number | null {
+  const musicEventSeconds = audioEventDurationSeconds(analysisData, /music|song|score|soundtrack/i);
+  if (musicEventSeconds !== null) return musicEventSeconds;
   const musicCues = (analysisData?.audioProsody || []).filter((cue) =>
     /music|song|score|soundtrack/i.test(cue.sound_environment?.label || ""),
   );
@@ -639,6 +757,10 @@ function motionIntensityValues(analysisData: AnalysisData | null): number[] {
 }
 
 function shotDurationValues(analysisData: AnalysisData | null): number[] {
+  const shotDurations = (analysisData?.metadata?.motionSceneBasis?.shotBoundaries?.intervals || [])
+    .map((segment) => intervalDuration(segment.start, segment.end))
+    .filter((value) => value > 0);
+  if (shotDurations.length) return shotDurations;
   return (analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [])
     .map((segment) => intervalDuration(segment.start, segment.end))
     .filter((value) => value > 0);
@@ -651,18 +773,25 @@ function sourceLayerStatus(availableRows: number, hasProxy = false): StatsKitSou
 }
 
 function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null): StatsKitSourceLayerDeliverable[] {
-  const shotBoundaryRows = 0;
+  const shotBoundaryRows = analysisData?.metadata?.motionSceneBasis?.shotBoundaries?.intervals?.length || 0;
   const sceneProxyRows = analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments?.length || 0;
   const shotSizeProxyRows = analysisData?.metadata?.cinematicClues?.shotSize?.samples?.length || 0;
+  const audioEventRows = analysisData?.metadata?.audioEventIntervals?.intervals?.length || 0;
   const audioProsodyRows = analysisData?.audioProsody?.length || 0;
+  const musicAnalysisRows = countMasterRecords(analysisData, (record) => record.category === "music_analysis");
   const musicSoundRows = (analysisData?.audioProsody || []).filter((cue) =>
     cue.sound_environment?.label,
-  ).length;
+  ).length + (analysisData?.metadata?.audioEventIntervals?.intervals || []).filter((interval) =>
+    /music|noise|sound|speech|silence/i.test(interval.event_type || ""),
+  ).length + musicAnalysisRows;
   const colorRows = (analysisData?.metadata?.spatialToneScan?.samples || []).reduce((sum, sample) => {
     const zones = Object.values(sample.zones || {});
     return sum + zones.filter((zone) => zone.dominant_tone || zone.brightness_band || zone.saturation_band).length;
   }, 0);
-  const diarizationTurns = num(analysisData?.metadata?.audioDiarizationTurns);
+  const diarizationTurns = Math.max(
+    num(analysisData?.audioDiarization?.turn_count),
+    num(analysisData?.metadata?.audioDiarizationTurns),
+  );
   const transcriptSpeakerRows = (analysisData?.transcript || []).filter((segment) =>
     Boolean(segment.speaker && segment.speaker !== "Unknown" && intervalDuration(segment.start, segment.end) > 0),
   ).length;
@@ -673,28 +802,36 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
       layer: "True shot-boundary intervals",
       status: sourceLayerStatus(shotBoundaryRows, sceneProxyRows + shotSizeProxyRows > 0),
       availableRows: shotBoundaryRows,
-      currentSource: sceneProxyRows || shotSizeProxyRows
+      currentSource: shotBoundaryRows
+        ? "Master Schema shot_boundary_interval rows"
+        : sceneProxyRows || shotSizeProxyRows
         ? `${sceneProxyRows} scene segment proxy rows / ${shotSizeProxyRows} shot-size sample rows`
         : "No shot-boundary or cinematic proxy layer visible",
       unlocks: "shot duration distributions, trailer cut counts, camera rhythm variance, temporal change points",
-      nextAction: "Add and persist a real shot-boundary detector output with start/end intervals and method provenance.",
+      nextAction: shotBoundaryRows
+        ? "Use governed shot intervals for shot distributions, camera rhythm, and significance/relevance timing."
+        : "Add and persist a real shot-boundary detector output with start/end intervals and method provenance.",
     },
     {
       id: "audio-event-intervals",
       layer: "Audio event intervals: speech / silence / noise / music",
-      status: sourceLayerStatus(0, audioProsodyRows > 0),
-      availableRows: 0,
-      currentSource: audioProsodyRows ? `${audioProsodyRows} prosody cues available as partial audio proxy` : "No audio event interval layer visible",
+      status: sourceLayerStatus(audioEventRows, audioProsodyRows > 0),
+      availableRows: audioEventRows,
+      currentSource: audioEventRows
+        ? "Master Schema audio_event_interval rows"
+        : audioProsodyRows ? `${audioProsodyRows} prosody cues available as partial audio proxy` : "No audio event interval layer visible",
       unlocks: "speech/silence/noise/music ratios, audio timelines, event-rate curves, source-linked significance",
-      nextAction: "Persist VAD/silence/noise/music intervals as governed audio events, not only summary readiness.",
+      nextAction: audioEventRows
+        ? "Use these governed intervals for StatsKit, SignificanceKit, and RelevanceKit audio actuals."
+        : "Persist VAD/silence/noise/music intervals as governed audio events, not only summary readiness.",
     },
     {
       id: "music-sound-classifier",
       layer: "Music and sound classifier output over time",
       status: sourceLayerStatus(musicSoundRows),
       availableRows: musicSoundRows,
-      currentSource: musicSoundRows ? "audioProsody.sound_environment labels" : "No classified music/sound timeline visible",
-      unlocks: "music intensity x emotion, soundscape relevance, music/sound significance claims",
+      currentSource: musicSoundRows ? "Master Schema audio/music rows + audioProsody.sound_environment labels" : "No classified music/sound timeline visible",
+      unlocks: "music intensity x expression, soundscape relevance, music/sound significance claims",
       nextAction: "Classify music, score, noise, ambience, and sound events over time and persist EvidenceLink-compatible intervals.",
     },
     {
@@ -803,7 +940,7 @@ function buildSubstanceRows(
   const objects = auditCounts.objects || 0;
   const actions = auditCounts.actions || 0;
   const topics = auditCounts.topics || 0;
-  const emotions = auditCounts.emotions || 0;
+  const expressions = auditCounts.expressions || 0;
   const cameraShots = auditCounts.cameraShots || 0;
   const speakers = auditCounts.speakers || 0;
   const sounds = auditCounts.sounds || 0;
@@ -811,15 +948,21 @@ function buildSubstanceRows(
   const colors = auditCounts.colors || 0;
   const matureAnchors = Number(metrics.find((metric) => metric.id === "mature_anchors")?.value || 0);
   const audioPresent = metrics.find((metric) => metric.id === "audio_readiness" && !metric.missing) ? 1 : 0;
+  const audioEventRows = analysisData?.metadata?.audioEventIntervals?.intervals?.length || 0;
   const speechSeconds = speechDurationSeconds(analysisData);
   const musicSeconds = musicDurationSeconds(analysisData);
-  const silenceSeconds = duration && speechSeconds ? Math.max(0, duration - speechSeconds) : null;
+  const silenceEventSeconds = audioEventDurationSeconds(analysisData, /silence|quiet/i);
+  const noiseSeconds = audioEventDurationSeconds(analysisData, /noise|sound|ambience|ambient/i);
+  const silenceSeconds = silenceEventSeconds !== null
+    ? silenceEventSeconds
+    : duration && speechSeconds ? Math.max(0, duration - speechSeconds) : null;
   const speakingTurnMedian = median(timedTranscriptDurations(analysisData));
   const tempoVariance = variance(speakingTempoValues(analysisData));
   const expressionVariance = variance(expressionToneValues(analysisData));
   const motionVariance = variance(motionIntensityValues(analysisData));
   const speakerDominanceStdDev = stdDev(speakerDurationValues(analysisData));
   const shotDurationStdDev = stdDev(shotDurationValues(analysisData));
+  const shotDurations = shotDurationValues(analysisData);
   const movementStdDev = stdDev(motionIntensityValues(analysisData));
   const auditByStatLabel = new Map(masterAuditRows.map((row) => [row.statLabel, row]));
   const descriptiveEntries: Array<[string, number, string, MasterSchemaStatsAuditRow | undefined]> = [
@@ -829,7 +972,7 @@ function buildSubstanceRows(
     ["objects", objects, "Master Schema object/detection audit", auditByStatLabel.get("objects detected")],
     ["actions", actions, "Master Schema action/POS/manual audit", auditByStatLabel.get("actions detected")],
     ["topics", topics, "Master Schema topic/meaning/quant audit", auditByStatLabel.get("topics detected")],
-    ["emotions", emotions, "Master Schema expression/emotion audit", auditByStatLabel.get("emotions detected")],
+    ["expressions", expressions, "Master Schema expression audit", auditByStatLabel.get("expressions detected")],
     ["camera shots", cameraShots, "Master Schema scene/camera audit", auditByStatLabel.get("camera shots detected")],
     ["speakers", speakers, "Master Schema speaker/transcript/audio audit", auditByStatLabel.get("speakers detected")],
     ["sounds", sounds, "Master Schema audio/sound audit", auditByStatLabel.get("sounds detected")],
@@ -883,13 +1026,15 @@ function buildSubstanceRows(
       "duration",
       "speech / silence / music duration",
       speechSeconds
-        ? `speech ${roundStat(speechSeconds)} / silence ${roundStat(silenceSeconds)} / music ${musicSeconds === null ? "not classified" : roundStat(musicSeconds)}`
+        ? `speech ${roundStat(speechSeconds)} / silence ${roundStat(silenceSeconds)} / noise ${noiseSeconds === null ? "not classified" : roundStat(noiseSeconds)} / music ${musicSeconds === null ? "not classified" : roundStat(musicSeconds)}`
         : "not computed",
       "seconds",
-      "timed transcript segments + optional audioProsody music environment labels",
-      speechSeconds ? (musicSeconds === null ? "candidate" : "computed") : audioPresent ? "needs source layer" : "not computed",
-      "Speech and silence are computed from timed transcript coverage; music requires classified audio environment intervals before it is fully actual.",
-      "transcript segment intervals + audioProsody.sound_environment",
+      "Master Schema audio_event_interval segments + timed transcript fallback",
+      audioEventRows ? "computed" : speechSeconds ? (musicSeconds === null ? "candidate" : "computed") : audioPresent ? "needs source layer" : "not computed",
+      audioEventRows
+        ? "Speech, silence, noise, and music are computed from governed Master Schema audio-event intervals."
+        : "Speech and silence use transcript coverage as a fallback; music requires classified audio environment intervals before it is fully actual.",
+      "Master Schema temporal_segments[event_family=audio_event_interval] + transcript segment intervals",
     ),
     statRow(
       "descriptive",
@@ -918,10 +1063,10 @@ function buildSubstanceRows(
       "descriptive",
       "Level I",
       "variance",
-      "camera movement / emotional tone / speaking tempo variance",
-      `movement ${roundStat(motionVariance)} / emotion ${roundStat(expressionVariance)} / tempo ${roundStat(tempoVariance)}`,
+      "camera movement / expression tone / speaking tempo variance",
+      `movement ${roundStat(motionVariance)} / expression ${roundStat(expressionVariance)} / tempo ${roundStat(tempoVariance)}`,
       "score",
-      "timed shot, emotion, and speech-tempo series",
+      "timed shot, expression, and speech-tempo series",
       motionVariance !== null || expressionVariance !== null || tempoVariance !== null ? "computed" : "needs source layer",
       "Variance is computed for each timed vector that exists; missing vector families remain not computed inside the compound value.",
       "motionSceneBasis.motionEvidence.samples + expressionResults + audioProsody.pace",
@@ -939,23 +1084,51 @@ function buildSubstanceRows(
       "transcript speaker durations + scene segment durations + motion evidence samples",
     ),
     statRow("cross_tabulation", "Level II", "cross_tab", "Gender x speaking time", "not computed", "matrix", "speaker identity + gender label + timed speech turns", "needs source layer", "Requires speaker-linked demographics and speaking-time intervals."),
-    statRow("cross_tabulation", "Level II", "cross_tab", "Location x emotion", "not computed", "matrix", "scene setting + expression/sentiment intervals", "needs source layer", "Requires location labels and timed emotional evidence."),
+    statRow("cross_tabulation", "Level II", "cross_tab", "Location x expression", "not computed", "matrix", "scene setting + expression/sentiment intervals", "needs source layer", "Requires location labels and timed expression evidence."),
     statRow("cross_tabulation", "Level II", "cross_tab", "Speaker x topic", "not computed", "matrix", "speaker turns + topic/meaning spans", "needs source layer", "Requires transcript spans linked to speakers and topics."),
-    statRow("correlation", "Level III", "correlation", "music intensity x negative emotion", "not computed", "r", "audio intensity time series + emotion time series", "needs source layer", "Requires aligned audio and emotion vectors."),
+    statRow("correlation", "Level III", "correlation", "music intensity x expression valence", "not computed", "r", "audio intensity time series + expression time series", "needs source layer", "Requires aligned audio and expression vectors."),
     statRow("correlation", "Level III", "correlation", "object density x narrative complexity", "not computed", "r", "object density series + narrative marker series", "needs source layer", "Requires per-window object and narrative measurements."),
     statRow("comparative", "Level IV", "comparative", "video-to-video comparison", "not computed", "table", "collection or comparative corpus", "needs corpus", "Single-video data is loaded; comparative statistics require multiple governed videos."),
-    statRow("distribution", "Level V", "histogram", "shot length distribution", "not computed", "distribution", "shot boundary intervals", "needs source layer", "Requires exact shot durations."),
+    statRow(
+      "distribution",
+      "Level V",
+      "histogram",
+      "shot length distribution",
+      shotDurations.length ? `${shotDurations.length} intervals / median ${roundStat(median(shotDurations))}s` : "not computed",
+      "distribution",
+      "Master Schema shot_boundary_interval segments",
+      shotDurations.length ? "computed" : "needs source layer",
+      shotDurations.length ? "Distribution is available from governed shot-boundary intervals." : "Requires exact shot durations.",
+      "Master Schema temporal_segments[event_family=shot_boundary_interval]",
+    ),
     statRow("distribution", "Level V", "boxplot", "speaker turn distribution", "not computed", "distribution", "speaker turn intervals", "needs source layer", "Requires timed speaker turns."),
     statRow("social_network", "Network", "degree", "entity interaction degree", matureAnchors, "nodes/edges", "manual anchors + interaction edges", matureAnchors ? "candidate" : "needs source layer", "Uses available mature anchors; actual centrality needs explicit edges."),
     statRow("social_network", "Network", "density", "interaction network density", "not computed", "score", "entity nodes + interaction edges", "needs source layer", "Requires a confirmed interaction edge set."),
     statRow("narrative", "Narrative", "event_rate", "scene transition rate", perMinute(cameraShots), "events/min", "scene/shot evidence count + duration", cameraShots && duration ? "candidate" : "needs source layer", "Count-derived transition proxy until exact boundaries are loaded."),
-    statRow("narrative", "Narrative", "curve", "hero / villain / suspense / emotion curves", "not computed", "timeline", "character presence + affect + scene markers", "needs source layer", "Requires timed character and affect traces."),
+    statRow("narrative", "Narrative", "curve", "hero / villain / suspense / expression curves", "not computed", "timeline", "character presence + expression + scene markers", "needs source layer", "Requires timed character and expression traces."),
     statRow("linguistic", "Linguistic", "frequency", "POS / transcript token evidence", actions, "count", "POS/transcript evidence counts", computedOrMissing(actions), "Available when POS or transcript layers have been harvested."),
     statRow("linguistic", "Linguistic", "lexical_diversity", "type-token ratio", "not computed", "ratio", "transcript token table", "needs source layer", "Requires transcript tokens, not just metadata."),
     statRow("visual", "Visual", "density", "object density", perMinute(objects), "events/min", "object/tracked_objects counts + duration", objects && duration ? "candidate" : computedOrMissing(objects), "Rate computed from available object count and runtime."),
-    statRow("visual", "Visual", "density", "face / expression density", perMinute(emotions + persons), "events/min", "person/expression counts + duration", (emotions || persons) && duration ? "candidate" : computedOrMissing(emotions + persons), "Rate computed from visible person/expression counts."),
+    statRow("visual", "Visual", "density", "face / expression density", perMinute(expressions + persons), "events/min", "person/expression counts + duration", (expressions || persons) && duration ? "candidate" : computedOrMissing(expressions + persons), "Rate computed from visible person/expression counts."),
     statRow("audio", "Audio", "ratio", "audio readiness", audioPresent ? 100 : 0, "%", "source_media_metadata.has_audio", hasMetadata ? "computed" : "needs source layer", "This is only readiness; actual audio statistics require audio intervals."),
-    statRow("audio", "Audio", "duration", "speech / silence / noise / music ratios", "not computed", "%", "VAD + diarization + audio classifier intervals", "needs source layer", "Actual audio evidence must be loaded before ratios are claimed."),
+    statRow(
+      "audio",
+      "Audio",
+      "duration",
+      "speech / silence / noise / music ratios",
+      audioEventRows && analysisData?.metadata?.audioEventIntervals?.summary?.ratios
+        ? Object.entries(analysisData.metadata.audioEventIntervals.summary.ratios)
+            .map(([key, value]) => `${key} ${Math.round(Number(value) * 1000) / 10}%`)
+            .join(" / ")
+        : "not computed",
+      "%",
+      "Master Schema audio_event_interval segments",
+      audioEventRows ? "computed" : "needs source layer",
+      audioEventRows
+        ? "Ratios are computed from governed speech/silence/noise/music intervals."
+        : "Actual audio evidence must be loaded before ratios are claimed.",
+      "Master Schema temporal_segments[event_family=audio_event_interval]",
+    ),
     statRow("temporal", "Temporal", "event_rate", "visible evidence event rate", perMinute(totalEvents), "events/min", "harvested evidence counts + duration", totalEvents && duration ? "candidate" : "needs source layer", "Aggregate rate; rolling windows require timestamped event rows."),
     statRow("temporal", "Temporal", "change_point", "burst / change-point detection", "not computed", "timeline", "timestamped multimodal event stream", "needs source layer", "Requires per-event timestamps across the full video."),
   ];
@@ -2009,6 +2182,314 @@ function selectedVisualizationData(
   return visualizationData(mode, peerRows.filter((peer) => visualizableRows.some((row) => peer.method === row.method)));
 }
 
+function statNumericValue(row: StatsTableRow | null | undefined): number | null {
+  if (!row) return null;
+  if (typeof row.value === "number" && Number.isFinite(row.value)) return row.value;
+  const parsed = Number(String(row.value).replace("%", "").match(/-?\d+(?:\.\d+)?/)?.[0] || "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildLocalComparisonStatsRows(
+  metadata: SourceMediaMetadata | null,
+  analysisData: AnalysisData | null,
+): StatsTableRow[] {
+  const auditRows = buildMasterSchemaStatsAudit(analysisData, metadata);
+  const metrics = buildMetrics(metadata, analysisData);
+  const radar = buildRadar(metrics);
+  return buildSubstanceRows(metadata, analysisData, metrics, radar, null, auditRows);
+}
+
+function findComparableFeatureRow(
+  rows: StatsTableRow[],
+  selected: StatsTableRow | null,
+): StatsTableRow | null {
+  if (!selected) return null;
+  return rows.find((row) => row.id === selected.id) ||
+    rows.find((row) =>
+      row.family === selected.family &&
+      row.method === selected.method &&
+      row.statistic === selected.statistic,
+    ) ||
+    null;
+}
+
+function buildComparisonFeatureRows(
+  corpus: ComparisonCorpusVideo[],
+  selected: StatsTableRow | null,
+): ComparisonFeatureRow[] {
+  return corpus.map((item) => {
+    const row = findComparableFeatureRow(item.statsRows, selected);
+    const value = statNumericValue(row);
+    return {
+      analysisId: item.analysisId,
+      sourceName: item.sourceName,
+      value,
+      displayValue: row ? String(row.value) : "missing",
+      status: row?.status || "missing",
+      evidence: row?.evidence || "No matching StatsKit row in this local analysis.",
+    };
+  });
+}
+
+function comparisonSummary(rows: ComparisonFeatureRow[]): {
+  count: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  delta: number | null;
+} {
+  const values = rows.map((row) => row.value).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (!values.length) {
+    return { count: 0, min: null, max: null, mean: null, delta: null };
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  return {
+    count: values.length,
+    min,
+    max,
+    mean: values.reduce((sum, value) => sum + value, 0) / values.length,
+    delta: max - min,
+  };
+}
+
+function comparisonVisualizationData(rows: ComparisonFeatureRow[]): VisualizationDatum[] {
+  return rows
+    .map((row): VisualizationDatum | null => {
+      if (row.value === null || !Number.isFinite(row.value)) return null;
+      return {
+        id: row.analysisId,
+        label: row.sourceName,
+        value: row.value,
+        detail: `${row.status} / ${row.evidence}`,
+        group: "comparison",
+        status: row.status,
+      };
+    })
+    .filter((row): row is VisualizationDatum => Boolean(row));
+}
+
+function missingnessVisualizationData(
+  missingness: ReturnType<typeof buildMissingnessProfile>,
+): VisualizationDatum[] {
+  return missingness.map((row) => ({
+    id: row.variable_id,
+    label: row.label,
+    value: Math.round(row.missing_rate * 100),
+    detail: `${row.missing_count} missing / ${row.observed_count} observed`,
+    group: "missingness",
+    status: row.missing_count ? "needs review" : "complete",
+  }));
+}
+
+const LOCAL_STATS_COMPARISON_POLICY = {
+  mode: "local_offline_first",
+  defaultDataLocation: "local saved Datascene analyses",
+  licensePolicy: "license-free core; licensed scripts and online providers require explicit activation",
+  offlineStandalone: "available when saved analyses and local artifacts are present",
+};
+
+const STATS_COMPARISON_WORKFLOW: StudioWorkflowStep[] = [
+  "corpus",
+  "unit",
+  "variables",
+  "matrix",
+  "quality",
+  "analyses",
+  "diagnostics",
+  "variants",
+  "interpretation",
+  "traceback",
+  "export",
+];
+
+const STATS_COMPARISON_SUPPORTED_METHODS = {
+  descriptive_comparison: [
+    "corpus_summary_table",
+    "per_video_profile_table",
+    "group_comparison_table",
+    "mean_median_comparison",
+    "proportion_comparison",
+    "distribution_comparison",
+  ],
+  association: [
+    "correlation_heatmap",
+    "pairwise_scatterplot",
+    "cross_tabulation",
+  ],
+  exploratory_multivariate: [
+    "pca_corpus_map",
+    "pca_loadings_table",
+    "kmeans_cluster_explorer",
+    "nearest_neighbor_similarity",
+    "outlier_detection",
+  ],
+  traceback: [
+    "click_table_cell_to_source",
+    "click_chart_point_to_video",
+    "click_cluster_to_member_videos",
+    "click_outlier_to_source_scene",
+    "click_correlation_to_underlying_observations",
+  ],
+};
+
+function buildFeatureMatrix(
+  corpus: ComparisonCorpusVideo[],
+  variables: StatsTableRow[],
+): Array<Record<string, string | number | null>> {
+  return corpus.map((item) => {
+    const row: Record<string, string | number | null> = {
+      analysis_id: item.analysisId,
+      source_name: item.sourceName,
+    };
+    variables.forEach((variable) => {
+      row[variable.id] = statNumericValue(findComparableFeatureRow(item.statsRows, variable));
+    });
+    return row;
+  });
+}
+
+function buildVariableRegistry(variables: StatsTableRow[]) {
+  return variables.map((variable) => ({
+    variable_id: variable.id,
+    label: variable.statistic,
+    method: variable.method,
+    family: variable.family,
+    measurement_level: variable.unit === "%" ? "ratio_percent" : typeof variable.value === "number" ? "numeric" : "mixed",
+    unit: variable.unit,
+    provenance: variable.evidence,
+    required_layer: variable.requiredLayer,
+    comparability: ["computed", "candidate", "raw"].includes(variable.status) ? "comparable" : "needs_review",
+  }));
+}
+
+function buildMissingnessProfile(matrix: Array<Record<string, string | number | null>>, variables: StatsTableRow[]) {
+  return variables.map((variable) => {
+    const missing = matrix.filter((row) => row[variable.id] === null || row[variable.id] === undefined).length;
+    return {
+      variable_id: variable.id,
+      label: variable.statistic,
+      missing_count: missing,
+      observed_count: Math.max(0, matrix.length - missing),
+      missing_rate: matrix.length ? missing / matrix.length : 0,
+    };
+  });
+}
+
+function buildStatsComparisonStudioPackage({
+  activeAnalysisId,
+  corpus,
+  variables,
+  selectedFeatureRows,
+  unitOfAnalysis,
+  variantMode,
+}: {
+  activeAnalysisId: string;
+  corpus: ComparisonCorpusVideo[];
+  variables: StatsTableRow[];
+  selectedFeatureRows: ComparisonFeatureRow[];
+  unitOfAnalysis: string;
+  variantMode: string;
+}): StatsComparisonStudioPackage {
+  const matrix = buildFeatureMatrix(corpus, variables);
+  const missingness = buildMissingnessProfile(matrix, variables);
+  const numericValues = selectedFeatureRows
+    .map((row) => row.value)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const summary = comparisonSummary(selectedFeatureRows);
+  const qualityWarnings = [
+    ...(corpus.length < 2 ? ["Corpus needs at least two videos for comparison."] : []),
+    ...missingness.filter((row) => row.missing_count > 0).slice(0, 4).map((row) => `${row.label} has missing values.`),
+    ...(numericValues.length < selectedFeatureRows.length ? ["Selected feature has non-numeric or missing rows in the corpus."] : []),
+  ];
+  return {
+    StatsComparisonStudio: {
+      schema_name: "Datascene Stats Comparison Studio",
+      schema_version: "0.1.0",
+      purpose: "Professional statistical comparison environment for multimodal Datascene corpora.",
+      workflow: STATS_COMPARISON_WORKFLOW,
+      runtime_policy: LOCAL_STATS_COMPARISON_POLICY,
+      core_objects: {
+        AnalysisProject: {
+          project_id: `stats-comparison:${activeAnalysisId || "local"}`,
+          active_analysis_id: activeAnalysisId,
+          execution_environment: "local_datascene_runtime",
+        },
+        CorpusDefinition: {
+          corpus_id: "local_saved_analysis_corpus",
+          analysis_ids: corpus.map((item) => item.analysisId),
+          source_names: corpus.map((item) => item.sourceName),
+          inclusion_rule: "completed local Datascene analyses selected by the analyst",
+        },
+        UnitOfAnalysisModel: {
+          unit: unitOfAnalysis,
+          observation_count: corpus.length,
+          supported_units: ["video", "scene", "shot", "speaker_turn", "source_moment"],
+        },
+        VariableRegistry: buildVariableRegistry(variables),
+        FeatureMatrix: {
+          matrix_version: "local-ui-0.1.0",
+          row_count: matrix.length,
+          column_count: variables.length,
+          rows: matrix,
+        },
+        MissingnessProfile: missingness,
+        UncertaintyModel: {
+          policy: "propagate source row status into diagnostics",
+          source_statuses: selectedFeatureRows.reduce<Record<string, number>>((acc, row) => {
+            acc[row.status] = (acc[row.status] || 0) + 1;
+            return acc;
+          }, {}),
+        },
+        AnalysisRecipe: {
+          selected_methods: ["per_video_profile_table", "mean_median_comparison", "distribution_comparison"],
+          variant_mode: variantMode,
+          variables: variables.map((variable) => variable.id),
+        },
+        AnalysisRun: {
+          run_id: `local-comparison:${activeAnalysisId || "no-active-analysis"}`,
+          status: corpus.length > 1 && variables.length ? "ready" : "needs_inputs",
+          executed_in: "frontend_local_corpus_builder",
+        },
+        AnalysisDiagnostics: {
+          quality_flags: qualityWarnings,
+          comparable_numeric_rows: numericValues.length,
+          corpus_size: corpus.length,
+        },
+        AnalysisResult: {
+          selected_feature_summary: summary,
+          selected_feature_rows: selectedFeatureRows,
+        },
+        AnalysisVisualization: {
+          available_modes: ["table", "bar_chart", "histogram", "boxplot", "heatmap"],
+          current_binding: "selected StatsKit feature across selected local videos",
+        },
+        AnalysisInterpretation: {
+          status: summary.count > 1 ? "candidate" : "needs_corpus",
+          claim: summary.delta === null
+            ? "No interpretable cross-video difference is available yet."
+            : `The selected feature varies by ${roundStat(summary.delta)} across the local comparison corpus.`,
+          review_state: "analyst_review_required",
+        },
+        AnalysisVariant: [
+          { variant_id: "all_selected", specification: "Use all checked local videos." },
+          { variant_id: "computed_only", specification: "Use only computed/candidate numeric rows." },
+        ],
+        AnalysisProvenanceGraph: {
+          root: "StatsComparisonStudio",
+          edges: selectedFeatureRows.map((row) => ({
+            from: "AnalysisResult",
+            to: `analysis:${row.analysisId}`,
+            evidence: row.evidence,
+            source_action: `datascene://analysis/${row.analysisId}/statskit`,
+          })),
+        },
+      },
+      v1_supported_methods: STATS_COMPARISON_SUPPORTED_METHODS,
+    },
+  };
+}
+
 function significanceVisualizationData(rows: SignificanceWorkbenchRow[]): VisualizationDatum[] {
   return rows.map((row) => ({
     id: row.id,
@@ -2287,6 +2768,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [significanceDimensionFilter, setSignificanceDimensionFilter] = useState<"all" | SignificanceDimensionKey>("all");
   const [statColumnWidths, setStatColumnWidths] =
     useState<Record<StatsWorkbenchColumn, number>>(DEFAULT_STAT_COLUMN_WIDTHS);
+  const [availableComparisonVideos, setAvailableComparisonVideos] = useState<VideoMetadata[]>([]);
+  const [selectedComparisonIds, setSelectedComparisonIds] = useState<string[]>([]);
+  const [comparisonCorpus, setComparisonCorpus] = useState<ComparisonCorpusVideo[]>([]);
+  const [comparisonStatus, setComparisonStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
+  const [comparisonError, setComparisonError] = useState("");
+  const [studioStep, setStudioStep] = useState<StudioWorkflowStep>("corpus");
+  const [studioUnitOfAnalysis, setStudioUnitOfAnalysis] = useState("video");
+  const [studioVariantMode, setStudioVariantMode] = useState("all_selected");
 
   useEffect(() => {
     const handler = (payload?: unknown) => {
@@ -2356,6 +2845,97 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     };
   }, [activeAnalysisId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    VideoService.listVideos(20)
+      .then((videos) => {
+        if (cancelled) return;
+        const completed = videos.filter((video) => video.status === "completed");
+        setAvailableComparisonVideos(completed);
+        setSelectedComparisonIds((current) => {
+          const valid = new Set(completed.map((video) => video.id));
+          const retained = current.filter((id) => valid.has(id));
+          if (retained.length) return retained;
+          const defaults = [
+            activeAnalysisId,
+            ...completed.filter((video) => video.id !== activeAnalysisId).slice(0, 5).map((video) => video.id),
+          ].filter(Boolean);
+          return [...new Set(defaults)];
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("StatsKit comparison corpus list failed:", error);
+          setAvailableComparisonVideos([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAnalysisId]);
+
+  useEffect(() => {
+    const ids = [...new Set(selectedComparisonIds.filter(Boolean))].slice(0, 8);
+    if (!ids.length) {
+      setComparisonCorpus([]);
+      setComparisonStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setComparisonStatus("loading");
+    setComparisonError("");
+    Promise.allSettled(ids.map(async (id): Promise<ComparisonCorpusVideo> => {
+      if (id === activeAnalysisId && (metadata || analysisData)) {
+        return {
+          analysisId: id,
+          sourceName: metadata?.original_filename || metadata?.analysis_id || analysisData?.metadata?.sourceName || id,
+          metadata,
+          analysisData,
+          statsRows: buildLocalComparisonStatsRows(metadata, analysisData),
+        };
+      }
+      const [metadataResult, analysisResult] = await Promise.allSettled([
+        apiService.getSourceMediaMetadata(id),
+        VideoService.getAnalysis(id),
+      ]);
+      const nextMetadata = metadataResult.status === "fulfilled" ? metadataResult.value : null;
+      const nextAnalysisData = analysisResult.status === "fulfilled" ? analysisResult.value : null;
+      return {
+        analysisId: id,
+        sourceName: nextMetadata?.original_filename || nextAnalysisData?.metadata?.sourceName || id,
+        metadata: nextMetadata,
+        analysisData: nextAnalysisData,
+        statsRows: buildLocalComparisonStatsRows(nextMetadata, nextAnalysisData),
+      };
+    }))
+      .then((results) => {
+        if (cancelled) return;
+        const fulfilled = results
+          .filter((result): result is PromiseFulfilledResult<ComparisonCorpusVideo> => result.status === "fulfilled")
+          .map((result) => result.value)
+          .filter((item) => item.statsRows.length > 0);
+        setComparisonCorpus(fulfilled);
+        setComparisonStatus(fulfilled.length > 1 ? "ready" : "idle");
+        const rejected = results.filter((result) => result.status === "rejected");
+        setComparisonError(rejected.length ? `${rejected.length} local analysis record(s) could not be loaded for comparison.` : "");
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setComparisonCorpus([]);
+          setComparisonStatus("failed");
+          setComparisonError(error instanceof Error ? error.message : "Local comparison corpus load failed");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeAnalysisId,
+    selectedComparisonIds.join("|"),
+    metadata,
+    analysisData,
+  ]);
+
   const masterAuditRows = useMemo(
     () => buildMasterSchemaStatsAudit(analysisData, metadata),
     [analysisData, metadata],
@@ -2423,17 +3003,36 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     () => buildSubstanceRows(metadata, analysisData, metrics, radar, runArtifact, masterAuditRows),
     [metadata, analysisData, metrics, radar, runArtifact, masterAuditRows],
   );
+  const operationalStatsRows = useMemo(
+    () => statsRows.map((row) => {
+      if (row.family !== "comparative" || row.statistic !== "video-to-video comparison") {
+        return row;
+      }
+      if (comparisonCorpus.length < 2) return row;
+      return {
+        ...row,
+        value: comparisonCorpus.length,
+        unit: "videos",
+        evidence: "local Datascene saved analyses + Master Schema StatsKit rows",
+        status: "computed" as const,
+        note: "Computed from the local offline comparison corpus. No online provider or licensed script is used.",
+        requiredLayer: "local Datascene comparison corpus",
+        visualizationTypes: defaultVisualizationTypes({ ...row, status: "computed", unit: "videos" }),
+      };
+    }),
+    [statsRows, comparisonCorpus.length],
+  );
   const schemaCoverageRows = buildSchemaCoverageRows(runArtifact, claims, radar, metadata);
   const schemaBundle = useMemo(
     () => buildSignificanceRelevanceSchemaBundle(activeAnalysisId, scope, audience, metrics, radar, claims, runArtifact, metadata),
     [activeAnalysisId, scope, audience, metrics, radar, claims, runArtifact, metadata],
   );
   const significanceRelevanceDeliveryAudit = useMemo(
-    () => buildSignificanceRelevanceDeliveryAudit(schemaBundle, runArtifact, claims, radar, statsRows),
-    [schemaBundle, runArtifact, claims, radar, statsRows],
+    () => buildSignificanceRelevanceDeliveryAudit(schemaBundle, runArtifact, claims, radar, operationalStatsRows),
+    [schemaBundle, runArtifact, claims, radar, operationalStatsRows],
   );
   const selectedFamily = STAT_FAMILY_OPTIONS.find((option) => option.id === statFamily) || STAT_FAMILY_OPTIONS[0];
-  const visibleStatsRows = statsRows.filter((row) => row.family === statFamily);
+  const visibleStatsRows = operationalStatsRows.filter((row) => row.family === statFamily);
   const visibleStatsRowIds = visibleStatsRows.map((row) => row.id).join("|");
   const selectedStat = visibleStatsRows.find((row) => row.id === selectedStatId) || visibleStatsRows[0] || null;
   const selectedStatsForVisualization = visibleStatsRows.filter((row) => selectedStatIds.includes(row.id));
@@ -2463,17 +3062,69 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       ? selectedScannerRowsForVisualization
       : scannerRows,
   );
+  const studioVariables = useMemo(() => {
+    const checked = operationalStatsRows.filter((row) => selectedStatIds.includes(row.id));
+    if (checked.length) return checked.slice(0, 12);
+    if (selectedStat) return [selectedStat];
+    return operationalStatsRows.filter((row) => ["computed", "candidate", "raw"].includes(row.status)).slice(0, 8);
+  }, [operationalStatsRows, selectedStatIds, selectedStat]);
+  const comparisonFeatureRows = useMemo(
+    () => buildComparisonFeatureRows(comparisonCorpus, selectedStat),
+    [comparisonCorpus, selectedStat],
+  );
+  const comparisonFeatureSummary = useMemo(
+    () => comparisonSummary(comparisonFeatureRows),
+    [comparisonFeatureRows],
+  );
+  const studioFeatureMatrix = useMemo(
+    () => buildFeatureMatrix(comparisonCorpus, studioVariables),
+    [comparisonCorpus, studioVariables],
+  );
+  const studioMissingnessProfile = useMemo(
+    () => buildMissingnessProfile(studioFeatureMatrix, studioVariables),
+    [studioFeatureMatrix, studioVariables],
+  );
+  const comparisonPlottedData = useMemo(
+    () => comparisonVisualizationData(comparisonFeatureRows),
+    [comparisonFeatureRows],
+  );
+  const missingnessPlottedData = useMemo(
+    () => missingnessVisualizationData(studioMissingnessProfile),
+    [studioMissingnessProfile],
+  );
   const plottedData = visualizationTarget === "significance"
     ? significancePlottedData
     : visualizationTarget === "relevance"
       ? relevancePlottedData
-      : statsPlottedData;
-  const missingDataRows = buildMissingDataRows(statsRows);
+      : visualizationTarget === "comparison"
+        ? studioStep === "quality"
+          ? missingnessPlottedData
+          : comparisonPlottedData
+        : statsPlottedData;
+  const missingDataRows = buildMissingDataRows(operationalStatsRows);
   const sourceLayerDeliverables = useMemo(
     () => buildStatsKitSourceLayerDeliverables(analysisData),
     [analysisData],
   );
   const selectedCanVisualize = plottedData.length > 0;
+  const studioPackage = useMemo(
+    () => buildStatsComparisonStudioPackage({
+      activeAnalysisId,
+      corpus: comparisonCorpus,
+      variables: studioVariables,
+      selectedFeatureRows: comparisonFeatureRows,
+      unitOfAnalysis: studioUnitOfAnalysis,
+      variantMode: studioVariantMode,
+    }),
+    [
+      activeAnalysisId,
+      comparisonCorpus,
+      studioVariables,
+      comparisonFeatureRows,
+      studioUnitOfAnalysis,
+      studioVariantMode,
+    ],
+  );
   const selectedResultCount = isRecord(schemaBundle.StatsKit) && Array.isArray(schemaBundle.StatsKit.source_results)
     ? schemaBundle.StatsKit.source_results.length
     : 0;
@@ -2483,6 +3134,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     filteredSignificanceRows[0] ||
     null;
   const sourceName = metadata?.original_filename || metadata?.analysis_id || activeAnalysisId || "no analysis";
+  const selectedComparisonSet = new Set(selectedComparisonIds);
   const duration = num(metadata?.duration_seconds);
   const compactIndicators = [
     `${metadata ? "source loaded" : "source missing"}`,
@@ -2510,6 +3162,12 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     });
   }, [selectedStatId, visibleStatsRowIds]);
 
+  useEffect(() => {
+    if (["matrix", "quality", "analyses", "diagnostics", "variants", "interpretation"].includes(studioStep)) {
+      setVisualizationTarget("comparison");
+    }
+  }, [studioStep]);
+
   const toggleVisualizationRow = (rowId: string) => {
     setSelectedStatIds((current) =>
       current.includes(rowId)
@@ -2532,6 +3190,24 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         ? current.filter((id) => id !== rowId)
         : [...current, rowId],
     );
+  };
+
+  const toggleComparisonVideo = (analysisId: string) => {
+    setSelectedComparisonIds((current) =>
+      current.includes(analysisId)
+        ? current.filter((id) => id !== analysisId)
+        : [...current, analysisId],
+    );
+  };
+
+  const exportStudioPackage = () => {
+    const blob = new Blob([JSON.stringify(studioPackage, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `datascene_stats_comparison_studio_${activeAnalysisId || "local"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   const setColumnWidth = (column: StatsWorkbenchColumn, width: number) => {
@@ -2644,6 +3320,537 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           ) : null}
         </div>
       )}
+
+      <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" open data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">StatsKit comparison studio</div>
+            <div className="mt-0.5 text-[9px] text-slate-500">Corpus to reproducible package; local Datascene data is the default runtime.</div>
+          </div>
+          <div className="font-mono text-[9px] text-cyan-100">
+            {comparisonStatus} / {comparisonCorpus.length} video(s)
+          </div>
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-1" data-vaa1-statskit-comparison-studio-workflow="true">
+          {STATS_COMPARISON_WORKFLOW.map((step, index) => (
+            <button
+              key={step}
+              type="button"
+              className={`rounded border px-2 py-1 text-[8px] uppercase tracking-[0.1em] ${studioStep === step ? "border-cyan-500/60 bg-cyan-950/30 text-cyan-100" : "border-slate-800 bg-[#090909] text-slate-500 hover:text-slate-200"}`}
+              onClick={() => setStudioStep(step)}
+            >
+              {index + 1}. {step.replace(/_/g, " ")}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+          <label className="rounded border border-slate-800 bg-[#090909] px-2 py-1.5">
+            <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Unit of analysis</span>
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-[#050505] px-2 py-1 text-[10px] text-slate-100"
+              value={studioUnitOfAnalysis}
+              onChange={(event) => setStudioUnitOfAnalysis(event.target.value)}
+              data-vaa1-statskit-unit-of-analysis-model="true"
+            >
+              <option value="video">Video</option>
+              <option value="scene">Scene</option>
+              <option value="shot">Shot</option>
+              <option value="speaker_turn">Speaker turn</option>
+              <option value="source_moment">Source moment</option>
+            </select>
+          </label>
+          <label className="rounded border border-slate-800 bg-[#090909] px-2 py-1.5">
+            <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Variant</span>
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-[#050505] px-2 py-1 text-[10px] text-slate-100"
+              value={studioVariantMode}
+              onChange={(event) => setStudioVariantMode(event.target.value)}
+              data-vaa1-statskit-analysis-variant="true"
+            >
+              <option value="all_selected">All selected videos</option>
+              <option value="computed_only">Computed/candidate numeric rows</option>
+              <option value="active_family_only">Active family variables</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+            onClick={exportStudioPackage}
+            data-vaa1-statskit-reproducible-package-export="true"
+          >
+            Export package
+          </button>
+        </div>
+        <div className="mt-2 rounded border border-cyan-900/40 bg-[#090909] px-3 py-2" data-vaa1-statskit-active-studio-step={studioStep}>
+          {studioStep === "corpus" ? (
+            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+              <div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Define corpus</div>
+                <div className="mt-1 text-[10px] text-slate-400">Choose completed local analyses for the comparison corpus. The feature matrix and diagnostics update from this checked set.</div>
+              </div>
+              <div className="grid grid-cols-3 gap-1 text-center text-[9px]">
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">available</div><div className="font-mono text-cyan-100">{availableComparisonVideos.length}</div></div>
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">checked</div><div className="font-mono text-cyan-100">{selectedComparisonIds.length}</div></div>
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">loaded</div><div className="font-mono text-cyan-100">{comparisonCorpus.length}</div></div>
+              </div>
+            </div>
+          ) : studioStep === "unit" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Define unit of analysis</div>
+              <div className="mt-1 text-[10px] text-slate-400">Current unit is <span className="font-mono text-cyan-100">{studioUnitOfAnalysis}</span>. Video-level comparison is operational now; scene, shot, speaker-turn, and source-moment units are schema-declared and will become fully operational as those interval tables mature.</div>
+            </div>
+          ) : studioStep === "variables" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Select variables</div>
+              <div className="mt-1 text-[10px] text-slate-400">{studioVariables.length} variable(s) are active. Check rows in the Stats workbench to add variables to the studio matrix.</div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {studioVariables.map((variable) => (
+                  <span key={variable.id} className="rounded border border-slate-800 bg-[#050505] px-2 py-1 text-[9px] text-slate-300">{variable.statistic}</span>
+                ))}
+              </div>
+            </div>
+          ) : studioStep === "matrix" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Build feature matrix</div>
+              <div className="mt-1 text-[10px] text-slate-400">Matrix shape: <span className="font-mono text-cyan-100">{comparisonCorpus.length}</span> observations x <span className="font-mono text-cyan-100">{studioVariables.length}</span> variables. Missing cells stay explicit instead of being silently coerced.</div>
+            </div>
+          ) : studioStep === "quality" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Inspect data quality</div>
+              <div className="mt-1 text-[10px] text-slate-400">Missingness, row status, and uncertainty are computed from local StatsKit rows and Master Schema-derived source status.</div>
+            </div>
+          ) : studioStep === "analyses" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Run analyses</div>
+              <div className="mt-1 text-[10px] text-slate-400">Available now: per-video profile table, mean/median comparison, distribution comparison, and selected-feature summary. Association and exploratory multivariate methods are registered as v1 studio methods and wait for richer matrices.</div>
+            </div>
+          ) : studioStep === "diagnostics" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Inspect diagnostics</div>
+              <div className="mt-1 text-[10px] text-slate-400">Corpus size, comparable row count, selected feature delta, and missingness warnings are active diagnostics for the current studio run.</div>
+            </div>
+          ) : studioStep === "variants" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Compare variants</div>
+              <div className="mt-1 text-[10px] text-slate-400">Current variant is <span className="font-mono text-cyan-100">{studioVariantMode}</span>. Change the variant selector to rebuild the exported AnalysisRecipe and AnalysisVariant objects.</div>
+            </div>
+          ) : studioStep === "interpretation" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Interpret results</div>
+              <div className="mt-1 text-[10px] text-slate-400">{comparisonFeatureSummary.delta === null ? "No cross-video delta is interpretable yet." : `Candidate claim: selected feature varies by ${roundStat(comparisonFeatureSummary.delta)} across the local corpus.`}</div>
+            </div>
+          ) : studioStep === "traceback" ? (
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Trace back to source</div>
+              <div className="mt-1 text-[10px] text-slate-400">{comparisonFeatureRows.length} provenance edge(s) are available in the export. Source actions use <span className="font-mono text-cyan-100">datascene://analysis/.../statskit</span> anchors.</div>
+            </div>
+          ) : (
+            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+              <div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Export reproducible package</div>
+                <div className="mt-1 text-[10px] text-slate-400">The export contains corpus definition, unit model, variable registry, feature matrix, missingness profile, diagnostics, variant specification, interpretation, and provenance graph.</div>
+              </div>
+              <button
+                type="button"
+                className="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                onClick={exportStudioPackage}
+              >
+                Export package
+              </button>
+            </div>
+          )}
+        </div>
+        <div className={`${["corpus", "unit"].includes(studioStep) ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-[0.95fr_1.05fr]`}>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Comparison set</div>
+              <div className="text-[9px] text-slate-500">{selectedComparisonIds.length} checked</div>
+            </div>
+            <div className="mt-2 max-h-40 overflow-auto pr-1">
+              {availableComparisonVideos.length ? (
+                availableComparisonVideos.map((video) => (
+                  <label key={video.id} className="mb-1 flex items-center gap-2 rounded border border-slate-900 bg-[#101010] px-2 py-1 text-[9px] text-slate-300">
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3 accent-cyan-400"
+                      checked={selectedComparisonSet.has(video.id)}
+                      onChange={() => toggleComparisonVideo(video.id)}
+                      data-vaa1-statskit-comparison-video-checkbox="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate" title={video.name}>{video.name}</span>
+                    <span className="shrink-0 font-mono text-slate-500">{video.id === activeAnalysisId ? "active" : video.status}</span>
+                  </label>
+                ))
+              ) : (
+                <div className="rounded border border-amber-900/50 bg-amber-950/10 px-2 py-1.5 text-[9px] text-amber-100">
+                  No completed local analyses are visible yet.
+                </div>
+              )}
+            </div>
+            {comparisonError ? <div className="mt-2 text-[9px] text-amber-200">{comparisonError}</div> : null}
+            <div className="mt-2 grid gap-1 text-[9px] text-slate-500" data-vaa1-statskit-license-free-policy="true">
+              <div><span className="text-slate-400">Mode:</span> {LOCAL_STATS_COMPARISON_POLICY.mode}</div>
+              <div><span className="text-slate-400">Data:</span> {LOCAL_STATS_COMPARISON_POLICY.defaultDataLocation}</div>
+              <div><span className="text-slate-400">Policy:</span> {LOCAL_STATS_COMPARISON_POLICY.licensePolicy}</div>
+              <div><span className="text-slate-400">Standalone:</span> {LOCAL_STATS_COMPARISON_POLICY.offlineStandalone}</div>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-feature-home-stats="true">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Selected feature home stats</div>
+                <div className="mt-1 truncate text-[10px] font-semibold text-slate-100">{selectedStat?.statistic || "Select a StatsKit row"}</div>
+              </div>
+              <div className="grid grid-cols-4 gap-1 text-center text-[9px]">
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">n</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.count}</div></div>
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">mean</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.mean === null ? "n/a" : roundStat(comparisonFeatureSummary.mean)}</div></div>
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">min</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.min === null ? "n/a" : roundStat(comparisonFeatureSummary.min)}</div></div>
+                <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">delta</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.delta === null ? "n/a" : roundStat(comparisonFeatureSummary.delta)}</div></div>
+              </div>
+            </div>
+            <div className="mt-2 overflow-auto rounded border border-slate-800">
+              <table className="w-full border-collapse text-left text-[9px]">
+                <thead className="bg-[#151515] uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Video</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Value</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Status</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparisonFeatureRows.length ? comparisonFeatureRows.map((row) => (
+                    <tr key={row.analysisId} className="border-b border-slate-950">
+                      <td className="max-w-[220px] truncate px-2 py-1.5 font-semibold text-slate-100" title={row.sourceName}>{row.sourceName}</td>
+                      <td className="px-2 py-1.5 font-mono text-cyan-100">{row.displayValue}</td>
+                      <td className={row.status === "computed" || row.status === "candidate" || row.status === "raw" ? "px-2 py-1.5 text-cyan-200" : "px-2 py-1.5 text-amber-200"}>{row.status}</td>
+                      <td className="max-w-[300px] truncate px-2 py-1.5 text-slate-500" title={row.evidence}>{row.evidence}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td className="px-2 py-1.5 text-slate-500" colSpan={4}>Select a StatsKit row and at least two local analyses to compare this feature.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div className={`${studioStep === "interpretation" ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-[0.9fr_1.1fr]`} data-vaa1-statskit-interpretation-step-workspace="true">
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Analysis interpretation</div>
+            <div className="mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-2 text-[10px] text-slate-300">
+              {comparisonFeatureSummary.delta === null ? (
+                "No cross-video claim is interpretable yet. Select a numeric feature and at least two comparable videos."
+              ) : (
+                `Candidate comparison claim: ${selectedStat?.statistic || "selected feature"} varies by ${roundStat(comparisonFeatureSummary.delta)} across ${comparisonFeatureSummary.count} comparable local observations.`
+              )}
+            </div>
+            <div className="mt-2 grid grid-cols-4 gap-1 text-center text-[9px]">
+              <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">n</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.count}</div></div>
+              <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">mean</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.mean === null ? "n/a" : roundStat(comparisonFeatureSummary.mean)}</div></div>
+              <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">min</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.min === null ? "n/a" : roundStat(comparisonFeatureSummary.min)}</div></div>
+              <div className="rounded border border-slate-800 px-2 py-1"><div className="text-slate-500">delta</div><div className="font-mono text-cyan-100">{comparisonFeatureSummary.delta === null ? "n/a" : roundStat(comparisonFeatureSummary.delta)}</div></div>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Interpretation support</div>
+            <div className="mt-2 overflow-auto rounded border border-slate-800">
+              <table className="w-full border-collapse text-left text-[9px]">
+                <thead className="bg-[#151515] uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Observation</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Value</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Interpretive status</th>
+                    <th className="border-b border-slate-800 px-2 py-1.5">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparisonFeatureRows.length ? comparisonFeatureRows.map((row) => (
+                    <tr key={row.analysisId} className="border-b border-slate-950">
+                      <td className="max-w-[220px] truncate px-2 py-1.5 font-semibold text-slate-100" title={row.sourceName}>{row.sourceName}</td>
+                      <td className="px-2 py-1.5 font-mono text-cyan-100">{row.displayValue}</td>
+                      <td className={row.value === null ? "px-2 py-1.5 text-amber-200" : "px-2 py-1.5 text-cyan-200"}>{row.value === null ? "cannot support claim" : "supports comparison"}</td>
+                      <td className="max-w-[320px] truncate px-2 py-1.5 text-slate-500" title={row.evidence}>{row.evidence}</td>
+                    </tr>
+                  )) : (
+                    <tr><td className="px-2 py-1.5 text-slate-500" colSpan={4}>Select a feature to inspect interpretation support.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div className={`${studioStep === "traceback" ? "block" : "hidden"} mt-2 rounded border border-slate-800 bg-[#090909] px-3 py-2`} data-vaa1-statskit-traceback-step-workspace="true">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Traceback graph</div>
+              <div className="mt-1 text-[9px] text-slate-500">{comparisonFeatureRows.length} provenance edge(s) for {selectedStat?.statistic || "the selected feature"}</div>
+            </div>
+            <div className="rounded border border-slate-800 px-2 py-1 font-mono text-[9px] text-cyan-100">{STATS_COMPARISON_SUPPORTED_METHODS.traceback.length} actions</div>
+          </div>
+          <div className="mt-2 overflow-auto rounded border border-slate-800">
+            <table className="w-full border-collapse text-left text-[9px]">
+              <thead className="bg-[#151515] uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Source action</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Observation</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Evidence layer</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Traceback next action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparisonFeatureRows.length ? comparisonFeatureRows.map((row) => {
+                  const sourceAction = `datascene://analysis/${row.analysisId}/statskit/${selectedStat?.id || "selected-feature"}`;
+                  return (
+                    <tr key={row.analysisId} className="border-b border-slate-950">
+                      <td className="max-w-[260px] truncate px-2 py-1.5 font-mono text-cyan-100" title={sourceAction}>{sourceAction}</td>
+                      <td className="max-w-[220px] truncate px-2 py-1.5 font-semibold text-slate-100" title={row.sourceName}>{row.sourceName}</td>
+                      <td className="max-w-[360px] truncate px-2 py-1.5 text-slate-400" title={row.evidence}>{row.evidence}</td>
+                      <td className={row.value === null ? "px-2 py-1.5 text-amber-200" : "px-2 py-1.5 text-cyan-200"}>{row.value === null ? "Open required source layer before accepting claim." : "Click-through can inspect the source analysis and evidence layer."}</td>
+                    </tr>
+                  );
+                }) : (
+                  <tr><td className="px-2 py-1.5 text-slate-500" colSpan={4}>Select a StatsKit feature to build traceback edges.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className={`${studioStep === "matrix" ? "block" : "hidden"} mt-2 rounded border border-slate-800 bg-[#090909] px-3 py-2`} data-vaa1-statskit-matrix-step-workspace="true">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Feature matrix builder</div>
+              <div className="mt-1 text-[9px] text-slate-500">{studioFeatureMatrix.length} observations x {studioVariables.length} variables</div>
+            </div>
+            <div className="rounded border border-slate-800 px-2 py-1 font-mono text-[9px] text-cyan-100">version local-ui-0.1.0</div>
+          </div>
+          <div className="mt-2 overflow-auto rounded border border-slate-800">
+            <table className="w-full border-collapse text-left text-[9px]">
+              <thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Observation</th>
+                  {studioVariables.map((variable) => (
+                    <th key={variable.id} className="border-b border-slate-800 px-2 py-1.5" title={variable.evidence}>{variable.statistic}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {studioFeatureMatrix.length ? studioFeatureMatrix.map((row) => (
+                  <tr key={String(row.analysis_id)} className="border-b border-slate-950">
+                    <td className="max-w-[260px] truncate px-2 py-1.5 font-semibold text-slate-100">{row.source_name}</td>
+                    {studioVariables.map((variable) => (
+                      <td key={variable.id} className={row[variable.id] === null ? "px-2 py-1.5 text-amber-200" : "px-2 py-1.5 font-mono text-cyan-100"}>
+                        {row[variable.id] ?? "missing"}
+                      </td>
+                    ))}
+                  </tr>
+                )) : (
+                  <tr><td className="px-2 py-1.5 text-slate-500" colSpan={Math.max(1, studioVariables.length + 1)}>Select corpus videos and variables to build the matrix.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className={`${studioStep === "quality" ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-[1fr_0.75fr]`} data-vaa1-statskit-quality-step-workspace="true">
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Missingness profile</div>
+            <div className="mt-2 space-y-2">
+              {studioMissingnessProfile.map((row) => (
+                <div key={row.variable_id} className="grid grid-cols-[1fr_52px] items-center gap-2">
+                  <div>
+                    <div className="truncate text-[9px] text-slate-300" title={row.label}>{row.label}</div>
+                    <div className="mt-1 h-2 overflow-hidden rounded bg-slate-950">
+                      <div className={row.missing_count ? "h-2 rounded bg-amber-400" : "h-2 rounded bg-cyan-400"} style={{ width: `${Math.max(2, row.missing_rate * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div className={row.missing_count ? "text-right font-mono text-[9px] text-amber-200" : "text-right font-mono text-[9px] text-cyan-100"}>
+                    {Math.round(row.missing_rate * 100)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Uncertainty model</div>
+            <div className="mt-2 space-y-1 text-[9px] text-slate-400">
+              {Object.entries(comparisonFeatureRows.reduce<Record<string, number>>((acc, row) => {
+                acc[row.status] = (acc[row.status] || 0) + 1;
+                return acc;
+              }, {})).map(([status, count]) => (
+                <div key={status} className="flex justify-between gap-2"><span>{status}</span><span className="font-mono text-cyan-100">{count}</span></div>
+              ))}
+              <div className="pt-2 text-slate-500">Source row status is propagated into diagnostics and export; no imputation is applied in this version.</div>
+            </div>
+          </div>
+        </div>
+
+        <div className={`${studioStep === "analyses" ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-3`} data-vaa1-statskit-analyses-step-workspace="true">
+          {Object.entries(STATS_COMPARISON_SUPPORTED_METHODS).filter(([family]) => family !== "traceback").map(([family, methods]) => (
+            <div key={family} className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+              <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">{family.replace(/_/g, " ")}</div>
+              <div className="mt-2 space-y-1">
+                {methods.map((method) => {
+                  const ready = family === "descriptive_comparison" ? comparisonCorpus.length > 1 && studioVariables.length > 0 : studioFeatureMatrix.length > 2 && studioVariables.length > 1;
+                  return (
+                    <div key={method} className="flex items-center justify-between gap-2 rounded border border-slate-900 bg-[#101010] px-2 py-1 text-[9px]">
+                      <span className="text-slate-300">{method}</span>
+                      <span className={ready ? "font-mono text-cyan-100" : "font-mono text-amber-200"}>{ready ? "ready" : "needs data"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className={`${studioStep === "diagnostics" ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-[1fr_1fr]`} data-vaa1-statskit-diagnostics-step-workspace="true">
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Assumption checks</div>
+            <div className="mt-2 space-y-1 text-[9px] text-slate-400">
+              <div className={comparisonCorpus.length > 1 ? "text-cyan-100" : "text-amber-200"}>Corpus size: {comparisonCorpus.length > 1 ? "sufficient for comparison" : "needs at least two videos"}</div>
+              <div className={studioVariables.length ? "text-cyan-100" : "text-amber-200"}>Variables: {studioVariables.length ? `${studioVariables.length} selected` : "none selected"}</div>
+              <div className={comparisonFeatureSummary.count > 1 ? "text-cyan-100" : "text-amber-200"}>Numeric selected feature rows: {comparisonFeatureSummary.count}</div>
+              <div className={studioMissingnessProfile.some((row) => row.missing_count > 0) ? "text-amber-200" : "text-cyan-100"}>
+                Missingness: {studioMissingnessProfile.some((row) => row.missing_count > 0) ? "present" : "none visible"}
+              </div>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Quality flags</div>
+            <div className="mt-2 space-y-1 text-[9px] text-slate-400">
+              {(studioPackage.StatsComparisonStudio.core_objects.AnalysisDiagnostics as { quality_flags?: string[] }).quality_flags?.length ? (
+                (studioPackage.StatsComparisonStudio.core_objects.AnalysisDiagnostics as { quality_flags?: string[] }).quality_flags?.map((flag) => (
+                  <div key={flag} className="rounded border border-amber-900/40 bg-amber-950/10 px-2 py-1 text-amber-100">{flag}</div>
+                ))
+              ) : (
+                <div className="rounded border border-cyan-900/40 bg-cyan-950/10 px-2 py-1 text-cyan-100">No active quality flags for the selected comparison.</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className={`${studioStep === "variants" ? "block" : "hidden"} mt-2 rounded border border-slate-800 bg-[#090909] px-3 py-2`} data-vaa1-statskit-variants-step-workspace="true">
+          <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Variant comparison</div>
+          <div className="mt-2 overflow-auto rounded border border-slate-800">
+            <table className="w-full border-collapse text-left text-[9px]">
+              <thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500">
+                <tr>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Variant</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Corpus</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Variables</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Comparable rows</th>
+                  <th className="border-b border-slate-800 px-2 py-1.5">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { id: "all_selected", corpus: comparisonCorpus.length, variables: studioVariables.length, comparable: comparisonFeatureSummary.count },
+                  { id: "computed_only", corpus: comparisonCorpus.length, variables: studioVariables.filter((row) => ["computed", "candidate", "raw"].includes(row.status)).length, comparable: comparisonFeatureRows.filter((row) => ["computed", "candidate", "raw"].includes(row.status)).length },
+                  { id: "active_family_only", corpus: comparisonCorpus.length, variables: visibleStatsRows.filter((row) => ["computed", "candidate", "raw"].includes(row.status)).length, comparable: comparisonFeatureSummary.count },
+                ].map((variant) => (
+                  <tr key={variant.id} className={studioVariantMode === variant.id ? "border-b border-slate-950 bg-cyan-950/20" : "border-b border-slate-950"}>
+                    <td className="px-2 py-1.5 font-semibold text-slate-100">{variant.id}</td>
+                    <td className="px-2 py-1.5 font-mono text-cyan-100">{variant.corpus}</td>
+                    <td className="px-2 py-1.5 font-mono text-cyan-100">{variant.variables}</td>
+                    <td className="px-2 py-1.5 font-mono text-cyan-100">{variant.comparable}</td>
+                    <td className={variant.corpus > 1 && variant.variables ? "px-2 py-1.5 text-cyan-200" : "px-2 py-1.5 text-amber-200"}>{variant.corpus > 1 && variant.variables ? "ready" : "needs inputs"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className={`${["variables", "export"].includes(studioStep) ? "grid" : "hidden"} mt-2 gap-2 lg:grid-cols-3`} data-vaa1-statskit-comparison-studio-core-objects="true">
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-variable-registry="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Variable registry</div>
+            <div className="mt-1 text-[9px] text-slate-500">{studioVariables.length} variable(s) from checked StatsKit rows</div>
+            <div className="mt-2 max-h-32 overflow-auto">
+              {buildVariableRegistry(studioVariables).map((variable) => (
+                <div key={variable.variable_id} className="mb-1 rounded border border-slate-900 bg-[#101010] px-2 py-1">
+                  <div className="truncate text-[9px] font-semibold text-slate-100" title={variable.label}>{variable.label}</div>
+                  <div className="mt-0.5 text-[8px] text-slate-500">{variable.measurement_level} / {variable.unit} / {variable.comparability}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-feature-matrix="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Feature matrix</div>
+            <div className="mt-1 text-[9px] text-slate-500">
+              {comparisonCorpus.length} row(s) x {studioVariables.length} variable(s)
+            </div>
+            <div className="mt-2 overflow-auto rounded border border-slate-800">
+              <table className="w-full border-collapse text-left text-[8px]">
+                <thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500">
+                  <tr>
+                    <th className="border-b border-slate-800 px-2 py-1">Video</th>
+                    {studioVariables.slice(0, 4).map((variable) => (
+                      <th key={variable.id} className="border-b border-slate-800 px-2 py-1">{variable.statistic}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {buildFeatureMatrix(comparisonCorpus, studioVariables).slice(0, 6).map((row) => (
+                    <tr key={String(row.analysis_id)} className="border-b border-slate-950">
+                      <td className="max-w-[120px] truncate px-2 py-1 text-slate-300">{row.source_name}</td>
+                      {studioVariables.slice(0, 4).map((variable) => (
+                        <td key={variable.id} className="px-2 py-1 font-mono text-cyan-100">{row[variable.id] ?? "missing"}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-missingness-profile="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Data quality</div>
+            <div className="mt-1 text-[9px] text-slate-500">Missingness and uncertainty from local row status.</div>
+            <div className="mt-2 space-y-1">
+              {buildMissingnessProfile(buildFeatureMatrix(comparisonCorpus, studioVariables), studioVariables).slice(0, 5).map((row) => (
+                <div key={row.variable_id} className="grid grid-cols-[1fr_48px] gap-2 text-[9px]">
+                  <span className="truncate text-slate-400" title={row.label}>{row.label}</span>
+                  <span className={row.missing_count ? "text-right font-mono text-amber-200" : "text-right font-mono text-cyan-100"}>
+                    {Math.round(row.missing_rate * 100)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-analysis-recipe="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Run analyses</div>
+            <div className="mt-2 grid gap-1 text-[9px] text-slate-400">
+              <div>Descriptive: {STATS_COMPARISON_SUPPORTED_METHODS.descriptive_comparison.length} methods</div>
+              <div>Association: {STATS_COMPARISON_SUPPORTED_METHODS.association.length} methods</div>
+              <div>Exploratory: {STATS_COMPARISON_SUPPORTED_METHODS.exploratory_multivariate.length} methods</div>
+              <div className={comparisonCorpus.length > 1 ? "text-cyan-100" : "text-amber-200"}>
+                AnalysisRun: {comparisonCorpus.length > 1 && studioVariables.length ? "ready" : "needs inputs"}
+              </div>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-analysis-diagnostics="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Diagnostics</div>
+            <div className="mt-2 space-y-1 text-[9px] text-slate-400">
+              <div>Corpus size: <span className="font-mono text-cyan-100">{comparisonCorpus.length}</span></div>
+              <div>Comparable selected rows: <span className="font-mono text-cyan-100">{comparisonFeatureSummary.count}</span></div>
+              <div>Selected feature delta: <span className="font-mono text-cyan-100">{comparisonFeatureSummary.delta === null ? "n/a" : roundStat(comparisonFeatureSummary.delta)}</span></div>
+              <div className={comparisonFeatureSummary.count > 1 ? "text-cyan-100" : "text-amber-200"}>
+                {comparisonFeatureSummary.count > 1 ? "Candidate interpretation available" : "More comparable rows needed"}
+              </div>
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2" data-vaa1-statskit-provenance-graph="true">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Traceback / export</div>
+            <div className="mt-2 space-y-1 text-[9px] text-slate-400">
+              <div>Traceback actions: {STATS_COMPARISON_SUPPORTED_METHODS.traceback.length}</div>
+              <div>Provenance edges: {comparisonFeatureRows.length}</div>
+              <div>Package schema: {studioPackage.StatsComparisonStudio.schema_version}</div>
+              <div className="text-slate-500">Cells and chart points retain `datascene://analysis/.../statskit` source actions in the export.</div>
+            </div>
+          </div>
+        </div>
+      </details>
 
       <div className="mt-2 grid gap-2 xl:grid-cols-[1.35fr_0.65fr]" data-vaa1-statskit-ordered-workbench-layout="true">
         <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010] xl:col-start-1 xl:row-start-1" open data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
@@ -2792,6 +3999,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                 <option value="stats">Stats workbench</option>
                 <option value="significance">Significance workbench</option>
                 <option value="relevance">Relevance scanner</option>
+                <option value="comparison">Comparison studio</option>
               </select>
             </label>
             <div className="rounded border border-slate-800 bg-[#090909] px-2 py-1.5 text-[9px] text-slate-400">

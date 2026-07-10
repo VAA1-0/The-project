@@ -1211,6 +1211,125 @@ class FrameAnalysisPipeline:
             },
         }
 
+    def _build_shot_boundary_intervals(self, cinematic_clues: dict | None = None) -> dict:
+        timestamps = sorted(
+            round(float(sample.get("timestamp", 0.0)), 3)
+            for sample in self.spatial_tone_samples
+        )
+        timeline_start = timestamps[0] if timestamps else 0.0
+        timeline_end = timestamps[-1] if timestamps else 0.0
+        intervals: list[dict] = []
+        boundaries: list[dict] = []
+        source = "none"
+        method = "shot boundaries unavailable"
+        true_boundary_intervals = False
+
+        try:
+            from scenedetect import ContentDetector, SceneManager, open_video
+
+            video = open_video(str(self.video_path))
+            scene_manager = SceneManager()
+            scene_manager.add_detector(ContentDetector())
+            scene_manager.detect_scenes(video)
+            detected_shots = scene_manager.get_scene_list()
+            if detected_shots:
+                source = "pyscenedetect"
+                method = "PySceneDetect ContentDetector shot boundary intervals"
+                true_boundary_intervals = True
+                for index, (start_time, end_time) in enumerate(detected_shots, start=1):
+                    start_seconds = round(float(start_time.get_seconds()), 3)
+                    end_seconds = round(float(end_time.get_seconds()), 3)
+                    if end_seconds <= start_seconds:
+                        continue
+                    intervals.append(
+                        {
+                            "shot_id": f"shot:{index:04d}",
+                            "start": start_seconds,
+                            "end": end_seconds,
+                            "duration": round(end_seconds - start_seconds, 3),
+                            "boundary_in": start_seconds if index > 1 else None,
+                            "boundary_out": end_seconds,
+                            "confidence": 0.82,
+                            "source": source,
+                            "review_state": "available",
+                        }
+                    )
+        except Exception as exc:
+            logger.info("Shot boundary detection unavailable or failed, using transition fallback: %s", exc)
+
+        if not intervals:
+            transition_samples = (
+                (cinematic_clues or {})
+                .get("transition_clues", {})
+                .get("samples", [])
+            )
+            fallback_boundaries = [
+                round(float(sample.get("timestamp", 0.0)), 3)
+                for sample in transition_samples
+                if str(sample.get("label") or "") != "continuity stable"
+            ]
+            cut_points = [timeline_start] + sorted(set(fallback_boundaries)) + [timeline_end]
+            source = "sampled_transition_proxy" if fallback_boundaries else "sampled_timeline_extent"
+            method = "sampled frame transition fallback; not a finished true shot detector"
+            true_boundary_intervals = False
+            for index in range(len(cut_points) - 1):
+                start_seconds = cut_points[index]
+                end_seconds = cut_points[index + 1]
+                if end_seconds <= start_seconds:
+                    continue
+                intervals.append(
+                    {
+                        "shot_id": f"shot-proxy:{len(intervals) + 1:04d}",
+                        "start": round(float(start_seconds), 3),
+                        "end": round(float(end_seconds), 3),
+                        "duration": round(float(end_seconds - start_seconds), 3),
+                        "boundary_in": start_seconds if intervals else None,
+                        "boundary_out": end_seconds,
+                        "confidence": 0.48 if fallback_boundaries else 0.25,
+                        "source": source,
+                        "review_state": "candidate_review_required",
+                    }
+                )
+
+        for index, interval in enumerate(intervals[:-1], start=1):
+            boundary_time = interval.get("boundary_out")
+            if boundary_time is None:
+                continue
+            boundaries.append(
+                {
+                    "boundary_id": f"shot-boundary:{index:04d}",
+                    "time": boundary_time,
+                    "pre_shot_id": interval.get("shot_id"),
+                    "post_shot_id": intervals[index].get("shot_id") if index < len(intervals) else None,
+                    "confidence": interval.get("confidence"),
+                    "source": source,
+                }
+            )
+
+        mean_duration = (
+            float(np.mean([interval["duration"] for interval in intervals]))
+            if intervals
+            else 0.0
+        )
+        return {
+            "schema": "vaa1.shot_boundary_intervals.v1",
+            "method": method,
+            "source": source,
+            "true_boundary_intervals": true_boundary_intervals,
+            "intervals": intervals,
+            "boundaries": boundaries,
+            "summary": {
+                "shot_count": len(intervals),
+                "boundary_count": len(boundaries),
+                "mean_shot_duration": round(mean_duration, 3),
+            },
+            "governance": {
+                "not_scene_segments": True,
+                "fallback_must_not_be_reported_as_true_shots": not true_boundary_intervals,
+                "source_review_required": not true_boundary_intervals,
+            },
+        }
+
     def analyze(self, save_video: bool = True, display: bool = False):
         """Main processing loop"""
         logger.info(f"Starting frame analysis on {self.video_path}")
@@ -1369,6 +1488,7 @@ class FrameAnalysisPipeline:
         }
         motion_evidence = self._build_motion_evidence()
         scene_segments = self._build_scene_segments()
+        shot_boundaries = self._build_shot_boundary_intervals(cinematic_clues)
 
         # Save results
         self._save_results(
@@ -1376,6 +1496,7 @@ class FrameAnalysisPipeline:
             spatial_tone_scan=spatial_tone_scan,
             motion_evidence=motion_evidence,
             scene_segments=scene_segments,
+            shot_boundaries=shot_boundaries,
         )
 
         logger.info("Frame analysis complete.")
@@ -1396,6 +1517,7 @@ class FrameAnalysisPipeline:
             "spatial_tone_scan": spatial_tone_scan,
             "motion_evidence": motion_evidence,
             "scene_segments": scene_segments,
+            "shot_boundaries": shot_boundaries,
             "annotated_video": str(self.output_video_path) if save_video else None,
             "yolo_csv": str(self.yolo_csv_path),
             "tracked_objects_csv": str(self.tracked_objects_csv_path),
@@ -1451,6 +1573,7 @@ class FrameAnalysisPipeline:
         spatial_tone_scan: dict | None = None,
         motion_evidence: dict | None = None,
         scene_segments: dict | None = None,
+        shot_boundaries: dict | None = None,
     ):
         """Save YOLO and OCR results as CSV and JSON in organized directories."""
         timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -1484,6 +1607,7 @@ class FrameAnalysisPipeline:
             "spatial_tone_scan": spatial_tone_scan or {},
             "motion_evidence": motion_evidence or {},
             "scene_segments": scene_segments or {},
+            "shot_boundaries": shot_boundaries or {},
             "output_video": str(self.output_video_path),
             "output_files": {
                 "yolo_csv": str(yolo_csv),

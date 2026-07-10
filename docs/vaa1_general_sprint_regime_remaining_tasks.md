@@ -15,6 +15,17 @@ Four tracks must remain visible in every sprint review and release-readiness dis
 
 These tracks are not polish. They are release gates.
 
+Cross-cutting timing authority rule added 2026-07-08:
+
+- Transcript, audio, POS, Quant, StatsKit, Meaning Network, Narrative Agent, Search, reports, and Traceback may not silently promote scaffold or degraded timing as mature source truth.
+- The most mature timing source wins: explicit analyst timing correction and source-verified anchors outrank raw transcript clocks; measured VAD can support speech timing; diarization speaker labels remain candidate until source-linked and confirmed.
+- Partial repair must remain visible as partial. For example, the Bond trailer scaffold-clock repair anchors `Why would I betray you?` at about `6.400s` and `The world is arming faster than we can respond.` at the measured VAD window `20.960-22.215s`, but the artifact remains `partially_repaired` until remaining coverage gaps are verified.
+- Any derived artifact rebuilt from repaired timing must carry timing repair status so professional workbenches can distinguish `anchor_verified`, `vad_anchor_verified`, candidate, inherited, degraded, and mature evidence.
+
+RCA:
+
+- `docs/vaa1_transcript_audio_master_clock_rca_2026-07-08.md`
+
 Relevant contracts:
 
 - `docs/schemas/vaa1.performance_observability_layer.schema.json`
@@ -99,6 +110,7 @@ Acceptance:
 - Make audio samples and visual patterns navigable, editable, droppable, replaceable, mergeable, splittable, assignable, unassignable, referenceable, and false-match aware.
 - Preserve dropped, rejected, replaced, and false-match evidence as inactive traceback history.
 - Block orphan semantic candidates or mark them explicitly unattached with a reason.
+- Make transcript and audio timing anchors editable, reviewable, and persistent. Analyst-corrected source times should rebuild linked transcript, prosody, POS, Quant, StatsKit, Meaning Network, Narrative Agent, Search, and report surfaces from the Master Schema/governed evidence route rather than leaving panel-local offsets behind.
 - Deliver the source layers required for StatsKit, SignificanceKit, and RelevanceRadar to become actual analytical tooling rather than missing-data placeholders:
   - true shot-boundary intervals, not only scene segments or shot-size samples;
   - audio event intervals for speech, silence, noise, and music;
@@ -113,6 +125,69 @@ Acceptance:
 - StatsKit can compute shot duration distributions, speech/silence/music/noise ratios, music/sound timelines, color/brightness/contrast statistics, and speaker-dominance statistics from persisted source-linked records.
 - Missing-data diagnostics can name the exact absent layer and route the analyst to the relevant extraction or review action.
 - SignificanceKit and RelevanceRadar claims that depend on these measurements remain candidate until linked evidence and method provenance are present.
+
+## 7A. VAD installation, provider routing, and actual analysis support
+
+- Audit the current "double VAD" situation: local waveform VAD/acoustic clustering, pyannote or other diarization-capable installs, Whisper-derived speech spans, and any frontend/audio-panel assumptions that treat one as the other.
+- Detect which VAD/speaker-segmentation providers are installed, activated, unavailable, stale, or license/API constrained.
+- Record provider name, version, runtime path, model path, activation state, parameters, source audio fingerprint, transcript-clock fingerprint, and fallback reason in every VAD/diarization artifact.
+- Define the provider hierarchy clearly:
+  - raw Whisper timecode controls transcript rows unless manually corrected;
+  - VAD controls speech/non-speech support intervals;
+  - diarization/acoustic clustering can propose speaker turns;
+  - Narrative Agent attribution remains candidate until source-linked and confirmed.
+- Make Audio Workbench and StatsKit name the active VAD provider and explain missing or degraded VAD layers without pretending the layer is mature.
+- Add stale-state checks so VAD-derived speaker turns, prosody windows, sample clouds, and StatsKit speech ratios are invalidated when transcript time, source audio, or selected VAD provider changes.
+- Verify that VAD support helps actual analysis work: speech/silence/noise ratios, audio event intervals, prosody windows, source jumps, sample windows, Narrative Agent confirmation candidates, and StatsKit measurements.
+
+Acceptance:
+
+- The program can explain which VAD route is active and why.
+- VAD output supports analysis without becoming transcript clock authority.
+- Installing or activating a second VAD/diarization provider cannot silently overwrite existing timing or speaker evidence.
+- Audio Panel, StatsKit, Master Schema, and Traceback all carry VAD provider and timing-authority metadata.
+
+## 7B. Shot-boundary detection and reporting operationalization
+
+- Turn shot-boundary detection into a persisted source layer, not only a visual/scene proxy.
+- Store shot intervals with source time, frame indexes, method, confidence, threshold/profile, runtime provider, source media fingerprint, and traceback refs.
+- Distinguish shot boundaries from scene segments, shot-size samples, transitions, camera motion, and editing rhythm interpretations.
+- Surface shot-boundary reporting in StatsKit, Meaning / Plot, reports, and Traceback:
+  - shot duration distributions;
+  - cut density;
+  - rapid-cut sections;
+  - long-take sections;
+  - boundary-to-speech/music/action correlations;
+  - missing or low-confidence boundary intervals.
+- Add a visual/manual review path for correcting, merging, splitting, confirming, or rejecting shot boundaries.
+- Ensure shot-boundary data can support later forensic renders and source-sample windows without becoming a private panel artifact.
+
+Acceptance:
+
+- StatsKit can compute shot-duration and cut-density metrics from persisted shot-boundary records.
+- Reports can cite shot intervals with source links and method provenance.
+- Shot-boundary corrections survive save, refresh, reopen, export, and traceback.
+
+## 7C. Dormant media-analysis features: music, lyrics, and audio classifiers
+
+- Audit dormant or partial media-analysis features and decide whether each should be activated, hidden, deferred, or removed from visible UI promises.
+- Prioritize music and lyrics detection because current code already points in that direction through `src/backend/analysis/lyric_detector.py`.
+- For music detection, persist source-timed intervals for music, non-music, score, song, noise, silence, and uncertain audio where supported.
+- For lyric/transcript matching, preserve separate evidence routes:
+  - detected lyric text;
+  - spoken transcript text;
+  - music/lyric match confidence;
+  - source time;
+  - copyright-sensitive handling in display/export.
+- Surface music and lyric evidence in Audio Workbench, StatsKit, Meaning / Plot, Narrative Agent, Search, reports, and Traceback only when source-linked and method-provenanced.
+- Keep lyric and music outputs candidate/review evidence until source-linked and confirmed where interpretation depends on them.
+- Add dependency/runtime checks for `librosa`, model files, ffmpeg requirements, and any license-sensitive music/lyrics libraries.
+
+Acceptance:
+
+- Music and lyrics are either operational with source-linked records, or visibly classified as dormant/deferred.
+- No UI route implies music/lyric analysis is delivered when it is only code-level potential.
+- Copyright-sensitive lyrics handling is explicit in reports/exports.
 
 ## 8. Governance matrix, traceback, and quality agent
 
@@ -155,6 +230,10 @@ Acceptance:
 - Keep core VAA1 usable without LLM/API keys, premium add-ons, or external services.
 - Record runtime/model choice, version, path, parameters, provider boundary, and fallback reason in traceback.
 - Isolate licensed scripts, paid tools, remote services, GPL/AGPL components, premium tools, and otherwise restricted capabilities behind explicit user choice.
+- Add a formal licensed-plugin route for user-supplied capabilities. Users should be able to install/activate a plugin or local script they are licensed to use without VAA1 bundling or silently depending on it.
+- For every licensed plugin, record plugin id, provider, version, user activation state, declared license boundary, local/remote boundary, accepted terms timestamp where applicable, produced evidence ids, and fallback behavior.
+- Provide open/local alternatives or disabled-state workflows for license-sensitive scripts whenever feasible.
+- Keep plugin outputs under the same evidence governance as native outputs: source anchors, method provenance, maturity state, traceback, and explicit candidate/confirmed status.
 - Add user-activation controls for optional or license-sensitive capabilities. The user should be able to see what is disabled, what is available locally, what requires external installation, and what requires a license or API/provider boundary.
 - Add FFmpeg workarounds and alternatives before release. VAA1 should detect installed FFmpeg/ffprobe path, version, and license boundary; allow the user to choose or replace the binary; explain unavailable codec/workflow consequences; and provide a local/basic fallback or disabled-state workflow where feasible.
 - Add YOLOv8/Ultralytics workarounds and alternatives before release. VAA1 should detect whether Ultralytics/YOLOv8 is available; expose user choice of detector/runtime; support a basic local detector fallback or disabled-state workflow; and prevent release-critical analysis from silently depending on YOLOv8 if the user has not activated it.
@@ -167,6 +246,54 @@ Acceptance:
 - FFmpeg and YOLOv8 alternatives, fallback paths, or disabled-state workflows are in place before release.
 - VAA1 can explain and survive missing, unactivated, incompatible, or license-restricted FFmpeg/YOLOv8 components without corrupting the analysis ledger.
 - FFmpeg, YOLOv8/Ultralytics, model paths, API providers, and licensed scripts flow through one runtime/activation registry rather than scattered checks.
+- Licensed plugins are opt-in, user-owned/activated, traceable, and replaceable by native/open alternatives or explicit disabled states.
+
+## 10A. Media import expansion and source acquisition governance
+
+- Decide which media-acquisition paths belong in VAA1 before release and which are post-`#0.1` deferrals:
+  - normal local upload/import;
+  - saved analysis/project bundle import;
+  - website page capture or scraping;
+  - web video/audio download when legally available;
+  - DVD/disc import for user-provided media;
+  - streaming media metadata import;
+  - streaming media capture/download only where the user has rights and the workflow is legally/technically permitted.
+- Keep source acquisition separate from analysis. Importers must produce a source media record with provenance, acquisition method, consent/licensing notes, source URL/path/device, timestamp, and media fingerprint before analysis begins.
+- For website scraping, respect robots/terms where applicable, record page URL, retrieval timestamp, selected media/assets, and user-provided permission/rights notes.
+- For DVD/disc import, distinguish ordinary file import from protected-disc ripping. Do not make circumvention a hidden or assumed feature; provide user-owned/local import paths and explicit disabled/deferral language for restricted workflows.
+- For streaming services, support metadata/time-map imports where useful, but do not silently download, scrape, or capture protected streams. Any streaming-media workflow must be user-activated, rights-aware, and traceable.
+- Preserve source-media chain of custody so reports can distinguish uploaded file, website asset, scraped metadata, DVD-derived file, and streaming metadata.
+
+Acceptance:
+
+- VAA1 can explain how a source entered the project and what rights/activation boundary governed it.
+- Media import UX does not imply that restricted web/DVD/stream acquisition is a built-in entitlement.
+- Imported web/disc/stream-derived records remain traceable through source media metadata, reports, and exports.
+
+## 10B. Downloadable data cleanup and user-friendly export governance
+
+- Redesign downloadable data around user tasks rather than raw artifact sprawl.
+- Group downloads into clear packages:
+  - source media and source metadata;
+  - analysis summary;
+  - transcript and timing authority;
+  - visual detections and BBox/ROI;
+  - audio, VAD, diarization, prosody, music/lyrics;
+  - Master Schema / governed evidence;
+  - mature-data decisions and correction ledgers;
+  - reports and forensic renders;
+  - developer/debug artifacts.
+- Label each download with plain-language purpose, source scope, maturity/authority level, created time, dependencies, and whether it is analyst-facing or developer-facing.
+- Add a manifest for every export bundle with file descriptions, schema versions, source media id, analysis id, timing clock fingerprint, runtime/plugin providers, optional licensed dependencies, and privacy/consent boundary.
+- Hide or collapse noisy debug artifacts by default while keeping them accessible through an advanced/developer export mode.
+- Prevent duplicate, stale, backup, temporary, and superseded artifacts from appearing as equally valid user downloads.
+- Ensure reports and user-facing exports use clean names, stable folder structure, and readable explanations of what each file is for.
+
+Acceptance:
+
+- A normal user can download the useful outputs without navigating raw internal clutter.
+- A developer can still export full debugging/provenance artifacts intentionally.
+- Export bundles preserve authority, timing, plugin/licensing, and source-chain metadata.
 
 ## 11. CVAT and annotation round trip
 
@@ -191,6 +318,115 @@ Acceptance:
 - Confirm Mature Data Proliferation remains governed in the package: saved proliferation decisions, candidate-only states, mature label projection, traceback, and rollback/reopen behavior must survive packaged runtime tests.
 - Run backend contracts, frontend tests, typecheck, Playwright checks, and at least one representative full-analysis smoke test.
 - Build the first `#0.1 .exe` only after core governance and release-readiness gates pass or are explicitly deferred.
+
+## 14. Repository cleanup and unpushed local work queue
+
+Status after the 2026-07-06 push to `origin/petteri` at commit `10293ee`:
+
+- The StatsKit, Significance/Relevance, Admin Observability, and latest Agent/Meaning graph increment are pushed.
+- The remaining local files below are not yet part of the pushed sprint history.
+- Do not silently include them in a future push. Each item needs either review, cleanup, separation into its own commit, or explicit discard/archive decision.
+
+## 14A. Push-readiness rule: actual working software, not scaffolding
+
+The next push should not be a documentation-only checkpoint if verified working software is present locally. The release branch should receive the actual Datascene/VAA1 development that has crossed a basic working-software threshold.
+
+The push should include these software-development scopes once verified:
+
+1. **Properly operational linked-time regime**
+   - Whisper/manual time authority guards.
+   - Transcript timing repair and authority metadata.
+   - Transcript panel display rules.
+   - POS/Quant/Audio/StatsKit/Master Schema timing propagation or invalidation logic touched by the repair.
+   - Regression tests for scaffold/fallback/VAD not becoming source-time truth.
+   - Timing-complication documentation and sprint-rule documentation.
+
+2. **StatsKit development**
+   - StatsKit backend agent and data contracts.
+   - StatsKit panel/workbench UI.
+   - Source-layer diagnostics and missing-data reporting.
+   - Tests proving rows render from real source/governed layers where available and remain `not computed` or candidate where source layers are missing.
+
+3. **Internal audio/audition features**
+   - Audio Workbench / Audio Panel implementation.
+   - VAD, diarization, prosody, audio sample cloud, music/lyrics, and audio event work that is actually wired into analysis artifacts or UI surfaces.
+   - Provider/runtime metadata and timing-authority propagation.
+   - Tests for audio diarization, sample clouds, timing regime, and any activated music/lyric functionality.
+
+4. **Governance documentation**
+   - Time-based linking known complications.
+   - General Sprint regime updates.
+   - Handover documentation that describes the actual pushed state, not merely aspirational work.
+
+Do not include these in the same software push unless explicitly requested:
+
+- investor or board-meeting slide decks;
+- generated presentation scripts unrelated to runtime product behavior;
+- Office lock files;
+- `node_modules` artifacts;
+- duplicate scratch files such as a root-level temporary `AudioPanel.tsx`;
+- old handover notes that are not needed to explain the pushed software state;
+- experimental files that have not been reviewed for integration, tests, and UI/runtime status.
+
+Comfort threshold before pushing the broad software slice:
+
+- Scope staged intentionally by file, not by `git add .`.
+- Features classified as operational, partial, nominal, dormant, or deferred.
+- Any partial UI route is visibly marked or hidden so it is not presented as delivered.
+- TypeScript passes for the frontend.
+- Focused frontend tests pass for touched panels/services.
+- Python compile or focused backend tests pass for touched backend modules.
+- Transcript timing guard and audio timing regime tests pass.
+- Audio diarization/sample-cloud tests pass when those modules are included.
+- A short manual or Playwright smoke path confirms that major pushed panels render and do not open blank/grey states.
+- The commit message names the true state: operational, partial, or guarded candidate. No “delivered” language for unproven paths.
+
+Acceptance:
+
+- The pushed branch contains real Datascene/VAA1 software progress, not just scaffolding notes.
+- Non-software artifacts are excluded or committed separately with explicit intent.
+- The user can stop for the day knowing StatsKit, internal audio/audition features, linked-time regime, and relevant documentation are either pushed as working software or explicitly listed as not-yet-push-ready with reasons.
+
+Unpushed tracked changes that need review:
+
+- `src/backend/analysis/lyric_detector.py`
+  - Adds music analysis / lyric-transcript matching direction.
+  - Needs dependency and runtime review because it introduces `librosa` / `numpy` usage and changes output semantics.
+  - Has a current trailing-whitespace warning at line 236 that must be cleaned before any commit.
+- `scripts/generate_datascene_investor_deck.js`
+  - Large investor-deck script rewrite.
+  - Needs a separate presentation-materials commit if kept.
+- `docs/investor_deck/datascene_investor_deck_editable_2026-06-06.pptx`
+  - Generated binary deck changed substantially.
+  - Needs explicit decision whether generated PPTX belongs in git for this sprint.
+- `node_modules/.package-lock.json`
+  - Likely dependency-install side effect.
+  - Should normally not be committed unless there is a deliberate dependency-lock reason.
+
+Unpushed untracked work that needs triage:
+
+- `src/backend/analysis/search_agent.py`
+  - Potential backend Search agent implementation.
+  - Needs source review, tests, API integration check, and decision whether it belongs with the Datascene Search sprint or a later backend-search commit.
+- `docs/board_meeting/datascene_kansalliskirjasto_board_slides_2026-06-16.pptx`
+- `docs/board_meeting/datascene_yle_archive_search_slides_2026-06-22.pptx`
+- `scripts/generate_kansalliskirjasto_board_slides.js`
+- `scripts/generate_yle_archive_datascene_slides.js`
+  - Board / customer-facing slide assets and generators.
+  - Need a separate materials commit or archive decision.
+- `docs/board_meeting/~$datascene_kansalliskirjasto_board_slides_2026-06-16.pptx`
+  - Temporary Office lock file.
+  - Should not be committed.
+- `docs/working_handover_handout_2026-06-03_Z_meaning_network_sfl_thread.md`
+- `docs/working_handover_handout_2026-06-08_A_windows_parity_deck_timing_thread.md`
+  - Older handoff docs.
+  - Need decision whether they are still useful sprint continuity records or should remain local/archive-only.
+
+Acceptance:
+
+- `git status -sb` is intentionally clean or contains only explicitly deferred local artifacts.
+- No generated deck, temporary lock file, dependency artifact, or experimental backend file is pushed accidentally.
+- Any kept item has its own coherent commit scope, tests or validation note, and documentation context.
 
 Release gate:
 

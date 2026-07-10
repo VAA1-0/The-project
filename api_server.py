@@ -34,7 +34,10 @@ from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline, validate_video
 from src.backend.analysis.pipeline_audio_text import AudioTranscriptionPipeline
 from src.backend.analysis.audio_prosody import analyze_audio_prosody
-from src.backend.analysis.audio_diarization import write_audio_diarization
+from src.backend.analysis.audio_diarization import (
+    audio_diarization_staleness,
+    write_audio_diarization,
+)
 from src.backend.analysis.audio_sample_cloud import (
     build_audio_sample_clouds_from_diarization,
     build_audio_sample_clouds_for_narrative_agents,
@@ -67,6 +70,9 @@ from src.backend.analysis.morphology_catalog import list_morphology_catalog
 from src.backend.analysis.language_utils import build_language_profile
 from src.backend.analysis.transcript_timing_guard import (
     build_transcript_quality_report,
+    build_transcript_timing_authority,
+    promote_automatic_transcript_timing,
+    rebuild_transcript_from_quick_sweep_candidate,
     transcript_timing_repair_needed,
 )
 from src.backend.analysis.evidence_linker import link_transcript_to_trace
@@ -440,6 +446,7 @@ def build_transcript_timeline_segments(
     *,
     coverage_target_seconds: Any = None,
 ) -> List[Dict[str, Any]]:
+    raw_segments = [segment for segment in (transcript.get("segments") or []) if isinstance(segment, dict)]
     utterances = sorted(
         [
             {
@@ -447,7 +454,7 @@ def build_transcript_timeline_segments(
                 "start": safe_float(segment.get("start")) or 0.0,
                 "end": safe_float(segment.get("end")) or 0.0,
             }
-            for segment in (transcript.get("segments") or [])
+            for segment in raw_segments
         ],
         key=lambda segment: (segment.get("start", 0.0), segment.get("end", 0.0)),
     )
@@ -502,6 +509,10 @@ def build_transcript_timeline_segments(
         )
 
     return timeline_segments
+
+
+def source_timed_transcript_segments(transcript: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [segment for segment in (transcript.get("segments") or []) if isinstance(segment, dict)]
 
 
 def first_present(mapping: Dict[str, Any], *keys: str) -> Any:
@@ -1146,13 +1157,16 @@ def narrative_agent_profile_extensions(definition: Dict[str, Any]) -> List[Dict[
     return extensions
 
 
-def build_narrative_agent_profile(definition: Dict[str, Any], index: int) -> Dict[str, Any]:
+def build_narrative_agent_profile(
+    definition: Dict[str, Any],
+    index: int,
+    *,
+    diarization_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     if not isinstance(definition, dict):
         return {}
     character_name = clean_source_label(definition.get("character_name"))
     actor_name = clean_source_label(definition.get("actor_name"))
-    if not character_name and not actor_name:
-        return {}
     profile_id = f"narrative-agent-{index + 1:04d}-{slugify_profile_id(character_name or actor_name, str(index + 1))}"
     source_url = clean_source_label(definition.get("source_url"))
     source_preference = clean_source_label(definition.get("source_preference")) or "supporting"
@@ -1163,7 +1177,7 @@ def build_narrative_agent_profile(definition: Dict[str, Any], index: int) -> Dic
         "narrative_agent_name": character_name,
         "aliases": definition.get("aliases") if isinstance(definition.get("aliases"), list) else [],
         "attached_performer_metadata": {
-            "actor_name": actor_name,
+            "actor_name": actor_name or None,
             "boundary": NARRATIVE_AGENT_PROFILE_GOVERNANCE["actor_boundary"],
         },
         "source_metadata": {
@@ -1174,7 +1188,7 @@ def build_narrative_agent_profile(definition: Dict[str, Any], index: int) -> Dic
             "source_preference": source_preference,
         },
         "evidence_slots": {
-            "lines": [],
+            "speaker_timeline": [],
             "audio_samples": [],
             "visual_patterns": [],
             "identification_refs": [],
@@ -1214,13 +1228,33 @@ def build_narrative_agent_profile(definition: Dict[str, Any], index: int) -> Dic
             "consulted": ["source_media_annotations.character_definitions", "source_media_web_metadata_sources"],
         },
     }
+
+    # Find and attach all spoken lines for this agent from the diarization artifact
+    if diarization_payload and character_name:
+        agent_turns = [
+            turn
+            for turn in diarization_payload.get("speaker_turns", [])
+            if (
+                isinstance(turn, dict)
+                and str(turn.get("speaker_label") or "").lower() == character_name.lower()
+            )
+        ]
+        if agent_turns:
+            profile["evidence_slots"]["speaker_timeline"] = agent_turns
+
     return {key: item for key, item in profile.items() if annotation_has_value(item)}
 
 
-def build_narrative_agent_profiles(character_definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_narrative_agent_profiles(
+    character_definitions: List[Dict[str, Any]],
+    *,
+    diarization_payload: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     profiles: List[Dict[str, Any]] = []
     for index, definition in enumerate(character_definitions):
-        profile = build_narrative_agent_profile(definition, index)
+        profile = build_narrative_agent_profile(
+            definition, index, diarization_payload=diarization_payload
+        )
         if profile:
             profiles.append(profile)
     return profiles
@@ -2523,8 +2557,11 @@ def video_internal_source_media_harvest(status: Dict[str, Any]) -> Dict[str, Any
         if any(char.isupper() for char in label) and len(label.split()) <= 5:
             append_unique_text(persons, label)
 
+    diarization_payload = artifact_payload_from_status_any(status, "audio_diarization")
     character_definitions = collect_web_metadata_character_definitions(status)
-    narrative_agent_profiles = build_narrative_agent_profiles(character_definitions)
+    narrative_agent_profiles = build_narrative_agent_profiles(
+        character_definitions, diarization_payload=diarization_payload
+    )
     character_roles = [
         normalize_character_role_candidate(
             {
@@ -3000,6 +3037,7 @@ def build_source_media_metadata_payload(
             "reference_speakers": user_annotations.get("reference_speakers", []),
             "reference_relation": user_annotations.get("reference_relation", ""),
             "reference_source": user_annotations.get("reference_source", ""),
+            "expected_identities": user_annotations.get("expected_identities", []),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
         },
@@ -3177,6 +3215,133 @@ def read_json_artifact_if_available(path_value: Any) -> Optional[Dict[str, Any]]
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def transcript_payload_has_timing_authority(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    timing_authority = payload.get("timing_authority")
+    if isinstance(timing_authority, dict):
+        operational_authority = str(timing_authority.get("operational_authority") or "")
+        if operational_authority in {
+            "original_whisper_timecode",
+            "manual_correction",
+            "manual_correction_for_verified_rows",
+        }:
+            return True
+    if payload.get("transcription_strategy") in {
+        "full_pass",
+        "original_whisper_timecode",
+    }:
+        return True
+    timing_repair = payload.get("timing_repair")
+    if isinstance(timing_repair, dict) and timing_repair.get("strategy") in {
+        "original_whisper_timecode",
+        "manual_correction",
+    }:
+        return True
+    segments = payload.get("segments") or []
+    if not isinstance(segments, list):
+        return False
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        if segment.get("timing_authority") in {
+            "manual_correction",
+            "original_whisper_timecode",
+            "full_pass",
+        }:
+            return True
+        if segment.get("timing_status") in {
+            "manual_correction",
+            "original_whisper_timecode",
+        }:
+            return True
+    return False
+
+
+def transcript_artifact_has_timing_authority(path_value: Any) -> bool:
+    return transcript_payload_has_timing_authority(
+        read_json_artifact_if_available(path_value)
+    )
+
+
+def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
+    """Keep the repaired global-clock transcript as the only transcript export."""
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    if not analysis_id:
+        return False
+
+    output_files = status.setdefault("output_files", {})
+    current_transcript = output_files.get("transcript")
+    if transcript_artifact_has_timing_authority(current_transcript):
+        return False
+
+    candidates: List[Any] = []
+    record = read_json_artifact_if_available(get_analysis_record_path(analysis_id))
+    if isinstance(record, dict):
+        record_output_files = record.get("output_files") or {}
+        if isinstance(record_output_files, dict):
+            candidates.append(record_output_files.get("transcript"))
+        record_transcript = (
+            (record.get("results") or {})
+            .get("audio_analysis", {})
+            .get("transcript")
+        )
+        if transcript_payload_has_timing_authority(record_transcript):
+            status.setdefault("results", {}).setdefault("audio_analysis", {})[
+                "transcript"
+            ] = record_transcript
+
+    audio_analysis = status.setdefault("results", {}).setdefault("audio_analysis", {})
+    embedded_transcript = audio_analysis.get("transcript")
+    if transcript_payload_has_timing_authority(embedded_transcript):
+        embedded_path = embedded_transcript.get("output_path") or embedded_transcript.get(
+            "path"
+        )
+        if embedded_path:
+            candidates.insert(0, embedded_path)
+
+    original_filename = str(status.get("original_filename") or "")
+    source_video_path = status.get("source_video_path")
+    if source_video_path:
+        source_dir = Path(str(source_video_path)).parent
+        source_stem = Path(str(source_video_path)).stem.replace("_source_video", "")
+        candidates.append(source_dir / f"{source_stem}_transcript.json")
+    if current_transcript:
+        current_path = Path(str(current_transcript))
+        candidates.append(
+            current_path.with_name(
+                current_path.name.replace("_extracted_audio_transcript", "_transcript")
+            )
+        )
+    if original_filename:
+        imported_root = Path(str(current_transcript)).parent if current_transcript else None
+        if imported_root:
+            candidates.append(imported_root / f"{Path(original_filename).stem}_transcript.json")
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate_path = Path(str(candidate))
+        if not candidate_path.exists():
+            continue
+        candidate_payload = read_json_artifact_if_available(candidate_path)
+        if not transcript_payload_has_timing_authority(candidate_payload):
+            continue
+        output_files["transcript"] = str(candidate_path)
+        audio_analysis["transcript"] = candidate_payload
+        status["output_files"] = output_files
+        status["transcript_timing_repair"] = candidate_payload.get(
+            "timing_repair",
+            status.get("transcript_timing_repair")
+            or {
+                "status": "repaired",
+                "reason": "authoritative_transcript_artifact_selected",
+            },
+        )
+        return True
+    return False
 
 
 def output_file_exists(status: Dict[str, Any], file_type: str) -> bool:
@@ -3361,9 +3526,25 @@ def write_iterative_audio_identity_artifacts_for_status(
         output_files.get("audio_diarization")
     )
     current_audio_diarization = audio_diarization or persisted_audio_diarization or {}
+    diarization_clock_health = audio_diarization_staleness(
+        current_audio_diarization,
+        transcript if isinstance(transcript, dict) else {},
+        audio_path,
+    )
+    if current_audio_diarization and diarization_clock_health.get("is_stale"):
+        current_audio_diarization["is_stale"] = True
+        current_audio_diarization["stale_reason"] = diarization_clock_health.get("stale_reason")
+        for turn in current_audio_diarization.get("speaker_turns") or []:
+            if isinstance(turn, dict):
+                turn["is_stale"] = True
+                turn["stale_reason"] = diarization_clock_health.get("stale_reason")
+                turn["valid_for_confirmation"] = False
+                turn["valid_for_mature_master_schema"] = False
+        audio_analysis["audio_diarization"] = current_audio_diarization
     needs_measured_diarization = (
         current_audio_diarization.get("status") != "completed_measured"
         or not output_file_exists(status, "audio_diarization")
+        or bool(diarization_clock_health.get("is_stale"))
     )
     if needs_measured_diarization and transcript and audio_path:
         diarization_path = (
@@ -3375,6 +3556,7 @@ def write_iterative_audio_identity_artifacts_for_status(
             output_json_path=diarization_path,
             transcript=transcript,
             audio_prosody=audio_prosody,
+            reference_speakers=(status.get("source_media_metadata") or {}).get("user_annotations", {}).get("reference_speakers"),
         )
         audio_analysis["audio_diarization"] = audio_diarization
         audio_analysis["audio_diarization_path"] = str(diarization_path)
@@ -3397,10 +3579,24 @@ def write_iterative_audio_identity_artifacts_for_status(
         )
         or 0
     )
+    current_diarization_fingerprint = (audio_diarization or {}).get("diarization_fingerprint")
+    existing_cloud_fingerprint = (existing_audio_sample_clouds or {}).get("diarization_fingerprint")
+    if not existing_cloud_fingerprint:
+        fingerprints = (existing_audio_sample_clouds or {}).get("diarization_fingerprints") or []
+        existing_cloud_fingerprint = fingerprints[0] if len(fingerprints) == 1 else None
+    existing_clouds_stale = bool((existing_audio_sample_clouds or {}).get("is_stale"))
+    sample_clock_mismatch = bool(
+        current_diarization_fingerprint
+        and existing_cloud_fingerprint
+        and existing_cloud_fingerprint != current_diarization_fingerprint
+    )
     should_rebuild_audio_samples = (
         not output_file_exists(status, "audio_sample_clouds")
         or existing_sample_count == 0
         or "audio_diarization" in created
+        or existing_clouds_stale
+        or sample_clock_mismatch
+        or (current_diarization_fingerprint and not existing_cloud_fingerprint)
         or (
             audio_diarization
             and audio_diarization.get("status") == "completed_measured"
@@ -3445,6 +3641,13 @@ def write_iterative_audio_identity_artifacts_for_status(
         audio_sample_clouds["audio_measurement_provider"] = (
             (audio_diarization or {}).get("provider")
         )
+        audio_sample_clouds["timing_contract"] = (audio_diarization or {}).get("timing_contract")
+        audio_sample_clouds["transcript_fingerprint"] = (audio_diarization or {}).get("transcript_fingerprint")
+        audio_sample_clouds["audio_fingerprint"] = (audio_diarization or {}).get("audio_fingerprint")
+        audio_sample_clouds["diarization_fingerprint"] = (audio_diarization or {}).get("diarization_fingerprint")
+        audio_sample_clouds["generated_from_artifact_id"] = f"{analysis_id}:audio_diarization"
+        audio_sample_clouds["is_stale"] = bool((audio_diarization or {}).get("is_stale"))
+        audio_sample_clouds["stale_reason"] = (audio_diarization or {}).get("stale_reason")
         sample_cloud_path.parent.mkdir(parents=True, exist_ok=True)
         sample_cloud_path.write_text(
             json.dumps(audio_sample_clouds, indent=2, ensure_ascii=False),
@@ -3935,6 +4138,426 @@ def build_master_schema_scene_temporal_segments(status: Dict[str, Any]) -> List[
             ),
         })
     return normalized
+
+
+def master_schema_interval_seconds(item: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+    interval = item.get("interval") if isinstance(item.get("interval"), dict) else {}
+    start = safe_float(item.get("start"))
+    end = safe_float(item.get("end"))
+    if start is None:
+        start = safe_float(item.get("start_seconds"))
+    if end is None:
+        end = safe_float(item.get("end_seconds"))
+    if start is None:
+        start = safe_float(interval.get("start_seconds"))
+    if end is None:
+        end = safe_float(interval.get("end_seconds"))
+    if start is None:
+        start_ms = safe_float(item.get("start_ms")) or safe_float(interval.get("start_ms"))
+        start = start_ms / 1000.0 if start_ms is not None else None
+    if end is None:
+        end_ms = safe_float(item.get("end_ms")) or safe_float(interval.get("end_ms"))
+        end = end_ms / 1000.0 if end_ms is not None else None
+    if start is None or end is None:
+        return None, None
+    start = max(0.0, min(start, end))
+    end = max(start, end)
+    return start, end
+
+
+def build_master_schema_audio_event_temporal_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Route governed speech/silence/noise/music intervals into Master Schema."""
+
+    payload = artifact_payload_from_status_any(status, "audio_event_intervals", "audio_event_intervals_json")
+    if not isinstance(payload, dict):
+        audio_analysis = ((status.get("results") or {}).get("audio_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+        payload = audio_analysis.get("audio_event_intervals") if isinstance(audio_analysis, dict) else {}
+    if not isinstance(payload, dict):
+        return []
+    raw_intervals = payload.get("intervals") if isinstance(payload.get("intervals"), list) else []
+    normalized: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw_intervals):
+        if not isinstance(item, dict):
+            continue
+        start, end = master_schema_interval_seconds(item)
+        if start is None or end is None:
+            continue
+        event_type = str(
+            item.get("event_type")
+            or item.get("label")
+            or item.get("type")
+            or "audio_event"
+        ).strip().lower().replace(" ", "_")
+        if not event_type:
+            event_type = "audio_event"
+        segment_id = item.get("segment_id") or item.get("event_id") or f"audio-event-{index + 1:04d}"
+        normalized.append({
+            "segment_id": str(segment_id),
+            "segment_type": "audio_event",
+            "event_family": "audio_event_interval",
+            "event_label": event_type,
+            "audio_event_type": event_type,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "interval": {
+                "start_seconds": round(start, 3),
+                "end_seconds": round(end, 3),
+                "start_ms": int(round(start * 1000)),
+                "end_ms": int(round(end * 1000)),
+            },
+            "confidence": safe_float(item.get("confidence"), 1.0),
+            "authority": "interpreted_automatic_detection",
+            "source": "audio_event_intervals",
+            "source_schema": payload.get("schema") or "vaa1.audio_event_intervals.v1",
+            "review_state": item.get("review_state") or "available",
+            "maturity_route": "master_schema.audio_event_interval_maturity",
+            "measurements": {
+                key: item.get(key)
+                for key in ("energy_rms", "energy_dbfs", "zero_crossing_rate", "pitch_hz", "music_score", "speech_overlap_seconds")
+                if item.get(key) is not None
+            },
+            "provenance": build_provenance(
+                source_system="vaa1",
+                source_type="audio_event_intervals",
+                created_by="master-schema-audio-event-router",
+                note="Speech/silence/noise/music interval routed through Master Schema.",
+            ),
+        })
+    return normalized
+
+
+def build_master_schema_speaker_diarization_temporal_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Route speaker-linked diarization turns into Master Schema."""
+
+    payload = artifact_payload_from_status_any(status, "audio_diarization", "audio_diarization_json")
+    if not isinstance(payload, dict):
+        audio_analysis = ((status.get("results") or {}).get("audio_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+        payload = audio_analysis.get("audio_diarization") if isinstance(audio_analysis, dict) else {}
+    if not isinstance(payload, dict):
+        return []
+    raw_turns = payload.get("speaker_turns") if isinstance(payload.get("speaker_turns"), list) else []
+    payload_stale = bool(payload.get("is_stale"))
+    payload_stale_reason = payload.get("stale_reason")
+    normalized: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw_turns):
+        if not isinstance(item, dict):
+            continue
+        start, end = master_schema_interval_seconds(item)
+        if start is None or end is None:
+            continue
+        speaker_label = str(
+            item.get("speaker_label")
+            or item.get("speaker")
+            or item.get("cluster")
+            or "speaker_unknown"
+        ).strip()
+        segment_id = item.get("turn_id") or item.get("segment_id") or f"speaker-turn-{index + 1:04d}"
+        timing_status = str(item.get("timing_status") or "unverified")
+        timing_authority = item.get("timing_authority")
+        item_stale = payload_stale or bool(item.get("is_stale"))
+        stale_reason = item.get("stale_reason") or payload_stale_reason
+        can_seed_mature = (
+            not item_stale
+            and bool(item.get("valid_for_mature_master_schema", True))
+            and timing_status in {"anchor_verified", "vad_anchor_verified", "manual_source_verified"}
+        )
+        normalized.append({
+            "segment_id": str(segment_id),
+            "segment_type": "speaker_turn",
+            "event_family": "speaker_diarization_turn",
+            "event_label": speaker_label,
+            "speaker_label": speaker_label,
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "interval": {
+                "start_seconds": round(start, 3),
+                "end_seconds": round(end, 3),
+                "start_ms": int(round(start * 1000)),
+                "end_ms": int(round(end * 1000)),
+            },
+            "transcript_text": item.get("text"),
+            "confidence": safe_float(
+                item.get("diarization_confidence")
+                or item.get("confidence"),
+                1.0,
+            ),
+            "authority": "source_verified_detection" if can_seed_mature else "interpreted_automatic_detection",
+            "source": "audio_diarization.speaker_turns",
+            "source_schema": payload.get("schema") or "vaa1.audio_diarization.measured.v1",
+            "review_state": item.get("review_state") or (
+                "stale_rebuild_required" if item_stale else (
+                    "candidate_review_required" if not can_seed_mature else "source_interval_verified"
+                )
+            ),
+            "maturity_route": "master_schema.speaker_diarization_maturity",
+            "timing_status": timing_status,
+            "timing_authority": timing_authority,
+            "timing_source": item.get("timing_source"),
+            "source_start": item.get("source_start"),
+            "source_end": item.get("source_end"),
+            "canonical_time_basis": item.get("canonical_time_basis") or "source_media_seconds",
+            "source_media_id": item.get("source_media_id"),
+            "transcript_fingerprint": item.get("transcript_fingerprint") or payload.get("transcript_fingerprint"),
+            "audio_fingerprint": item.get("audio_fingerprint") or payload.get("audio_fingerprint"),
+            "diarization_fingerprint": item.get("diarization_fingerprint") or payload.get("diarization_fingerprint"),
+            "generated_from_artifact_id": item.get("generated_from_artifact_id") or f"{status.get('analysis_id')}:audio_diarization",
+            "generated_at": item.get("generated_at") or payload.get("generated_at"),
+            "is_stale": item_stale,
+            "stale_reason": stale_reason,
+            "valid_for_confirmation": bool(item.get("valid_for_confirmation")) and not item_stale,
+            "can_seed_mature_speaker_claim": can_seed_mature,
+            "measurements": {
+                key: item.get(key)
+                for key in ("cluster_id", "turn_index", "overlap_seconds", "energy_dbfs", "pitch_hz")
+                if item.get(key) is not None
+            },
+            "provenance": build_provenance(
+                source_system="vaa1",
+                source_type="audio_diarization",
+                created_by="master-schema-speaker-diarization-router",
+                note=(
+                    "Speaker diarization turn routed through Master Schema with timing authority preserved."
+                ),
+            ),
+        })
+    return normalized
+
+
+def build_master_schema_shot_boundary_temporal_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Route true or candidate shot-boundary intervals into Master Schema."""
+
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    payload = summary.get("shot_boundaries") if isinstance(summary.get("shot_boundaries"), dict) else {}
+    if not payload:
+        visual_analysis = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+        payload = visual_analysis.get("shot_boundaries") if isinstance(visual_analysis, dict) else {}
+    if not isinstance(payload, dict):
+        return []
+    raw_intervals = payload.get("intervals") if isinstance(payload.get("intervals"), list) else []
+    normalized: List[Dict[str, Any]] = []
+    true_boundaries = bool(payload.get("true_boundary_intervals"))
+    for index, item in enumerate(raw_intervals):
+        if not isinstance(item, dict):
+            continue
+        start, end = master_schema_interval_seconds(item)
+        if start is None or end is None:
+            continue
+        shot_id = item.get("shot_id") or item.get("segment_id") or f"shot-{index + 1:04d}"
+        normalized.append({
+            "segment_id": f"shot-boundary-{index + 1:04d}",
+            "shot_id": str(shot_id),
+            "segment_type": "shot",
+            "event_family": "shot_boundary_interval",
+            "event_label": f"Shot {index + 1}",
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "duration": round(end - start, 3),
+            "interval": {
+                "start_seconds": round(start, 3),
+                "end_seconds": round(end, 3),
+                "start_ms": int(round(start * 1000)),
+                "end_ms": int(round(end * 1000)),
+            },
+            "boundary_in": item.get("boundary_in"),
+            "boundary_out": item.get("boundary_out"),
+            "confidence": safe_float(item.get("confidence"), 1.0 if true_boundaries else 0.35),
+            "authority": "interpreted_automatic_detection" if true_boundaries else "raw_detection",
+            "source": payload.get("source") or item.get("source") or "shot_boundaries",
+            "source_schema": payload.get("schema") or "vaa1.shot_boundary_intervals.v1",
+            "true_boundary_interval": true_boundaries,
+            "review_state": item.get("review_state") or ("available" if true_boundaries else "candidate_review_required"),
+            "maturity_route": (
+                "master_schema.true_shot_boundary_interval_maturity"
+                if true_boundaries
+                else "master_schema.shot_boundary_candidate_maturity"
+            ),
+            "provenance": build_provenance(
+                source_system="vaa1",
+                source_type="shot_boundary_intervals",
+                created_by="master-schema-shot-boundary-router",
+                note="Shot boundary interval routed through Master Schema.",
+            ),
+        })
+    return normalized
+
+
+def build_master_schema_music_lyric_temporal_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Route music-analysis and lyric/transcript matches into Master Schema when present."""
+
+    payload = artifact_payload_from_status_any(
+        status,
+        "music_lyrics_analysis",
+        "tune_lyrics",
+        "lyric_detector",
+    )
+    if not isinstance(payload, dict):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    music_analysis = payload.get("musical_analysis") if isinstance(payload.get("musical_analysis"), dict) else {}
+    key_series = music_analysis.get("per_second_key_indication") if isinstance(music_analysis.get("per_second_key_indication"), list) else []
+    if music_analysis:
+        for index, item in enumerate(key_series[:600] or [{}]):
+            if not isinstance(item, dict):
+                continue
+            start = safe_float(item.get("time"), 0.0) or 0.0
+            end = start + 1.0
+            normalized.append({
+                "segment_id": f"music-analysis-{index + 1:04d}",
+                "segment_type": "music_analysis",
+                "event_family": "music_analysis",
+                "event_label": "music analysis",
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "duration": round(end - start, 3),
+                "interval": {
+                    "start_seconds": round(start, 3),
+                    "end_seconds": round(end, 3),
+                    "start_ms": int(round(start * 1000)),
+                    "end_ms": int(round(end * 1000)),
+                },
+                "measurements": {
+                    "beats_per_second": music_analysis.get("beats_per_second"),
+                    "average_key_indication": music_analysis.get("average_key_indication"),
+                    "dominant_pitch_class": item.get("dominant_pitch_class"),
+                },
+                "authority": "interpreted_automatic_detection",
+                "source": "music_lyrics_analysis.musical_analysis",
+                "source_schema": music_analysis.get("schema") or "vaa1.music_analysis.v1",
+                "review_state": "available" if music_analysis.get("status") == "computed" else "candidate_review_required",
+                "maturity_route": "master_schema.music_analysis_maturity",
+                "provenance": build_provenance(
+                    source_system="vaa1",
+                    source_type="music_analysis",
+                    created_by="master-schema-music-lyrics-router",
+                    note="Music/prosodic analysis routed through Master Schema.",
+                ),
+            })
+    lyric_matches = payload.get("lyrics_in_transcript") if isinstance(payload.get("lyrics_in_transcript"), list) else []
+    for index, item in enumerate(lyric_matches):
+        if not isinstance(item, dict):
+            continue
+        start, end = master_schema_interval_seconds(item)
+        transcript_segment = item.get("transcript_segment") if isinstance(item.get("transcript_segment"), dict) else {}
+        if start is None:
+            start = safe_float(transcript_segment.get("start"), 0.0) or 0.0
+        if end is None:
+            end = safe_float(transcript_segment.get("end"), start) or start
+        normalized.append({
+            "segment_id": f"lyric-match-{index + 1:04d}",
+            "segment_type": "lyric_transcript_match",
+            "event_family": "lyric_transcript_match",
+            "event_label": item.get("matched_lyric_line") or "lyric match",
+            "start": round(start, 3),
+            "end": round(max(end, start), 3),
+            "duration": round(max(end, start) - start, 3),
+            "interval": {
+                "start_seconds": round(start, 3),
+                "end_seconds": round(max(end, start), 3),
+                "start_ms": int(round(start * 1000)),
+                "end_ms": int(round(max(end, start) * 1000)),
+            },
+            "lyrics_excerpt": item.get("matched_lyric_line"),
+            "authority": "interpreted_automatic_detection",
+            "source": "music_lyrics_analysis.lyrics_in_transcript",
+            "source_schema": item.get("schema") or "vaa1.lyric_transcript_match.v1",
+            "review_state": "candidate_review_required",
+            "maturity_route": "master_schema.lyric_transcript_match_maturity",
+            "provenance": build_provenance(
+                source_system="vaa1",
+                source_type="lyric_transcript_match",
+                created_by="master-schema-music-lyrics-router",
+                note="Lyric/transcript match routed through Master Schema.",
+            ),
+        })
+    return normalized
+
+
+def merge_master_schema_temporal_segments(*segment_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for group in segment_groups:
+        for index, segment in enumerate(group or []):
+            if not isinstance(segment, dict):
+                continue
+            segment_id = str(
+                segment.get("segment_id")
+                or f"{segment.get('event_family') or segment.get('segment_type') or 'segment'}:{index}"
+            )
+            merged[segment_id] = {**segment, "segment_id": segment_id}
+    return list(merged.values())
+
+
+def build_master_schema_foundational_source_layers(
+    status: Dict[str, Any],
+    *,
+    temporal_segments: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    audio_segments = [
+        segment for segment in temporal_segments
+        if segment.get("event_family") == "audio_event_interval"
+    ]
+    shot_segments = [
+        segment for segment in temporal_segments
+        if segment.get("event_family") == "shot_boundary_interval"
+    ]
+    music_segments = [
+        segment for segment in temporal_segments
+        if segment.get("event_family") == "music_analysis"
+    ]
+    lyric_segments = [
+        segment for segment in temporal_segments
+        if segment.get("event_family") == "lyric_transcript_match"
+    ]
+    speaker_turn_segments = [
+        segment for segment in temporal_segments
+        if segment.get("event_family") == "speaker_diarization_turn"
+    ]
+    return {
+        "schema": "vaa1.master_schema_foundational_source_layers.v1",
+        "updated_at": utc_now_iso(),
+        "principle": "Foundational detection products land in Master Schema before StatsKit, SignificanceKit, or RelevanceKit consume them.",
+        "layers": {
+            "audio_event_intervals": {
+                "status": "available" if audio_segments else "missing",
+                "schema": "vaa1.audio_event_intervals.v1",
+                "master_schema_surface": "temporal_segments[event_family=audio_event_interval]",
+                "row_count": len(audio_segments),
+                "event_types": sorted({str(segment.get("audio_event_type") or segment.get("event_label")) for segment in audio_segments}),
+                "maturity_route": "master_schema.audio_event_interval_maturity",
+            },
+            "shot_boundary_intervals": {
+                "status": "available" if shot_segments else "missing",
+                "schema": "vaa1.shot_boundary_intervals.v1",
+                "master_schema_surface": "temporal_segments[event_family=shot_boundary_interval]",
+                "row_count": len(shot_segments),
+                "true_boundary_rows": len([segment for segment in shot_segments if segment.get("true_boundary_interval")]),
+                "maturity_route": "master_schema.true_shot_boundary_interval_maturity",
+            },
+            "speaker_diarization_turns": {
+                "status": "available" if speaker_turn_segments else "missing",
+                "schema": "vaa1.audio_diarization.measured.v1",
+                "master_schema_surface": "temporal_segments[event_family=speaker_diarization_turn]",
+                "row_count": len(speaker_turn_segments),
+                "speaker_labels": sorted({str(segment.get("speaker_label") or segment.get("event_label")) for segment in speaker_turn_segments}),
+                "maturity_route": "master_schema.speaker_diarization_maturity",
+            },
+            "music_analysis": {
+                "status": "available" if music_segments else "missing",
+                "schema": "vaa1.music_analysis.v1",
+                "master_schema_surface": "temporal_segments[event_family=music_analysis]",
+                "row_count": len(music_segments),
+                "maturity_route": "master_schema.music_analysis_maturity",
+            },
+            "lyric_transcript_matches": {
+                "status": "available" if lyric_segments else "missing",
+                "schema": "vaa1.lyric_transcript_match.v1",
+                "master_schema_surface": "temporal_segments[event_family=lyric_transcript_match]",
+                "row_count": len(lyric_segments),
+                "maturity_route": "master_schema.lyric_transcript_match_maturity",
+            },
+        },
+    }
 
 
 def track_feature_vector_from_row(item: Dict[str, Any], *keys: str) -> Optional[List[float]]:
@@ -4541,6 +5164,19 @@ def point_in_window(timestamp: Any, window_start: float, window_end: float) -> b
     return value is not None and window_start <= value <= window_end
 
 
+def intervals_overlap(
+    item_start: Any,
+    item_end: Any,
+    window_start: float,
+    window_end: float,
+) -> bool:
+    start = safe_float(item_start)
+    end = safe_float(item_end) if item_end is not None else start
+    if start is None or end is None:
+        return False
+    return max(start, window_start) <= min(end, window_end)
+
+
 def bbox_region_overlap(
     item: Dict[str, Any],
     region: Optional[Dict[str, Any]],
@@ -5020,6 +5656,13 @@ def build_vaa1_master_schema_from_cvat(
 
     if not any(is_scene_temporal_segment(segment) for segment in temporal_segments):
         temporal_segments.extend(build_master_schema_scene_temporal_segments(status))
+    temporal_segments = merge_master_schema_temporal_segments(
+        temporal_segments,
+        build_master_schema_audio_event_temporal_segments(status),
+        build_master_schema_speaker_diarization_temporal_segments(status),
+        build_master_schema_shot_boundary_temporal_segments(status),
+        build_master_schema_music_lyric_temporal_segments(status),
+    )
 
     genre_annotations: List[Dict[str, Any]] = []
     if normalize_taxonomy_label(user_annotations.get("genre")):
@@ -5197,6 +5840,7 @@ def build_vaa1_master_schema_from_cvat(
             "reference_speakers": user_annotations.get("reference_speakers", []),
             "reference_relation": user_annotations.get("reference_relation", ""),
             "reference_source": user_annotations.get("reference_source", ""),
+            "expected_identities": user_annotations.get("expected_identities", []),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
         },
@@ -5218,6 +5862,10 @@ def build_vaa1_master_schema_from_cvat(
         "object_annotations": object_annotations,
         "track_annotations": track_annotations,
         "temporal_segments": temporal_segments,
+        "foundational_source_layers": build_master_schema_foundational_source_layers(
+            status,
+            temporal_segments=temporal_segments,
+        ),
         "expression_annotations": [],
         "review_layer": {
             "status": "unreviewed",
@@ -5382,6 +6030,13 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
                 if is_scene_temporal_segment(segment)
             ],
         ]
+    temporal_segments = merge_master_schema_temporal_segments(
+        temporal_segments,
+        build_master_schema_audio_event_temporal_segments(status),
+        build_master_schema_speaker_diarization_temporal_segments(status),
+        build_master_schema_shot_boundary_temporal_segments(status),
+        build_master_schema_music_lyric_temporal_segments(status),
+    )
 
     merged = {
         **scaffold,
@@ -5394,6 +6049,10 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
         "character_definition_annotations": scaffold.get("character_definition_annotations", []),
         "narrative_agent_profile_annotations": scaffold.get("narrative_agent_profile_annotations", []),
         "temporal_segments": temporal_segments,
+        "foundational_source_layers": build_master_schema_foundational_source_layers(
+            status,
+            temporal_segments=temporal_segments,
+        ),
     }
     merged["scene_constellation_governance"] = build_scene_constellation_governance(
         status=status,
@@ -5474,6 +6133,46 @@ def build_master_schema_maturity_audit(
             "maturity_route": "master_schema.scene_card_maturity",
         },
         {
+            "producer": "audio_event_intervals",
+            "status": "active" if output_files.get("audio_event_intervals") or any(
+                segment.get("event_family") == "audio_event_interval"
+                for segment in master_schema_payload.get("temporal_segments", []) or []
+                if isinstance(segment, dict)
+            ) else "missing",
+            "master_schema_surface": "temporal_segments[event_family=audio_event_interval]",
+            "maturity_route": "master_schema.audio_event_interval_maturity",
+        },
+        {
+            "producer": "audio_diarization",
+            "status": "active" if output_files.get("audio_diarization") or any(
+                segment.get("event_family") == "speaker_diarization_turn"
+                for segment in master_schema_payload.get("temporal_segments", []) or []
+                if isinstance(segment, dict)
+            ) else "missing",
+            "master_schema_surface": "temporal_segments[event_family=speaker_diarization_turn]",
+            "maturity_route": "master_schema.speaker_diarization_maturity",
+        },
+        {
+            "producer": "shot_boundary_intervals",
+            "status": "active" if any(
+                segment.get("event_family") == "shot_boundary_interval"
+                for segment in master_schema_payload.get("temporal_segments", []) or []
+                if isinstance(segment, dict)
+            ) else "missing",
+            "master_schema_surface": "temporal_segments[event_family=shot_boundary_interval]",
+            "maturity_route": "master_schema.true_shot_boundary_interval_maturity",
+        },
+        {
+            "producer": "music_lyrics_analysis",
+            "status": "active" if any(
+                segment.get("event_family") in {"music_analysis", "lyric_transcript_match"}
+                for segment in master_schema_payload.get("temporal_segments", []) or []
+                if isinstance(segment, dict)
+            ) else "missing",
+            "master_schema_surface": "temporal_segments[event_family=music_analysis|lyric_transcript_match]",
+            "maturity_route": "master_schema.music_lyrics_maturity",
+        },
+        {
             "producer": "identity_refinement",
             "status": "active" if status.get("identity_refinement") or internal_artifacts.get("identity_refinement_candidates") else "missing",
             "master_schema_surface": "review_layer.annotation_corrections / identity candidate ledgers",
@@ -5523,6 +6222,26 @@ def build_master_schema_maturity_audit(
         "object_annotations": len(master_schema_payload.get("object_annotations") or []),
         "track_annotations": len(master_schema_payload.get("track_annotations") or []),
         "temporal_segments": len(master_schema_payload.get("temporal_segments") or []),
+        "audio_event_interval_segments": len([
+            segment for segment in master_schema_payload.get("temporal_segments", []) or []
+            if isinstance(segment, dict) and segment.get("event_family") == "audio_event_interval"
+        ]),
+        "speaker_diarization_turn_segments": len([
+            segment for segment in master_schema_payload.get("temporal_segments", []) or []
+            if isinstance(segment, dict) and segment.get("event_family") == "speaker_diarization_turn"
+        ]),
+        "shot_boundary_interval_segments": len([
+            segment for segment in master_schema_payload.get("temporal_segments", []) or []
+            if isinstance(segment, dict) and segment.get("event_family") == "shot_boundary_interval"
+        ]),
+        "music_analysis_segments": len([
+            segment for segment in master_schema_payload.get("temporal_segments", []) or []
+            if isinstance(segment, dict) and segment.get("event_family") == "music_analysis"
+        ]),
+        "lyric_transcript_match_segments": len([
+            segment for segment in master_schema_payload.get("temporal_segments", []) or []
+            if isinstance(segment, dict) and segment.get("event_family") == "lyric_transcript_match"
+        ]),
         "character_role_annotations": len(master_schema_payload.get("character_role_annotations") or []),
         "character_definition_annotations": len(master_schema_payload.get("character_definition_annotations") or []),
         "narrative_agent_profile_annotations": len(master_schema_payload.get("narrative_agent_profile_annotations") or []),
@@ -5998,6 +6717,10 @@ def regenerate_pos_from_transcript_if_needed(output_files: Dict[str, str]) -> bo
         transcript_text,
         language_code=language_code,
     ).run()
+    pos_result["transcript_timing_authority"] = build_transcript_timing_authority(
+        transcript_data
+    )
+    pos_result["source_transcript_clock"] = "operational_transcript"
 
     pos_path.parent.mkdir(parents=True, exist_ok=True)
     with open(pos_path, "w", encoding="utf-8") as handle:
@@ -6099,10 +6822,20 @@ def regenerate_audio_prosody_if_needed(status: Dict[str, Any]) -> bool:
         return False
 
     prosody_path.write_text(
-        json.dumps(audio_prosody, indent=2, ensure_ascii=False),
+        json.dumps(normalize_analysis_json_for_write(audio_prosody), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     output_files["audio_prosody"] = str(prosody_path)
+    audio_events = audio_prosody.get("audio_event_intervals") if isinstance(audio_prosody, dict) else None
+    if isinstance(audio_events, dict):
+        audio_events_path = prosody_path.with_name(
+            f"{prosody_path.stem.replace('_audio_prosody', '')}_audio_event_intervals.json"
+        )
+        audio_events_path.write_text(
+            json.dumps(audio_events, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["audio_event_intervals"] = str(audio_events_path)
     status["output_files"] = output_files
     return True
 
@@ -6113,6 +6846,13 @@ def normalize_analysis_json_for_write(value: Any) -> Any:
 
         if isinstance(value, pd.DataFrame):
             return value.to_dict(orient="records")
+        if isinstance(value, dict):
+            return {
+                str(key): normalize_analysis_json_for_write(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [normalize_analysis_json_for_write(item) for item in value]
     except Exception:
         pass
     return make_json_safe(value)
@@ -6145,7 +6885,10 @@ def rewrite_pos_quant_from_transcript(
             f"{transcript_path.stem.replace('_transcript', '')}_pos.json"
         )
     )
+    timing_authority = build_transcript_timing_authority(transcript)
     pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
+    pos_result["transcript_timing_authority"] = timing_authority
+    pos_result["source_transcript_clock"] = "operational_transcript"
     pos_path.parent.mkdir(parents=True, exist_ok=True)
     pos_path.write_text(
         json.dumps(normalize_analysis_json_for_write(pos_result), indent=2, ensure_ascii=False),
@@ -6172,6 +6915,8 @@ def rewrite_pos_quant_from_transcript(
         quant_result,
         transcript.get("segments", []),
     )
+    quant_result["transcript_timing_authority"] = timing_authority
+    quant_result["source_transcript_clock"] = "operational_transcript"
     quant_path.parent.mkdir(parents=True, exist_ok=True)
     quant_path.write_text(
         json.dumps(normalize_analysis_json_for_write(quant_result), indent=2, ensure_ascii=False),
@@ -6179,6 +6924,81 @@ def rewrite_pos_quant_from_transcript(
     )
     output_files["quan_analysis"] = str(quant_path)
     rewritten.append("quan_analysis")
+    return rewritten
+
+
+def rebuild_audio_diarization_after_timing_change(
+    status: Dict[str, Any],
+    transcript: Dict[str, Any],
+    audio_path: Path,
+    audio_prosody: Dict[str, Any] | None,
+) -> List[str]:
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    if not analysis_id:
+        return []
+
+    output_files = status.setdefault("output_files", {})
+    diarization_path = (
+        Path(output_files["audio_diarization"])
+        if output_files.get("audio_diarization")
+        else TRANSCRIPTS_DIR / f"{analysis_id}_audio_diarization.json"
+    )
+    diarization_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_diarization = write_audio_diarization(
+        analysis_id,
+        audio_path=audio_path,
+        output_json_path=diarization_path,
+        transcript=transcript,
+        audio_prosody=audio_prosody,
+    )
+    output_files["audio_diarization"] = str(diarization_path)
+
+    audio_analysis = status.setdefault("results", {}).setdefault("audio_analysis", {})
+    audio_analysis["audio_diarization"] = audio_diarization
+    audio_analysis["audio_diarization_path"] = str(diarization_path)
+
+    rewritten = ["audio_diarization"]
+    if audio_diarization.get("status") == "completed_measured":
+        source_media_context = build_source_media_metadata_payload(status)
+        diarization_clouds = build_audio_sample_clouds_from_diarization(
+            analysis_id,
+            audio_diarization=audio_diarization,
+            source_media_context=source_media_context,
+            source_audio_path=audio_path,
+        )
+        narrative_agent_clouds = build_audio_sample_clouds_for_narrative_agents(
+            analysis_id,
+            transcript=transcript,
+            audio_prosody=audio_prosody,
+            source_media_context=source_media_context,
+            source_audio_path=audio_path,
+        )
+        audio_sample_clouds = merge_audio_sample_cloud_payloads(
+            analysis_id,
+            diarization_clouds,
+            narrative_agent_clouds,
+        )
+        audio_sample_clouds["audio_diarization_status"] = audio_diarization.get("status")
+        audio_sample_clouds["audio_measurement_provider"] = audio_diarization.get("provider")
+        audio_sample_clouds["transcript_timing_authority"] = (
+            (audio_diarization.get("measurement") or {}).get("transcript_timing_authority")
+        )
+        sample_cloud_path = (
+            Path(output_files["audio_sample_clouds"])
+            if output_files.get("audio_sample_clouds")
+            else TRANSCRIPTS_DIR / f"{analysis_id}_audio_sample_clouds.json"
+        )
+        sample_cloud_path.parent.mkdir(parents=True, exist_ok=True)
+        sample_cloud_path.write_text(
+            json.dumps(normalize_analysis_json_for_write(audio_sample_clouds), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["audio_sample_clouds"] = str(sample_cloud_path)
+        audio_analysis["audio_sample_clouds"] = audio_sample_clouds
+        audio_analysis["audio_sample_clouds_path"] = str(sample_cloud_path)
+        rewritten.append("audio_sample_clouds")
+
+    status["output_files"] = output_files
     return rewritten
 
 
@@ -6236,6 +7056,7 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
         isinstance(previous_repair, dict)
         and previous_repair.get("status") == "failed"
         and "ffmpeg" not in previous_reason.lower()
+        and "fallback_did_not_improve_timeline_coverage" not in previous_reason
     ):
         return False
 
@@ -6264,23 +7085,52 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
         media_duration_seconds=media_duration_seconds,
         audio_duration_seconds=audio_duration_seconds,
     )
+    repair_reason = "degraded_transcript_coverage"
     before_end = safe_float(quality_report.get("last_segment_end_seconds")) or 0.0
     after_end = safe_float(repaired_quality.get("last_segment_end_seconds")) or 0.0
     if repaired_quality.get("status") != "ok" and after_end < before_end + 6.0:
-        logger.warning(
-            "Transcript timing repair did not improve coverage for %s: before_end=%s after_end=%s",
-            status.get("analysis_id"),
-            before_end,
-            after_end,
+        automatic_candidate = (
+            repaired.get("automatic_fallback_candidate")
+            if isinstance(repaired.get("automatic_fallback_candidate"), dict)
+            else None
         )
-        status["transcript_timing_repair"] = {
-            "status": "failed",
-            "reason": "fallback_did_not_improve_timeline_coverage",
-            "quality_before": quality_report,
-            "quality_after": repaired_quality,
-            "backup_path": str(backup_path),
-        }
-        return False
+        automatic_repair = None
+        if automatic_candidate:
+            promoted_repair = promote_automatic_transcript_timing(
+                transcript,
+                automatic_candidate,
+                after_seconds=0.0,
+            )
+            automatic_repair = rebuild_transcript_from_quick_sweep_candidate(
+                promoted_repair or transcript,
+                automatic_candidate,
+            )
+            if automatic_repair is None:
+                automatic_repair = promoted_repair
+        if automatic_repair is None:
+            logger.warning(
+                "Transcript timing repair rejected VAD authority for %s: before_end=%s after_end=%s",
+                status.get("analysis_id"),
+                before_end,
+                after_end,
+            )
+            status["transcript_timing_repair"] = {
+                "status": "failed",
+                "reason": "automatic_transcript_timing_unavailable_vad_rejected_as_clock_authority",
+                "quality_before": quality_report,
+                "quality_after": repaired_quality,
+                "backup_path": str(backup_path),
+            }
+            return False
+
+        repaired = automatic_repair
+        repaired_quality = build_transcript_quality_report(
+            repaired,
+            media_duration_seconds=media_duration_seconds,
+            audio_duration_seconds=audio_duration_seconds,
+        )
+        after_end = safe_float(repaired_quality.get("last_segment_end_seconds")) or 0.0
+        repair_reason = "inherited_rows_promoted_from_automatic_transcript_timestamps"
 
     transcript_text = " ".join(
         str(segment.get("text", "")).strip()
@@ -6296,12 +7146,13 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
         coverage_target_seconds=media_duration_seconds or audio_duration_seconds,
     )
     repaired["timing_repair"] = {
-        "status": "repaired",
-        "reason": "degraded_transcript_coverage",
+        "status": "repaired" if repaired_quality.get("status") == "ok" else "partially_repaired",
+        "reason": repair_reason,
         "quality_before": quality_report,
         "quality_after": repaired_quality,
         "backup_path": str(backup_path),
     }
+    repaired["timing_authority"] = build_transcript_timing_authority(repaired)
 
     transcript_path.write_text(
         json.dumps(repaired, indent=2, ensure_ascii=False),
@@ -6310,7 +7161,8 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
     output_files["transcript"] = str(transcript_path)
 
     write_linked_transcript_artifact(status, repaired, output_files)
-    audio_prosody = analyze_audio_prosody(audio_path, repaired.get("segments", []))
+    timed_segments = source_timed_transcript_segments(repaired)
+    audio_prosody = analyze_audio_prosody(audio_path, timed_segments)
     prosody_path = (
         Path(output_files["audio_prosody"])
         if output_files.get("audio_prosody")
@@ -6323,6 +7175,22 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
         encoding="utf-8",
     )
     output_files["audio_prosody"] = str(prosody_path)
+    audio_events = audio_prosody.get("audio_event_intervals") if isinstance(audio_prosody, dict) else None
+    if isinstance(audio_events, dict):
+        audio_events_path = prosody_path.with_name(
+            f"{prosody_path.stem.replace('_audio_prosody', '')}_audio_event_intervals.json"
+        )
+        audio_events_path.write_text(
+            json.dumps(normalize_analysis_json_for_write(audio_events), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["audio_event_intervals"] = str(audio_events_path)
+    rewritten_audio = rebuild_audio_diarization_after_timing_change(
+        status,
+        {"segments": timed_segments, **{k: v for k, v in repaired.items() if k != "segments"}},
+        audio_path,
+        audio_prosody,
+    )
     write_time_bank_artifact(
         status,
         output_files,
@@ -6342,7 +7210,8 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
         }
     )
     status["transcript_timing_repair"] = {
-        "status": "repaired",
+        "status": "repaired" if repaired_quality.get("status") == "ok" else "partially_repaired",
+        "reason": repair_reason,
         "quality_before": quality_report,
         "quality_after": repaired_quality,
         "backup_path": str(backup_path),
@@ -6350,6 +7219,7 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
             "transcript",
             "linked_transcript",
             "audio_prosody",
+            *rewritten_audio,
             "time_bank_audio",
             *rewritten,
         ],
@@ -6558,6 +7428,7 @@ def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[
         "linked_transcript.json": "linked_transcript",
         "transcript.json": "transcript",
         "audio_prosody.json": "audio_prosody",
+        "audio_event_intervals.json": "audio_event_intervals",
         "time_bank_audio.json": "time_bank_audio",
         "time_bank_ocr.json": "time_bank_ocr",
         "time_bank_objects.json": "time_bank_objects",
@@ -7115,6 +7986,7 @@ def run_complete_analysis(
                     "spatial_tone_scan": visual_results.get("spatial_tone_scan", {}),
                     "motion_evidence": visual_results.get("motion_evidence", {}),
                     "scene_segments": visual_results.get("scene_segments", {}),
+                    "shot_boundaries": visual_results.get("shot_boundaries", {}),
                     "face_results": visual_results.get("face_results"),
                     "face_anonymization": visual_results.get("face_anonymization"),
                     "face_anonymization_enabled": visual_results.get("face_anonymization_enabled", False),
@@ -7347,6 +8219,7 @@ def run_complete_analysis(
                 transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
+                audio_event_intervals_filename = f"{analysis_id}_audio_event_intervals.json"
                 audio_diarization_filename = f"{analysis_id}_audio_diarization.json"
                 audio_sample_clouds_filename = f"{analysis_id}_audio_sample_clouds.json"
 
@@ -7354,6 +8227,7 @@ def run_complete_analysis(
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
                 organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
                 organized_audio_prosody_path = TRANSCRIPTS_DIR / audio_prosody_filename
+                organized_audio_event_intervals_path = TRANSCRIPTS_DIR / audio_event_intervals_filename
                 organized_audio_diarization_path = TRANSCRIPTS_DIR / audio_diarization_filename
                 organized_audio_sample_clouds_path = TRANSCRIPTS_DIR / audio_sample_clouds_filename
 
@@ -7397,6 +8271,11 @@ def run_complete_analysis(
                     with open(organized_audio_prosody_path, "w", encoding="utf-8") as f:
                         json.dump(audio_prosody, f, indent=2, ensure_ascii=False)
                     output_files["audio_prosody"] = str(organized_audio_prosody_path)
+                    audio_events = audio_prosody.get("audio_event_intervals") if isinstance(audio_prosody, dict) else None
+                    if isinstance(audio_events, dict):
+                        with open(organized_audio_event_intervals_path, "w", encoding="utf-8") as f:
+                            json.dump(audio_events, f, indent=2, ensure_ascii=False)
+                        output_files["audio_event_intervals"] = str(organized_audio_event_intervals_path)
                 except Exception as prosody_error:
                     logger.warning("Audio prosody analysis failed: %s", prosody_error)
                     results["audio_prosody_error"] = str(prosody_error)
@@ -7495,6 +8374,10 @@ def run_complete_analysis(
                         language_code=transcript.get("language", "en"),
                     )
                     pos_result = pos_analyzer.run()
+                    pos_result["transcript_timing_authority"] = build_transcript_timing_authority(
+                        transcript
+                    )
+                    pos_result["source_transcript_clock"] = "operational_transcript"
 
                     pos_path_init = f"{analysis_id}_pos.json"
                     pos_path = TRANSCRIPTS_DIR / pos_path_init
@@ -7542,6 +8425,10 @@ def run_complete_analysis(
                         quan_result,
                         transcript.get("segments", []),
                     )
+                    quan_result["transcript_timing_authority"] = build_transcript_timing_authority(
+                        transcript
+                    )
+                    quan_result["source_transcript_clock"] = "operational_transcript"
 
                     def normalize_for_json(value):
                         try:
@@ -7578,6 +8465,9 @@ def run_complete_analysis(
                     "audio_prosody_path": str(organized_audio_prosody_path)
                     if output_files.get("audio_prosody")
                     else None,
+                    "audio_event_intervals_path": str(organized_audio_event_intervals_path)
+                    if output_files.get("audio_event_intervals")
+                    else None,
                     "audio_diarization_path": str(organized_audio_diarization_path)
                     if output_files.get("audio_diarization")
                     else None,
@@ -7588,6 +8478,11 @@ def run_complete_analysis(
                     "pos_analysis": str(pos_path) if pos_path else None,
                     "quan_analysis": str(quan_path) if quan_path else None,
                     "audio_prosody": audio_prosody,
+                    "audio_event_intervals": (
+                        audio_prosody.get("audio_event_intervals")
+                        if isinstance(audio_prosody, dict)
+                        else None
+                    ),
                     "audio_diarization": audio_diarization,
                     "audio_sample_clouds": audio_sample_clouds,
                     "transcript": transcript,
@@ -8042,6 +8937,93 @@ async def refresh_evidence_proliferation_matcher_endpoint(
 
     return make_json_safe(result)
 
+
+def _clock_range_for_rows(rows: Any) -> Dict[str, Any]:
+    starts: List[float] = []
+    ends: List[float] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        start, end = master_schema_interval_seconds(row)
+        if start is None or end is None:
+            continue
+        starts.append(start)
+        ends.append(end)
+    return {
+        "row_count": len(starts),
+        "start": round(min(starts), 3) if starts else None,
+        "end": round(max(ends), 3) if ends else None,
+    }
+
+
+def build_audio_timing_health_report(status: Dict[str, Any]) -> Dict[str, Any]:
+    analysis_id = status.get("analysis_id")
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    audio_analysis = ((status.get("results") or {}).get("audio_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+    transcript = audio_analysis.get("transcript") or read_json_artifact_if_available(output_files.get("transcript")) or {}
+    prosody = audio_analysis.get("audio_prosody") or read_json_artifact_if_available(output_files.get("audio_prosody")) or {}
+    diarization = audio_analysis.get("audio_diarization") or read_json_artifact_if_available(output_files.get("audio_diarization")) or {}
+    sample_clouds = audio_analysis.get("audio_sample_clouds") or read_json_artifact_if_available(output_files.get("audio_sample_clouds")) or {}
+    audio_path = output_files.get("audio") or audio_analysis.get("audio_path")
+    diarization_health = audio_diarization_staleness(
+        diarization if isinstance(diarization, dict) else {},
+        transcript if isinstance(transcript, dict) else {},
+        audio_path,
+    )
+    sample_rows = []
+    for cloud in (sample_clouds or {}).get("clouds") or []:
+        if isinstance(cloud, dict):
+            sample_rows.extend([sample for sample in cloud.get("samples") or [] if isinstance(sample, dict)])
+    return {
+        "analysis_id": analysis_id,
+        "canonical_time_basis": "source_media_seconds",
+        "audio_path": audio_path,
+        "transcript": {
+            **_clock_range_for_rows((transcript or {}).get("segments") if isinstance(transcript, dict) else []),
+            "fingerprint": (diarization or {}).get("transcript_fingerprint"),
+            "strategy": (transcript or {}).get("transcription_strategy") if isinstance(transcript, dict) else None,
+            "timing_repair": (transcript or {}).get("timing_repair") if isinstance(transcript, dict) else None,
+        },
+        "prosody": {
+            **_clock_range_for_rows((prosody or {}).get("cues") if isinstance(prosody, dict) else []),
+            "status": (prosody or {}).get("status") if isinstance(prosody, dict) else None,
+        },
+        "audio_diarization": {
+            **_clock_range_for_rows((diarization or {}).get("speaker_turns") if isinstance(diarization, dict) else []),
+            "status": (diarization or {}).get("status") if isinstance(diarization, dict) else None,
+            "fingerprint": (diarization or {}).get("diarization_fingerprint") if isinstance(diarization, dict) else None,
+            "timing_contract": (diarization or {}).get("timing_contract") if isinstance(diarization, dict) else None,
+            "is_stale": diarization_health.get("is_stale"),
+            "stale_reason": diarization_health.get("stale_reason"),
+            "valid_for_confirmation_rows": sum(
+                1
+                for turn in ((diarization or {}).get("speaker_turns") or [])
+                if isinstance(turn, dict) and turn.get("valid_for_confirmation") and not turn.get("is_stale")
+            ),
+        },
+        "audio_sample_clouds": {
+            **_clock_range_for_rows(sample_rows),
+            "status": (sample_clouds or {}).get("status") if isinstance(sample_clouds, dict) else None,
+            "fingerprint": (sample_clouds or {}).get("diarization_fingerprint") if isinstance(sample_clouds, dict) else None,
+            "is_stale": bool((sample_clouds or {}).get("is_stale")) if isinstance(sample_clouds, dict) else None,
+            "stale_reason": (sample_clouds or {}).get("stale_reason") if isinstance(sample_clouds, dict) else None,
+            "valid_for_confirmation_rows": sum(
+                1
+                for sample in sample_rows
+                if sample.get("valid_for_confirmation") and not sample.get("is_stale")
+            ),
+        },
+    }
+
+
+@app.get("/api/analysis/{analysis_id}/audio-timing-health", response_model=dict)
+async def get_audio_timing_health(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return make_json_safe(build_audio_timing_health_report(status))
+
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -8092,6 +9074,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "live_mature_data_proliferation_audit": status.get(
             "live_mature_data_proliferation_audit"
         ),
+        "audio_event_intervals": (status.get("results", {}).get("audio_analysis", {}) or {}).get("audio_event_intervals"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -8109,6 +9092,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         results = status.get("results") or {}
         output_files = status.get("output_files", {})
         transcript_timing_repair_before = status.get("transcript_timing_repair")
+        authoritative_transcript_selected = prefer_authoritative_transcript_artifact(status)
         transcript_timing_repaired = repair_transcript_timing_if_needed(status)
         transcript_timing_repair_state = status.get("transcript_timing_repair")
         transcript_timing_repair_changed = (
@@ -8121,6 +9105,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         visual_time_bank_regenerated = regenerate_time_bank_visual_artifacts_if_needed(status)
         iterative_artifacts_created = write_iterative_derived_artifacts_for_status(status)
         if (
+            authoritative_transcript_selected
+            or
             transcript_timing_repaired
             or transcript_timing_repair_changed
             or
@@ -8231,6 +9217,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["spatial_tone_scan"] = va.get("spatial_tone_scan", {})
             response_data["summary"]["motion_evidence"] = va.get("motion_evidence", {})
             response_data["summary"]["scene_segments"] = va.get("scene_segments", {})
+            response_data["summary"]["shot_boundaries"] = va.get("shot_boundaries", {})
             response_data["summary"]["expression_samples"] = len(va.get("expression_results", []))
             response_data["summary"]["expression_status"] = va.get(
                 "expression_status", "not_run"
@@ -8252,6 +9239,19 @@ async def get_analysis_status(analysis_id: str) -> dict:
             )
             response_data["summary"]["audio_prosody_cues"] = len(
                 aa.get("audio_prosody", {}).get("cues", [])
+            )
+            audio_events = aa.get("audio_event_intervals") or (
+                aa.get("audio_prosody", {}).get("audio_event_intervals", {})
+                if isinstance(aa.get("audio_prosody"), dict)
+                else {}
+            )
+            response_data["summary"]["audio_event_intervals"] = len(
+                audio_events.get("intervals", []) if isinstance(audio_events, dict) else []
+            )
+            response_data["summary"]["audio_event_ratios"] = (
+                audio_events.get("summary", {}).get("ratios", {})
+                if isinstance(audio_events, dict)
+                else {}
             )
             response_data["summary"]["audio_sample_clouds"] = (
                 aa.get("audio_sample_clouds", {}).get("cloud_count", 0)
@@ -8605,6 +9605,10 @@ async def download_file(analysis_id: str, file_type: str):
 
     if status["status"] != "completed":
         raise HTTPException(status_code=400, detail="Analysis not completed")
+
+    if file_type == "transcript":
+        if prefer_authoritative_transcript_artifact(status):
+            persist_analysis_record_for_status(status)
     
     output_files = status.get("output_files", {})
     
@@ -8621,6 +9625,7 @@ async def download_file(analysis_id: str, file_type: str):
         "transcript": ("transcript.json", "application/json"),
         "linked_transcript": ("linked_transcript.json", "application/json"),
         "audio_prosody": ("audio_prosody.json", "application/json"),
+        "audio_event_intervals": ("audio_event_intervals.json", "application/json"),
         "audio_diarization": ("audio_diarization.json", "application/json"),
         "audio_sample_clouds": ("audio_sample_clouds.json", "application/json"),
         "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
@@ -8722,6 +9727,7 @@ async def download_bundle(analysis_id: str):
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
+        "audio_event_intervals": "audio_event_intervals.json",
         "audio_diarization": "audio_diarization.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
@@ -8808,6 +9814,7 @@ def build_project_bundle_file(payload: Dict[str, Any]) -> Dict[str, Any]:
         "transcript": "transcript.json",
         "linked_transcript": "linked_transcript.json",
         "audio_prosody": "audio_prosody.json",
+        "audio_event_intervals": "audio_event_intervals.json",
         "audio_diarization": "audio_diarization.json",
         "audio_sample_clouds": "audio_sample_clouds.json",
         "identity_triangulation": "identity_triangulation_bundle.json",
@@ -9816,6 +10823,11 @@ async def refresh_pos_analysis(
         for segment in transcript_segments
         if isinstance(segment, dict) and str(segment.get("text", "")).strip()
     ).strip()
+    timing_transcript = {
+        "segments": transcript_segments,
+        "transcription_strategy": payload.get("transcription_strategy")
+        or "manual_correction",
+    }
 
     if not transcript_text:
         transcript_path_raw = output_files.get("transcript")
@@ -9834,6 +10846,7 @@ async def refresh_pos_analysis(
                     or (transcript_data.get("language_info") or {}).get("code")
                     or language_code
                 )
+                timing_transcript = transcript_data
             except Exception as exc:
                 raise HTTPException(
                     status_code=400,
@@ -9847,6 +10860,10 @@ async def refresh_pos_analysis(
         )
 
     pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
+    pos_result["transcript_timing_authority"] = build_transcript_timing_authority(
+        timing_transcript
+    )
+    pos_result["source_transcript_clock"] = "operational_transcript"
 
     pos_path_raw = output_files.get("pos_analysis")
     if pos_path_raw:

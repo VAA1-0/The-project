@@ -1,4 +1,5 @@
 import importlib.util
+import ast
 import unittest
 from pathlib import Path
 
@@ -42,6 +43,25 @@ class DiarizationAdapterContractTest(unittest.TestCase):
         )
 
         self.assertEqual(payload["provider"], "diart")
+
+    def test_measured_writer_accepts_reference_speakers_contract(self):
+        project_root = Path(__file__).resolve().parents[1]
+        source_path = project_root / "src/backend/analysis/audio_diarization.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+        for name in ("build_audio_diarization", "write_audio_diarization"):
+            self.assertIn(name, functions)
+            keyword_names = [arg.arg for arg in functions[name].args.kwonlyargs]
+            self.assertIn(
+                "reference_speakers",
+                keyword_names,
+                f"{name} must accept API-provided reference speakers without crashing",
+            )
 
 
 if __name__ == "__main__":

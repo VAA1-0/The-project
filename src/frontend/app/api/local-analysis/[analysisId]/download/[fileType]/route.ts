@@ -43,6 +43,90 @@ async function readRecord(analysisId: string) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
+function transcriptPayloadHasTimingAuthority(payload: any): boolean {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  if (payload.transcription_strategy === "anchored_vad_timing_repair") {
+    return true;
+  }
+  const timingRepair = payload.timing_repair;
+  if (
+    timingRepair &&
+    typeof timingRepair === "object" &&
+    (timingRepair.reason === "degraded_scaffold_clock_repaired_with_anchored_vad_timing" ||
+      timingRepair.strategy === "anchored_vad_timing_repair")
+  ) {
+    return true;
+  }
+  const segments = Array.isArray(payload.segments) ? payload.segments : [];
+  return segments.some((segment: any) => {
+    if (!segment || typeof segment !== "object") {
+      return false;
+    }
+    return (
+      segment.timing_authority === "anchored_vad_timing_repair" ||
+      segment.timing_authority === "quick_sweep_transcript" ||
+      [
+        "anchor_verified",
+        "vad_anchor_verified",
+        "anchored_offset",
+        "automatic_transcript_timestamp",
+      ].includes(segment.timing_status)
+    );
+  });
+}
+
+async function readJsonIfAvailable(rawPath?: string | null) {
+  if (!rawPath) {
+    return null;
+  }
+  try {
+    const filePath = safeProjectPath(rawPath);
+    return JSON.parse(await fs.readFile(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function authoritativeTranscriptPath(record: any, currentOutputPath?: string) {
+  const candidates: string[] = [];
+  const outputTranscript = record?.output_files?.transcript;
+  if (typeof outputTranscript === "string") {
+    candidates.push(outputTranscript);
+  }
+
+  const sourceVideoPath = record?.source_video_path;
+  if (typeof sourceVideoPath === "string") {
+    const sourceDir = path.dirname(sourceVideoPath);
+    const sourceStem = path.basename(sourceVideoPath).replace(/_source_video\.[^.]+$/, "");
+    candidates.push(path.join(sourceDir, `${sourceStem}_transcript.json`));
+  }
+
+  if (typeof currentOutputPath === "string") {
+    candidates.push(
+      currentOutputPath.replace(
+        /transcripts\/(.+)_extracted_audio_transcript\.json$/,
+        "$1_transcript.json",
+      ),
+    );
+    candidates.push(
+      currentOutputPath.replace(
+        /_extracted_audio_transcript\.json$/,
+        "_transcript.json",
+      ),
+    );
+  }
+
+  for (const candidate of candidates) {
+    const payload = await readJsonIfAvailable(candidate);
+    if (transcriptPayloadHasTimingAuthority(payload)) {
+      return candidate;
+    }
+  }
+  return currentOutputPath;
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ analysisId: string; fileType: string }> },
@@ -50,9 +134,12 @@ export async function GET(
   const { analysisId, fileType } = await params;
   try {
     const record = await readRecord(analysisId);
-    const outputPath = record.output_files?.[fileType];
+    let outputPath = record.output_files?.[fileType];
     if (!outputPath) {
       return NextResponse.json({ detail: "File not found" }, { status: 404 });
+    }
+    if (fileType === "transcript") {
+      outputPath = await authoritativeTranscriptPath(record, outputPath);
     }
 
     const filePath = safeProjectPath(outputPath);

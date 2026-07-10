@@ -38,9 +38,13 @@ const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const dataMaturationPanel = read("app/V2components/components/panels/DataMaturationPanel.tsx");
 const statsKitPanel = read("app/V2components/components/panels/StatsKitPanel.tsx");
+const audioPanel = read("app/V2components/components/panels/AudioPanel.tsx");
 const adminObservabilityPanel = read("app/V2components/components/panels/AdminObservabilityPanel.tsx");
 const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
 const tracebackDrawerPanel = read("app/V2components/components/panels/TracebackDrawerPanel.tsx");
+const localAnalysisDownloadRoute = read(
+  "app/api/local-analysis/[analysisId]/download/[fileType]/route.ts",
+);
 const secondOrderAffirmations = read(
   "app/V2components/components/panels/SecondOrderLabelAffirmations.tsx",
 );
@@ -918,8 +922,8 @@ test("detection and analysis panels use shared VAA1 video seek navigation", () =
 test("Transcript panel text words remain linked to source video time", () => {
   assert.match(
     speechPanel,
-    /const openTranscriptRowAtSourceTime = \(row: any\) => \{[\s\S]*openVideoAtTime\(videoId, Number\(row\?\.start \?\? 0\)\);[\s\S]*\};/,
-    "Transcript panel must centralize transcript row navigation through the shared video seek helper",
+    /const openTranscriptRowAtSourceTime = \(row: any\) => \{[\s\S]*!rowHasTimingAuthority\(row\)[\s\S]*const start = Number\(row\?\.start\);[\s\S]*Number\.isFinite\(start\)[\s\S]*openVideoAtTime\(videoId, start\);[\s\S]*\};/,
+    "Transcript panel must centralize transcript row navigation through the shared video seek helper only after source timing is valid",
   );
   assert.match(
     speechPanel,
@@ -946,16 +950,56 @@ test("Transcript panel surfaces degraded backend timing repair state", () => {
   );
 });
 
-test("Audio prosody follows corrected transcript operational clock", () => {
+test("Audio prosody follows corrected transcript operational clock without double-shifting repaired timing", () => {
   assert.match(
     videoService,
-    /function applyTranscriptClockOffsetToAudioProsody\([\s\S]*transcript_clock_offset_seconds[\s\S]*cue[\s\S]*start[\s\S]*sourceStart \+ offset[\s\S]*end[\s\S]*sourceEnd \+ offset/,
-    "audio prosody cues must follow the same correction offset as Transcript rows",
+    /function shouldApplyTranscriptClockOffset\(transcript: TranscriptSegment\[\]\): boolean \{[\s\S]*return !transcript\.some\(segmentHasRepairedTimingAuthority\)/,
+    "frontend must skip the legacy global offset when transcript rows already carry repaired timing authority",
   );
   assert.match(
     videoService,
-    /const correctedAudioProsody =[\s\S]*applyTranscriptClockOffsetToAudioProsody\(audioProsodyData\.value, corrections\)/,
-    "loaded analysis data must expose offset-corrected audio prosody cues",
+    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*anchored_vad_timing_repair[\s\S]*vad_anchor_verified/,
+    "anchored and VAD-verified repair rows must be treated as already clock-corrected",
+  );
+  assert.doesNotMatch(
+    videoService,
+    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*inherited_after_vad_anchor/,
+    "inherited VAD projection rows must not be treated as source timing authority",
+  );
+  assert.match(
+    videoService,
+    /function applyTranscriptClockOffsetToAudioProsody\([\s\S]*transcript: TranscriptSegment\[\] = \[\][\s\S]*if \(!shouldApplyTranscriptClockOffset\(transcript\)\) \{[\s\S]*return cues/,
+    "audio prosody cues must not be shifted again when regenerated from repaired transcript timing",
+  );
+  assert.match(
+    videoService,
+    /const correctedAudioProsody =[\s\S]*applyTranscriptClockOffsetToAudioProsody\([\s\S]*audioProsodyData\.value,[\s\S]*corrections,[\s\S]*correctedTranscript/,
+    "loaded analysis data must pass transcript timing authority into audio prosody normalization",
+  );
+  assert.match(
+    videoService,
+    /transcriptTimingRepairCacheKey\(status\)[\s\S]*cached\.transcriptTimingRepairKey[\s\S]*transcriptTimingRepairKey: timingRepairCacheKey/,
+    "analysis cache must invalidate when backend transcript timing repair state changes",
+  );
+  assert.match(
+    videoService,
+    /rawTranscriptPayloadLooksLikeScaffold[\s\S]*index \* 2[\s\S]*Authoritative local transcript fallback failed/,
+    "transcript loading must reject a successful stale 0,2,4,6 scaffold payload and try the authoritative local artifact",
+  );
+  assert.match(
+    localAnalysisDownloadRoute,
+    /authoritativeTranscriptPath[\s\S]*transcriptPayloadHasTimingAuthority[\s\S]*fileType === "transcript"/,
+    "local transcript download route must also prefer authoritative repaired timing over stale scaffold artifacts",
+  );
+  assert.match(
+    speechPanel,
+    /transcriptRowsLookLikeScaffold[\s\S]*loadAuthoritativeTranscriptRows[\s\S]*rejected scaffold transcript rows; surfaced anchored_vad_timing_repair artifact/,
+    "Transcript panel must replace stale scaffold rows with the authoritative repaired transcript before rendering",
+  );
+  assert.match(
+    speechPanel,
+    /transcriptSourceBlocked[\s\S]*Scaffold transcript timing rejected[\s\S]*spoken rows at 0,2,4,6 seconds are not displayed/,
+    "Transcript panel must not render spoken scaffold rows if a stale source still reaches the component",
   );
 });
 
@@ -1759,7 +1803,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /shot duration distributions[\s\S]*speech\/silence\/noise\/music ratios[\s\S]*music intensity x emotion[\s\S]*brightness distributions[\s\S]*speaker dominance/,
+    /shot duration distributions[\s\S]*speech\/silence\/noise\/music ratios[\s\S]*music intensity x expression[\s\S]*brightness distributions[\s\S]*speaker dominance/,
     "StatsKit delivery plan must connect missing layers to StatsKit, SignificanceKit, and RelevanceRadar outputs",
   );
 
@@ -1779,6 +1823,66 @@ test("Narrative Agent panel owns Character Paths home", () => {
     statsKitPanel,
     /data-vaa1-statskit-workbench-table-uses-panel-height="true"/,
     "StatsKit workbench table must use the visible panel height instead of an artificially short inner scroll area",
+  );
+
+  assert.match(
+    audioPanel,
+    /data-vaa1-panel="audio-workbench"[\s\S]*data-vaa1-audio-section="speech-diarization"[\s\S]*data-vaa1-audio-section="prosody"[\s\S]*data-vaa1-audio-section="music-sound"[\s\S]*data-vaa1-audio-section="lyrics"[\s\S]*data-vaa1-audio-section="foley-sampling"[\s\S]*data-vaa1-audio-section="recognition-governance"/,
+    "Audio panel must be a multi-section workbench for speech, prosody, music, lyrics, foley sampling, and recognition governance",
+  );
+
+  assert.match(
+    audioPanel,
+    /eventBus\.emit\("videoTimeLineChanged"[\s\S]*jumpTo\(event\.start, \{ analysisId[\s\S]*jumpTo\(cue\.start, \{ analysisId/,
+    "Audio workbench rows must navigate the source video through the shared timeline event",
+  );
+
+  assert.match(
+    audioPanel,
+    /audioEventsFromStatus[\s\S]*audio_prosody[\s\S]*music_lyrics_analysis[\s\S]*audio_sample_clouds/,
+    "Audio workbench must surface event intervals, prosody, music/lyrics, and audio recognition sample layers",
+  );
+
+  assert.match(
+    audioPanel,
+    /sampleCloudRowsFromStatus[\s\S]*audio_sample_clouds[\s\S]*license-free transcript only[\s\S]*data-vaa1-audio-source-media-link="true"/,
+    "Audio workbench must expose source media traceability and sample-cloud fallbacks instead of mute empty sections",
+  );
+
+  assert.match(
+    audioPanel,
+    /VideoService\.getAnalysis[\s\S]*transcriptRowsFromAnalysisData[\s\S]*transcriptTimingAudit[\s\S]*data-vaa1-audio-waveform-strip="true"/,
+    "Audio workbench must pull transcript rows, audit timing maturity, and expose an energy/waveform strip",
+  );
+
+  assert.match(
+    audioPanel,
+    /audioEventsFromMatureTranscript[\s\S]*global anchor only[\s\S]*per-line sync needed[\s\S]*speaker diarization label only[\s\S]*alignSampleRowsToTranscript[\s\S]*prosodyCuesFromAnalysisData/,
+    "Audio workbench must distinguish a reliable first-speech anchor from source-locked per-line timing",
+  );
+
+  assert.match(
+    audioPanel,
+    /data-vaa1-audio-timing-audit="global-anchor-only"[\s\S]*rows share one duration pattern[\s\S]*coverage/,
+    "Audio workbench must visibly warn when transcript rows are scaffolded or degraded after a global clock offset",
+  );
+
+  assert.match(
+    audioPanel,
+    /knownNarrativeAgentOptions[\s\S]*narrative_agent_profiles[\s\S]*character_definitions[\s\S]*character_roles[\s\S]*reference_speakers[\s\S]*Confirm as known narrative agent/,
+    "Audio workbench narrative-agent confirmations must use the pre-existing known character / narrative-agent pool",
+  );
+
+  assert.match(
+    audioPanel,
+    /upsertMasterSchemaPresenceIntervalForManualAnnotation[\s\S]*data-vaa1-audio-row-actions="true"[\s\S]*persistAudioDecision\(target, "agent", label\)/,
+    "Audio workbench rows must be confirmable as narrative-agent evidence and feed the Master Schema feedback loop",
+  );
+
+  assert.match(
+    audioPanel,
+    /data-vaa1-audio-foley-sampling="true"[\s\S]*gun shot[\s\S]*laughter[\s\S]*roar[\s\S]*applause\/applauds[\s\S]*proliferating labels across the data array/,
+    "Audio workbench must expose reviewed foley sampling candidates for local proliferation workflows",
   );
 
   assert.match(
@@ -1959,6 +2063,54 @@ test("Narrative Agent panel owns Character Paths home", () => {
     statsKitPanel,
     /data-vaa1-significance-workbench-row="true"[\s\S]*data-vaa1-significance-workbench-inspector="true"[\s\S]*SignificanceClaim\.scope \/ perspective \/ significance_vector \/ evidence_support/,
     "Significance workbench rows must be selectable and inspect the actual SignificanceClaim schema paths",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-comparison-studio-workflow="true"[\s\S]*setStudioStep\(step\)[\s\S]*data-vaa1-statskit-active-studio-step=\{studioStep\}/,
+    "StatsKit Comparison Studio workflow buttons must switch an active operational studio step, not only highlight labels",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-matrix-step-workspace="true"[\s\S]*data-vaa1-statskit-quality-step-workspace="true"[\s\S]*data-vaa1-statskit-analyses-step-workspace="true"[\s\S]*data-vaa1-statskit-diagnostics-step-workspace="true"[\s\S]*data-vaa1-statskit-variants-step-workspace="true"/,
+    "StatsKit Comparison Studio matrix, quality, analyses, diagnostics, and variants steps must render distinct active workspaces",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /Define corpus[\s\S]*Define unit of analysis[\s\S]*Select variables[\s\S]*Build feature matrix[\s\S]*Inspect data quality[\s\S]*Run analyses[\s\S]*Inspect diagnostics[\s\S]*Compare variants[\s\S]*Interpret results[\s\S]*Trace back to source[\s\S]*Export reproducible package/,
+    "StatsKit Comparison Studio active step workspace must expose distinct functional content for every workflow step",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /visualizationTarget === "comparison"[\s\S]*<option value="comparison">Comparison studio<\/option>/,
+    "StatsKit Comparison Studio must be available as a visualization target for comparison outputs",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /statLabel: "expressions detected"[\s\S]*Master Schema expression audit/,
+    "StatsKit must report expression evidence as expressions, not unsupported emotion detection",
+  );
+
+  assert.doesNotMatch(
+    statsKitPanel,
+    /statLabel: "emotions detected"/,
+    "StatsKit must not label expression evidence as emotion detection",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /speakerNames\.size > 1 \? speakerNames\.size : 0[\s\S]*Only one transcript speaker label is visible; treated as an unresolved transcript proxy/,
+    "StatsKit speaker counts must not accept a single transcript speaker label as mature speaker recognition",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-interpretation-step-workspace="true"[\s\S]*Analysis interpretation[\s\S]*Interpretation support[\s\S]*data-vaa1-statskit-traceback-step-workspace="true"[\s\S]*Traceback graph[\s\S]*datascene:\/\/analysis\/\$\{row\.analysisId\}\/statskit/,
+    "StatsKit Comparison Studio interpretation and traceback steps must expose distinct claim and provenance workspaces",
   );
 
   assert.doesNotMatch(

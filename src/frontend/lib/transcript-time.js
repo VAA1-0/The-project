@@ -46,20 +46,27 @@ function transcriptTimeFromFields(segment, secondsKeys, millisecondsKeys) {
 
 export function normalizeTranscriptSegmentTiming(segment) {
   const source = segment && typeof segment === "object" ? segment : {};
-  const start =
-    transcriptTimeFromFields(
-      source,
-      ["start_seconds", "start", "timestamp_seconds", "timestamp", "time_seconds", "time"],
-      ["start_ms", "timestamp_ms", "time_ms"],
-    ) ?? 0;
+  const start = transcriptTimeFromFields(
+    source,
+    ["start_seconds", "start", "timestamp_seconds", "timestamp", "time_seconds", "time"],
+    ["start_ms", "timestamp_ms", "time_ms"],
+  );
   const rawEnd = transcriptTimeFromFields(
     source,
     ["end_seconds", "end", "end_timestamp_seconds", "end_timestamp"],
     ["end_ms", "end_timestamp_ms"],
   );
-  const end = rawEnd ?? start;
-  const normalizedStart = Math.max(0, Math.min(start, end));
-  const normalizedEnd = Math.max(normalizedStart, Math.max(start, end));
+  if (start === null && rawEnd === null) {
+    return {
+      t: "0.0s",
+      start: 0,
+      end: 0,
+    };
+  }
+  const safeStart = start ?? rawEnd ?? 0;
+  const end = rawEnd ?? safeStart;
+  const normalizedStart = Math.max(0, Math.min(safeStart, end));
+  const normalizedEnd = Math.max(normalizedStart, Math.max(safeStart, end));
   return {
     t: `${normalizedStart.toFixed(1)}s`,
     start: normalizedStart,
@@ -69,9 +76,12 @@ export function normalizeTranscriptSegmentTiming(segment) {
 
 export function applyTranscriptClockOffset(segment, offsetSeconds) {
   const source = segment && typeof segment === "object" ? segment : {};
+  const offset = Number(offsetSeconds || 0);
+  if (!Number.isFinite(offset) || offset === 0) {
+    return { ...source };
+  }
   const sourceStart = Number(source.sourceStart ?? source.start ?? 0);
   const sourceEnd = Number(source.sourceEnd ?? source.end ?? sourceStart);
-  const offset = Number(offsetSeconds || 0);
   const start = Math.max(0, sourceStart + offset);
   const end = Math.max(start, sourceEnd + offset);
   return {

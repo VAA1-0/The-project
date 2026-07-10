@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
+import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 
 function formatSpeechSeconds(value?: number | null): string {
   const safe = Number(value ?? 0);
@@ -41,6 +42,111 @@ function formatSpeechSeconds(value?: number | null): string {
   const minutes = Math.floor(clamped / 60);
   const seconds = clamped - minutes * 60;
   return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
+}
+
+function rowHasTimingAuthority(row: any): boolean {
+  const timingStatus = String(row?.timingStatus || row?.timing_status || "").trim();
+  const timingAuthority = String(row?.timingAuthority || row?.timing_authority || "").trim();
+  return (
+    timingAuthority === "manual_correction" ||
+    timingAuthority === "original_whisper_timecode" ||
+    timingAuthority === "full_pass" ||
+    timingAuthority === "anchored_vad_timing_repair" ||
+    timingAuthority === "vad_anchor_verified" ||
+    [
+      "manual_correction",
+      "original_whisper_timecode",
+      "anchored_vad_timing_repair",
+      "vad_anchor_verified",
+    ].includes(timingStatus)
+  );
+}
+
+function transcriptPayloadDeclaresOperationalWhisperClock(payload: any): boolean {
+  const timingAuthority = payload?.timing_authority || payload?.timingAuthority || {};
+  const operationalAuthority = String(
+    timingAuthority?.operational_authority || timingAuthority?.operationalAuthority || "",
+  );
+  return (
+    operationalAuthority === "original_whisper_timecode" ||
+    operationalAuthority === "manual_correction" ||
+    operationalAuthority === "manual_correction_for_verified_rows"
+  );
+}
+
+function transcriptRowsLookLikeScaffold(rows: any[] = []): boolean {
+  const utterances = rows.filter((row) => {
+    const text = String(row?.text || "").trim();
+    return (
+      text &&
+      !text.startsWith("[Unresolved") &&
+      row?.segmentType !== "unresolved_interval" &&
+      row?.segment_type !== "unresolved_interval"
+    );
+  });
+  if (utterances.some(rowHasTimingAuthority) || utterances.length < 4) {
+    return false;
+  }
+  return utterances.slice(0, 4).every((row, index) => {
+    const start = Number(row?.start ?? row?.start_seconds ?? 0);
+    return Number.isFinite(start) && Math.abs(start - index * 2) <= 0.01;
+  });
+}
+
+function transcriptPayloadHasTimingAuthority(payload: any): boolean {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  if (transcriptPayloadDeclaresOperationalWhisperClock(payload)) {
+    return true;
+  }
+  const segments = Array.isArray(payload.segments) ? payload.segments : [];
+  return segments.some(rowHasTimingAuthority);
+}
+
+function normalizeTranscriptPayloadRows(rows: any[] = []) {
+  return rows.map((row) => {
+    const timing = normalizeTranscriptSegmentTiming(row || {});
+    return {
+      ...timing,
+      text: row?.text || "",
+      rawText: row?.raw_text || row?.rawText || row?.text || "",
+      speaker: row?.speaker || row?.speaker_label || "Speaker 1",
+      sourceStart: Number(row?.source_start ?? row?.sourceStart ?? timing.start),
+      sourceEnd: Number(row?.source_end ?? row?.sourceEnd ?? timing.end),
+      segmentType: row?.segment_type || row?.segmentType || "utterance",
+      synthetic: Boolean(row?.synthetic),
+      timingStatus: row?.timing_status || row?.timingStatus,
+      timingAuthority: row?.timing_authority || row?.timingAuthority,
+      timingSource: row?.timing_source || row?.timingSource,
+      sourceTimingStatus: row?.source_timing_status || row?.sourceTimingStatus,
+      sourceTimeValid: row?.source_time_valid ?? row?.sourceTimeValid,
+      status: row?.status,
+      correctionSource: row?.correctionSource || "transcript",
+      targetId: row?.targetId,
+    };
+  });
+}
+
+async function loadAuthoritativeTranscriptRows(videoId: string) {
+  const noCacheToken = Date.now().toString(36);
+  const response = await fetch(
+    `/api/local-analysis/${videoId}/download/transcript?_=${noCacheToken}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const payload = await response.json();
+  if (!transcriptPayloadHasTimingAuthority(payload)) {
+    return null;
+  }
+  return {
+    transcript: normalizeTranscriptPayloadRows(payload.segments || []),
+    transcriptTimeline: normalizeTranscriptPayloadRows(
+      payload.timeline_segments || payload.segments || [],
+    ),
+  };
 }
 
 type TranscriptEditorDraft = {
@@ -149,11 +255,28 @@ export default function SpeechToTextPanel({
           setVideoUrl(null);
         }
 
-        // Load analysis data
+        // Load analysis data and hard-stop stale scaffold transcript clocks before rendering.
         const analysis = await VideoService.getAnalysis(videoId);
+        let displayAnalysis = analysis;
+        const analysisRows = analysis.transcript ?? analysis.transcriptTimeline ?? [];
+        if (transcriptRowsLookLikeScaffold(analysisRows)) {
+          const authoritativeRows = await loadAuthoritativeTranscriptRows(videoId);
+          if (authoritativeRows) {
+            displayAnalysis = {
+              ...analysis,
+              transcript: authoritativeRows.transcript,
+              transcriptTimeline: authoritativeRows.transcriptTimeline,
+              metadata: {
+                ...((analysis.metadata || {}) as Record<string, unknown>),
+                transcriptSourceDecision:
+                  "rejected scaffold transcript rows; surfaced anchored_vad_timing_repair artifact",
+              },
+            } as unknown as typeof analysis;
+          }
+        }
 
-        setAnalysisData(analysis);
-        setRawCsv(analysis.rawCsv || null);
+        setAnalysisData(displayAnalysis);
+        setRawCsv(displayAnalysis.rawCsv || null);
       } catch (err) {
         console.error("Failed to load data:", err);
         setBlobMissing(true);
@@ -166,7 +289,21 @@ export default function SpeechToTextPanel({
   }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to empty arrays if not available)
-  const transcript = analysisData?.transcriptTimeline ?? analysisData?.transcript ?? [];
+  const rawTranscript =
+    panelMode === "audio"
+      ? analysisData?.transcriptTimeline ?? analysisData?.transcript ?? []
+      : analysisData?.transcript ?? analysisData?.transcriptTimeline ?? [];
+  const transcriptSourceBlocked = transcriptRowsLookLikeScaffold(rawTranscript);
+  const transcript = transcriptSourceBlocked
+    ? rawTranscript.filter((row: any) => {
+        const text = String(row?.text || "").trim();
+        return (
+          text.startsWith("[Unresolved") ||
+          row?.segmentType === "unresolved_interval" ||
+          row?.segment_type === "unresolved_interval"
+        );
+      })
+    : rawTranscript;
   const transcriptClockOffset = Number(
     analysisData?.annotationCorrections?.transcript_clock_offset_seconds || 0,
   );
@@ -585,10 +722,16 @@ export default function SpeechToTextPanel({
   };
 
   const openTranscriptRowAtSourceTime = (row: any) => {
-    if (!videoId || row?.synthetic) {
+    if (!videoId || row?.synthetic || !rowHasTimingAuthority(row)) {
+      setEditorMessage("This transcript row is text-only until per-line source timing is verified.");
       return;
     }
-    openVideoAtTime(videoId, Number(row?.start ?? 0));
+    const start = Number(row?.start);
+    if (!Number.isFinite(start)) {
+      setEditorMessage("This transcript row does not have a valid source timestamp.");
+      return;
+    }
+    openVideoAtTime(videoId, start);
   };
 
   const saveTranscriptEditor = async () => {
@@ -770,6 +913,11 @@ export default function SpeechToTextPanel({
                     Clock offset {formatSpeechSeconds(transcriptClockOffset)}.
                     To correct drift, pause video at the spoken line and use Sync clock on that transcript row.
                   </div>
+                  {transcriptSourceBlocked ? (
+                    <div className="mt-2 rounded border border-rose-500/30 bg-rose-950/20 px-2 py-1 text-[11px] text-rose-100">
+                      Scaffold transcript timing rejected: spoken rows at 0,2,4,6 seconds are not displayed.
+                    </div>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -1176,6 +1324,7 @@ export default function SpeechToTextPanel({
               ) : (
                 transcript.map((row: any) => {
                   const isSynthetic = Boolean(row.synthetic);
+                  const hasSourceTiming = rowHasTimingAuthority(row);
                   const segmentLabel =
                     row.segmentType === "manual_entry"
                       ? "Manual marker"
@@ -1215,7 +1364,11 @@ export default function SpeechToTextPanel({
                       ) : (
                         <div className="flex items-center gap-2">
                           <div className="rounded border border-white/8 bg-[#121212] px-2 py-1 text-[10px] text-slate-400">
-                            {row.status === "unconfirmed" ? "Unconfirmed" : "Confirmed"}
+                            {!hasSourceTiming
+                              ? "Needs timing"
+                              : row.status === "unconfirmed"
+                                ? "Unconfirmed"
+                                : "Confirmed"}
                           </div>
                           <button
                             type="button"
@@ -1223,6 +1376,7 @@ export default function SpeechToTextPanel({
                               event.stopPropagation();
                               syncTranscriptClockToRow(row);
                             }}
+                            disabled={!hasSourceTiming}
                             className="rounded border border-sky-500/20 bg-sky-950/20 px-2 py-1 text-[10px] text-sky-100 hover:bg-sky-900/30"
                           >
                             Sync clock

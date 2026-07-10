@@ -50,6 +50,8 @@
 - CVAT annotation flow still needs a dedicated troubleshooting pass
 - timeline indicators for video review are not yet implemented
 - tracing / timestamp regime is still pending across lenses, especially for later triangulation and navigability
+- time-based linking now has a dedicated known-complications register and must be treated as release-critical before any transcript, POS, Quant, Audio, Master Schema, StatsKit, Traceback, or saved-work import changes:
+  - `docs/vaa1_time_based_linking_known_complications_2026-07-10.md`
 - `General Matrix` for multimodal comparison does not exist yet; only `Quant matrix` is scaffolded
 - scene/environment detection is still missing as its own layer, which is why indicative context labels such as building, forest/canopy, classroom, or city setup are not yet available through the current object stack
 - OCR is now calmer in the UI, but still needs a dedicated calibration pass:

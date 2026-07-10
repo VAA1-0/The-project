@@ -341,6 +341,193 @@ def _sound_environment_label(
     return "ambient sound"
 
 
+def _audio_duration_seconds(mono_pcm: bytes, sample_rate: int, sample_width: int) -> float:
+    if sample_rate <= 0 or sample_width <= 0:
+        return 0.0
+    return len(mono_pcm) / float(sample_rate * sample_width)
+
+
+def _interval_overlap_seconds(
+    left_start: float,
+    left_end: float,
+    right_start: float,
+    right_end: float,
+) -> float:
+    return max(0.0, min(left_end, right_end) - max(left_start, right_start))
+
+
+def _has_transcript_overlap(
+    start_s: float,
+    end_s: float,
+    transcript_segments: Sequence[Dict[str, Any]],
+) -> bool:
+    for segment in transcript_segments:
+        segment_start = float(segment.get("start") or 0.0)
+        segment_end = float(segment.get("end") or segment_start)
+        if _interval_overlap_seconds(start_s, end_s, segment_start, segment_end) >= 0.08:
+            return True
+    return False
+
+
+def _audio_event_type(
+    environment_label: str,
+    *,
+    has_transcript: bool,
+    energy_dbfs: Optional[float],
+    zero_crossing_rate: float,
+) -> Tuple[str, float]:
+    label = environment_label.lower()
+    if has_transcript and energy_dbfs is not None and energy_dbfs > -45:
+        return "speech", 0.86
+    if energy_dbfs is None or energy_dbfs <= -42:
+        return "silence", 0.88
+    if "music" in label:
+        return "music", 0.74
+    if any(token in label for token in ("noise", "crowd", "street", "traffic", "ambience", "ambient")):
+        return "noise", 0.68
+    if zero_crossing_rate >= 0.2:
+        return "noise", 0.62
+    return "noise", 0.52
+
+
+def _merge_audio_event_intervals(intervals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not intervals:
+        return []
+
+    merged: List[Dict[str, Any]] = []
+    for interval in intervals:
+        if not merged:
+            merged.append({**interval})
+            continue
+        previous = merged[-1]
+        if (
+            previous.get("event_type") == interval.get("event_type")
+            and float(interval.get("start", 0.0)) - float(previous.get("end", 0.0)) <= 0.08
+        ):
+            previous["end"] = interval["end"]
+            previous["duration"] = round(
+                float(previous["end"]) - float(previous["start"]),
+                3,
+            )
+            previous["confidence"] = round(
+                (float(previous.get("confidence", 0.0)) + float(interval.get("confidence", 0.0))) / 2.0,
+                3,
+            )
+            previous.setdefault("classifier_labels", [])
+            previous["classifier_labels"].extend(interval.get("classifier_labels") or [])
+            continue
+        merged.append({**interval})
+
+    for index, interval in enumerate(merged, start=1):
+        interval["interval_id"] = f"audio-event-{index:04d}"
+        labels = interval.get("classifier_labels") or []
+        interval["classifier_labels"] = sorted(set(str(label) for label in labels if label))
+    return merged
+
+
+def _build_audio_event_intervals(
+    mono_pcm: bytes,
+    window: AudioWindow,
+    transcript_segments: Sequence[Dict[str, Any]],
+    *,
+    window_seconds: float = 1.0,
+) -> Dict[str, Any]:
+    duration_seconds = _audio_duration_seconds(mono_pcm, window.sample_rate, window.sample_width)
+    if duration_seconds <= 0:
+        return {
+            "schema": "vaa1.audio_event_intervals.v1",
+            "method": "waveform windows plus transcript timing and prosody sound-environment classifier",
+            "status": "empty",
+            "duration_seconds": 0.0,
+            "intervals": [],
+            "summary": {"speech": 0.0, "silence": 0.0, "music": 0.0, "noise": 0.0},
+        }
+
+    raw_intervals: List[Dict[str, Any]] = []
+    cursor = 0.0
+    while cursor < duration_seconds:
+        start_s = round(cursor, 3)
+        end_s = round(min(duration_seconds, cursor + window_seconds), 3)
+        segment_bytes = _slice_pcm(
+            mono_pcm,
+            window.sample_rate,
+            window.sample_width,
+            start_s,
+            end_s,
+        )
+        sample_values = _bytes_to_int_array(segment_bytes, window.sample_width)
+        rms_value = float(audioop.rms(segment_bytes, window.sample_width)) if segment_bytes else 0.0
+        energy_dbfs = _energy_dbfs(rms_value, window.sample_width)
+        pitch_hz = _estimate_pitch_hz(segment_bytes, window.sample_rate, window.sample_width)
+        zero_crossing_rate = round(_zero_crossing_rate(sample_values), 4)
+        spectral_variation = round(_spectral_variation(sample_values), 2)
+        has_transcript = _has_transcript_overlap(start_s, end_s, transcript_segments)
+        environment_label = _sound_environment_label(
+            energy_dbfs,
+            pitch_hz,
+            zero_crossing_rate,
+            max(0.0, end_s - start_s),
+            1.0 if has_transcript else 0.0,
+            "speech" if has_transcript else "",
+        )
+        event_type, confidence = _audio_event_type(
+            environment_label,
+            has_transcript=has_transcript,
+            energy_dbfs=energy_dbfs,
+            zero_crossing_rate=zero_crossing_rate,
+        )
+        raw_intervals.append(
+            {
+                "interval_id": "",
+                "event_type": event_type,
+                "start": start_s,
+                "end": end_s,
+                "duration": round(end_s - start_s, 3),
+                "confidence": confidence,
+                "source_layer": "audio_prosody.waveform_window_classifier",
+                "classifier_labels": [environment_label],
+                "measurements": {
+                    "energy_dbfs": energy_dbfs,
+                    "pitch_hz": pitch_hz,
+                    "zero_crossing_rate": zero_crossing_rate,
+                    "spectral_variation": spectral_variation,
+                    "transcript_overlap": has_transcript,
+                },
+            }
+        )
+        cursor += window_seconds
+
+    intervals = _merge_audio_event_intervals(raw_intervals)
+    summary = {"speech": 0.0, "silence": 0.0, "music": 0.0, "noise": 0.0}
+    for interval in intervals:
+        event_type = str(interval.get("event_type") or "")
+        if event_type in summary:
+            summary[event_type] = round(summary[event_type] + float(interval.get("duration") or 0.0), 3)
+    total = max(duration_seconds, 0.001)
+    ratios = {
+        key: round(value / total, 4)
+        for key, value in summary.items()
+    }
+    return {
+        "schema": "vaa1.audio_event_intervals.v1",
+        "method": "waveform windows plus transcript timing and prosody sound-environment classifier",
+        "status": "computed",
+        "duration_seconds": round(duration_seconds, 3),
+        "window_seconds": window_seconds,
+        "intervals": intervals,
+        "summary": {
+            **summary,
+            "ratios": ratios,
+            "interval_count": len(intervals),
+        },
+        "governance": {
+            "speech_intervals_are_supported_by_transcript_timing": True,
+            "music_and_noise_are_local_classifier_candidates": True,
+            "requires_review_before_mature_semantic_claims": True,
+        },
+    }
+
+
 def _segment_word_count(text: str) -> int:
     return len(_WORD_RE.findall(text or ""))
 
@@ -515,4 +702,9 @@ def analyze_audio_prosody(
         "sample_width": window.sample_width,
         "channel_count": window.channel_count,
         "cues": cues,
+        "audio_event_intervals": _build_audio_event_intervals(
+            mono_pcm,
+            window,
+            transcript_segments,
+        ),
     }

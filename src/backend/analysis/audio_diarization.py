@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import wave
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,6 +19,12 @@ from sklearn.preprocessing import StandardScaler
 TARGET_SAMPLE_RATE = 16000
 FRAME_SECONDS = 0.025
 HOP_SECONDS = 0.010
+AUDIO_DIARIZATION_CLOCK_VERSION = "vaa1.audio_diarization.clock.v2"
+PUNCTUAL_TIMING_STATUSES = {"anchor_verified", "vad_anchor_verified", "manual_source_verified"}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -25,6 +33,211 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return result if math.isfinite(result) else default
+
+
+def _stable_hash(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def transcript_timing_fingerprint(transcript: Optional[Dict[str, Any]]) -> str:
+    """Fingerprint the canonical transcript clock, not only transcript text."""
+
+    rows: List[Dict[str, Any]] = []
+    for index, segment in enumerate((transcript or {}).get("segments") or []):
+        if not isinstance(segment, dict):
+            continue
+        start = _safe_float(segment.get("start"))
+        end = _safe_float(segment.get("end"), start)
+        rows.append(
+            {
+                "index": index,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "text": str(segment.get("text") or ""),
+                "timing_status": segment.get("timing_status"),
+                "timing_authority": segment.get("timing_authority"),
+                "timing_source": segment.get("timing_source"),
+            }
+        )
+    return _stable_hash(
+        {
+            "schema": "vaa1.transcript_timing_fingerprint.v1",
+            "strategy": (transcript or {}).get("transcription_strategy"),
+            "timing_repair": (transcript or {}).get("timing_repair"),
+            "rows": rows,
+        }
+    )
+
+
+def audio_source_fingerprint(audio_path: str | Path | None) -> str:
+    if not audio_path:
+        return _stable_hash({"schema": "vaa1.audio_source_fingerprint.v1", "path": None})
+    path = Path(audio_path)
+    stat_payload: Dict[str, Any] = {
+        "schema": "vaa1.audio_source_fingerprint.v1",
+        "path": str(path),
+        "exists": path.exists(),
+    }
+    try:
+        stat = path.stat()
+        stat_payload.update({"size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
+    except OSError:
+        pass
+    try:
+        with wave.open(str(path), "rb") as wav:
+            stat_payload.update(
+                {
+                    "channels": wav.getnchannels(),
+                    "sample_width": wav.getsampwidth(),
+                    "sample_rate": wav.getframerate(),
+                    "frame_count": wav.getnframes(),
+                }
+            )
+    except Exception:
+        pass
+    return _stable_hash(stat_payload)
+
+
+def audio_timing_contract(
+    transcript: Optional[Dict[str, Any]],
+    audio_path: str | Path | None,
+) -> Dict[str, Any]:
+    segments = [
+        segment for segment in (transcript or {}).get("segments") or [] if isinstance(segment, dict)
+    ]
+    starts = [_safe_float(segment.get("start")) for segment in segments]
+    ends = [_safe_float(segment.get("end"), _safe_float(segment.get("start"))) for segment in segments]
+    return {
+        "schema": "vaa1.audio_timing_contract.v1",
+        "clock_version": AUDIO_DIARIZATION_CLOCK_VERSION,
+        "transcript_fingerprint": transcript_timing_fingerprint(transcript),
+        "audio_fingerprint": audio_source_fingerprint(audio_path),
+        "transcript_segment_count": len(segments),
+        "clock_range": {
+            "start": round(min(starts), 3) if starts else None,
+            "end": round(max(ends), 3) if ends else None,
+        },
+    }
+
+
+def audio_diarization_staleness(
+    diarization: Optional[Dict[str, Any]],
+    transcript: Optional[Dict[str, Any]],
+    audio_path: str | Path | None = None,
+    *,
+    tolerance_seconds: float = 0.001,
+) -> Dict[str, Any]:
+    """Return whether a saved diarization artifact is valid for the current clock."""
+
+    if not isinstance(diarization, dict) or not diarization:
+        return {"is_stale": True, "stale_reason": "missing_audio_diarization_artifact"}
+    if diarization.get("status") != "completed_measured":
+        return {"is_stale": True, "stale_reason": "audio_diarization_not_completed_measured"}
+
+    expected = audio_timing_contract(transcript, audio_path)
+    actual = diarization.get("timing_contract") if isinstance(diarization.get("timing_contract"), dict) else {}
+    if not actual:
+        return {"is_stale": True, "stale_reason": "missing_audio_timing_contract", "expected": expected}
+    for key in ("clock_version", "transcript_fingerprint"):
+        if actual.get(key) != expected.get(key):
+            return {
+                "is_stale": True,
+                "stale_reason": f"{key}_mismatch",
+                "expected": expected.get(key),
+                "actual": actual.get(key),
+            }
+    if audio_path and actual.get("audio_fingerprint") != expected.get("audio_fingerprint"):
+        return {
+            "is_stale": True,
+            "stale_reason": "audio_fingerprint_mismatch",
+            "expected": expected.get("audio_fingerprint"),
+            "actual": actual.get("audio_fingerprint"),
+        }
+
+    segments = [s for s in (transcript or {}).get("segments") or [] if isinstance(s, dict)]
+    turns = [t for t in diarization.get("speaker_turns") or [] if isinstance(t, dict)]
+    if len(turns) != len(segments):
+        return {
+            "is_stale": True,
+            "stale_reason": "speaker_turn_count_mismatch",
+            "expected": len(segments),
+            "actual": len(turns),
+        }
+    for index, (turn, segment) in enumerate(zip(turns, segments)):
+        start_delta = abs(_safe_float(turn.get("start")) - _safe_float(segment.get("start")))
+        end_delta = abs(_safe_float(turn.get("end")) - _safe_float(segment.get("end"), _safe_float(segment.get("start"))))
+        if start_delta > tolerance_seconds or end_delta > tolerance_seconds:
+            return {
+                "is_stale": True,
+                "stale_reason": "speaker_turn_clock_mismatch",
+                "index": index,
+                "start_delta": round(start_delta, 6),
+                "end_delta": round(end_delta, 6),
+            }
+    if any(turn.get("is_stale") for turn in turns):
+        return {"is_stale": True, "stale_reason": "speaker_turn_marked_stale"}
+    return {"is_stale": False, "stale_reason": None}
+
+
+def _transcript_timing_authority(transcript: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(transcript, dict):
+        return {
+            "status": "missing",
+            "strategy": None,
+            "speaker_turn_timing_source": "audio_only",
+            "segments_can_seed_mature_speaker_turns": False,
+        }
+
+    segments = [
+        segment for segment in transcript.get("segments") or [] if isinstance(segment, dict)
+    ]
+    timing_repair = transcript.get("timing_repair") if isinstance(transcript.get("timing_repair"), dict) else {}
+    strategy = transcript.get("transcription_strategy")
+    timing_status_counts: Dict[str, int] = {}
+    for segment in segments:
+        status = str(segment.get("timing_status") or "unmarked")
+        timing_status_counts[status] = timing_status_counts.get(status, 0) + 1
+
+    durations = []
+    starts = []
+    for segment in segments:
+        start = _safe_float(segment.get("start"))
+        end = _safe_float(segment.get("end"), start)
+        if end > start:
+            starts.append(round(start, 3))
+            durations.append(round(end - start, 3))
+    dominant_ratio = 0.0
+    if durations:
+        dominant_duration = max(set(durations), key=durations.count)
+        dominant_ratio = durations.count(dominant_duration) / len(durations)
+    scaffold_suspected = bool(starts and min(starts) <= 0.05 and dominant_ratio >= 0.65)
+
+    if strategy == "anchored_vad_timing_repair" or timing_status_counts:
+        status = timing_repair.get("status") or "partially_repaired"
+    elif scaffold_suspected:
+        status = "scaffold_suspected"
+    else:
+        status = "unverified"
+
+    mature_statuses = {"anchor_verified", "vad_anchor_verified"}
+    segments_can_seed = bool(
+        timing_status_counts
+        and all(
+            status_name in mature_statuses
+            for status_name in timing_status_counts
+            if timing_status_counts.get(status_name)
+        )
+    )
+    return {
+        "status": status,
+        "strategy": strategy,
+        "timing_repair_reason": timing_repair.get("reason"),
+        "timing_status_counts": timing_status_counts,
+        "scaffold_suspected": scaffold_suspected,
+        "speaker_turn_timing_source": "transcript_segments",
+        "segments_can_seed_mature_speaker_turns": segments_can_seed,
+    }
 
 
 def _read_pcm_audio(audio_path: str | Path) -> Tuple[np.ndarray, int]:
@@ -238,11 +451,15 @@ def build_audio_diarization(
     audio_path: str | Path,
     transcript: Optional[Dict[str, Any]] = None,
     audio_prosody: Optional[Dict[str, Any]] = None,
+    reference_speakers: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     samples, sample_rate = _read_pcm_audio(audio_path)
     features = _frame_features(samples, sample_rate)
     voiced, thresholds = _measured_vad(features, transcript)
     vad_segments = _vad_segments(voiced)
+    timing_authority = _transcript_timing_authority(transcript)
+    timing_contract = audio_timing_contract(transcript, audio_path)
+    generated_at = _utc_now()
 
     transcript_segments = [
         segment
@@ -276,15 +493,32 @@ def build_audio_diarization(
         speaker_label = f"SPEAKER_{int(labels[measured_index]):02d}"
         confidence = float(confidences[measured_index])
         turn_id = f"turn_{segment_index:04d}"
+        timing_status = segment.get("timing_status") or timing_authority["status"]
+        source_time_valid = timing_status in PUNCTUAL_TIMING_STATUSES
         turns.append(
             {
                 "turn_id": turn_id,
                 "speaker_label": speaker_label,
                 "start": round(start, 3),
                 "end": round(end, 3),
+                "source_start": segment.get("source_start"),
+                "source_end": segment.get("source_end"),
                 "text": segment.get("text"),
                 "diarization_status": "measured_acoustic_cluster",
                 "diarization_confidence": round(confidence, 4),
+                "timing_status": timing_status,
+                "timing_authority": segment.get("timing_authority") or timing_authority["strategy"],
+                "timing_source": segment.get("timing_source") or timing_authority["speaker_turn_timing_source"],
+                "source_media_id": str(audio_path),
+                "canonical_time_basis": "source_media_seconds",
+                "transcript_fingerprint": timing_contract["transcript_fingerprint"],
+                "audio_fingerprint": timing_contract["audio_fingerprint"],
+                "generated_from_artifact_id": f"{analysis_id}:transcript:{segment_index:04d}",
+                "generated_at": generated_at,
+                "is_stale": False,
+                "stale_reason": None,
+                "valid_for_confirmation": source_time_valid,
+                "valid_for_mature_master_schema": source_time_valid,
                 "embedding_ref": f"embedding:{turn_id}",
                 "reference_match": None,
             }
@@ -299,12 +533,40 @@ def build_audio_diarization(
         )
 
     duration = len(samples) / float(sample_rate)
+    diarization_fingerprint = _stable_hash(
+        {
+            "schema": "vaa1.audio_diarization_fingerprint.v1",
+            "analysis_id": analysis_id,
+            "provider": "local_waveform_vad_acoustic_clustering",
+            "timing_contract": timing_contract,
+            "turns": [
+                {
+                    "turn_id": turn.get("turn_id"),
+                    "speaker_label": turn.get("speaker_label"),
+                    "start": turn.get("start"),
+                    "end": turn.get("end"),
+                    "timing_status": turn.get("timing_status"),
+                }
+                for turn in turns
+            ],
+        }
+    )
+    for turn in turns:
+        turn["diarization_fingerprint"] = diarization_fingerprint
+
     return {
         "schema": "vaa1.audio_diarization.measured.v1",
         "analysis_id": analysis_id,
         "status": "completed_measured",
         "provider": "local_waveform_vad_acoustic_clustering",
         "audio_path": str(audio_path),
+        "timing_contract": timing_contract,
+        "transcript_fingerprint": timing_contract["transcript_fingerprint"],
+        "audio_fingerprint": timing_contract["audio_fingerprint"],
+        "diarization_fingerprint": diarization_fingerprint,
+        "generated_at": generated_at,
+        "is_stale": False,
+        "stale_reason": None,
         "measurement": {
             "sample_rate": sample_rate,
             "duration_seconds": round(duration, 3),
@@ -314,10 +576,13 @@ def build_audio_diarization(
             "speaker_cluster_count": speaker_count,
             "cluster_silhouette": round(float(silhouette), 4),
             "identity_recognition_performed": False,
+            "transcript_timing_authority": timing_authority,
         },
         "turn_count": len(turns),
         "speaker_turns": turns,
-        "reference_speakers": [],
+        "reference_speakers": [
+            speaker for speaker in (reference_speakers or []) if isinstance(speaker, dict)
+        ],
         "embedding_index": {
             "status": "completed_measured",
             "provider": "local_cepstral_acoustic_embedding",
@@ -328,12 +593,17 @@ def build_audio_diarization(
         "governance": {
             "measured_audio_only": True,
             "speaker_labels_are_clusters_not_identities": True,
+            "speaker_turns_depend_on_transcript_timing": True,
+            "speaker_turns_can_seed_mature_claims": bool(
+                timing_authority.get("segments_can_seed_mature_speaker_turns")
+            ),
             "identity_requires_verified_voice_or_analyst_confirmation": True,
             "listening_requires_visible_presence_and_another_speaker_turn": True,
         },
         "notes": [
             "Voice activity and acoustic clusters were computed from the source waveform.",
             "Speaker cluster labels do not identify a named person without verified reference evidence.",
+            "Canonical start/end values are source-media seconds. source_start/source_end are provenance only.",
         ],
     }
 
@@ -345,6 +615,7 @@ def write_audio_diarization(
     output_json_path: str | Path,
     transcript: Optional[Dict[str, Any]] = None,
     audio_prosody: Optional[Dict[str, Any]] = None,
+    reference_speakers: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     try:
         payload = build_audio_diarization(
@@ -352,6 +623,7 @@ def write_audio_diarization(
             audio_path=audio_path,
             transcript=transcript,
             audio_prosody=audio_prosody,
+            reference_speakers=reference_speakers,
         )
     except Exception as exc:
         payload = {
@@ -362,7 +634,9 @@ def write_audio_diarization(
             "audio_path": str(audio_path),
             "turn_count": 0,
             "speaker_turns": [],
-            "reference_speakers": [],
+            "reference_speakers": [
+                speaker for speaker in (reference_speakers or []) if isinstance(speaker, dict)
+            ],
             "embedding_index": {
                 "status": "measurement_failed",
                 "provider": "local_cepstral_acoustic_embedding",
