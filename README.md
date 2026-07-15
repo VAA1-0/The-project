@@ -4,6 +4,21 @@ VAA1 is an open-source pipeline designed to automate the first stages of video a
 
 ---
 
+## Current Development Focus
+
+The current development period is **Operational Evidence and Analysis Core**.
+
+The primary objective is to harden VAA1 into a controlled evidence system where all analytical claims are traceable, correctable, and governed by a mature data proliferation regime.
+
+This work begins with a mandatory discovery sprint to create a comprehensive inventory of the system's data attributes and their operational semantics.
+
+-   **Governing Sprint Plan:** [`docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md`](./docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md)
+-   **Architectural Context:** `docs/architecture/vaa1_data_attribute_inventory_report_2026-07-12.md`
+
+All subsequent work on the Data Maturation Proliferation Regime v2 depends on the successful completion of this empirical audit.
+
+---
+
 ## Quick Start On Mac For Local Development
 
 The current Mac development startup path is:
@@ -150,16 +165,362 @@ This file can be shared when reporting issues.
 
 ---
 
-## What VAA1 Provides
+Unresolved interval
+0:00.000 ~ 0:06.400
+duration 0:06.400
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:06.400 ~ 0:08.400
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+WhywouldIbetrayyou?
+Transcript span
+0:08.400 ~ 0:10.400
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Weallhaveoursecrets.
+Transcript span
+0:10.400 ~ 0:12.400
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Wejustdidn'tgettoyoursyet.
+Unresolved interval
+0:12.400 ~ 0:20.960
+duration 0:08.560
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:20.960 ~ 0:22.215
+duration 0:01.255
+Confirmed
+Sync clock
+Edit span
+Theworldisarmingfasterthanwecanrespond.
+Unresolved interval
+0:22.215 ~ 0:26.000
+duration 0:03.785
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:26.000 ~ 0:28.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Where's007?
+Transcript span
+0:28.000 ~ 0:30.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Ineedafavor,brother.
+Transcript span
+0:30.000 ~ 0:32.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+You'retheonlyoneItrustforthis.
+Unresolved interval
+0:32.000 ~ 0:34.000
+duration 0:02.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:34.000 ~ 0:36.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Theworld'snewdawncommandareborn.
+Transcript span
+0:36.000 ~ 0:37.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Youweredouble-o.
+Transcript span
+0:37.000 ~ 0:38.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Twoyears.
+Transcript span
+0:38.000 ~ 0:40.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Sostayinyourlane.
+Transcript span
+0:40.000 ~ 0:42.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+You'regettingmyway.
+Transcript span
+0:42.000 ~ 0:44.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Iwillputabrothertoyourknee.
+Unresolved interval
+0:44.000 ~ 0:46.000
+duration 0:02.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:46.000 ~ 0:48.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Theonethatworks.
+Transcript span
+0:48.000 ~ 0:50.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Ithoughtyou'ddoitgetalong.
+Unresolved interval
+0:50.000 ~ 0:52.000
+duration 0:02.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:52.000 ~ 0:53.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Name?
+Transcript span
+0:53.000 ~ 0:54.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Bonda.
+Unresolved interval
+0:54.000 ~ 0:55.000
+duration 0:01.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+0:55.000 ~ 0:56.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Name?
+Transcript span
+0:56.000 ~ 0:57.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Bonda.
+Transcript span
+0:57.000 ~ 0:58.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+I'mnotgoingtolosecontrol.
+Transcript span
+0:58.000 ~ 1:00.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'mnotgoingtolose.
+Transcript span
+1:00.000 ~ 1:02.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+Control.
+Unresolved interval
+1:02.000 ~ 1:04.000
+duration 0:02.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+1:04.000 ~ 1:08.000
+duration 0:04.000
+Confirmed
+Sync clock
+Edit span
+James,yougaveupeverythingforher.
+Unresolved interval
+1:08.000 ~ 1:12.000
+duration 0:04.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+1:12.000 ~ 1:14.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'mnotgoingtolosecontrol.
+Transcript span
+1:14.000 ~ 1:16.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'mnotgoingtolosecontrol.
+Transcript span
+1:16.000 ~ 1:20.000
+duration 0:04.000
+Confirmed
+Sync clock
+Edit span
+James,yougaveupeverythingforher.
+Unresolved interval
+1:20.000 ~ 1:24.000
+duration 0:04.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+1:24.000 ~ 1:31.000
+duration 0:07.000
+Confirmed
+Sync clock
+Edit span
+Whenhersecretfindsitswayout,there'llbethedeathofhim.
+Transcript span
+1:31.000 ~ 1:32.000
+duration 0:01.000
+Confirmed
+Sync clock
+Edit span
+Whatisit?
+Transcript span
+1:32.000 ~ 1:37.000
+duration 0:05.000
+Confirmed
+Sync clock
+Edit span
+Youdon'tknowwhatthisis.
+Transcript span
+1:37.000 ~ 1:40.000
+duration 0:03.000
+Confirmed
+Sync clock
+Edit span
+JamesBond.
+Transcript span
+1:40.000 ~ 1:43.000
+duration 0:03.000
+Confirmed
+Sync clock
+Edit span
+Licensetokill.
+Transcript span
+1:43.000 ~ 1:47.000
+duration 0:04.000
+Confirmed
+Sync clock
+Edit span
+Historyofviolence.
+Transcript span
+1:47.000 ~ 1:52.000
+duration 0:05.000
+Confirmed
+Sync clock
+Edit span
+Icouldbespeakingtomyownreflection.
+Transcript span
+1:52.000 ~ 1:55.000
+duration 0:03.000
+Confirmed
+Sync clock
+Edit span
+Condidors.
+Transcript span
+1:55.000 ~ 2:00.000
+duration 0:05.000
+Confirmed
+Sync clock
+Edit span
+MinewillsurvivelongafterI'mgone.
+Transcript span
+2:00.000 ~ 2:04.000
+duration 0:04.000
+Confirmed
+Sync clock
+Edit span
+Historyisn'tkindtomenwhoplayGod.
+Unresolved interval
+2:04.000 ~ 2:20.000
+duration 0:16.000
+Coverage marker
+[Unresolvedaudiointerval]
+Transcript span
+2:20.000 ~ 2:22.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'mnotarealman.
+Transcript span
+2:22.000 ~ 2:24.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'marealman.
+Transcript span
+2:24.000 ~ 2:26.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'marealman.
+Transcript span
+2:26.000 ~ 2:28.000
+duration 0:02.000
+Confirmed
+Sync clock
+Edit span
+I'marealman.
+Unresolved tail
+2:28.000 ~ 2:35.105
+duration 0:07.105
+Coverage marker
+[Unresolvedaudiotail]## What VAA1 Provides: From Raw Video to Governed Insight
 
-A unified open‑source pipeline for:
+VAA1 is an end-to-end analysis environment that turns raw video into a structured, navigable, and research-ready dataset. Its core features include:
 
-* Metadata extraction
-* Transcription
-* Object and expression recognition
-* Audio & visual intelligence
-* Quantitative text features
-* Research‑ready structured outputs
+*   **Multimodal AI Pipeline**: Automatically processes video to extract:
+    *   **Visuals**: Object and person detection (YOLOv8), expression analysis (DeepFace), and OCR.
+    *   **Audio**: High-quality transcription (Whisper) and state-of-the-art speaker diarization (`pyannote.audio`) to distinguish who is speaking.
+
+*   **Mature Data Proliferation**: VAA1 learns from you. When an analyst confirms a speaker or character, the system uses that "mature evidence" to find that person in other parts of the video, proposing candidates for review instead of forcing repetitive manual work.
+
+*   **Integrated Meaning Network**: A powerful visualization tool that maps the relationships between characters, scenes, and events over time. It now includes speaker timelines, providing an intuitive overview of the dialogue flow.
+
+*   **StatsKit Workbench**: A dedicated panel for source-linked statistical analysis. It can perform speech-to-silence ratio analysis and provides the foundation for deeper dialogue metrics like speaker dominance and turn-taking frequency.
+
+*   **Analyst-in-the-Loop Governance**: The core design principle of VAA1 is that the analyst is the final authority. Automated systems propose candidates, but manual corrections are treated as the source of truth, ensuring that all insights are traceable and governed.
+
+*   **Research-Ready Outputs**: All generated data, from raw detections to mature, analyst-confirmed insights, is organized into structured artifacts ready for further research, reporting, or export.
 
 ---
 

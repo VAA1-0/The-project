@@ -143,9 +143,9 @@ class AudioSampleCloudContractTest(unittest.TestCase):
                         "source_start": 0.0,
                         "source_end": 2.0,
                         "text": "Why would I betray you?",
-                        "timing_status": "anchor_verified",
-                        "timing_authority": "anchored_vad_timing_repair",
-                        "timing_source": "manual anchor",
+                        "timing_status": "original_whisper_timecode",
+                        "timing_authority": "original_whisper_timecode",
+                        "timing_source": "openai_whisper.word_timestamps",
                         "transcript_fingerprint": "transcript-fp",
                         "audio_fingerprint": "audio-fp",
                         "diarization_fingerprint": "dia-fp-1",
@@ -158,7 +158,7 @@ class AudioSampleCloudContractTest(unittest.TestCase):
         sample = payload["clouds"][0]["samples"][0]
         self.assertEqual(sample["time_start"], 6.4)
         self.assertEqual(sample["source_start"], 0.0)
-        self.assertEqual(sample["timing_status"], "anchor_verified")
+        self.assertEqual(sample["timing_status"], "original_whisper_timecode")
         self.assertEqual(sample["diarization_fingerprint"], "dia-fp-1")
         self.assertTrue(sample["valid_for_confirmation"])
 

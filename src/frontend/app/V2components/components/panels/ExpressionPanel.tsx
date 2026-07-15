@@ -327,16 +327,13 @@ export default function ExpressionPanel() {
                     sample.rawDominantEmotion || sample.dominant_emotion || "Unknown";
                   const correctionKey = `${sample.timestamp}-${sample.face_id ?? idx}`;
                   return (
-                    <div
+                    <details
                       key={correctionKey}
-                    className="cursor-pointer rounded border border-slate-800 bg-slate-950/20 px-3 py-2 transition hover:bg-slate-900/35"
-                    onClick={() => {
-                        openVideoAtTime(videoId, sample.timestamp);
-                    }}
+                      className="group rounded border border-slate-800 bg-slate-950/20"
                   >
-                      <div className="flex items-start justify-between gap-3">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 marker:hidden">
                         <span
-                          className={`text-[11px] ${
+                          className={`min-w-0 truncate text-[11px] ${
                             sample.quality === "weak"
                               ? "text-[#b8b8b8]"
                               : "text-slate-200"
@@ -344,7 +341,20 @@ export default function ExpressionPanel() {
                         >
                           {matureExpressionLabel}
                         </span>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <span className="shrink-0 text-[10px] text-[var(--ui-passive-text)]">
+                          {Number(sample.timestamp).toFixed(2)}s
+                          {` · ${(weighting.ranking.margin_to_second * 100).toFixed(1)}% margin`}
+                        </span>
+                      </summary>
+                      <div className="border-t border-slate-800 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openVideoAtTime(videoId, sample.timestamp)}
+                            className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
+                          >
+                            Show in video
+                          </button>
                           <button
                             type="button"
                             onClick={(event) => {
@@ -367,11 +377,7 @@ export default function ExpressionPanel() {
                           >
                             Drop
                           </button>
-                          <span className="text-[10px] text-[var(--ui-passive-text)]">
-                            {Number(sample.timestamp).toFixed(2)}s
-                          </span>
                         </div>
-                      </div>
 
                       {openCorrectionKey === correctionKey ? (
                         <div
@@ -545,7 +551,8 @@ export default function ExpressionPanel() {
                             : ""}
                         </div>
                       ) : null}
-                    </div>
+                      </div>
+                    </details>
                   );
                 })}
                 </>

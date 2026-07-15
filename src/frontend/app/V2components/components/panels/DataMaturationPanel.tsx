@@ -1438,7 +1438,11 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         </div>
       </section>
 
-      <div className="grid gap-3 lg:grid-cols-4">
+      <details className="rounded border border-white/10 bg-[#101010]">
+        <summary className="cursor-pointer list-none px-3 py-2 text-[12px] text-slate-300 marker:hidden">
+          Maturation overview · {metrics.matureWriteCount} mature writes · {metrics.confirmationRows} awaiting confirmation
+        </summary>
+        <div className="grid gap-2 border-t border-white/10 p-2 lg:grid-cols-4">
         <MetricCard label="Manual anchors" value={metrics.manualAnchorCount} detail={`${metrics.manualVisualAnnotations} visual, ${metrics.confirmedDecisions} accepted decisions`} active={activeQueue === "manual"} onInspect={(issue) => activateQueue("manual", issue)} />
         <MetricCard label="Needs confirmation" value={metrics.confirmationRows} detail="mature-data candidates requiring promote/defer/drop" active={activeQueue === "confirmations"} onInspect={(issue) => activateQueue("confirmations", issue)} />
         <MetricCard label="BBox confirmations" value={metrics.bboxConfirmationRows} detail="timebound BBox/ROI detections needing manual annotation" active={activeQueue === "bbox"} onInspect={(issue) => activateQueue("bbox", issue)} />
@@ -1446,9 +1450,9 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         <MetricCard label="Governed hypotheses" value={metrics.governedMatureHypotheses} detail={`${metrics.automaticReviewProjections} automatic review projections, ${metrics.blockedPromotions} blocked promotions`} active={activeQueue === "confirmations"} onInspect={(issue) => activateQueue("confirmations", issue)} />
         <MetricCard label="Mature writes" value={metrics.matureWriteCount} detail={`${metrics.matureSurfaces} surfaces, ${metrics.resolvedEvidence} resolved evidence, ${metrics.matureEntityRecords} entities`} active={activeQueue === "content"} onInspect={(issue) => activateQueue("content", issue)} />
         <MetricCard label="Review pressure" value={metrics.agentPersistence.review + metrics.rejectedDecisions + metrics.governedMatureHypotheses} detail={`${metrics.agentPersistence.labels} persistence labels tracked`} onInspect={setSelectedIssue} />
-      </div>
+        </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-2 border-t border-white/10 p-2 lg:grid-cols-3">
         <MetricCard
           label="Entity Registry"
           value={metrics.entityRecords}
@@ -1477,6 +1481,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           onInspect={(issue) => activateQueue("scanner", issue)}
         />
       </div>
+      </details>
 
       <section
         className="mt-4 rounded border border-white/10 bg-[#101010] p-3"

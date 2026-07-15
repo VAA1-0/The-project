@@ -958,13 +958,13 @@ test("Audio prosody follows corrected transcript operational clock without doubl
   );
   assert.match(
     videoService,
-    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*anchored_vad_timing_repair[\s\S]*vad_anchor_verified/,
-    "anchored and VAD-verified repair rows must be treated as already clock-corrected",
+    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*authority === "original_whisper_timecode"[\s\S]*status === "original_whisper_timecode"/,
+    "only original Whisper or manual transcript rows must be treated as already clock-corrected",
   );
-  assert.doesNotMatch(
+  assert.match(
     videoService,
-    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*inherited_after_vad_anchor/,
-    "inherited VAD projection rows must not be treated as source timing authority",
+    /function segmentHasRepairedTimingAuthority\(segment: TranscriptSegment\): boolean \{[\s\S]*"inherited_after_vad_anchor"[\s\S]*return false;[\s\S]*authority === "original_whisper_timecode"/,
+    "inherited VAD projection rows must be denied before Whisper/manual rows are accepted as source timing authority",
   );
   assert.match(
     videoService,
@@ -993,8 +993,8 @@ test("Audio prosody follows corrected transcript operational clock without doubl
   );
   assert.match(
     speechPanel,
-    /transcriptRowsLookLikeScaffold[\s\S]*loadAuthoritativeTranscriptRows[\s\S]*rejected scaffold transcript rows; surfaced anchored_vad_timing_repair artifact/,
-    "Transcript panel must replace stale scaffold rows with the authoritative repaired transcript before rendering",
+    /transcriptRowsLookLikeScaffold[\s\S]*loadAuthoritativeTranscriptRows[\s\S]*rejected scaffold transcript rows; surfaced original Whisper timecode artifact/,
+    "Transcript panel must replace stale scaffold rows with the authoritative Whisper transcript before rendering",
   );
   assert.match(
     speechPanel,
@@ -5173,5 +5173,59 @@ test("browser refresh shortcuts remain reserved for the browser", () => {
     menuBar,
     /Reload UI \/ Refresh Workspace/,
     "the menu must expose an explicit reload path when HMR does not surface new frontend changes",
+  );
+});
+
+test("BBox overlays consume quiet backend compatibility projections with local fallback", () => {
+  assert.match(
+    videoPanel,
+    /VideoService\.getProjectedSubjectStates\([\s\S]*visibleProjectionSubjectRefs/,
+    "VideoPanel must request visible BBox projections in one bounded batch",
+  );
+  assert.match(
+    videoPanel,
+    /backendProjectionOverlayLabel\s*\|\|\s*manualOverrideOverlayLabel/,
+    "saved backend projections must participate before legacy manual-label fallback",
+  );
+  assert.match(
+    videoPanel,
+    /\.catch\(\(\) => \{[\s\S]*setBackendProjectionBySubject\(\(current\) =>[\s\S]*Object\.keys\(current\)\.length === 0 \? current : \{\}/,
+    "projection unavailability must fall back quietly without a toast or banner",
+  );
+  assert.doesNotMatch(
+    videoPanel,
+    /Projected states unavailable[\s\S]{0,200}(toast|alert\()/,
+    "projection diagnostics must not become a screaming UI notification",
+  );
+  assert.match(
+    videoPanel,
+    /visibleProjectionSubjectRefsKey[\s\S]*Object\.keys\(current\)\.length === 0 \? current : \{\}/,
+    "projection effects must use stable dependencies and equality-guarded empty state",
+  );
+});
+
+test("BBox saves leave canonical synchronization to the atomic backend boundary", () => {
+  assert.match(
+    videoPanel,
+    /saveAnnotationCorrections[\s\S]*requireSavedManualVisualAnnotation/,
+    "BBox saves must verify the backend-persisted compatibility response",
+  );
+  assert.doesNotMatch(
+    videoPanel,
+    /VideoService\.createCanonicalDecision\(videoId/,
+    "panels must not independently dual-write canonical authority after compatibility persistence",
+  );
+});
+
+test("Meaning Network and Master Schema consume shared canonical claim projections", () => {
+  assert.match(
+    meaningPlotPanel,
+    /getProjectedCanonicalClaims[\s\S]*meaning_network\.relationship[\s\S]*setConfirmedMeaningNetworkEdges/,
+    "Meaning Network must hydrate relationship governance from canonical projection",
+  );
+  assert.match(
+    masterSchemaPanel,
+    /getProjectedCanonicalClaims[\s\S]*narrative_agent\.assignment[\s\S]*canonicalClaims/,
+    "Master Schema Narrative Agent paths must consume canonical projections",
   );
 });

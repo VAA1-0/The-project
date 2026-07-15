@@ -602,7 +602,7 @@ export default function DownloadPanel() {
         <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
-              Download Results
+              Download results
             </h2>
             {videoId && (
               <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
@@ -652,7 +652,7 @@ export default function DownloadPanel() {
                     onClick={() => setShowDebug(false)}
                     className="px-2 py-1 text-xs rounded border border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
                   >
-                    Hide Debug
+                    Hide debug
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -669,7 +669,7 @@ export default function DownloadPanel() {
                     disabled={getAvailableFileCount() === 0}
                   >
                     <Download className="size-3.5" />
-                    Download All ({getAvailableFileCount()})
+                    Download all ({getAvailableFileCount()})
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -751,7 +751,7 @@ export default function DownloadPanel() {
           <div className="border-b border-slate-700 bg-slate-900">
             <div className="px-4 py-2 flex justify-between items-center bg-slate-800">
               <h3 className="text-sm font-semibold text-slate-300">
-                Debug Information
+                Debug information
               </h3>
               <div className="flex items-center gap-2">
                 <button
@@ -796,7 +796,7 @@ export default function DownloadPanel() {
             <div className="flex flex-col items-center justify-center h-64">
               <Folder className="size-12 text-slate-400 mb-4" />
               <div className="text-slate-400 text-lg mb-2">
-                No Video Selected
+                No video selected
               </div>
               <div className="max-w-xs text-center text-sm text-[var(--ui-passive-text)]">
                 Select a video from the Project Panel to view and download
@@ -807,18 +807,18 @@ export default function DownloadPanel() {
             <div className="flex flex-col items-center justify-center h-64 p-4">
               <AlertCircle className="size-12 text-red-400 mb-4" />
               <div className="text-slate-300 text-lg mb-2 text-center">
-                Red Alert
+                Analysis unavailable
               </div>
               <div className="text-sm text-slate-400 text-center mb-4">
                 {analysisStatus.error ||
-                  "A critical subsystem went offline during the mission."}
+                  "The analysis did not complete. Existing work remains available."}
               </div>
               <button
                 onClick={handleRefresh}
                 className="px-4 py-2 text-sm bg-slate-700 hover:bg-slate-600 rounded flex items-center gap-2"
               >
                 <RefreshCw className="size-4" />
-                Try Again
+                Try again
               </button>
             </div>
           ) : analysisStatus?.status !== "completed" ? (
@@ -826,8 +826,8 @@ export default function DownloadPanel() {
               <Clock className="size-12 text-yellow-400 mb-4 animate-pulse" />
               <div className="text-slate-300 text-lg mb-2">
                 {analysisStatus?.status === "processing"
-                  ? "Mission in Progress"
-                  : "Mission Awaiting Completion"}
+                  ? "Analysis in progress"
+                  : "Analysis awaiting completion"}
               </div>
               <div className="max-w-sm text-center text-sm text-[var(--ui-passive-text)]">
                 {analysisStatus?.progress !== undefined && (
@@ -866,11 +866,11 @@ export default function DownloadPanel() {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/25 p-3">
-                <div className="text-xs uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
-                  Whole Project
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+              <details className="rounded-lg border border-slate-800 bg-slate-900/25">
+                <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
+                  Whole project
+                </summary>
+                <div className="m-3 mt-1 flex items-center justify-between gap-3 border-t border-slate-800 bg-slate-950/20 p-3">
                   <div>
                     <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-300">
                       Full project bundle
@@ -887,16 +887,16 @@ export default function DownloadPanel() {
                     className="shrink-0 rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     disabled={projectAnalysisCount === 0}
                   >
-                    Download Project
+                    Download project
                   </button>
                 </div>
-              </div>
+              </details>
 
-              <div className="rounded-lg border border-slate-800 bg-slate-900/25 p-3">
-                <div className="text-xs uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
-                  Per Analysed Video
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+              <details className="rounded-lg border border-slate-800 bg-slate-900/25">
+                <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
+                  Per analysed video
+                </summary>
+                <div className="m-3 mt-1 flex items-center justify-between gap-3 border-t border-slate-800 bg-slate-950/20 p-3">
                   <div>
                     <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-300">
                       Current video bundle
@@ -910,11 +910,16 @@ export default function DownloadPanel() {
                     className="shrink-0 rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     disabled={getAvailableFileCount() === 0}
                   >
-                    Download Video Bundle
+                    Download video bundle
                   </button>
                 </div>
-              </div>
+              </details>
 
+              <details className="rounded-lg border border-slate-800 bg-slate-900/25">
+                <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
+                  Analysis files ({getAvailableFileCount()} available)
+                </summary>
+                <div className="space-y-2 border-t border-slate-800 p-3">
               {availableFiles.map((file, index) => (
                 <div
                   key={index}
@@ -988,14 +993,16 @@ export default function DownloadPanel() {
                   )}
                 </div>
               ))}
+                </div>
+              </details>
 
               {getAvailableFileCount() < getTotalFileCount() && (
-                <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-                  <h4 className="text-sm font-medium text-slate-300 mb-2 flex items-center gap-2">
-                    <AlertCircle className="size-4 text-yellow-500" />
-                    Some stations are still offline
-                  </h4>
-                  <p className="text-xs text-slate-400 mb-3">
+                <details className="rounded-lg border border-slate-800 bg-slate-900/25">
+                  <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400">
+                    Some outputs are not available
+                  </summary>
+                  <div className="border-t border-slate-800 p-3">
+                  <p className="mb-3 text-xs text-slate-400">
                     This can happen when a subsystem is still running, was not
                     part of the selected mission profile, or did not return a report.
                   </p>
@@ -1018,10 +1025,11 @@ export default function DownloadPanel() {
                       }
                       className="text-xs text-blue-400 hover:text-blue-300"
                     >
-                      Open Captain&apos;s Reference →
+                      Open API reference →
                     </button>
                   </div>
-                </div>
+                  </div>
+                </details>
               )}
 
               <div className="border-t border-slate-700 pt-4 text-xs text-[var(--ui-passive-text)]">
@@ -1044,7 +1052,7 @@ export default function DownloadPanel() {
                       onClick={() => setShowDebug(!showDebug)}
                       className="text-blue-400 hover:text-blue-300"
                     >
-                      {showDebug ? "Hide Debug" : "Show Debug"}
+                      {showDebug ? "Hide debug" : "Show debug"}
                     </button>
                   </div>
                 </div>

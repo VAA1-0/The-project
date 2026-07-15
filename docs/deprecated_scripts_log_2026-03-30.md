@@ -66,9 +66,13 @@ Risk if forgotten:
 - `scripts/start_services.bat`
 - `scripts/start_services_lite.bat`
 - `run_all.sh`
+- removed: malformed tracked `run_vaa1_lite.sh"` Mac-lite Docker launcher
 
 Status:
-- active but overlapping launcher surface
+- `run_vaa1.bat` remains the root Windows launcher
+- `scripts/run_vaa1.bat` delegates to the root launcher and must not carry a separate startup sequence
+- `scripts/start_vaa1_macos.sh` remains the canonical Mac launcher and uses `vaa1_core` / `vaa1_face`
+- `.venv` is a Windows plain-Python setup artifact only; it is not the Mac Datascene/VAA1 backend runtime
 
 Risk if forgotten:
 - packaging and onboarding confusion

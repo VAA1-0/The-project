@@ -23,7 +23,20 @@ CANDIDATE_TIMING_AUTHORITIES = {
     "chunked_fallback",
     "tail_recovery_fallback",
     "fallback_candidate",
+    "quick_sweep_transcript",
+    "quick_sweep_transcript_priority",
     "scaffold",
+}
+
+VERIFIED_REPAIR_STATUSES = {
+    "anchor_verified",
+    "vad_anchor_verified",
+}
+
+NON_AUTHORITATIVE_TIMING_STATUSES = {
+    "automatic_transcript_timestamp",
+    "anchored_offset",
+    "inherited_after_vad_anchor",
 }
 
 
@@ -76,10 +89,70 @@ def transcript_timing_looks_scaffolded(transcript: Dict[str, Any]) -> bool:
 def row_has_operational_whisper_timecode(row: Dict[str, Any]) -> bool:
     authority = str(row.get("timing_authority") or row.get("timingAuthority") or "")
     status = str(row.get("timing_status") or row.get("timingStatus") or "")
+    source_time_valid = row.get("source_time_valid", row.get("sourceTimeValid"))
+    if status in NON_AUTHORITATIVE_TIMING_STATUSES:
+        return False
+    if authority == "manual_correction":
+        return source_time_valid is not False or status == "manual_correction"
     return (
-        authority in WHISPER_TIMING_AUTHORITIES
+        authority in (WHISPER_TIMING_AUTHORITIES - {"manual_correction"})
         or status in {"manual_correction", "original_whisper_timecode"}
     )
+
+
+def row_has_verified_source_timecode(row: Dict[str, Any]) -> bool:
+    status = str(row.get("timing_status") or row.get("timingStatus") or "")
+    return (
+        row_has_operational_whisper_timecode(row)
+        or status == "manual_correction"
+    )
+
+
+def _automatic_transcript_has_operational_clock(transcript: Dict[str, Any]) -> bool:
+    segments = [
+        segment for segment in transcript.get("segments", []) if isinstance(segment, dict)
+    ]
+    if not segments:
+        return False
+    if transcript_timing_looks_scaffolded({"segments": segments}):
+        return False
+    return (
+        _has_word_level_timestamps(segments)
+        or str(transcript.get("transcription_strategy") or "") in {
+            "full_pass",
+            "original_whisper_timecode",
+        }
+        or any(row_has_operational_whisper_timecode(segment) for segment in segments)
+    )
+
+
+def quarantine_candidate_timing_row(
+    row: Dict[str, Any],
+    *,
+    reason: str = "fallback candidate timing quarantined; manual or original Whisper timecode required",
+) -> Dict[str, Any]:
+    """Keep candidate text/provenance while preventing false source-span display."""
+    quarantined = dict(row)
+    start = safe_float(quarantined.get("start"))
+    end = safe_float(quarantined.get("end"))
+    if start is not None:
+        quarantined.setdefault("candidate_start", start)
+    if end is not None:
+        quarantined.setdefault("candidate_end", end)
+    quarantined.setdefault("source_start", start)
+    quarantined.setdefault("source_end", end)
+    quarantined.update(
+        {
+            "start": None,
+            "end": None,
+            "timing_status": "needs_per_line_sync",
+            "timing_authority": "text_only_no_source_timing",
+            "timing_source": reason,
+            "source_time_valid": False,
+            "candidate_time_valid": False,
+        }
+    )
+    return quarantined
 
 
 def build_transcript_timing_authority(
@@ -117,7 +190,13 @@ def build_transcript_timing_authority(
     has_word_timing = _has_word_level_timestamps(segments)
     strategy = transcript.get("transcription_strategy")
     scaffolded = transcript_timing_looks_scaffolded(transcript)
-    if has_word_timing or strategy in {
+    if has_word_timing:
+        default_authority = "original_whisper_timecode"
+        operational_rows = max(operational_rows, len(segments))
+    elif scaffolded:
+        default_authority = "scaffold_candidate"
+        operational_rows = 0
+    elif strategy in {
         "full_pass",
         "original_whisper_timecode",
     }:
@@ -127,8 +206,6 @@ def build_transcript_timing_authority(
         default_authority = "candidate_fallback"
     elif strategy in VAD_SUPPORT_AUTHORITIES:
         default_authority = "vad_support_only"
-    elif scaffolded:
-        default_authority = "scaffold_candidate"
     else:
         default_authority = "unverified"
 
@@ -461,13 +538,15 @@ def promote_automatic_transcript_timing(
     *,
     after_seconds: float = 0.0,
 ) -> Dict[str, Any] | None:
-    """Prefer automatic Whisper-like timestamps over inherited VAD projection rows."""
+    """Promote only row-level operational Whisper/manual clocks over projections."""
     automatic_segments = [
         segment
         for segment in automatic_transcript.get("segments", [])
         if isinstance(segment, dict)
     ]
     if not automatic_segments:
+        return None
+    if not _automatic_transcript_has_operational_clock(automatic_transcript):
         return None
 
     changed = False
@@ -484,13 +563,23 @@ def promote_automatic_transcript_timing(
         }:
             match = _matching_segment_by_text(automatic_segments, segment.get("text"))
             if match:
+                match_authority = str(match.get("timing_authority") or match.get("timingAuthority") or "")
+                match_status = str(match.get("timing_status") or match.get("timingStatus") or "")
+                if not (
+                    row_has_operational_whisper_timecode(match)
+                    or match_authority in {"full_pass", "original_whisper_timecode"}
+                    or match_status == "original_whisper_timecode"
+                    or isinstance(match.get("words"), list)
+                ):
+                    repaired_segments.append(next_segment)
+                    continue
                 next_segment.update(
                     {
                         "start": safe_float(match.get("start")) or 0.0,
                         "end": safe_float(match.get("end")) or safe_float(match.get("start")) or 0.0,
-                        "timing_status": "automatic_transcript_timestamp",
-                        "timing_authority": "quick_sweep_transcript",
-                        "timing_source": "automatic transcript timestamp promoted over VAD projection",
+                        "timing_status": "original_whisper_timecode",
+                        "timing_authority": "original_whisper_timecode",
+                        "timing_source": "original Whisper timecode promoted over candidate projection",
                         "source_time_valid": True,
                     }
                 )
@@ -508,7 +597,7 @@ def rebuild_transcript_from_quick_sweep_candidate(
     transcript: Dict[str, Any],
     automatic_transcript: Dict[str, Any],
 ) -> Dict[str, Any] | None:
-    """Replace VAD-inherited projection rows with automatic transcript candidates."""
+    """Use quick-sweep candidates for text coverage without certifying their clock."""
     automatic_segments = [
         dict(segment)
         for segment in automatic_transcript.get("segments", [])
@@ -521,11 +610,7 @@ def rebuild_transcript_from_quick_sweep_candidate(
     for segment in transcript.get("segments", []):
         if not isinstance(segment, dict):
             continue
-        if str(segment.get("timing_status") or "") in {
-            "anchor_verified",
-            "vad_anchor_verified",
-            "automatic_transcript_timestamp",
-        }:
+        if row_has_verified_source_timecode(segment):
             preserved.append(dict(segment))
 
     rows_by_text = {
@@ -539,14 +624,9 @@ def rebuild_transcript_from_quick_sweep_candidate(
         key = _normalize_text_for_match(automatic.get("text"))
         row = rows_by_text.get(key)
         if row is None:
-            row = dict(automatic)
-            row.update(
-                {
-                    "timing_status": "automatic_transcript_timestamp",
-                    "timing_authority": "quick_sweep_transcript",
-                    "timing_source": "automatic transcript timestamp",
-                    "source_time_valid": True,
-                }
+            row = quarantine_candidate_timing_row(
+                automatic,
+                reason="quick_sweep/chunked fallback candidate timing quarantined; manual or original Whisper timecode required",
             )
         rebuilt.append(row)
         seen_texts.add(key)
@@ -556,11 +636,18 @@ def rebuild_transcript_from_quick_sweep_candidate(
         if key and key not in seen_texts:
             rebuilt.append(row)
 
-    rebuilt.sort(key=lambda row: safe_float(row.get("start")) or 0.0)
+    rebuilt.sort(
+        key=lambda row: (
+            safe_float(row.get("start")) is None,
+            safe_float(row.get("start"))
+            if safe_float(row.get("start")) is not None
+            else safe_float(row.get("candidate_start")) or 0.0,
+        )
+    )
     repaired = {
         **transcript,
         "segments": rebuilt,
-        "transcription_strategy": "quick_sweep_transcript",
+        "transcription_strategy": "operational_transcript_with_quarantined_quick_sweep_candidates",
     }
     repaired["timing_authority"] = build_transcript_timing_authority(repaired)
     return repaired

@@ -1,8 +1,40 @@
-# VAA1 General Sprint Regime: Remaining Tasks
+# VAA1 General Sprint Regime: Operational Evidence and Analysis Core
 
 Date: 2026-05-25
+Current period definition updated: 2026-07-12
 
 This is the consolidated remaining sprint map. It keeps the interpretive features, maturity regime, governance, packaging, and release-readiness work in one place so no major track quietly falls off the board.
+
+## Current Development Period: Operational Evidence and Analysis Core
+
+The next development period is **Operational Evidence and Analysis Core**.
+
+This period begins with a mandatory **Empirical Taxonomy Discovery and Delivery Sprint**. This foundational audit ensures that all subsequent work is grounded in a precise, machine-actionable understanding of the system's data attributes and their dependencies.
+
+**Governing Document:**
+-   `docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md`
+
+Current gate status (2026-07-15): **Canonical architecture `GO — OPERATIONAL`**. The registry is schema-validated; governed compatibility writes synchronize atomically into an append-only decision ledger; candidate writers are proposal-only; dependency invalidation and shared projection are operational; Video, Meaning Network, and Master Schema consume canonical projections; and a validation copy of real saved work proves persistence and traceback. See `docs/vaa1_canonical_architectural_revamp_delivery_2026-07-15.md` and `docs/inventory/pass_1_gate.json`.
+
+Its scope is restricted to the work required to prove Datascene as a controlled evidence system:
+
+1. Complete the linked-time regime.
+2. Stop correction and annotation bleed.
+3. Implement the minimum canonical proliferation ledger.
+4. Stabilize persisted shot, VAD, and speaker-turn layers.
+5. Make Stats Comparison Studio consume those real layers.
+6. Prove correction, traceback, save/reopen, and export.
+7. Instrument performance and maturation costs under the hood.
+8. Classify every remaining feature as operational, partial, dormant, or deferred.
+
+The greatest strategic gain in this period comes from demonstrating that Datascene is no longer merely a collection of promising analytical features. It is a controlled evidence system in which professional interpretations remain inspectable, correctable, reproducible, and linked to their audiovisual source.
+
+Scope discipline:
+
+- Work outside this evidence-core list is deferred unless it directly removes risk from one of the eight period objectives.
+- UI promises must map to persisted, source-linked records or be labeled partial, dormant, or deferred.
+- New analytical surfaces must consume governed evidence layers rather than private panel-local approximations.
+- The sprint is complete only when correction, traceback, save/reopen, export, and performance/maturation instrumentation can be demonstrated on real persisted layers.
 
 ## Non-Droppable Release Tracks
 

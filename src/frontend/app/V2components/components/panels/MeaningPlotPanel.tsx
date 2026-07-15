@@ -9,6 +9,7 @@ import {
   type EvidenceProliferationCandidate,
   type ManualVisualAnnotation,
   type ProliferationDecision,
+  type ProjectedCanonicalClaim,
   type SecondOrderLabelInstruction,
   type SourceMediaMetadata,
 } from "@/lib/api-service";
@@ -3551,6 +3552,7 @@ export default function MeaningPlotPanel({
 }) {
   const [selectedVideoId, setSelectedVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [canonicalClaims, setCanonicalClaims] = useState<ProjectedCanonicalClaim[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeLens, setActiveLens] = useState<PlotLens>("freytag");
   const [activeArchetypeLens, setActiveArchetypeLens] =
@@ -3687,6 +3689,7 @@ export default function MeaningPlotPanel({
     if (!selectedVideoId) {
       setAnalysisData(null);
       setGovernedSourceMetadata(null);
+      setCanonicalClaims([]);
       return;
     }
     let cancelled = false;
@@ -3694,17 +3697,26 @@ export default function MeaningPlotPanel({
     Promise.all([
       VideoService.refreshAnalysis(selectedVideoId),
       apiService.getSourceMediaMetadata(selectedVideoId).catch(() => null),
+      VideoService.getProjectedCanonicalClaims(selectedVideoId, {
+        properties: [
+          "semantic.assignment.label",
+          "narrative_agent.assignment",
+          "meaning_network.relationship",
+        ],
+      }).catch(() => null),
     ])
-      .then(([data, sourceMetadata]) => {
+      .then(([data, sourceMetadata, projectedClaims]) => {
         if (!cancelled) {
           setAnalysisData(data);
           setGovernedSourceMetadata(sourceMetadata);
+          setCanonicalClaims(projectedClaims?.claims || []);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setAnalysisData(null);
           setGovernedSourceMetadata(null);
+          setCanonicalClaims([]);
         }
       })
       .finally(() => {
@@ -3741,12 +3753,43 @@ export default function MeaningPlotPanel({
         return;
       }
       VideoService.refreshAnalysis(selectedVideoId)
-        .then((data) => setAnalysisData(data))
+        .then((data) => {
+          setAnalysisData(data);
+          return VideoService.getProjectedCanonicalClaims(selectedVideoId, {
+            properties: [
+              "semantic.assignment.label",
+              "narrative_agent.assignment",
+              "meaning_network.relationship",
+            ],
+          });
+        })
+        .then((projected) => setCanonicalClaims(projected.claims))
         .catch(() => {});
     };
     eventBus.on("analysisCorrectionsChanged", correctionsHandler);
     return () => eventBus.off("analysisCorrectionsChanged", correctionsHandler);
   }, [selectedVideoId]);
+
+  useEffect(() => {
+    const projectedLabels: Record<string, string> = {};
+    const projectedEdges: Record<string, "confirmed" | "rejected"> = {};
+    canonicalClaims.forEach((claim) => {
+      if (
+        claim.projection_status === "projected" &&
+        (claim.property === "semantic.assignment.label" ||
+          claim.property === "narrative_agent.assignment") &&
+        typeof claim.projected_value === "string"
+      ) {
+        projectedLabels[claim.subject_ref.id] = claim.projected_value;
+      }
+      if (claim.property === "meaning_network.relationship") {
+        projectedEdges[claim.subject_ref.id] =
+          claim.projection_status === "suppressed" ? "rejected" : "confirmed";
+      }
+    });
+    setRenamedMeaningNetworkMarkers((current) => ({ ...current, ...projectedLabels }));
+    setConfirmedMeaningNetworkEdges((current) => ({ ...current, ...projectedEdges }));
+  }, [canonicalClaims]);
 
   useEffect(() => {
     const handler = (payload: { videoId?: string; annotation?: ManualVisualAnnotation }) => {

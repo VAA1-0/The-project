@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.projected_claim_collection.v0.schema.json",
+  "title": "VAA1 Projected Canonical Claim Collection",
+  "type": "object",
+  "required": ["schema", "analysis_id", "claim_count", "claims"],
+  "properties": {
+    "schema": { "const": "vaa1.projected_claim_collection.v0" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "claim_count": { "type": "integer", "minimum": 0 },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schema", "analysis_id", "subject_ref", "property",
+          "projected_value", "authority", "maturity", "validity",
+          "projection_status", "decision_refs", "evidence_refs", "traceback_refs"
+        ],
+        "properties": {
+          "schema": { "const": "vaa1.projected_claim.v0" },
+          "analysis_id": { "type": "string" },
+          "subject_ref": {
+            "type": "object",
+            "required": ["type", "id"],
+            "properties": {
+              "type": { "type": "string" },
+              "id": { "type": "string" }
+            }
+          },
+          "property": { "type": "string" },
+          "projected_value": { "type": ["string", "number", "boolean", "object", "array", "null"] },
+          "authority": { "type": "string" },
+          "maturity": { "type": "string" },
+          "validity": { "enum": ["current", "stale", "invalid", "unknown"] },
+          "projection_status": { "enum": ["projected", "suppressed", "stale", "unavailable"] },
+          "decision_refs": { "type": "array", "items": { "type": "string" } },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "correction_refs": { "type": "array", "items": { "type": "string" } },
+          "traceback_refs": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

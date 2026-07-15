@@ -1279,14 +1279,19 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                         })
                       }
                     >
-                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
-                        Scene Account
+                      <div className="text-[11px] font-semibold text-cyan-300">
+                        Scene account
                       </div>
                       <p className="text-sm leading-6 text-slate-100">
                         {proseSections?.summary ||
                           selectedCard.nlp_scene_summary_sentence ||
                           selectedCard.nlp_scene_summary?.sentence}
                       </p>
+                      <details className="mt-2 rounded border border-slate-800 bg-slate-950/20">
+                        <summary className="cursor-pointer list-none px-2 py-1.5 text-[11px] text-slate-300 marker:hidden">
+                          Scene attributes
+                        </summary>
+                        <div className="border-t border-slate-800 p-2">
                       {selectedCard.nlp_scene_summary?.authority && (
                         <div className="mt-1 text-[10px] text-slate-500">
                           {selectedCard.nlp_scene_summary.authority.replaceAll("_", " ")}
@@ -1364,6 +1369,8 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                             ))}
                         </div>
                       )}
+                        </div>
+                      </details>
                     </div>
                   )}
                   {showNoteEditor && (
@@ -1394,11 +1401,11 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   )}
                 </section>
 
-                <section>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
-                    Said In Scene
-                  </div>
-                  <div className="space-y-2">
+                <details className="rounded border border-slate-800 bg-slate-950/20">
+                  <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-cyan-300 marker:hidden">
+                    Said in scene · {matureSpeech.length}
+                  </summary>
+                  <div className="space-y-2 border-t border-slate-800 p-2">
                     {matureSpeech.slice(0, 80).map((utterance, index) => {
                       const start =
                         typeof utterance.navigation_time_seconds === "number"
@@ -1437,13 +1444,14 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       );
                     })}
                   </div>
-                </section>
+                </details>
 
                 {matureMeaningPlot && (
-                  <section className="border-y border-slate-800 py-3">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-300">
-                      Meaning / Plot
-                    </div>
+                  <details className="rounded border border-slate-800 bg-slate-950/20">
+                    <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-violet-300 marker:hidden">
+                      Meaning / plot
+                    </summary>
+                    <div className="border-t border-slate-800 p-3">
                     <p className="text-[12px] leading-5 text-slate-300">
                       {matureMeaningPlot.summary || "No plot / meaning candidates surfaced for this scene yet."}
                     </p>
@@ -1501,17 +1509,19 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                           );
                         })}
                     </div>
-                  </section>
+                    </div>
+                  </details>
                 )}
 
                 {sceneInterpretiveReadings.length > 0 && (
-                  <section
-                    className="border-b border-slate-800 pb-3"
+                  <details
+                    className="rounded border border-slate-800 bg-slate-950/20"
                     data-vaa1-scene-card-interpretive-readings="true"
                   >
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300">
-                      Interpretive Readings
-                    </div>
+                    <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-300 marker:hidden">
+                      Interpretive readings · {sceneInterpretiveReadings.length}
+                    </summary>
+                    <div className="border-t border-slate-800 p-2">
                     <p className="text-[12px] leading-5 text-slate-400">
                       Lens and character-path readings available for this scene. Open them in Meaning / Plot to review source anchors.
                     </p>
@@ -1566,23 +1576,26 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                         );
                       })}
                     </div>
-                  </section>
+                    </div>
+                  </details>
                 )}
 
                 {metadataSummary?.summary && (
-                  <section className="border-b border-slate-800 pb-3">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-teal-300">
-                      Source Extraction Metadata Summary
-                    </div>
+                  <details className="rounded border border-slate-800 bg-slate-950/20">
+                    <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-300 marker:hidden">
+                      Source extraction metadata
+                    </summary>
+                    <div className="border-t border-slate-800 p-3">
                     <p className="text-[12px] leading-5 text-slate-300">{metadataSummary.summary}</p>
-                  </section>
+                    </div>
+                  </details>
                 )}
 
-                <section>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                    Ontology Facets
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <details className="rounded border border-slate-800 bg-slate-950/20">
+                  <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-300 marker:hidden">
+                    Ontology facets
+                  </summary>
+                  <div className="grid gap-3 border-t border-slate-800 p-2 md:grid-cols-2 xl:grid-cols-3">
                     {FACET_ORDER.map((facet) => {
                       const values = selectedCard.tags?.[facet] || [];
                       if (!values.length) return null;
@@ -1618,13 +1631,13 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       );
                     })}
                   </div>
-                </section>
+                </details>
 
-                <section>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                    Evidence Items
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-2">
+                <details className="rounded border border-slate-800 bg-slate-950/20">
+                  <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-300 marker:hidden">
+                    Evidence items · {visibleItems.length}
+                  </summary>
+                  <div className="grid gap-2 border-t border-slate-800 p-2 md:grid-cols-2">
                     {visibleItems.slice(0, 80).map((item, index) => (
                       <button
                         key={item.item_id ? `${item.item_id}-${index}` : `${item.category}-${item.label}-${index}`}
@@ -1659,7 +1672,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       </button>
                     ))}
                   </div>
-                </section>
+                </details>
               </div>
             )}
           </main>

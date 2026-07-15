@@ -3321,7 +3321,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       )}
 
-      <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" open data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
+      <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">StatsKit comparison studio</div>
@@ -3853,7 +3853,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <div className="mt-2 grid gap-2 xl:grid-cols-[1.35fr_0.65fr]" data-vaa1-statskit-ordered-workbench-layout="true">
-        <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010] xl:col-start-1 xl:row-start-1" open data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
+        <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010] xl:col-start-1 xl:row-start-1" data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Stats workbench table</div>
@@ -3980,7 +3980,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           </div>
         </details>
 
-        <details className="order-5 rounded border border-slate-800 bg-[#101010] px-3 py-2 xl:sticky xl:top-2 xl:col-start-2 xl:row-span-4 xl:row-start-1 xl:self-start" open data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="right-visualization">
+        <details className="order-5 rounded border border-slate-800 bg-[#101010] px-3 py-2 xl:sticky xl:top-2 xl:col-start-2 xl:row-span-4 xl:row-start-1 xl:self-start" data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="right-visualization">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Visualization</div>

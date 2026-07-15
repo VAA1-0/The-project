@@ -20,7 +20,7 @@ TARGET_SAMPLE_RATE = 16000
 FRAME_SECONDS = 0.025
 HOP_SECONDS = 0.010
 AUDIO_DIARIZATION_CLOCK_VERSION = "vaa1.audio_diarization.clock.v2"
-PUNCTUAL_TIMING_STATUSES = {"anchor_verified", "vad_anchor_verified", "manual_source_verified"}
+PUNCTUAL_TIMING_STATUSES = {"original_whisper_timecode", "manual_correction", "manual_source_verified"}
 
 
 def _utc_now() -> str:
@@ -220,7 +220,7 @@ def _transcript_timing_authority(transcript: Optional[Dict[str, Any]]) -> Dict[s
     else:
         status = "unverified"
 
-    mature_statuses = {"anchor_verified", "vad_anchor_verified"}
+    mature_statuses = {"original_whisper_timecode", "manual_correction", "manual_source_verified"}
     segments_can_seed = bool(
         timing_status_counts
         and all(
@@ -494,7 +494,11 @@ def build_audio_diarization(
         confidence = float(confidences[measured_index])
         turn_id = f"turn_{segment_index:04d}"
         timing_status = segment.get("timing_status") or timing_authority["status"]
-        source_time_valid = timing_status in PUNCTUAL_TIMING_STATUSES
+        row_authority = str(segment.get("timing_authority") or timing_authority["strategy"] or "")
+        source_time_valid = (
+            timing_status in PUNCTUAL_TIMING_STATUSES
+            or row_authority in {"original_whisper_timecode", "manual_correction"}
+        )
         turns.append(
             {
                 "turn_id": turn_id,
@@ -507,7 +511,7 @@ def build_audio_diarization(
                 "diarization_status": "measured_acoustic_cluster",
                 "diarization_confidence": round(confidence, 4),
                 "timing_status": timing_status,
-                "timing_authority": segment.get("timing_authority") or timing_authority["strategy"],
+                "timing_authority": row_authority,
                 "timing_source": segment.get("timing_source") or timing_authority["speaker_turn_timing_source"],
                 "source_media_id": str(audio_path),
                 "canonical_time_basis": "source_media_seconds",

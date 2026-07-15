@@ -98,7 +98,7 @@ class AudioDiarizationContractTest(unittest.TestCase):
                 16000,
             )
 
-    def test_repaired_transcript_timing_status_is_carried_into_speaker_turns(self):
+    def test_vad_repair_timing_status_is_carried_without_confirmation_authority(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = Path(tmpdir) / "voices.wav"
             write_test_wave(audio_path, duration=6.0)
@@ -145,6 +145,8 @@ class AudioDiarizationContractTest(unittest.TestCase):
             payload["speaker_turns"][1]["timing_authority"],
             "anchored_vad_timing_repair",
         )
+        self.assertFalse(payload["speaker_turns"][0]["valid_for_confirmation"])
+        self.assertFalse(payload["speaker_turns"][1]["valid_for_confirmation"])
 
     def test_completed_measured_diarization_is_stale_if_transcript_clock_changed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -177,7 +179,7 @@ class AudioDiarizationContractTest(unittest.TestCase):
         self.assertTrue(health["is_stale"])
         self.assertIn("mismatch", health["stale_reason"])
 
-    def test_verified_speaker_turns_survive_rebuild_with_correct_global_time(self):
+    def test_original_whisper_speaker_turns_survive_rebuild_with_correct_global_time(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = Path(tmpdir) / "voices.wav"
             write_test_wave(audio_path, duration=24.0)
@@ -185,21 +187,21 @@ class AudioDiarizationContractTest(unittest.TestCase):
                 "analysis-bond",
                 audio_path=audio_path,
                 transcript={
-                    "transcription_strategy": "anchored_vad_timing_repair",
+                    "transcription_strategy": "original_whisper_timecode",
                     "segments": [
                         {
                             "start": 6.4,
                             "end": 8.4,
                             "text": "Why would I betray you?",
-                            "timing_status": "anchor_verified",
-                            "timing_authority": "anchored_vad_timing_repair",
+                            "timing_status": "original_whisper_timecode",
+                            "timing_authority": "original_whisper_timecode",
                         },
                         {
                             "start": 20.96,
                             "end": 22.215,
                             "text": "The world is arming faster than we can respond.",
-                            "timing_status": "vad_anchor_verified",
-                            "timing_authority": "anchored_vad_timing_repair",
+                            "timing_status": "original_whisper_timecode",
+                            "timing_authority": "original_whisper_timecode",
                         },
                     ],
                 },

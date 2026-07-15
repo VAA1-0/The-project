@@ -13,6 +13,7 @@ import type {
   IdentityCandidate,
   IdentityCandidateLedger,
   ManualVisualAnnotation,
+  ProjectedCanonicalClaim,
   SecondOrderLabelInstruction,
 } from "@/lib/api-service";
 import {
@@ -573,7 +574,10 @@ function upsertNarrativeAgentPathRow(
   rows.set(key, next);
 }
 
-function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[] {
+function buildNarrativeAgentPathRows(
+  analysisData: any,
+  canonicalClaims: ProjectedCanonicalClaim[] = [],
+): NarrativeAgentPathRow[] {
   const rows = new Map<string, NarrativeAgentPathRow>();
   const records: MasterSchemaResolvedEvidenceRecord[] =
     analysisData?.masterSchemaResolvedEvidence?.records || [];
@@ -678,6 +682,27 @@ function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[]
         start_seconds: interval.start_seconds,
         end_seconds: interval.end_seconds,
       } as Record<string, unknown>,
+    });
+  }
+
+  for (const claim of canonicalClaims) {
+    if (
+      claim.projection_status !== "projected" ||
+      claim.property !== "narrative_agent.assignment" ||
+      typeof claim.projected_value !== "string"
+    ) {
+      continue;
+    }
+    const scope = claim.scope || {};
+    upsertNarrativeAgentPathRow(rows, {
+      label: claim.projected_value,
+      source: "Canonical decision projection",
+      start: numberFrom(scope.start_seconds),
+      end: numberFrom(scope.end_seconds),
+      manualCount: 1,
+      sceneRefs: [],
+      evidenceChips: ["canonical decision"],
+      sourceItem: claim as unknown as Record<string, unknown>,
     });
   }
 
@@ -1913,10 +1938,10 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
   const order: MatureEvidenceAuthority[] = resolved.authorityOrder || [];
   const counts = resolved.counts || {};
   return (
-    <section className="mb-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <details className="mb-2 rounded border border-emerald-500/20 bg-emerald-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2 marker:hidden">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-200">
+          <div className="text-[11px] font-semibold text-emerald-200">
             Evidence reliability
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -1933,8 +1958,8 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
             </span>
           ))}
         </div>
-      </div>
-    </section>
+      </summary>
+    </details>
   );
 }
 
@@ -2075,10 +2100,10 @@ function ConfirmationProgramStrip({
     });
   };
   return (
-    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <details className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-3 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          <div className="text-[11px] font-semibold text-cyan-200">
             Analyst confirmations
           </div>
           <div className="mt-0.5 max-w-3xl text-[10px] text-[var(--ui-passive-text)]">
@@ -2086,16 +2111,14 @@ function ConfirmationProgramStrip({
               "User confirmed corrections and annotations anchor mature sense-making."}
           </div>
         </div>
-        <button
-          type="button"
-          className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:border-cyan-400/80 hover:bg-cyan-950/30"
-          onClick={inspectProgram}
-        >
-          {program?.consults_user_confirmed_anchor
-            ? "Inspect confirmed anchors"
-            : "Anchor consultation pending"}
-        </button>
-      </div>
+        <span className="shrink-0 text-[10px] text-cyan-100">
+          {anchorSurfaces.length} surfaces · {families.length} families
+        </span>
+      </summary>
+      <div className="border-t border-cyan-900/40 px-3 py-2">
+      <button type="button" className="rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100" onClick={inspectProgram}>
+        Inspect confirmed anchors
+      </button>
       {localInspection ? (
         <div
           className="mt-2 rounded border border-cyan-800/60 bg-cyan-950/20 px-2 py-2"
@@ -2193,7 +2216,8 @@ function ConfirmationProgramStrip({
           </div>
         </div>
       )}
-    </section>
+      </div>
+    </details>
   );
 }
 
@@ -2253,10 +2277,10 @@ function MasterSchemaSubjectStrip({
     });
   };
   return (
-    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <details className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-2 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          <div className="text-[11px] font-semibold text-cyan-200">
             Known character profiles
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -2266,8 +2290,8 @@ function MasterSchemaSubjectStrip({
         <span className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100">
           {subjects.length} governed subject{subjects.length === 1 ? "" : "s"}
         </span>
-      </div>
-      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+      </summary>
+      <div className="grid gap-1.5 border-t border-cyan-900/40 p-2 md:grid-cols-2 xl:grid-cols-3">
         {subjects.slice(0, 18).map((subject) => {
           const subjectPresenceIntervals = presenceIntervalsForMasterSubject(presenceIntervals, subject);
           return (
@@ -2302,7 +2326,7 @@ function MasterSchemaSubjectStrip({
           </button>
         );})}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2320,10 +2344,10 @@ function MatureProliferationMatchStrip({
     return null;
   }
   return (
-    <section className="mb-2 rounded border border-amber-500/20 bg-amber-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <details className="mb-2 rounded border border-amber-500/20 bg-amber-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-2 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-200">
+          <div className="text-[11px] font-semibold text-amber-200">
             Suggested matches
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -2333,8 +2357,8 @@ function MatureProliferationMatchStrip({
         <span className="shrink-0 rounded border border-amber-700/60 bg-[#111214] px-2 py-1 text-[10px] text-amber-100">
           {visibleMatches.length} run{visibleMatches.length === 1 ? "" : "s"}
         </span>
-      </div>
-      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+      </summary>
+      <div className="grid gap-1.5 border-t border-amber-900/40 p-2 md:grid-cols-2 xl:grid-cols-3">
         {visibleMatches.slice(0, 12).map((match, index) => {
           const requestId = match.request_id || `proliferation_match:${index}`;
           const candidateCount = Number(match.candidate_count || 0);
@@ -2378,7 +2402,7 @@ function MatureProliferationMatchStrip({
           );
         })}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2398,12 +2422,12 @@ function PanelDropdownSection({
   return (
     <details
       className="mb-2 rounded border border-slate-800 bg-slate-950/20"
-      open={defaultOpen}
+      open={defaultOpen ? true : undefined}
       data-vaa1-headline-dropdown="true"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2 text-[11px] font-semibold text-slate-200 marker:content-none">
         <span className="min-w-0">
-          <span className="block uppercase tracking-[0.12em] text-cyan-200">
+          <span className="block text-cyan-200">
             {title}
           </span>
           {summary ? (
@@ -2427,18 +2451,20 @@ function PanelDropdownSection({
 
 function NarrativeAgentCharacterPathsHome({
   analysisData,
+  canonicalClaims,
   videoId,
   openPanel,
   onCommitTimelineHandle,
 }: {
   analysisData: any;
+  canonicalClaims: ProjectedCanonicalClaim[];
   videoId: string;
   openPanel: (panelType: string, panelProps?: any) => void;
   onCommitTimelineHandle: (commit: NarrativeAgentTimelineHandleCommit) => void;
 }) {
   const rows = useMemo(
-    () => buildNarrativeAgentPathRows(analysisData),
-    [analysisData],
+    () => buildNarrativeAgentPathRows(analysisData, canonicalClaims),
+    [analysisData, canonicalClaims],
   );
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [activeNarrativeAgentArchetypeLens, setActiveNarrativeAgentArchetypeLens] =
@@ -2717,7 +2743,6 @@ function NarrativeAgentCharacterPathsHome({
         title="Choose Character"
         summary="Pick one character to inspect. Everything below follows this selection."
         count={`${rows.length} profiles`}
-        defaultOpen
       >
       <div data-vaa1-narrative-agent-single-profile-selector="true">
         <div className="flex flex-wrap items-end justify-between gap-2">
@@ -2774,7 +2799,6 @@ function NarrativeAgentCharacterPathsHome({
         title="StatsKit + Significance + Relevance"
         summary="Ranks this character's source-linked evidence for the current analyst task."
         count={selectedRelevanceSurface ? `${formatNarrativeAgentScore(selectedRelevanceSurface.overallScore)} relevance` : "pending"}
-        defaultOpen
       >
         {selectedRelevanceSurface ? (
           <div
@@ -2921,7 +2945,6 @@ function NarrativeAgentCharacterPathsHome({
         title="Recommended Next Steps"
         summary="Practical checks that would make this character more useful for analysis and matching."
         count={selectedCharacterRecommendations.length || "ready"}
-        defaultOpen
       >
         {selectedCharacterRecommendations.length > 0 ? (
           <div className="grid gap-1.5 md:grid-cols-2" data-vaa1-narrative-agent-recommendations="true">
@@ -3558,6 +3581,7 @@ export default function MasterSchemaPanel({
   const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const [canonicalClaims, setCanonicalClaims] = useState<ProjectedCanonicalClaim[]>([]);
   const [identityLedger, setIdentityLedger] =
     useState<IdentityCandidateLedger | null>(null);
   const [identityActionMessage, setIdentityActionMessage] = useState("");
@@ -3620,6 +3644,7 @@ export default function MasterSchemaPanel({
       analysisLoadRequestRef.current = requestId;
       if (!videoId) {
         setAnalysisData(null);
+        setCanonicalClaims([]);
         setIsLoading(false);
         return;
       }
@@ -3633,7 +3658,12 @@ export default function MasterSchemaPanel({
       }
       setIsLoading(true);
       try {
-        const nextAnalysisData = await VideoService.getAnalysis(requestedVideoId);
+        const [nextAnalysisData, projectedClaims] = await Promise.all([
+          VideoService.getAnalysis(requestedVideoId),
+          VideoService.getProjectedCanonicalClaims(requestedVideoId, {
+            properties: ["narrative_agent.assignment"],
+          }).catch(() => null),
+        ]);
         if (
           analysisLoadRequestRef.current !== requestId ||
           requestedVideoId !== videoId ||
@@ -3642,6 +3672,7 @@ export default function MasterSchemaPanel({
           return;
         }
         setAnalysisData(nextAnalysisData);
+        setCanonicalClaims(projectedClaims?.claims || []);
       } catch (error) {
         console.error("Failed to load master schema annotations:", error);
         if (analysisLoadRequestRef.current === requestId) {
@@ -4042,6 +4073,7 @@ export default function MasterSchemaPanel({
             {category === "Identification" && (
               <NarrativeAgentCharacterPathsHome
                 analysisData={analysisData}
+                canonicalClaims={canonicalClaims}
                 videoId={videoId}
                 openPanel={openPanel}
                 onCommitTimelineHandle={(commit) => {
@@ -4128,28 +4160,38 @@ export default function MasterSchemaPanel({
               </>
             ) : (
               <>
-                <SecondOrderLabelReviewTray
-                  plan={analysisData?.secondOrderLabelProliferation}
-                />
-                <AutomaticEvidenceSection
-                  category={category}
-                  analysisData={analysisData}
-                  videoId={videoId}
-                  identityLedger={identityLedger}
-                  identityActionMessage={identityActionMessage}
-                  isIdentityActionBusy={isIdentityActionBusy}
-                  identityDrafts={identityDrafts}
-                  onCreateIdentityCandidates={createIdentityCandidates}
-                  onIdentityDraftChange={updateIdentityDraft}
-                  onPromoteIdentityCandidate={promoteIdentityCandidate}
-                />
+                <PanelDropdownSection
+                  title="Suggested labels"
+                  summary="Candidate labels awaiting analyst review."
+                >
+                  <SecondOrderLabelReviewTray
+                    plan={analysisData?.secondOrderLabelProliferation}
+                  />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title={`${category} evidence`}
+                  summary="Computed evidence and candidate records for this leaf."
+                >
+                  <AutomaticEvidenceSection
+                    category={category}
+                    analysisData={analysisData}
+                    videoId={videoId}
+                    identityLedger={identityLedger}
+                    identityActionMessage={identityActionMessage}
+                    isIdentityActionBusy={isIdentityActionBusy}
+                    identityDrafts={identityDrafts}
+                    onCreateIdentityCandidates={createIdentityCandidates}
+                    onIdentityDraftChange={updateIdentityDraft}
+                    onPromoteIdentityCandidate={promoteIdentityCandidate}
+                  />
+                </PanelDropdownSection>
               </>
             )}
             <PanelDropdownSection
               title={category === "Identification" ? "Source Annotations" : "Manual Annotations"}
               summary="Source-time and BBox/ROI anchored analyst annotations."
               count={totalAnnotations}
-              defaultOpen={category !== "Identification"}
+              defaultOpen={false}
             >
             {groupedAnnotations.length === 0 ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">

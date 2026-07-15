@@ -163,6 +163,7 @@ filelock==3.20.0
 packaging==25.0
 more-itertools==10.8.0
 regex==2025.11.3
+pytest==8.4.2
 
 # UI & CLI
 click==8.3.1

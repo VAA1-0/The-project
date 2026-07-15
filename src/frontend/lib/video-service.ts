@@ -871,20 +871,38 @@ function applyAnnotationCorrectionsToTranscript(
 function segmentHasRepairedTimingAuthority(segment: TranscriptSegment): boolean {
   const status = String(segment.timingStatus || segment.sourceTimingStatus || "").trim();
   const authority = String(segment.timingAuthority || "").trim();
+  const sourceTimeValid = (segment as any).sourceTimeValid;
   if (
-    authority === "manual_correction" ||
+    [
+      "automatic_transcript_timestamp",
+      "inherited_after_vad_anchor",
+      "needs_per_line_sync",
+    ].includes(status) ||
+    [
+      "quick_sweep_transcript",
+      "quick_sweep_transcript_priority",
+      "chunked_fallback",
+      "tail_recovery_fallback",
+      "fallback_candidate",
+      "scaffold",
+      "text_only_no_source_timing",
+    ].includes(authority)
+  ) {
+    return false;
+  }
+  if (authority === "manual_correction") {
+    return sourceTimeValid !== false || status === "manual_correction";
+  }
+  if (
     authority === "original_whisper_timecode" ||
     authority === "full_pass" ||
-    authority === "anchored_vad_timing_repair" ||
-    authority === "vad_anchor_verified"
+    status === "original_whisper_timecode"
   ) {
     return true;
   }
   return [
     "manual_correction",
     "original_whisper_timecode",
-    "anchored_vad_timing_repair",
-    "vad_anchor_verified",
   ].includes(status);
 }
 
@@ -899,14 +917,16 @@ function rawTranscriptPayloadHasTimingAuthority(payload: any): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
   }
-  const timingAuthority = payload.timing_authority || payload.timingAuthority || {};
-  const operationalAuthority = String(
-    timingAuthority?.operational_authority || timingAuthority?.operationalAuthority || "",
-  );
+  if (rawTranscriptPayloadLooksLikeScaffold(payload)) {
+    return false;
+  }
+  const authorityPayload = payload.timing_authority;
   if (
-    operationalAuthority === "original_whisper_timecode" ||
-    operationalAuthority === "manual_correction" ||
-    operationalAuthority === "manual_correction_for_verified_rows"
+    authorityPayload &&
+    typeof authorityPayload === "object" &&
+    ["original_whisper_timecode", "manual_correction"].includes(
+      String(authorityPayload.operational_authority || ""),
+    )
   ) {
     return true;
   }
@@ -925,8 +945,29 @@ function rawTranscriptPayloadHasTimingAuthority(payload: any): boolean {
     }
     const authority = String(segment.timing_authority || segment.timingAuthority || "");
     const status = String(segment.timing_status || segment.timingStatus || "");
+    const sourceTimeValid = segment.source_time_valid ?? segment.sourceTimeValid;
+    if (
+      [
+        "automatic_transcript_timestamp",
+        "inherited_after_vad_anchor",
+        "needs_per_line_sync",
+      ].includes(status) ||
+      [
+        "quick_sweep_transcript",
+        "quick_sweep_transcript_priority",
+        "chunked_fallback",
+        "tail_recovery_fallback",
+        "fallback_candidate",
+        "scaffold",
+        "text_only_no_source_timing",
+      ].includes(authority)
+    ) {
+      return false;
+    }
+    if (authority === "manual_correction") {
+      return sourceTimeValid !== false || status === "manual_correction";
+    }
     return (
-      authority === "manual_correction" ||
       authority === "original_whisper_timecode" ||
       authority === "full_pass" ||
       [
@@ -953,6 +994,31 @@ function isManualTranscriptClockRow(segment: any): boolean {
     authority === "manual_correction" ||
     status === "manual_correction" ||
     source.startsWith("annotation_corrections.")
+  );
+}
+
+function transcriptRowHasCandidateOnlyTiming(segment: any): boolean {
+  const status = String(segment?.timing_status || segment?.timingStatus || "");
+  const authority = String(segment?.timing_authority || segment?.timingAuthority || "");
+  const source = String(segment?.timing_source || segment?.timingSource || "");
+  const sourceTimeValid = segment?.source_time_valid ?? segment?.sourceTimeValid;
+  return (
+    sourceTimeValid === false ||
+    [
+      "automatic_transcript_timestamp",
+      "inherited_after_vad_anchor",
+      "needs_per_line_sync",
+    ].includes(status) ||
+    [
+      "quick_sweep_transcript",
+      "quick_sweep_transcript_priority",
+      "chunked_fallback",
+      "tail_recovery_fallback",
+      "fallback_candidate",
+      "scaffold",
+      "text_only_no_source_timing",
+    ].includes(authority) ||
+    /chunked|fallback|scaffold|quick_sweep/i.test(source)
   );
 }
 
@@ -1019,7 +1085,7 @@ function buildWhisperClockPayloadWithMatureAnnotations(payload: any): any {
       end: clockSegment.end,
       source_start: clockSegment.start,
       source_end: clockSegment.end,
-      timing_status: "automatic_transcript_timestamp",
+      timing_status: "original_whisper_timecode",
       timing_authority: "original_whisper_timecode",
       timing_source: "whisper_timecode",
       source_time_valid: true,
@@ -3939,6 +4005,8 @@ export interface AnalysisData {
   entityRegistry?: DatasceneEntityRegistryView;
   contentSearch?: DatasceneContentSearchView;
   annotationCorrections?: AnnotationCorrections | null;
+  canonicalDecisionLedger?: AnalysisStatus["canonical_decision_ledger"];
+  projectedCanonicalClaims?: import("./api-service").ProjectedCanonicalClaimCollection;
   forensicRenderJobs?: ForensicRenderJob[];
   sourceSamples?: SourceSample[];
   identityRefinement?: IdentityRefinementStatus | null;
@@ -4716,6 +4784,13 @@ export interface AnalysisStatus {
   source_media_metadata?: SourceMediaMetadata;
   source_media_annotations?: Record<string, unknown>;
   annotation_corrections?: AnnotationCorrections | null;
+  canonical_decision_ledger?: {
+    schema: "vaa1.canonical_decision_ledger.v0";
+    analysis_id: string;
+    version: 1;
+    decisions: Array<Record<string, unknown>>;
+  };
+  projected_canonical_claims?: import("./api-service").ProjectedCanonicalClaimCollection;
   transcript_timing_repair?: {
     status?: string;
     reason?: string;
@@ -5034,6 +5109,7 @@ export class VideoService {
   private static readonly analysisCache = new Map<
     string,
     {
+      cachedAt: number;
       completedAt?: string;
       correctionUpdatedAt?: string;
       transcriptTimingRepairKey?: string;
@@ -5102,7 +5178,7 @@ export class VideoService {
   static async get(id: string): Promise<VideoMetadata> {
     try {
       // Cast to our extended AnalysisStatus type
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status = (await apiService.getStatusSummary(id)) as AnalysisStatus;
 
       return {
         id: status.analysis_id,
@@ -5152,7 +5228,7 @@ export class VideoService {
    */
   static async getBlob(id: string): Promise<Blob | null> {
     try {
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status = (await apiService.getStatusSummary(id)) as AnalysisStatus;
 
       if (status.status === "completed") {
         try {
@@ -5177,6 +5253,10 @@ export class VideoService {
     const existingPromise = this.analysisPromiseCache.get(id);
     if (existingPromise) {
       return existingPromise;
+    }
+    const recentlyResolved = this.analysisCache.get(id);
+    if (recentlyResolved && Date.now() - recentlyResolved.cachedAt < 5_000) {
+      return recentlyResolved.data;
     }
 
     const loadPromise = (async () => {
@@ -5462,6 +5542,8 @@ export class VideoService {
         entityRegistry,
         contentSearch,
         annotationCorrections: corrections,
+        canonicalDecisionLedger: status.canonical_decision_ledger,
+        projectedCanonicalClaims: status.projected_canonical_claims,
         forensicRenderJobs: status.forensic_render_jobs || [],
         sourceSamples: status.source_samples || [],
         identityRefinement: status.identity_refinement || null,
@@ -5592,6 +5674,7 @@ export class VideoService {
         },
       };
       this.analysisCache.set(id, {
+        cachedAt: Date.now(),
         completedAt: status.analysis_completed_at,
         correctionUpdatedAt: correctionUpdatedAt || undefined,
         transcriptTimingRepairKey: timingRepairCacheKey,
@@ -5648,6 +5731,42 @@ export class VideoService {
     const saved = await apiService.saveAnnotationCorrections(id, corrections);
     this.invalidateAnalysisCache(id);
     return saved;
+  }
+
+  static async getProjectedSubjectState(
+    id: string,
+    subjectRef: string,
+    timestampSeconds: number,
+  ) {
+    return apiService.getProjectedSubjectState(id, subjectRef, timestampSeconds);
+  }
+
+  static async getProjectedSubjectStates(
+    id: string,
+    requests: Array<{ subject_ref: string; timestamp: number }>,
+  ) {
+    return apiService.getProjectedSubjectStates(id, requests);
+  }
+
+  static async createCanonicalDecision(
+    id: string,
+    decision: import("./api-service").CanonicalDecisionInput,
+  ) {
+    return apiService.createCanonicalDecision(id, decision);
+  }
+
+  static async getProjectedCanonicalClaims(
+    id: string,
+    request: Parameters<typeof apiService.getProjectedCanonicalClaims>[1],
+  ) {
+    return apiService.getProjectedCanonicalClaims(id, request);
+  }
+
+  static async invalidateCanonicalDecision(
+    id: string,
+    invalidation: Parameters<typeof apiService.invalidateCanonicalDecision>[1],
+  ) {
+    return apiService.invalidateCanonicalDecision(id, invalidation);
   }
 
   static async refreshAnalysis(id: string): Promise<AnalysisData> {
@@ -5861,10 +5980,28 @@ export class VideoService {
         }
       }
       transcriptData = buildWhisperClockPayloadWithMatureAnnotations(transcriptData);
+      const payloadCandidateOnlyTiming = [
+        "chunked_fallback",
+        "tail_recovery_fallback",
+        "quick_sweep_transcript",
+        "quick_sweep_transcript_priority",
+        "fallback_candidate",
+        "scaffold",
+      ].includes(String(transcriptData?.transcription_strategy || ""));
       const normalizeSegment = (seg: any): TranscriptSegment => {
         const timing = normalizeTranscriptSegmentTiming(seg || {});
+        const candidateOnlyTiming =
+          (payloadCandidateOnlyTiming || transcriptRowHasCandidateOnlyTiming(seg)) && !segmentHasRepairedTimingAuthority({
+            ...timing,
+            timingStatus: seg.timing_status || seg.timingStatus,
+            timingAuthority: seg.timing_authority || seg.timingAuthority,
+            timingSource: seg.timing_source || seg.timingSource,
+            sourceTimeValid: seg.source_time_valid ?? seg.sourceTimeValid,
+          } as TranscriptSegment);
         return {
           ...timing,
+          start: candidateOnlyTiming ? Number.NaN : timing.start,
+          end: candidateOnlyTiming ? Number.NaN : timing.end,
           text: seg.text || "",
           rawText: seg.raw_text || seg.rawText || seg.text || "",
           speaker: seg.speaker || seg.speaker_label || "Speaker 1",

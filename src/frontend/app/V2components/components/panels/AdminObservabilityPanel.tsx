@@ -57,17 +57,17 @@ function AdminSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="border-t border-white/10 py-4">
-      <div className="mb-3">
-        <h3 className="text-[12px] font-semibold uppercase tracking-[0.16em] text-cyan-100">
+    <details className="border-t border-white/10">
+      <summary className="cursor-pointer list-none px-2 py-3 marker:hidden">
+        <h3 className="text-[12px] font-semibold text-slate-200">
           {title}
         </h3>
         <p className="mt-1 max-w-3xl text-[11px] leading-5 text-slate-400">
           {subtitle}
         </p>
-      </div>
-      {children}
-    </section>
+      </summary>
+      <div className="border-t border-white/10 p-2">{children}</div>
+    </details>
   );
 }
 

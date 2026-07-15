@@ -73,6 +73,7 @@ from src.backend.analysis.transcript_timing_guard import (
     build_transcript_timing_authority,
     promote_automatic_transcript_timing,
     rebuild_transcript_from_quick_sweep_candidate,
+    transcript_timing_looks_scaffolded,
     transcript_timing_repair_needed,
 )
 from src.backend.analysis.evidence_linker import link_transcript_to_trace
@@ -129,6 +130,15 @@ from src.backend.analysis.ai_agent_feature_starters import (
     write_feature_starter_manifest,
 )
 from src.backend.analysis.statskit_agent import StatsKitAgent, StatsKitAgentError
+from src.backend.analysis.projected_state import project_subject_state, project_subject_states
+from src.backend.analysis.decision_ledger import (
+    append_decision,
+    append_dependency_invalidation,
+    append_invalidation,
+    empty_decision_ledger,
+)
+from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
+from src.backend.analysis.claim_projection import project_canonical_claims
 from fastapi import Form
 
 
@@ -1188,6 +1198,7 @@ def build_narrative_agent_profile(
             "source_preference": source_preference,
         },
         "evidence_slots": {
+            "lines": [],
             "speaker_timeline": [],
             "audio_samples": [],
             "visual_patterns": [],
@@ -1240,6 +1251,7 @@ def build_narrative_agent_profile(
             )
         ]
         if agent_turns:
+            profile["evidence_slots"]["lines"] = agent_turns
             profile["evidence_slots"]["speaker_timeline"] = agent_turns
 
     return {key: item for key, item in profile.items() if annotation_has_value(item)}
@@ -3122,6 +3134,96 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
     }
 
 
+def tracked_objects_for_projection(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Load tracked observations for the read-only compatibility projector."""
+    visual = ((status.get("results") or {}).get("visual_analysis") or {})
+    inline = visual.get("tracked_objects")
+    if isinstance(inline, list):
+        return [item for item in inline if isinstance(item, dict)]
+
+    raw_path = (status.get("output_files") or {}).get("tracked_objects_json")
+    if raw_path:
+        try:
+            payload = json.loads(Path(str(raw_path)).read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
+            if isinstance(payload, dict):
+                items = payload.get("tracked_objects") or payload.get("items") or []
+                return [item for item in items if isinstance(item, dict)]
+        except (OSError, ValueError, TypeError):
+            return []
+    return []
+
+
+def decision_ledger_for_status(status: Dict[str, Any]) -> Dict[str, Any]:
+    analysis_id = str(status.get("analysis_id") or "")
+    inline = status.get("canonical_decision_ledger")
+    if isinstance(inline, dict):
+        ledger = inline
+    else:
+        ledger = None
+    path_value = (status.get("output_files") or {}).get("decision_ledger")
+    if ledger is None and path_value:
+        try:
+            payload = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                status["canonical_decision_ledger"] = payload
+                ledger = payload
+        except (OSError, ValueError, TypeError):
+            pass
+    if ledger is None:
+        ledger = empty_decision_ledger(analysis_id)
+    status["canonical_decision_ledger"] = ledger
+
+    corrections = status.get("annotation_corrections")
+    if isinstance(corrections, dict) and any(
+        corrections.get(collection)
+        for collection in ("manual_visual_annotations", "label_overrides", "proliferation_decisions")
+    ):
+        created_at = str(corrections.get("updated_at") or utc_now_iso())
+        created_by = str(corrections.get("updated_by") or "analyst")
+        ledger, backfilled = sync_corrections_to_ledger(
+            ledger,
+            {},
+            corrections,
+            analysis_id=analysis_id,
+            created_at=created_at,
+            created_by=created_by,
+        )
+        status["canonical_decision_ledger"] = ledger
+        if backfilled:
+            analysis_dir = RESULTS_DIR / analysis_id
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            path = analysis_dir / "decision_ledger.json"
+            path.write_text(json.dumps(ledger, indent=2, ensure_ascii=False), encoding="utf-8")
+            status.setdefault("output_files", {})["decision_ledger"] = str(path)
+            append_analysis_event(
+                status,
+                "canonical_ledger_backfilled",
+                details={
+                    "event_count": len(backfilled),
+                    "decision_refs": [event["decision_id"] for event in backfilled],
+                },
+            )
+            persist_analysis_record_for_status(status)
+    return ledger
+
+
+def write_decision_ledger_file(status: Dict[str, Any]) -> Path:
+    analysis_id = str(status.get("analysis_id") or "")
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    path = analysis_dir / "decision_ledger.json"
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(decision_ledger_for_status(status), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    status.setdefault("output_files", {})["decision_ledger"] = str(path)
+    return path
+
+
 def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     analysis_id = status.get("analysis_id")
     if not analysis_id:
@@ -3220,6 +3322,8 @@ def read_json_artifact_if_available(path_value: Any) -> Optional[Dict[str, Any]]
 def transcript_payload_has_timing_authority(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
+    if transcript_timing_looks_scaffolded(payload):
+        return False
     timing_authority = payload.get("timing_authority")
     if isinstance(timing_authority, dict):
         operational_authority = str(timing_authority.get("operational_authority") or "")
@@ -3267,21 +3371,21 @@ def transcript_artifact_has_timing_authority(path_value: Any) -> bool:
 
 
 def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
-    """Keep the repaired global-clock transcript as the only transcript export."""
+    """Prefer the preserved Whisper/manual clock artifact over candidates."""
     analysis_id = str(status.get("analysis_id") or "").strip()
     if not analysis_id:
         return False
 
     output_files = status.setdefault("output_files", {})
     current_transcript = output_files.get("transcript")
-    if transcript_artifact_has_timing_authority(current_transcript):
-        return False
 
     candidates: List[Any] = []
     record = read_json_artifact_if_available(get_analysis_record_path(analysis_id))
     if isinstance(record, dict):
         record_output_files = record.get("output_files") or {}
         if isinstance(record_output_files, dict):
+            candidates.append(record_output_files.get("raw_whisper_transcript"))
+            candidates.append(record_output_files.get("operational_transcript"))
             candidates.append(record_output_files.get("transcript"))
         record_transcript = (
             (record.get("results") or {})
@@ -3309,7 +3413,13 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         source_stem = Path(str(source_video_path)).stem.replace("_source_video", "")
         candidates.append(source_dir / f"{source_stem}_transcript.json")
     if current_transcript:
+        candidates.append(current_transcript)
         current_path = Path(str(current_transcript))
+        candidates.append(
+            current_path.with_name(
+                current_path.name.replace("_transcript", "_transcript_raw_whisper")
+            )
+        )
         candidates.append(
             current_path.with_name(
                 current_path.name.replace("_extracted_audio_transcript", "_transcript")
@@ -3329,7 +3439,11 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         candidate_payload = read_json_artifact_if_available(candidate_path)
         if not transcript_payload_has_timing_authority(candidate_payload):
             continue
+        if str(candidate_path) == str(current_transcript):
+            return False
         output_files["transcript"] = str(candidate_path)
+        if candidate_payload.get("transcription_strategy") == "original_whisper_timecode":
+            output_files.setdefault("raw_whisper_transcript", str(candidate_path))
         audio_analysis["transcript"] = candidate_payload
         status["output_files"] = output_files
         status["transcript_timing_repair"] = candidate_payload.get(
@@ -7067,6 +7181,27 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
             encoding="utf-8",
         )
 
+    if prefer_authoritative_transcript_artifact(status):
+        status["transcript_timing_repair"] = {
+            "status": "relinked",
+            "reason": "preserved_whisper_or_manual_clock_artifact_selected",
+            "quality_before": quality_report,
+            "backup_path": str(backup_path),
+            "vad_policy": "auxiliary_only_not_transcript_clock",
+            "fallback_policy": "candidate_not_operational_source_truth",
+        }
+        return True
+
+    status["transcript_timing_repair"] = {
+        "status": "blocked",
+        "reason": "automatic_repair_disabled_original_whisper_or_manual_clock_required",
+        "quality_before": quality_report,
+        "backup_path": str(backup_path),
+        "vad_policy": "auxiliary_only_not_transcript_clock",
+        "fallback_policy": "candidate_not_operational_source_truth",
+    }
+    return False
+
     try:
         repaired = AudioTranscriptionPipeline(str(audio_path)).rerun_with_chunked_fallback(
             primary_transcript=transcript,
@@ -8148,9 +8283,18 @@ def run_complete_analysis(
                         "transcription_fallback",
                         "Transcript coverage degraded. Retrying with chunked relay windows.",
                     )
-                    transcript = audio_pipeline.rerun_with_chunked_fallback(
+                    fallback_candidate = audio_pipeline.rerun_with_chunked_fallback(
                         primary_transcript=transcript,
                     )
+                    transcript["automatic_fallback_candidate"] = {
+                        "transcription_strategy": fallback_candidate.get("transcription_strategy"),
+                        "fallback_used": fallback_candidate.get("fallback_used"),
+                        "chunking": fallback_candidate.get("chunking"),
+                        "segments": fallback_candidate.get("segments", []),
+                        "created_at": fallback_candidate.get("created_at"),
+                        "fallback_comparison": fallback_candidate.get("fallback_comparison"),
+                        "candidate_reason": "chunked_fallback_preserved_as_candidate_not_transcript_clock",
+                    }
                     transcript_quality = build_transcript_quality_report(
                         transcript,
                         media_duration_seconds=(
@@ -8165,9 +8309,10 @@ def run_complete_analysis(
                         stage="transcription_fallback",
                         message="Chunked transcript fallback completed.",
                         details={
-                            "strategy": transcript.get("transcription_strategy"),
+                            "strategy": fallback_candidate.get("transcription_strategy"),
                             "quality": transcript_quality,
-                            "comparison": transcript.get("fallback_comparison") or {},
+                            "comparison": fallback_candidate.get("fallback_comparison") or {},
+                            "clock_policy": "fallback_candidate_not_transcript_time_authority",
                         },
                     )
 
@@ -8217,6 +8362,7 @@ def run_complete_analysis(
                 # Step 3: Prepare organized paths
                 audio_filename = f"{analysis_id}_audio.wav"
                 transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
+                raw_whisper_transcript_filename = f"{analysis_id}_transcript_raw_whisper.json"
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
                 audio_event_intervals_filename = f"{analysis_id}_audio_event_intervals.json"
@@ -8225,6 +8371,7 @@ def run_complete_analysis(
 
                 organized_audio_path = AUDIO_DIR / audio_filename
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
+                organized_raw_whisper_path = TRANSCRIPTS_DIR / raw_whisper_transcript_filename
                 organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
                 organized_audio_prosody_path = TRANSCRIPTS_DIR / audio_prosody_filename
                 organized_audio_event_intervals_path = TRANSCRIPTS_DIR / audio_event_intervals_filename
@@ -8241,6 +8388,7 @@ def run_complete_analysis(
                 # Step 5: Locate transcript file
                 original_transcript_dir = Path(audio_path).parent / "transcripts"
                 original_transcript_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript.json"
+                original_raw_whisper_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript_raw_whisper.json"
 
                 if not original_transcript_path.exists():
                     alternative_path = audio_pipeline.output_dir / f"{Path(audio_path).stem}_transcript.json"
@@ -8253,8 +8401,22 @@ def run_complete_analysis(
                 shutil.move(str(original_transcript_path), organized_transcript_path)
                 with open(organized_transcript_path, "w", encoding="utf-8") as f:
                     json.dump(transcript, f, indent=2, ensure_ascii=False)
+                if original_raw_whisper_path.exists():
+                    shutil.copy2(str(original_raw_whisper_path), organized_raw_whisper_path)
+                else:
+                    with open(organized_raw_whisper_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {
+                                **transcript,
+                                "transcription_strategy": "original_whisper_timecode",
+                            },
+                            f,
+                            indent=2,
+                            ensure_ascii=False,
+                        )
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                output_files["raw_whisper_transcript"] = str(organized_raw_whisper_path)
                 write_linked_transcript_artifact(status, transcript, output_files)
 
                 try:
@@ -9024,6 +9186,55 @@ async def get_audio_timing_health(analysis_id: str) -> dict:
     return make_json_safe(build_audio_timing_health_report(status))
 
 
+@app.get("/api/status/{analysis_id}/summary", response_model=dict)
+async def get_analysis_status_summary(analysis_id: str) -> dict:
+    """Return the bounded shell/panel bootstrap view without materializing artifacts."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+    audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+    source_video_path = status.get("source_video_path")
+    return make_json_safe({
+        "schema": "vaa1.analysis_status_summary.v1",
+        "analysis_id": analysis_id,
+        "status": status.get("status"),
+        "progress": status.get("progress"),
+        "mission_stage": status.get("mission_stage"),
+        "mission_message": status.get("mission_message"),
+        "filename": status.get("original_filename"),
+        "error": status.get("error"),
+        "pipeline_type": status.get("pipeline_type", "full"),
+        "analysis_tier": status.get("analysis_tier", "science_scan"),
+        "modality_focus": status.get("modality_focus", "multimodal"),
+        "uploaded_at": status.get("uploaded_at"),
+        "analysis_started_at": status.get("analysis_started_at"),
+        "analysis_completed_at": status.get("analysis_completed_at"),
+        "cvatID": status.get("cvatID", 0),
+        "source_video_path": source_video_path,
+        "source_video_exists": bool(source_video_path and Path(str(source_video_path)).exists()),
+        "source_media_metadata": status.get("source_media_metadata"),
+        "transcript_timing_repair": status.get("transcript_timing_repair"),
+        "summary": {
+            "yolo_detections": len(visual.get("yolo_results") or []),
+            "tracked_objects": len(visual.get("tracked_objects") or []),
+            "ocr_detections": len(visual.get("ocr_results") or []),
+            "expression_samples": len(visual.get("expression_results") or []),
+            "expression_status": visual.get("expression_status", "not_run"),
+            "motion_evidence": visual.get("motion_evidence", {}),
+            "scene_segments": visual.get("scene_segments", {}),
+            "audio_segments": len((audio.get("transcript") or {}).get("segments") or []),
+            "audio_language": (audio.get("transcript") or {}).get("language", "unknown"),
+        },
+        "canonical_summary": {
+            "decision_count": len((status.get("canonical_decision_ledger") or {}).get("decisions") or []),
+            "corrections_updated_at": (status.get("annotation_corrections") or {}).get("updated_at"),
+        },
+        "download_links": build_download_links(analysis_id, status.get("output_files") or {}),
+    })
+
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -9032,6 +9243,12 @@ async def get_analysis_status(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    canonical_ledger = decision_ledger_for_status(status)
+    canonical_projection = project_canonical_claims(
+        analysis_id=analysis_id,
+        decisions=canonical_ledger.get("decisions", []),
+    )
 
     response_data = {
         "analysis_id": analysis_id,
@@ -9056,6 +9273,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_video_path": status.get("source_video_path"),
         "source_media_metadata": status.get("source_media_metadata"),
         "annotation_corrections": status.get("annotation_corrections"),
+        "canonical_decision_ledger": canonical_ledger,
+        "projected_canonical_claims": canonical_projection,
         "cvat_ingest": status.get("cvat_ingest"),
         "internal_artifacts": status.get("internal_artifacts"),
         "forensic_render_jobs": status.get("forensic_render_jobs", []),
@@ -9646,6 +9865,10 @@ async def download_file(analysis_id: str, file_type: str):
         ),
         "datascene_meaning_network": (
             "datascene_meaning_network.json",
+            "application/json",
+        ),
+        "vaa1_annotation_master_schema": (
+            "vaa1_annotation_master_schema.json",
             "application/json",
         ),
         "mise_en_scene_scene_cards": ("mise_en_scene_scene_card_report.json", "application/json"),
@@ -10944,6 +11167,192 @@ async def get_annotation_corrections(analysis_id: str) -> dict:
     }
 
 
+@app.get("/api/analysis/{analysis_id}/projected-state", response_model=dict)
+async def get_projected_state(
+    analysis_id: str,
+    subject_ref: str,
+    timestamp: float,
+) -> dict:
+    """Return a calm, read-only projection over current legacy evidence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return project_subject_state(
+        analysis_id=analysis_id,
+        subject_ref=subject_ref,
+        timestamp=timestamp,
+        tracked_objects=tracked_objects_for_projection(status),
+        corrections=build_annotation_corrections_payload(status),
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+    )
+
+
+@app.post("/api/analysis/{analysis_id}/projected-state/batch", response_model=dict)
+async def get_projected_state_batch(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve visible subjects in one quiet, read-only request."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    requests = payload.get("requests") or []
+    if not isinstance(requests, list):
+        raise HTTPException(status_code=400, detail="requests must be a list")
+    if len(requests) > 500:
+        raise HTTPException(status_code=400, detail="At most 500 projections may be requested")
+    return project_subject_states(
+        analysis_id=analysis_id,
+        requests=requests,
+        tracked_objects=tracked_objects_for_projection(status),
+        corrections=build_annotation_corrections_payload(status),
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+    )
+
+
+@app.post("/api/analysis/{analysis_id}/claims/projected", response_model=dict)
+async def get_projected_canonical_claims(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve canonical claims for any governed subject/property family."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    subject_refs = payload.get("subject_refs") or []
+    properties = payload.get("properties") or []
+    if not isinstance(subject_refs, list) or not isinstance(properties, list):
+        raise HTTPException(status_code=400, detail="subject_refs and properties must be lists")
+    if len(subject_refs) > 1000 or len(properties) > 100:
+        raise HTTPException(status_code=400, detail="Projection request is too large")
+    timestamp = payload.get("timestamp")
+    if timestamp is not None:
+        timestamp = safe_float(timestamp)
+        if timestamp is None or timestamp < 0:
+            raise HTTPException(status_code=400, detail="timestamp must be a non-negative number")
+    return project_canonical_claims(
+        analysis_id=analysis_id,
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+        subject_refs=subject_refs,
+        properties=properties,
+        timestamp=timestamp,
+    )
+
+
+@app.get("/api/analysis/{analysis_id}/decisions", response_model=dict)
+async def get_canonical_decisions(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return {"status": "ok", "decision_ledger": decision_ledger_for_status(status)}
+
+
+@app.post("/api/analysis/{analysis_id}/decisions", response_model=dict)
+async def create_canonical_decision(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Append an accepted pilot decision without rewriting earlier records."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, decision, appended = append_decision(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_decision_appended",
+            details={"decision_id": decision["decision_id"], "property": decision["property"]},
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "decision": decision,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/decisions/invalidate", response_model=dict)
+async def invalidate_canonical_decisions(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Append a validity event; original decisions remain immutable."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, event, appended = append_invalidation(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_decision_invalidated",
+            details={
+                "invalidation_id": event["decision_id"],
+                "target_decision_refs": event["target_decision_refs"],
+                "reason_code": event["reason_code"],
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "invalidation": event,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/decisions/dependency-change", response_model=dict)
+async def invalidate_decisions_for_dependency_change(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Apply a declared clock, track, geometry, evidence, or taxonomy change."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    dependency_ref = str(payload.get("dependency_ref") or "").strip()
+    if not dependency_ref:
+        raise HTTPException(status_code=400, detail="dependency_ref is required")
+    try:
+        ledger, event, appended = append_dependency_invalidation(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_dependency_invalidation",
+            details={
+                "dependency_ref": dependency_ref,
+                "validity_effect": event["validity_effect"],
+                "target_decision_refs": event["target_decision_refs"],
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "invalidation": event,
+    }
+
+
 @app.post("/api/annotation-corrections/{analysis_id}", response_model=dict)
 async def update_annotation_corrections(
     analysis_id: str, payload: Dict[str, Any] = Body(...)
@@ -10953,6 +11362,7 @@ async def update_annotation_corrections(
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
     corrections = status.setdefault("annotation_corrections", {})
+    previous_corrections = json.loads(json.dumps(corrections, default=str))
     corrections["version"] = 1
     corrections["updated_at"] = utc_now_iso()
     corrections["updated_by"] = payload.get("updated_by") or "analyst"
@@ -11008,6 +11418,50 @@ async def update_annotation_corrections(
         )
     else:
         corrections.setdefault("transcript_clock_offset_seconds", None)
+
+    ledger, canonical_events = sync_corrections_to_ledger(
+        decision_ledger_for_status(status),
+        previous_corrections,
+        corrections,
+        analysis_id=analysis_id,
+        created_at=corrections["updated_at"],
+        created_by=corrections["updated_by"],
+    )
+    status["canonical_decision_ledger"] = ledger
+    previous_clock_offset = previous_corrections.get("transcript_clock_offset_seconds")
+    current_clock_offset = corrections.get("transcript_clock_offset_seconds")
+    if previous_clock_offset != current_clock_offset:
+        try:
+            ledger, clock_event, clock_appended = append_dependency_invalidation(
+                ledger,
+                {
+                    "dependency_ref": "source_media.clock",
+                    "reason_code": "transcript_clock_offset_changed",
+                    "reason": "The operational media clock changed; time-scoped decisions require review.",
+                    "validity_effect": "stale",
+                    "require_temporal_scope": True,
+                    "created_at": corrections["updated_at"],
+                    "created_by": corrections["updated_by"],
+                },
+                analysis_id=analysis_id,
+            )
+        except ValueError:
+            clock_event = None
+            clock_appended = False
+        if clock_appended and clock_event:
+            canonical_events.append(clock_event)
+            status["canonical_decision_ledger"] = ledger
+    if canonical_events:
+        write_decision_ledger_file(status)
+        append_analysis_event(
+            status,
+            "canonical_correction_sync",
+            details={
+                "event_count": len(canonical_events),
+                "decision_refs": [event["decision_id"] for event in canonical_events],
+                "actions": [event["decision_action"] for event in canonical_events],
+            },
+        )
 
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)

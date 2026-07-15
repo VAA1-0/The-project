@@ -71,6 +71,7 @@ import {
   type AnnotationCorrections,
   type EvidenceProliferationCandidate,
   type ManualVisualAnnotation,
+  type ProjectedSubjectState,
   type ProliferationDecision,
 } from "@/lib/api-service";
 import {
@@ -2007,6 +2008,9 @@ export default function VideoPanel() {
   const [correctionRefreshNonce, setCorrectionRefreshNonce] = useState(0);
   const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [backendProjectionBySubject, setBackendProjectionBySubject] = useState<
+    Record<string, ProjectedSubjectState>
+  >({});
   const [duration, setDuration] = useState(0);
   const [frameReadyTime, setFrameReadyTime] = useState<number | null>(null);
   const [renderedVideoRect, setRenderedVideoRect] =
@@ -3739,6 +3743,64 @@ export default function VideoPanel() {
       ),
     [currentTime, groupedDetectedObjects, nearbyFaces],
   );
+  const projectionTimeBucket = Math.max(0, Math.round(currentTime * 4) / 4);
+  const visibleProjectionSubjectRefs = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          activeRawObjects.flatMap((item) => objectTrackTargetIds(item)).filter(Boolean),
+        ),
+      ).sort(),
+    [activeRawObjects],
+  );
+  const visibleProjectionSubjectRefsKey = visibleProjectionSubjectRefs.join("\u001f");
+
+  useEffect(() => {
+    const subjectRefs = visibleProjectionSubjectRefsKey
+      ? visibleProjectionSubjectRefsKey.split("\u001f")
+      : [];
+    if (!videoId || !overlayToggles.objects || subjectRefs.length === 0) {
+      setBackendProjectionBySubject((current) =>
+        Object.keys(current).length === 0 ? current : {},
+      );
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void VideoService.getProjectedSubjectStates(
+        videoId,
+        subjectRefs.map((subjectRef) => ({
+          subject_ref: subjectRef,
+          timestamp: projectionTimeBucket,
+        })),
+      )
+        .then((result) => {
+          if (cancelled) return;
+          const next = Object.fromEntries(
+            result.projections.map((projection) => [projection.subject_ref.id, projection]),
+          );
+          setBackendProjectionBySubject((current) =>
+            JSON.stringify(current) === JSON.stringify(next) ? current : next,
+          );
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setBackendProjectionBySubject((current) =>
+              Object.keys(current).length === 0 ? current : {},
+            );
+          }
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    overlayToggles.objects,
+    projectionTimeBucket,
+    videoId,
+    visibleProjectionSubjectRefsKey,
+  ]);
   const activeOCR = useMemo(
     () => buildLocalOCROverlays(ocrResults, currentTime, videoWidth, videoHeight),
     [currentTime, ocrResults, videoHeight, videoWidth],
@@ -4365,9 +4427,22 @@ export default function VideoPanel() {
         const manualOverrideOverlayLabel = manualOverrideActive
           ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
           : undefined;
+        const backendProjection = targetIds
+          .map((trackId) => backendProjectionBySubject[trackId])
+          .find(
+            (projection) =>
+              projection?.projection_status === "projected" &&
+              projection.authority !== "raw_detection" &&
+              Math.abs(projection.timestamp_seconds - projectionTimeBucket) < 0.001 &&
+              Boolean(projection.projected_value),
+          );
+        const backendProjectionOverlayLabel = governedOverlayLabel(
+          backendProjection?.projected_value,
+        );
         const unresolvedOverlayLabel = unresolvedObjectConfirmationLabel(item);
         const objectOverlayLabel =
           localOverlayLabel ||
+          backendProjectionOverlayLabel ||
           manualOverrideOverlayLabel ||
           manualTrackOverlayLabel ||
           narrativeAgentOverlayLabel ||
@@ -4380,7 +4455,7 @@ export default function VideoPanel() {
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
           label: objectOverlayLabel,
-          color: localOverride || manualOverrideActive || manualTrackAuthority
+          color: localOverride || backendProjection || manualOverrideActive || manualTrackAuthority
             ? "border-emerald-300/80 bg-emerald-300/10"
             : masterSchemaMatureOverride
             ? "border-violet-300/85 bg-violet-300/10"
@@ -4708,10 +4783,12 @@ export default function VideoPanel() {
     analysisData?.masterSchemaResolvedEvidence?.records,
     analysisData?.metadata?.sourceAnnotations,
     allManualVisualAnnotations,
+    backendProjectionBySubject,
     currentTime,
     localObjectLabelOverrides,
     manualVisualAnnotations,
     overlayToggles,
+    projectionTimeBucket,
     resolveManualGeometryAtTime,
     isManualAnnotationVisibleInSelectedWorkspace,
     storedProliferationMatches,

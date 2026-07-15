@@ -124,7 +124,7 @@ class TranscriptTimingGuardContractTest(unittest.TestCase):
             "vad_0020",
         )
 
-    def test_automatic_transcript_timestamps_outrank_inherited_vad_projection(self):
+    def test_chunked_fallback_timestamps_do_not_outrank_inherited_projection(self):
         transcript = {
             "transcription_strategy": "anchored_vad_timing_repair",
             "segments": [
@@ -158,39 +158,28 @@ class TranscriptTimingGuardContractTest(unittest.TestCase):
             after_seconds=0.0,
         )
 
-        self.assertIsNotNone(repaired)
-        assert repaired is not None
-        self.assertEqual(repaired["segments"][1]["start"], 26.0)
-        self.assertEqual(repaired["segments"][1]["end"], 28.0)
-        self.assertEqual(
-            repaired["segments"][1]["timing_status"],
-            "automatic_transcript_timestamp",
-        )
-        self.assertEqual(
-            repaired["segments"][1]["timing_authority"],
-            "quick_sweep_transcript",
-        )
-        self.assertEqual(
-            repaired["timing_authority"]["vad_policy"],
-            "auxiliary_only_not_transcript_clock",
-        )
+        self.assertIsNone(repaired)
 
-    def test_quick_sweep_rebuild_removes_mixed_vad_projection_rows(self):
+    def test_quick_sweep_rebuild_keeps_text_but_quarantines_candidate_timing(self):
         transcript = {
             "segments": [
                 {
                     "start": 6.4,
                     "end": 8.4,
                     "text": "Why would I betray you?",
-                    "timing_status": "anchor_verified",
-                    "timing_authority": "anchored_vad_timing_repair",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "timing_source": "openai_whisper.word_timestamps",
+                    "source_time_valid": True,
                 },
                 {
                     "start": 20.96,
                     "end": 22.215,
                     "text": "The world is arming faster than we can respond.",
-                    "timing_status": "vad_anchor_verified",
-                    "timing_authority": "anchored_vad_timing_repair",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "timing_source": "openai_whisper.word_timestamps",
+                    "source_time_valid": True,
                 },
                 {
                     "start": 26.0,
@@ -248,18 +237,35 @@ class TranscriptTimingGuardContractTest(unittest.TestCase):
         self.assertIsNotNone(repaired)
         assert repaired is not None
         rows = repaired["segments"]
+        preserved = rows[:2]
         self.assertEqual(
-            [(row["start"], row["end"], row["text"]) for row in rows],
+            [(row["start"], row["end"], row["text"]) for row in preserved],
             [
                 (6.4, 8.4, "Why would I betray you?"),
                 (20.96, 22.215, "The world is arming faster than we can respond."),
-                (26.0, 28.0, "Where's 007?"),
-                (28.0, 30.0, "I need a favor, brother."),
-                (30.0, 32.0, "You're the only one I trust for this."),
-                (34.0, 36.0, "The world's new dawn command are born."),
-                (36.0, 37.0, "You were double-o."),
             ],
         )
+        quarantined = rows[2:]
+        self.assertEqual(
+            [row["text"] for row in quarantined],
+            [
+                "Where's 007?",
+                "I need a favor, brother.",
+                "You're the only one I trust for this.",
+                "The world's new dawn command are born.",
+                "You were double-o.",
+            ],
+        )
+        self.assertTrue(all(row["start"] is None and row["end"] is None for row in quarantined))
+        self.assertTrue(
+            all(row["timing_status"] == "needs_per_line_sync" for row in quarantined)
+        )
+        self.assertTrue(
+            all(row["timing_authority"] == "text_only_no_source_timing" for row in quarantined)
+        )
+        self.assertTrue(all(row["source_time_valid"] is False for row in quarantined))
+        self.assertEqual(quarantined[0]["candidate_start"], 26.0)
+        self.assertEqual(quarantined[0]["candidate_end"], 28.0)
         self.assertNotIn(
             "inherited_after_vad_anchor",
             {row.get("timing_status") for row in rows},
@@ -268,6 +274,7 @@ class TranscriptTimingGuardContractTest(unittest.TestCase):
             repaired["timing_authority"]["vad_policy"],
             "auxiliary_only_not_transcript_clock",
         )
+        self.assertFalse(repaired["timing_authority"]["source_time_operational"])
 
     def test_high_quality_transcript_with_word_timestamps_is_not_repaired(self):
         transcript = {
@@ -330,6 +337,72 @@ class TranscriptTimingGuardContractTest(unittest.TestCase):
         )
         self.assertFalse(authority["source_time_operational"])
         self.assertEqual(authority["operational_whisper_rows"], 0)
+
+    def test_scaffold_labelled_as_original_whisper_is_rejected(self):
+        transcript = {
+            "transcription_strategy": "original_whisper_timecode",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 2.0,
+                    "text": "Why would I betray you?",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "source_time_valid": True,
+                },
+                {
+                    "start": 2.0,
+                    "end": 4.0,
+                    "text": "We all have our secrets.",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "source_time_valid": True,
+                },
+                {
+                    "start": 4.0,
+                    "end": 6.0,
+                    "text": "We just didn't get to yours yet.",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "source_time_valid": True,
+                },
+                {
+                    "start": 6.0,
+                    "end": 8.0,
+                    "text": "The world is arming faster than we can respond.",
+                    "timing_status": "original_whisper_timecode",
+                    "timing_authority": "original_whisper_timecode",
+                    "source_time_valid": True,
+                },
+            ],
+        }
+
+        authority = build_transcript_timing_authority(transcript)
+
+        self.assertEqual(authority["operational_authority"], "scaffold_candidate")
+        self.assertEqual(authority["operational_whisper_rows"], 0)
+        self.assertFalse(authority["source_time_operational"])
+
+    def test_anchored_offset_manual_label_is_not_operational_manual_timecode(self):
+        transcript = {
+            "segments": [
+                {
+                    "start": 8.4,
+                    "end": 10.4,
+                    "text": "We all have our secrets.",
+                    "timing_status": "anchored_offset",
+                    "timing_authority": "manual_correction",
+                    "timing_source": "manual opening anchor + transcript scaffold delta",
+                    "source_time_valid": False,
+                    "candidate_time_valid": True,
+                },
+            ],
+        }
+
+        authority = build_transcript_timing_authority(transcript)
+
+        self.assertEqual(authority["operational_whisper_rows"], 0)
+        self.assertFalse(authority["source_time_operational"])
 
 
 if __name__ == "__main__":

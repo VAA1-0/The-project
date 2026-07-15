@@ -1563,7 +1563,14 @@ export default function SourceMediaMetadataPanel() {
         </div>
       ) : (
         <>
-          <div className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-950/10 p-3">
+          <details className="mt-3 rounded border border-slate-800 bg-slate-950/20">
+            <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-medium text-slate-300 marker:hidden">
+              Primary metadata
+              <span className="ml-2 text-[10px] font-normal text-slate-500">
+                Editable Master Schema source fields
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.16em] text-cyan-200/80">
@@ -2010,9 +2017,10 @@ export default function SourceMediaMetadataPanel() {
                 )}
               </div>
             </details>
-          </div>
+            </div>
+          </details>
 
-          <details open className={detailClass}>
+          <details className={detailClass}>
             <summary className={summaryClass}>
               Media Facts
               <span className="ml-2 normal-case tracking-normal text-slate-500">
@@ -2669,8 +2677,8 @@ export default function SourceMediaMetadataPanel() {
             </summary>
             <div className="border-t border-slate-800 p-3">
             <div className="space-y-2">
-              <details open className={subDetailClass}>
-                <summary className={subSummaryClass}>Primary Description</summary>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>Primary description</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2712,7 +2720,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>People and Narrative Agents</summary>
+                <summary className={subSummaryClass}>People and narrative agents</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2751,7 +2759,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Time and Space</summary>
+                <summary className={subSummaryClass}>Time and space</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="block">
@@ -2830,7 +2838,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Situation and Description Evidence</summary>
+                <summary className={subSummaryClass}>Situation and description evidence</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2889,7 +2897,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Genre and Governance Axes</summary>
+                <summary className={subSummaryClass}>Genre and governance axes</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <CustomizableSelectField
                 label="Genre"
@@ -3120,7 +3128,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>References and Audit</summary>
+                <summary className={subSummaryClass}>References and audit</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">

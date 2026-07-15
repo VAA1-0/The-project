@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.projected_subject_state_batch.compatibility.schema.json",
+  "title": "VAA1 Projected Subject State Batch Compatibility Contract",
+  "type": "object",
+  "required": ["schema", "analysis_id", "projection_count", "projections", "compatibility_mode"],
+  "properties": {
+    "schema": {"const": "vaa1.projected_subject_state_batch.v0.compatibility"},
+    "analysis_id": {"type": "string", "minLength": 1},
+    "projection_count": {"type": "integer", "minimum": 0, "maximum": 500},
+    "projections": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "vaa1.projected_subject_state.compatibility.schema.json"}
+    },
+    "compatibility_mode": {"const": true}
+  },
+  "additionalProperties": false
+}
