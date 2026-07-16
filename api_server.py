@@ -154,6 +154,7 @@ from src.backend.analysis.framework_projection import (
     confirm_proposition_to_ledger,
     write_framework_projections,
 )
+from src.backend.analysis.governed_reporting import GovernedReportService
 from src.backend.analysis.source_policy_service import evaluate_source_use
 from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
 from src.backend.analysis.vocabulary_service import (
@@ -10997,6 +10998,35 @@ def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegi
     )
 
 
+def governed_report_service_for_analysis(analysis_id: str) -> GovernedReportService:
+    return GovernedReportService(analysis_id, RESULTS_DIR / analysis_id / "governed_reports.json")
+
+
+def governed_report_sources_for_analysis(analysis_id: str, status: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Expose governed objects with their evidence chain intact for report verification."""
+    registry = interpretation_registry_for_analysis(analysis_id).view()
+    records = {str(item.get("record_id")): dict(item) for item in registry.get("records", []) if item.get("record_id")}
+
+    def evidence_for(ref: str, visited: set[str] | None = None) -> list[str]:
+        visited = set(visited or ())
+        if ref in visited or ref not in records:
+            return []
+        visited.add(ref)
+        item = records[ref]
+        direct = [str(value) for value in item.get("evidence_refs", []) if value]
+        support = [str(value) for value in item.get("support_refs", []) if value]
+        inherited = [evidence_ref for value in support for evidence_ref in evidence_for(value, visited)]
+        return list(dict.fromkeys([*direct, *inherited]))
+
+    for ref, item in records.items():
+        item["evidence_refs"] = evidence_for(ref)
+    for item in decision_ledger_for_status(status).get("decisions", []):
+        decision_id = str(item.get("decision_id") or "")
+        if decision_id and item.get("decision_action") != "invalidate":
+            records[decision_id] = {"kind": "decision", **item, "effective_validity": item.get("validity", "current")}
+    return records
+
+
 @app.get("/api/analysis/{analysis_id}/interpretation-registry", response_model=dict)
 async def get_interpretation_registry(analysis_id: str) -> dict:
     if get_analysis_entry(analysis_id) is None:
@@ -11073,6 +11103,66 @@ async def confirm_interpretation_proposition(
     write_decision_ledger_file(status)
     persist_analysis_record_for_status(status)
     return {"analysis_id": analysis_id, "appended": appended, "decision": decision}
+
+
+@app.get("/api/analysis/{analysis_id}/governed-reports", response_model=dict)
+async def get_governed_reports(analysis_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return governed_report_service_for_analysis(analysis_id).view()
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/claims", response_model=dict)
+async def create_governed_report_claim(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        result = governed_report_service_for_analysis(analysis_id).create_claim(
+            payload, governed_report_sources_for_analysis(analysis_id, status), persist=bool(payload.get("persist", True))
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/invalidations", response_model=dict)
+async def invalidate_governed_report_claims(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        result = governed_report_service_for_analysis(analysis_id).invalidate_sources(
+            payload.get("changed_source_refs") or [], reason=str(payload.get("reason") or "A governed source changed."),
+            persist=bool(payload.get("persist", True)),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/export", response_model=dict)
+async def export_governed_report(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    export_id = str(payload.get("export_id") or uuid.uuid4().hex)
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", export_id):
+        raise HTTPException(status_code=400, detail="export_id contains unsupported characters")
+    output_path = RESULTS_DIR / analysis_id / "reports" / f"{export_id}.json"
+    try:
+        result = governed_report_service_for_analysis(analysis_id).export(payload.get("claim_refs") or [], output_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, "report_run": result["report_run"], "export_path": result["export_path"]}
+
+
+@app.get("/api/analysis/{analysis_id}/governed-reports/claims/{claim_id}/traceback", response_model=dict)
+async def get_governed_report_traceback(analysis_id: str, claim_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        return governed_report_service_for_analysis(analysis_id).traceback(claim_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/source-media/{analysis_id}/references", response_model=dict)

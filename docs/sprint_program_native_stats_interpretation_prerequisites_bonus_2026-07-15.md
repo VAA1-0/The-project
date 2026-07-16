@@ -97,6 +97,8 @@ B5 progress (2026-07-16): an append-only candidate registry now operationalizes 
 
 B6 progress (2026-07-16): eligible registry records now project into Meaning Network, explicitly scoped Narrative Agent readings, and explicitly assigned Boje 5B events while retaining candidate authority, alternatives, counter-evidence, and traceback. A separate explicit analyst action adapts a selected proposition into the canonical decision ledger. The projection route has passed a non-persisting canonical-runtime probe and correctly fabricates no framework content when the saved analysis has no persisted registry. See `docs/vaa1_b6_framework_projection_and_analyst_confirmation_delivery_2026-07-16.md`.
 
+B7 closure progress (2026-07-16): governed report claims and reproducible JSON report runs now preserve an enforced source chain from report sentence through governed analytical object and evidence reference to source location. Unlinked citations are rejected; conflicts and limitations remain visible; correction and invalidation preserve history; affected-branch planning is returned; exports embed claim hashes and traceback. The isolated full lifecycle passes. See `docs/vaa1_b7_governed_reporting_and_traceback_delivery_2026-07-16.md`.
+
 ### Bonus 3 — Reproducible native statistical runs
 
 - Introduce `measurement_run.schema.json` and normalize existing StatsKit runs around it.
@@ -125,7 +127,7 @@ Gate B4: competing propositions coexist with explicit relations; speaker reassig
 - Complete Meaning Network bindings for candidates/mature propositions, alternatives, contradictions, stale propagation, source navigation, and write-boundary enforcement.
 - Complete Narrative Agent bindings for stable subjects, assignments, merge/split, temporal presence, state/relationship transitions, multimodal routing, validity, and stale handling.
 - Implement native finding → proposition → 5B candidate → analyst decision → stakeholder projection → report claim.
-- Source Between from proposition comparison; Bets from future speech acts/outcomes; Becoming from state transitions; Before from retrospective fragment links; Beneath from cross-modal/relational/material/institutional discrepancy.
+- Source Between from proposition comparison; Bets from future speech acts/outcomes; Becoming from state transitions; Beyond from supported alternatives, counterfactuals, or implications; Beneath from cross-modal, relational, material, or institutional discrepancy.
 - Keep Beneath behind the strictest confirmation gate; absence alone is insufficient.
 
 Gate B5: every projection traces to propositions and source evidence; reporting cannot mutate stakeholder state; disagreement survives projection.
