@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.native_finding.v1.schema.json",
+  "title": "VAA1 native finding",
+  "type": "object",
+  "required": ["schema", "finding_id", "run_id", "finding_type", "value", "evidence_refs", "quality_ref", "authority", "maturity", "interpretation_status"],
+  "properties": {
+    "schema": {"const": "vaa1.native_finding.v1"},
+    "finding_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "finding_type": {"const": "descriptive_measurement"},
+    "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "interpretation_status": {"const": "not_interpreted"}
+  },
+  "additionalProperties": true
+}

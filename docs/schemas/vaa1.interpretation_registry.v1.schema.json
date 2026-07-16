@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.interpretation_registry.v1.schema.json",
+  "title": "VAA1 governed interpretation candidate registry",
+  "type": "object",
+  "required": ["schema", "analysis_id", "version", "records"],
+  "properties": {
+    "schema": {"const": "vaa1.interpretation_registry.v1"},
+    "analysis_id": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["schema", "record_id", "kind", "analysis_id", "authority", "validity", "provenance"],
+        "properties": {
+          "kind": {"enum": ["claim", "proposition", "relation", "state_transition", "invalidation"]},
+          "authority": {"type": "string"},
+          "validity": {"type": "string"},
+          "provenance": {
+            "type": "object",
+            "required": ["writer_class", "canonical_write"],
+            "properties": {"writer_class": {"const": "candidate_service"}, "canonical_write": {"const": false}}
+          }
+        }
+      }
+    }
+  }
+}

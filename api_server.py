@@ -139,6 +139,30 @@ from src.backend.analysis.decision_ledger import (
 )
 from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
 from src.backend.analysis.claim_projection import project_canonical_claims
+from src.backend.analysis.source_clock_authority import (
+    clock_affected_decision_refs,
+    overlapping_dependents,
+    select_authoritative_time_scope,
+)
+from src.backend.analysis.evidence_quality import assess_evidence_quality, evaluate_quality_use
+from src.backend.analysis.execution_graph_planner import load_execution_graph, plan_affected_branches
+from src.backend.analysis.reproducible_measurement import ReproducibleMeasurementService
+from src.backend.analysis.shot_boundary_measurement import measure_shot_boundaries
+from src.backend.analysis.interpretation_registry import InterpretationRegistry
+from src.backend.analysis.framework_projection import (
+    build_framework_projections,
+    confirm_proposition_to_ledger,
+    write_framework_projections,
+)
+from src.backend.analysis.source_policy_service import evaluate_source_use
+from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
+from src.backend.analysis.vocabulary_service import (
+    VocabularyError,
+    list_vocabularies,
+    load_vocabulary_registry,
+    public_registry,
+    resolve_term,
+)
 from fastapi import Form
 
 
@@ -3052,6 +3076,7 @@ def build_source_media_metadata_payload(
             "expected_identities": user_annotations.get("expected_identities", []),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
+            "source_policy": user_annotations.get("source_policy", {}),
         },
         "annotation_maturity": status.get("source_media_annotation_maturity", {}),
         "video_internal_harvest": status.get("source_media_video_internal_harvest", {}),
@@ -10677,11 +10702,14 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "reference_source",
         "confidence",
         "notes",
+        "source_policy",
     ):
         if key in payload:
             value = payload.get(key)
             if key in ("persons", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
+            elif key == "source_policy":
+                annotations[key] = value if isinstance(value, dict) else {}
             else:
                 annotations[key] = value or ""
 
@@ -10728,6 +10756,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "reference_source",
                     "confidence",
                     "notes",
+                    "source_policy",
                 )
                 if key in payload
             ]
@@ -10740,6 +10769,310 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "analysis_id": analysis_id,
         "source_media_metadata": status.get("source_media_metadata", {}),
     }
+
+
+@app.get("/api/vocabularies", response_model=dict)
+async def get_canonical_vocabularies(include_terms: bool = False) -> dict:
+    """Return versioned vocabulary contracts used by governed applications."""
+    try:
+        registry = load_vocabulary_registry()
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "vocabularies": public_registry(registry)["vocabularies"]
+        if include_terms
+        else list_vocabularies(registry),
+    }
+
+
+@app.post("/api/vocabularies/resolve", response_model=dict)
+async def resolve_canonical_vocabulary_term(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Resolve a stable term id, version, label, and replacement lineage."""
+    try:
+        term = resolve_term(
+            load_vocabulary_registry(),
+            str(payload.get("vocabulary_id") or ""),
+            str(payload.get("term_id") or ""),
+            version=payload.get("vocabulary_version"),
+            language=str(payload.get("language") or "en"),
+            follow_replacement=bool(payload.get("follow_replacement", True)),
+        )
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "resolved", "term": term}
+
+
+@app.post("/api/source-media/{analysis_id}/policy/evaluate", response_model=dict)
+async def evaluate_source_media_policy(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Evaluate a local, provider, transfer, or export use without changing evidence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    try:
+        decision = evaluate_source_use(
+            metadata,
+            str(payload.get("purpose") or ""),
+            provider_id=payload.get("provider_id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    append_analysis_event(
+        status,
+        "source_policy_evaluated",
+        details={
+            "purpose": decision["purpose"],
+            "provider_id": decision["provider_id"],
+            "allowed": decision["allowed"],
+            "review_state": decision["review_state"],
+            "reason_codes": decision["reason_codes"],
+        },
+    )
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "policy_decision": decision}
+
+
+@app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
+async def resolve_analysis_source_clock(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Resolve timing authority and identify only overlapping dependents."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        raise HTTPException(status_code=400, detail="candidates must be a list")
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    duration = safe_float(metadata.get("duration_seconds"))
+    try:
+        selected = select_authoritative_time_scope(candidates, duration_seconds=duration)
+        affected = overlapping_dependents(
+            selected,
+            payload.get("dependents") if isinstance(payload.get("dependents"), list) else [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    invalidation = None
+    if bool(payload.get("apply_invalidation")):
+        ledger = decision_ledger_for_status(status)
+        target_decision_refs = clock_affected_decision_refs(ledger, selected)
+        if target_decision_refs:
+            try:
+                ledger, invalidation, appended = append_dependency_invalidation(
+                    ledger,
+                    {
+                        "dependency_ref": "source_media.clock",
+                        "target_decision_refs": target_decision_refs,
+                        "reason_code": "source_clock_changed",
+                        "reason": "The canonical source timing changed within this decision scope.",
+                        "validity_effect": "stale",
+                        "authority": str(payload.get("authority") or "explicit_user_correction"),
+                        "created_by": str(payload.get("created_by") or "analyst"),
+                    },
+                    analysis_id=analysis_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            status["canonical_decision_ledger"] = ledger
+            write_decision_ledger_file(status)
+            if appended:
+                append_analysis_event(
+                    status,
+                    "source_clock_dependency_invalidation",
+                    details={
+                        "target_decision_refs": target_decision_refs,
+                        "changed_scope": selected,
+                    },
+                )
+            persist_analysis_record_for_status(status)
+    return {
+        "analysis_id": analysis_id,
+        "selected_time_scope": selected,
+        "affected_dependent_refs": affected,
+        "invalidation": invalidation,
+    }
+
+
+@app.post("/api/evidence-quality/assess", response_model=dict)
+async def assess_evidence_quality_route(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Assess evidence fitness while keeping every result calmly inspectable."""
+    try:
+        assessment = assess_evidence_quality(payload)
+        uses = payload.get("evaluate_uses") or [
+            "inspect",
+            "exploratory_analysis",
+            "descriptive_measurement",
+            "comparative_inference",
+            "proposition_candidate",
+            "mature_projection",
+            "verified_report_claim",
+        ]
+        evaluations = {
+            str(use): evaluate_quality_use(assessment, str(use)) for use in uses
+        }
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "assessed", "assessment": assessment, "use_evaluations": evaluations}
+
+
+@app.post("/api/analysis/{analysis_id}/execution-graph/affected-plan", response_model=dict)
+async def plan_analysis_affected_branches(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Return deterministic downstream work for changed scientific feature stages."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    changed_nodes = payload.get("changed_nodes")
+    if not isinstance(changed_nodes, list):
+        raise HTTPException(status_code=400, detail="changed_nodes must be a list")
+    try:
+        plan = plan_affected_branches(
+            load_execution_graph(),
+            changed_nodes,
+            include_operational_edges=bool(payload.get("include_operational_edges")),
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, "affected_branch_plan": plan}
+
+
+@app.post("/api/analysis/{analysis_id}/measurement-runs/native-core", response_model=dict)
+async def run_native_core_measurements(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Run source-traceable transcript, speaker, VAD, and scene measurements."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        service = ReproducibleMeasurementService(
+            analysis_id,
+            RESULTS_DIR / analysis_id,
+            RESULTS_DIR.parent,
+        )
+        return service.run(
+            persist=bool(payload.get("persist", True)),
+            parameters=payload.get("parameters") if isinstance(payload.get("parameters"), dict) else None,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/shot-boundaries/measure", response_model=dict)
+async def measure_analysis_shot_boundaries(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Measure true source-video shot intervals with the local governed provider."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    persist = bool(payload.get("persist", True))
+    output_path = RESULTS_DIR / analysis_id / "shot_boundaries.json" if persist else None
+    try:
+        measured = measure_shot_boundaries(
+            source,
+            analysis_id=analysis_id,
+            threshold=float(payload.get("threshold", 27.0)),
+            min_scene_len_frames=int(payload.get("min_scene_len_frames", 10)),
+            output_path=output_path,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        status.setdefault("output_files", {})["shot_boundaries"] = str(output_path)
+        status.setdefault("results", {}).setdefault("visual_analysis", {})["shot_boundaries"] = measured
+        refresh_master_schema_metadata_surfaces(status)
+        persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "persisted": persist, "shot_boundaries": measured}
+
+
+def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegistry:
+    return InterpretationRegistry(
+        analysis_id,
+        RESULTS_DIR / analysis_id / "interpretation_registry.json",
+    )
+
+
+@app.get("/api/analysis/{analysis_id}/interpretation-registry", response_model=dict)
+async def get_interpretation_registry(analysis_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return interpretation_registry_for_analysis(analysis_id).view()
+
+
+@app.post("/api/analysis/{analysis_id}/interpretation-registry/{record_kind}", response_model=dict)
+async def append_interpretation_record(
+    analysis_id: str, record_kind: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    registry = interpretation_registry_for_analysis(analysis_id)
+    handlers = {
+        "claims": registry.append_claim,
+        "propositions": registry.append_proposition,
+        "relations": registry.append_relation,
+        "state-transitions": registry.append_transition,
+        "invalidations": registry.invalidate,
+    }
+    if record_kind not in handlers:
+        raise HTTPException(status_code=404, detail="Unknown interpretation record kind")
+    try:
+        result = handlers[record_kind](payload, persist=bool(payload.get("persist", True)))
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/framework-projections", response_model=dict)
+async def project_analysis_frameworks(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    projections = build_framework_projections(
+        analysis_id,
+        interpretation_registry_for_analysis(analysis_id).view(),
+    )
+    persisted = bool(payload.get("persist", True))
+    if persisted:
+        write_framework_projections(
+            RESULTS_DIR / analysis_id / "framework_projections.json",
+            projections,
+        )
+    return {"analysis_id": analysis_id, "persisted": persisted, "framework_projections": projections}
+
+
+@app.post("/api/analysis/{analysis_id}/interpretation-registry/propositions/{proposition_id}/confirm", response_model=dict)
+async def confirm_interpretation_proposition(
+    analysis_id: str, proposition_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    registry = interpretation_registry_for_analysis(analysis_id).view()
+    proposition = next(
+        (item for item in registry.get("records", []) if item.get("record_id") == proposition_id),
+        None,
+    )
+    if proposition is None:
+        raise HTTPException(status_code=404, detail="Proposition not found")
+    try:
+        ledger, decision, appended = confirm_proposition_to_ledger(
+            analysis_id=analysis_id,
+            ledger=decision_ledger_for_status(status),
+            proposition=proposition,
+            payload=payload,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "appended": appended, "decision": decision}
 
 
 @app.post("/api/source-media/{analysis_id}/references", response_model=dict)
@@ -11245,6 +11578,45 @@ async def get_canonical_decisions(analysis_id: str) -> dict:
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
     return {"status": "ok", "decision_ledger": decision_ledger_for_status(status)}
+
+
+@app.post("/api/analysis/{analysis_id}/taxonomy-applications", response_model=dict)
+async def create_taxonomy_application(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve a canonical term and append its scoped analyst application."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, decision, appended = apply_taxonomy_term(
+            decision_ledger_for_status(status),
+            load_vocabulary_registry(),
+            payload,
+            analysis_id=analysis_id,
+        )
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "taxonomy_application_appended",
+            details={
+                "decision_id": decision["decision_id"],
+                "subject_ref": decision["subject_ref"],
+                "term_ref": (decision.get("provenance") or {}).get("term_ref"),
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "taxonomy_application": decision,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
 
 
 @app.post("/api/analysis/{analysis_id}/decisions", response_model=dict)

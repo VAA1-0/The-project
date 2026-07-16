@@ -4,6 +4,8 @@ Date: 2026-05-03
 
 This is the current stable Mac startup path for local VAA1 development and manual testing.
 
+> **`.venv` is not in use for Datascene/VAA1 runtime.** Do not use `.venv/bin/python` for the backend or face capability. Read this runbook and use both documented Conda environments: `vaa1_core` and `vaa1_face`.
+
 ## Canonical Command
 
 From the repository root:
@@ -39,6 +41,13 @@ This updates both Mac Conda environments:
 - `environment-MacOS-face.yml` -> `vaa1_face`
 
 It also verifies important imports in both environments before startup.
+
+The environment split is intentional:
+
+- `vaa1_core` runs the backend API and core multimodal analysis.
+- `vaa1_face` provides the separate face/DeepFace capability.
+- Full Datascene/VAA1 readiness requires both environments to exist and pass verification.
+- The frontend remains the Node/Next workspace under `src/frontend`.
 
 ## Normal Recovery
 

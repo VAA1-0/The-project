@@ -133,6 +133,12 @@ require_command conda
 require_command curl
 require_command lsof
 
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+  echo "Note: the active virtualenv is not a VAA1 runtime environment and will not be used."
+  echo "VAA1 uses the documented Conda environments: $CORE_ENV and $FACE_ENV."
+  echo "Read docs/vaa1_macos_startup_runbook_2026-05-03.md for the supported startup path."
+fi
+
 mkdir -p "$CACHE_ROOT/matplotlib" "$CACHE_ROOT/ultralytics" "$CACHE_ROOT/xdg"
 
 if [[ "$SETUP_ENVS" -eq 1 ]]; then

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.evidence_quality.v1.schema.json",
+  "title": "VAA1 Evidence Quality Assessment",
+  "type": "object",
+  "required": ["schema", "evidence_ref", "dimensions", "overall_score", "assessment_coverage", "fitness_band", "limitations", "separation_note"],
+  "properties": {
+    "schema": {"const": "vaa1.evidence_quality.v1"},
+    "evidence_ref": {"type": "string"},
+    "dimensions": {
+      "type": "object",
+      "required": ["clarity", "audibility", "occlusion_control", "temporal_precision", "completeness", "representativeness", "source_independence", "corroboration", "transcription_quality", "assignment_stability"],
+      "additionalProperties": false,
+      "properties": {
+        "clarity": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "audibility": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "occlusion_control": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "temporal_precision": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "completeness": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "representativeness": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "source_independence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "corroboration": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "transcription_quality": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "assignment_stability": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+      }
+    },
+    "overall_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "assessment_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+    "fitness_band": {"enum": ["unassessed", "limited", "exploratory", "qualified", "robust"]},
+    "limitations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "confidence": {},
+    "maturity": {},
+    "authority": {},
+    "separation_note": {"type": "string", "minLength": 1}
+  }
+}

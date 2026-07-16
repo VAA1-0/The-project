@@ -16,6 +16,22 @@ This period begins with a mandatory **Empirical Taxonomy Discovery and Delivery 
 
 Current gate status (2026-07-15): **Canonical architecture `GO — OPERATIONAL`**. The registry is schema-validated; governed compatibility writes synchronize atomically into an append-only decision ledger; candidate writers are proposal-only; dependency invalidation and shared projection are operational; Video, Meaning Network, and Master Schema consume canonical projections; and a validation copy of real saved work proves persistence and traceback. See `docs/vaa1_canonical_architectural_revamp_delivery_2026-07-15.md` and `docs/inventory/pass_1_gate.json`.
 
+## Intermediary Bonus Sprint: Native Statistics-to-Interpretation Prerequisites
+
+Before implementing the full native multimodal statistics-to-interpretation engine, complete the gated intermediary program in `docs/sprint_program_native_stats_interpretation_prerequisites_bonus_2026-07-15.md`.
+
+The bonus sprint closes the remaining gap between the operational canonical architecture and scientifically reproducible interpretation. Its mandatory order is:
+
+1. Post-revamp inventory delta and a bounded interpretation-ready attribute profile.
+2. Versioned vocabulary service and a scientific execution graph distinct from runtime/idle scheduling.
+3. Canonical source-clock closure and evidence-quality contracts.
+4. Reproducible multimodal measurement runs with no report-eligible mock outputs.
+5. Governed findings, epistemic claims, propositions, relations, and state transitions.
+6. Traceable Meaning Network, Narrative Agent, and Boje 5B projections.
+7. Verified report claims and full save/reopen/correct/invalidate/recompute/export proof.
+
+This is a prerequisite sprint, not a replacement architecture or an exhaustive new inventory. The existing canonical decision, authority, projection, invalidation, and traceback regime remains binding throughout.
+
 Its scope is restricted to the work required to prove Datascene as a controlled evidence system:
 
 1. Complete the linked-time regime.

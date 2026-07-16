@@ -21,6 +21,8 @@ All subsequent work on the Data Maturation Proliferation Regime v2 depends on th
 
 ## Quick Start On Mac For Local Development
 
+> **Important runtime note:** the repository `.venv` is not used to run Datascene/VAA1. Do not start the backend with `.venv/bin/python`. Read `docs/vaa1_macos_startup_runbook_2026-05-03.md` and use the two documented Conda environments: `vaa1_core` and `vaa1_face`.
+
 The current Mac development startup path is:
 
 ```bash
@@ -39,10 +41,12 @@ For first setup, dependency repair, or after Mac environment files change:
 bash scripts/start_vaa1_macos.sh --setup-envs --replace
 ```
 
-The Mac launcher uses the repository Conda environments:
+The Mac launcher uses and verifies both repository Conda environments:
 
 * `vaa1_core` from `environment-MacOS-core.yml`
 * `vaa1_face` from `environment-MacOS-face.yml`
+
+`vaa1_core` runs the main API and analytical pipeline. `vaa1_face` supplies the separate face/DeepFace capability. Both environments must be present and verified for the full program array; neither is replaced by `.venv`.
 
 It binds services to `127.0.0.1`, keeps runtime caches inside `.cache/vaa1-runtime`, checks the
 backend health route, and verifies that the evidence proliferation matching route is present.

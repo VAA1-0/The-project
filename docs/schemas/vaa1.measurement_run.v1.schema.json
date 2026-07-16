@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.measurement_run.v1.schema.json",
+  "title": "VAA1 reproducible measurement run",
+  "type": "object",
+  "required": ["schema", "run_id", "analysis_id", "content_fingerprint", "method", "inputs", "measurements", "exclusions", "evidence_quality", "affected_branch_plan"],
+  "properties": {
+    "schema": {"const": "vaa1.measurement_run.v1"},
+    "run_id": {"type": "string"},
+    "analysis_id": {"type": "string"},
+    "content_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "method": {"type": "object", "required": ["id", "version"]},
+    "inputs": {"type": "array", "items": {"type": "object", "required": ["role", "path", "sha256", "available"]}},
+    "measurements": {"type": "object", "required": ["transcript", "speaker_turns", "voice_activity", "scenes", "objects", "ocr", "expressions", "prosody", "shot_boundaries", "camera_composition"]},
+    "exclusions": {"type": "array"},
+    "evidence_quality": {"type": "object"},
+    "affected_branch_plan": {"type": "object"}
+  },
+  "additionalProperties": true
+}
