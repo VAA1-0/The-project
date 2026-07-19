@@ -103,7 +103,7 @@ $checks += New-CheckResult -Name "FFmpeg" -Command "ffmpeg" -Arguments @("-versi
 $checks += New-CheckResult -Name "FFprobe" -Command "ffprobe" -Arguments @("-version") -RequiredFor "video/audio metadata" -Help "Install FFmpeg and ensure ffprobe.exe is on PATH."
 
 $repoChecks = @()
-$repoChecks += Test-PathPresence -Name "Local virtual environment" -Path (Join-Path $repoRoot ".venv") -RequiredFor "plain Python setup" -Help "Run .\scripts\windows_first_run.ps1 or use conda activate vaa1_compatible."
+$repoChecks += Test-PathPresence -Name "Local virtual environment" -Path (Join-Path $repoRoot ".venv") -RequiredFor "Windows plain Python setup only" -Help ".venv is a Windows plain-Python setup artifact. On Mac, use vaa1_core through scripts/start_vaa1_macos.sh."
 $repoChecks += Test-PathPresence -Name "requirements.txt" -Path (Join-Path $repoRoot "requirements.txt") -RequiredFor "plain Python setup" -Help "If absent, use environment.yml / conda setup."
 $repoChecks += Test-PathPresence -Name "environment.yml" -Path (Join-Path $repoRoot "environment.yml") -RequiredFor "conda setup" -Help "Ask the VAA1 team for the current environment file."
 $repoChecks += Test-PathPresence -Name "Frontend package.json" -Path (Join-Path $repoRoot "src\frontend\package.json") -RequiredFor "frontend"

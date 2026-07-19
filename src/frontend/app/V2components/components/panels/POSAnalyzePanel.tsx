@@ -186,13 +186,13 @@ export default function POSAnalyzePanel() {
   const [posRefreshMessage, setPosRefreshMessage] = useState<string | null>(null);
 
   // State for show/hide sections
-  const [showPosCounts, setShowPosCounts] = useState(true);
-  const [showPosRatios, setShowPosRatios] = useState(true);
-  const [showGrammarFeatures, setShowGrammarFeatures] = useState(true);
-  const [showCaseProfile, setShowCaseProfile] = useState(true);
-  const [showInterrogatives, setShowInterrogatives] = useState(true);
-  const [showTenseProfile, setShowTenseProfile] = useState(true);
-  const [showPosWords, setShowPosWords] = useState(true);
+  const [showPosCounts, setShowPosCounts] = useState(false);
+  const [showPosRatios, setShowPosRatios] = useState(false);
+  const [showGrammarFeatures, setShowGrammarFeatures] = useState(false);
+  const [showCaseProfile, setShowCaseProfile] = useState(false);
+  const [showInterrogatives, setShowInterrogatives] = useState(false);
+  const [showTenseProfile, setShowTenseProfile] = useState(false);
+  const [showPosWords, setShowPosWords] = useState(false);
   const [expandedGrammarBuckets, setExpandedGrammarBuckets] = useState<string[]>([]);
   const [showPosMenu, setShowPosMenu] = useState(false);
   const [matrixSections, setMatrixSections] = useState<string[]>([]);

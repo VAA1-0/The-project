@@ -82,7 +82,21 @@ export function masterSchemaTemporalSegmentsFromAnalysis(
   const temporalSegments = Array.isArray(master?.temporal_segments)
     ? master.temporal_segments
     : [];
-  return temporalSegments
+  // The master timeline also contains speaker turns and audio events. Those are
+  // governed temporal evidence, but they are not scenes and must not become
+  // Scene Card navigation entries.
+  const explicitlyTypedScenes = temporalSegments.filter(
+    (segment: Record<string, any>) =>
+      String(segment?.segment_type || segment?.type || "").trim().toLowerCase() === "scene",
+  );
+  const sceneSegments = explicitlyTypedScenes.length
+    ? explicitlyTypedScenes
+    : temporalSegments.filter(
+        (segment: Record<string, any>) =>
+          Boolean(segment?.scene_id) ||
+          String(segment?.event_family || "").trim().toLowerCase() === "scene_understanding",
+      );
+  return sceneSegments
     .map((segment: Record<string, any>, index: number) =>
       normalizeSceneSegment(segment, index, "vaa1_annotation_master_schema.temporal_segments"),
     )

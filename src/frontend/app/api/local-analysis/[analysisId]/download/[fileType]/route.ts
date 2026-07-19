@@ -47,15 +47,24 @@ function transcriptPayloadHasTimingAuthority(payload: any): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
   }
-  if (payload.transcription_strategy === "anchored_vad_timing_repair") {
+  if (rawTranscriptPayloadLooksLikeScaffold(payload)) {
+    return false;
+  }
+  const authority = payload.timing_authority;
+  if (
+    authority &&
+    typeof authority === "object" &&
+    ["original_whisper_timecode", "manual_correction"].includes(
+      String(authority.operational_authority || ""),
+    )
+  ) {
     return true;
   }
   const timingRepair = payload.timing_repair;
   if (
     timingRepair &&
     typeof timingRepair === "object" &&
-    (timingRepair.reason === "degraded_scaffold_clock_repaired_with_anchored_vad_timing" ||
-      timingRepair.strategy === "anchored_vad_timing_repair")
+    timingRepair.strategy === "original_whisper_timecode"
   ) {
     return true;
   }
@@ -64,15 +73,54 @@ function transcriptPayloadHasTimingAuthority(payload: any): boolean {
     if (!segment || typeof segment !== "object") {
       return false;
     }
-    return (
-      segment.timing_authority === "anchored_vad_timing_repair" ||
-      segment.timing_authority === "quick_sweep_transcript" ||
+    const status = String(segment.timing_status || segment.timingStatus || "");
+    const authority = String(segment.timing_authority || segment.timingAuthority || "");
+    const sourceTimeValid = segment.source_time_valid ?? segment.sourceTimeValid;
+    if (
       [
-        "anchor_verified",
-        "vad_anchor_verified",
-        "anchored_offset",
         "automatic_transcript_timestamp",
+        "inherited_after_vad_anchor",
+        "needs_per_line_sync",
+      ].includes(status) ||
+      [
+        "quick_sweep_transcript",
+        "quick_sweep_transcript_priority",
+        "chunked_fallback",
+        "tail_recovery_fallback",
+        "fallback_candidate",
+        "scaffold",
+        "text_only_no_source_timing",
+      ].includes(authority)
+    ) {
+      return false;
+    }
+    if (authority === "manual_correction") {
+      return sourceTimeValid !== false || status === "manual_correction";
+    }
+    return (
+      authority === "original_whisper_timecode" ||
+      authority === "full_pass" ||
+      [
+        "manual_correction",
+        "original_whisper_timecode",
       ].includes(segment.timing_status)
+    );
+  });
+}
+
+function rawTranscriptPayloadLooksLikeScaffold(payload: any): boolean {
+  const segments = Array.isArray(payload?.segments) ? payload.segments : [];
+  if (segments.length < 4) {
+    return false;
+  }
+  return segments.slice(0, 4).every((segment: any, index: number) => {
+    const start = Number(segment?.start);
+    const end = Number(segment?.end);
+    return (
+      Number.isFinite(start) &&
+      Number.isFinite(end) &&
+      Math.abs(start - index * 2) <= 0.02 &&
+      Math.abs(end - (index + 1) * 2) <= 0.02
     );
   });
 }
@@ -91,6 +139,14 @@ async function readJsonIfAvailable(rawPath?: string | null) {
 
 async function authoritativeTranscriptPath(record: any, currentOutputPath?: string) {
   const candidates: string[] = [];
+  const rawWhisperTranscript = record?.output_files?.raw_whisper_transcript;
+  if (typeof rawWhisperTranscript === "string") {
+    candidates.push(rawWhisperTranscript);
+  }
+  const operationalTranscript = record?.output_files?.operational_transcript;
+  if (typeof operationalTranscript === "string") {
+    candidates.push(operationalTranscript);
+  }
   const outputTranscript = record?.output_files?.transcript;
   if (typeof outputTranscript === "string") {
     candidates.push(outputTranscript);
@@ -104,6 +160,13 @@ async function authoritativeTranscriptPath(record: any, currentOutputPath?: stri
   }
 
   if (typeof currentOutputPath === "string") {
+    candidates.push(currentOutputPath.replace(/_transcript\.json$/, "_transcript_raw_whisper.json"));
+    candidates.push(
+      currentOutputPath.replace(
+        /_extracted_audio_transcript\.json$/,
+        "_extracted_audio_transcript_raw_whisper.json",
+      ),
+    );
     candidates.push(
       currentOutputPath.replace(
         /transcripts\/(.+)_extracted_audio_transcript\.json$/,

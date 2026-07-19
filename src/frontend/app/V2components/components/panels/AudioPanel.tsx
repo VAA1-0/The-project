@@ -1242,13 +1242,26 @@ function buildAudioProliferationDecision(
 }
 
 function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: AudioPanelProps) {
-  const analysisId = analysis?.analysis_id || analysis?.id || explicitAnalysisId || videoId || "";
+  const propAnalysisId = analysis?.analysis_id || analysis?.id || explicitAnalysisId || videoId || "";
+  const [analysisId, setAnalysisId] = useState(
+    () => propAnalysisId || eventBus.getLast<string>("videoIdChanged") || "",
+  );
   const [status, setStatus] = useState<any>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(analysisId));
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (propAnalysisId) setAnalysisId(propAnalysisId);
+  }, [propAnalysisId]);
+
+  useEffect(() => {
+    const handler = (nextAnalysisId: string) => setAnalysisId(nextAnalysisId || "");
+    eventBus.on("videoIdChanged", handler);
+    return () => eventBus.off("videoIdChanged", handler);
+  }, []);
 
   useEffect(() => {
     if (!analysisId) {
@@ -1612,8 +1625,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <details className="mb-3 border border-slate-800" open data-vaa1-audio-section="speech-diarization">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Speech, VAD, And Speaker Diarization</summary>
+        <details className="mb-3 border border-slate-800" data-vaa1-audio-section="speech-diarization">
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Speech, VAD, and speaker diarization</summary>
           <div className="max-h-[58vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -1635,8 +1648,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
           </div>
         </details>
 
-        <details className="mb-3 border border-slate-800" open data-vaa1-audio-section="prosody">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Prosody, Delivery, And Turn Structure</summary>
+        <details className="mb-3 border border-slate-800" data-vaa1-audio-section="prosody">
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Prosody, delivery, and turn structure</summary>
           <div className="max-h-[50vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -1684,7 +1697,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </details>
 
         <details className="mb-3 border border-slate-800" data-vaa1-audio-section="music-sound">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Music And Sound Classifier</summary>
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Music and sound classifier</summary>
           <div className="max-h-[44vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -1725,7 +1738,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </details>
 
         <details className="mb-3 border border-slate-800" data-vaa1-audio-section="lyrics">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Lyrics And Transcript Matches</summary>
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Lyrics and transcript matches</summary>
           <div className="max-h-[38vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -1767,7 +1780,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </details>
 
         <details className="mb-3 border border-slate-800" data-vaa1-audio-section="foley-sampling" data-vaa1-audio-foley-sampling="true">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Foley Sampling And Proliferation Candidates</summary>
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Foley sampling and proliferation candidates</summary>
           <div className="max-h-[38vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -1816,7 +1829,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </details>
 
         <details className="mb-3 border border-slate-800" data-vaa1-audio-section="recognition-governance">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Audio Recognition Governance</summary>
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Audio recognition governance</summary>
           <div className="max-h-[38vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">

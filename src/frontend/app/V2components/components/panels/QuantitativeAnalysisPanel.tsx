@@ -31,13 +31,13 @@ export default function QuantitativeAnalysisPanel() {
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   // State for show/hide sections
-  const [showBuildTokenStream, setShowBuildTokenStream] = useState(true);
+  const [showBuildTokenStream, setShowBuildTokenStream] = useState(false);
   const [showCorpusSentenceWordStats, setShowCorpusSentenceWordStats] =
-    useState(true);
-  const [showTfidfTopTerms, setShowTfidfTopTerms] = useState(true);
-  const [showBigrams, setShowBigrams] = useState(true);
-  const [showSentenceTagging, setShowSentenceTagging] = useState(true);
-  const [showConcordance, setShowConcordance] = useState(true);
+    useState(false);
+  const [showTfidfTopTerms, setShowTfidfTopTerms] = useState(false);
+  const [showBigrams, setShowBigrams] = useState(false);
+  const [showSentenceTagging, setShowSentenceTagging] = useState(false);
+  const [showConcordance, setShowConcordance] = useState(false);
   const [showQuantMenu, setShowQuantMenu] = useState(false);
   const [matrixSections, setMatrixSections] = useState<string[]>([]);
   const [matrixAnalysisIds, setMatrixAnalysisIds] = useState<string[]>([]);

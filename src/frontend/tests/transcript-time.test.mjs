@@ -80,7 +80,7 @@ test("zero clock offset does not let provenance timestamps overwrite repaired gl
       end: 8.4,
       sourceStart: 0,
       sourceEnd: 2,
-      timingAuthority: "anchored_vad_timing_repair",
+      timingAuthority: "original_whisper_timecode",
     },
     0,
   );

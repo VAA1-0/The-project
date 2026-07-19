@@ -71,3 +71,239 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Universal Datascene leaf language: compact, calm, and disclosure-led. */
+.vaa1-panel-leaf {
+  --vaa1-leaf-font-size: 12px;
+  --vaa1-leaf-muted: #94a3b8;
+  --vaa1-leaf-border: rgba(255, 255, 255, 0.08);
+  --vaa1-leaf-surface: #222222;
+  --vaa1-leaf-header: #141414;
+  --vaa1-leaf-expanded: #151515;
+  --vaa1-leaf-subtle: #171717;
+  height: 100%;
+  width: 100%;
+  background: var(--vaa1-leaf-surface);
+  color: #d7dbe2;
+  font-size: var(--vaa1-leaf-font-size);
+  line-height: 1.45;
+}
+
+.vaa1-panel-leaf .uppercase {
+  letter-spacing: 0.14em;
+}
+
+.vaa1-panel-leaf summary {
+  min-height: 32px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.vaa1-panel-leaf details {
+  border-color: var(--vaa1-leaf-border);
+  background: var(--vaa1-leaf-surface);
+}
+
+.vaa1-panel-leaf details > summary:hover,
+.vaa1-panel-leaf details[open] > summary {
+  color: #e5e9ef;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* Narrative Agent follows the lighter POS/Quant governance work surface. */
+.vaa1-panel-leaf details[data-vaa1-quiet-governance-section="true"],
+.vaa1-panel-leaf details[data-vaa1-quiet-governance-section="true"]
+  [data-vaa1-headline-dropdown-body="true"]
+  details {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #222222;
+}
+
+.vaa1-panel-leaf button[aria-expanded][data-state] {
+  min-height: 32px;
+  border: 1px solid var(--vaa1-leaf-border) !important;
+  border-radius: 3px !important;
+  background: var(--vaa1-leaf-surface) !important;
+  color: #94a3b8 !important;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow: none !important;
+}
+
+.vaa1-panel-leaf button[aria-expanded][data-state]:hover,
+.vaa1-panel-leaf button[aria-expanded][data-state="open"] {
+  background: rgba(148, 163, 184, 0.05) !important;
+  color: #e1e5eb !important;
+}
+
+.vaa1-panel-leaf label,
+.vaa1-panel-leaf thead,
+.vaa1-panel-leaf [class*="text-slate-500"] {
+  letter-spacing: 0.02em;
+}
+
+.vaa1-panel-leaf select,
+.vaa1-panel-leaf input,
+.vaa1-panel-leaf textarea,
+.vaa1-panel-leaf button {
+  font-size: 12px;
+}
+
+.vaa1-panel-leaf button,
+.vaa1-panel-leaf .rounded-lg,
+.vaa1-panel-leaf .rounded-xl,
+.vaa1-panel-leaf .rounded-2xl,
+.vaa1-panel-leaf .rounded-3xl {
+  border-radius: 3px !important;
+}
+
+.vaa1-panel-leaf h1,
+.vaa1-panel-leaf h2,
+.vaa1-panel-leaf h3,
+.vaa1-panel-leaf h4 {
+  letter-spacing: 0.015em;
+  text-transform: none;
+}
+
+.vaa1-panel-leaf h1,
+.vaa1-panel-leaf h2 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vaa1-panel-leaf h3,
+.vaa1-panel-leaf h4 {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.vaa1-panel-leaf table {
+  font-size: 11px;
+}
+
+.vaa1-panel-leaf thead {
+  color: var(--vaa1-leaf-muted);
+  font-weight: 500;
+  text-transform: none !important;
+}
+
+.vaa1-panel-leaf select {
+  min-height: 30px;
+  border-color: var(--vaa1-leaf-border);
+  background-color: var(--vaa1-leaf-expanded);
+  color: #d7dbe2;
+}
+
+/* Shared POS/Quant panel geometry and surfaces. Source media and chart marks keep
+   their own explicit colour; panel chrome and governance workspaces do not. */
+.vaa1-panel-leaf > * {
+  background-color: var(--vaa1-leaf-surface);
+}
+
+.vaa1-panel-leaf input,
+.vaa1-panel-leaf textarea {
+  border-color: var(--vaa1-leaf-border);
+  background-color: var(--vaa1-leaf-expanded);
+  color: #d7dbe2;
+}
+
+.vaa1-panel-leaf [class*="bg-[#1a1a1a]"],
+.vaa1-panel-leaf [class*="bg-[#141414]"] {
+  background-color: var(--vaa1-leaf-header) !important;
+}
+
+.vaa1-panel-leaf [class*="bg-[#0c0d0f]"],
+.vaa1-panel-leaf [class*="bg-[#111111]"],
+.vaa1-panel-leaf [class*="bg-[#111214]"],
+.vaa1-panel-leaf [class*="bg-[#151515]"] {
+  background-color: var(--vaa1-leaf-expanded) !important;
+}
+
+.vaa1-panel-leaf [class*="bg-[#121212]"],
+.vaa1-panel-leaf [class*="bg-[#171717]"] {
+  background-color: var(--vaa1-leaf-subtle) !important;
+}
+
+.vaa1-panel-leaf [class*="border-slate-7"],
+.vaa1-panel-leaf [class*="border-slate-8"],
+.vaa1-panel-leaf [class*="border-white/"] {
+  border-color: var(--vaa1-leaf-border) !important;
+}
+
+.vaa1-panel-leaf button.rounded-full,
+.vaa1-panel-leaf a.rounded-full {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background-color: #101010 !important;
+  color: #cbd5e1 !important;
+  font-size: 10px;
+  box-shadow: none !important;
+}
+
+.vaa1-panel-leaf button:hover,
+.vaa1-panel-leaf a:hover {
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+/* Governance surfaces use one restrained evidentiary tone. Semantic colour remains
+   available in charts and source media, but not as a wall of status tiles. */
+.vaa1-panel-leaf [class*="bg-cyan-"],
+.vaa1-panel-leaf [class*="bg-teal-"],
+.vaa1-panel-leaf [class*="bg-emerald-"],
+.vaa1-panel-leaf [class*="bg-lime-"],
+.vaa1-panel-leaf [class*="bg-amber-"],
+.vaa1-panel-leaf [class*="bg-violet-"],
+.vaa1-panel-leaf [class*="bg-rose-"] {
+  background-color: rgba(148, 163, 184, 0.045) !important;
+}
+
+.vaa1-panel-leaf [class*="border-cyan-"],
+.vaa1-panel-leaf [class*="border-teal-"],
+.vaa1-panel-leaf [class*="border-emerald-"],
+.vaa1-panel-leaf [class*="border-lime-"],
+.vaa1-panel-leaf [class*="border-amber-"],
+.vaa1-panel-leaf [class*="border-violet-"],
+.vaa1-panel-leaf [class*="border-rose-"] {
+  border-color: var(--vaa1-leaf-border) !important;
+}
+
+.vaa1-panel-leaf [class*="text-cyan-"],
+.vaa1-panel-leaf [class*="text-teal-"],
+.vaa1-panel-leaf [class*="text-emerald-"],
+.vaa1-panel-leaf [class*="text-lime-"],
+.vaa1-panel-leaf [class*="text-amber-"],
+.vaa1-panel-leaf [class*="text-violet-"] {
+  color: #b7c0cc !important;
+}
+
+.vaa1-panel-leaf [class*="text-rose-"] {
+  color: #c5a8ad !important;
+}
+
+/* Closed disclosures are index rows: title plus one operational dimension. Longer
+   descriptions belong to the open state, where they regain normal flow. */
+.vaa1-panel-leaf details:not([open]) > summary > div:first-child > :not(:first-child),
+.vaa1-panel-leaf details:not([open]) > summary > span:first-child > :not(:first-child),
+.vaa1-panel-leaf details:not([open]) > summary > span[class*="ml-"] {
+  display: none !important;
+}
+
+/* Component-local dark canvases must not override the universal work surface. */
+.vaa1-panel-leaf main,
+.vaa1-panel-leaf > div,
+.vaa1-panel-leaf [class*="overflow-y-auto"],
+.vaa1-panel-leaf [class*="overflow-auto"] {
+  background-color: var(--vaa1-leaf-surface) !important;
+}
+
+.vaa1-panel-leaf [class*="bg-[#101010]"]:not(button):not(a):not(input):not(select),
+.vaa1-panel-leaf [class*="bg-[#090909]"]:not(button):not(a):not(input):not(select),
+.vaa1-panel-leaf [class*="bg-[#080b0b]"]:not(button):not(a):not(input):not(select),
+.vaa1-panel-leaf [class*="bg-[#050707]"]:not(button):not(a):not(input):not(select),
+.vaa1-panel-leaf [class*="bg-[#0f0f0f]"]:not(button):not(a):not(input):not(select) {
+  background-color: var(--vaa1-leaf-surface) !important;
+}

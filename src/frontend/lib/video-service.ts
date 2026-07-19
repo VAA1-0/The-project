@@ -359,7 +359,10 @@ export interface MasterSchemaResolvedEvidenceRecord {
     | "shot_boundary"
     | "music_analysis"
     | "lyric_match"
-    | "speaker_diarization";
+    | "speaker_diarization"
+    | "organization"
+    | "place"
+    | "scene_card";
   label: string;
   authority: MatureEvidenceAuthority;
   sourcePanel: string;
@@ -828,13 +831,45 @@ function applyAnnotationCorrectionsToTranscript(
     const normalizedEmpty =
       baseText.length > 0 ? baseText : segment.status === "unconfirmed" ? "Unconfirmed" : "";
     const shiftedSegment = applyTranscriptClockOffset(segment, transcriptClockOffset);
+    const sourceStart = Number(segment.start ?? 0);
+    const sourceEnd = Number(segment.end ?? segment.start ?? 0);
+    const spanRule = [...textRules].reverse().find((rule) => {
+      if (
+        rule.modality !== "text" ||
+        normalizeCorrectionValue(rule.raw_value) !== normalizeCorrectionValue(baseText) ||
+        (rule.corrected_start_timestamp === undefined &&
+          rule.corrected_end_timestamp === undefined)
+      ) {
+        return false;
+      }
+      const targetStart = Number(rule.target_start_timestamp ?? sourceStart);
+      const targetEnd = Number(rule.target_end_timestamp ?? sourceEnd);
+      return Math.abs(targetStart - sourceStart) <= 0.01 && Math.abs(targetEnd - sourceEnd) <= 0.01;
+    });
+    const correctedStart = spanRule?.corrected_start_timestamp;
+    const correctedEnd = spanRule?.corrected_end_timestamp;
+    const hasCorrectedSpan = correctedStart !== undefined || correctedEnd !== undefined;
+    const nextStart = hasCorrectedSpan
+      ? Math.max(0, Number(correctedStart ?? shiftedSegment.start ?? sourceStart))
+      : shiftedSegment.start;
+    const nextEnd = hasCorrectedSpan
+      ? Math.max(nextStart, Number(correctedEnd ?? shiftedSegment.end ?? sourceEnd))
+      : shiftedSegment.end;
     return {
       ...segment,
       ...shiftedSegment,
+      start: nextStart,
+      end: nextEnd,
+      t: hasCorrectedSpan ? `${Number(nextStart).toFixed(1)}s` : shiftedSegment.t,
       rawText: segment.rawText || segment.text,
-      text: applyTextSubstitutions(normalizedEmpty, textRules),
+      text: spanRule
+        ? String(spanRule.corrected_value || normalizedEmpty).trim()
+        : applyTextSubstitutions(normalizedEmpty, textRules),
       status: segment.status || (normalizedEmpty ? "confirmed" : "unconfirmed"),
-      correctionSource: segment.correctionSource || "transcript",
+      correctionSource: spanRule ? "manual" : segment.correctionSource || "transcript",
+      timingStatus: spanRule ? "manual_correction" : segment.timingStatus,
+      timingAuthority: spanRule ? "manual_correction" : segment.timingAuthority,
+      sourceTimeValid: spanRule ? true : segment.sourceTimeValid,
     };
   });
 
@@ -871,20 +906,38 @@ function applyAnnotationCorrectionsToTranscript(
 function segmentHasRepairedTimingAuthority(segment: TranscriptSegment): boolean {
   const status = String(segment.timingStatus || segment.sourceTimingStatus || "").trim();
   const authority = String(segment.timingAuthority || "").trim();
+  const sourceTimeValid = (segment as any).sourceTimeValid;
   if (
-    authority === "manual_correction" ||
+    [
+      "automatic_transcript_timestamp",
+      "inherited_after_vad_anchor",
+      "needs_per_line_sync",
+    ].includes(status) ||
+    [
+      "quick_sweep_transcript",
+      "quick_sweep_transcript_priority",
+      "chunked_fallback",
+      "tail_recovery_fallback",
+      "fallback_candidate",
+      "scaffold",
+      "text_only_no_source_timing",
+    ].includes(authority)
+  ) {
+    return false;
+  }
+  if (authority === "manual_correction") {
+    return sourceTimeValid !== false || status === "manual_correction";
+  }
+  if (
     authority === "original_whisper_timecode" ||
     authority === "full_pass" ||
-    authority === "anchored_vad_timing_repair" ||
-    authority === "vad_anchor_verified"
+    status === "original_whisper_timecode"
   ) {
     return true;
   }
   return [
     "manual_correction",
     "original_whisper_timecode",
-    "anchored_vad_timing_repair",
-    "vad_anchor_verified",
   ].includes(status);
 }
 
@@ -899,14 +952,16 @@ function rawTranscriptPayloadHasTimingAuthority(payload: any): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
   }
-  const timingAuthority = payload.timing_authority || payload.timingAuthority || {};
-  const operationalAuthority = String(
-    timingAuthority?.operational_authority || timingAuthority?.operationalAuthority || "",
-  );
+  if (rawTranscriptPayloadLooksLikeScaffold(payload)) {
+    return false;
+  }
+  const authorityPayload = payload.timing_authority;
   if (
-    operationalAuthority === "original_whisper_timecode" ||
-    operationalAuthority === "manual_correction" ||
-    operationalAuthority === "manual_correction_for_verified_rows"
+    authorityPayload &&
+    typeof authorityPayload === "object" &&
+    ["original_whisper_timecode", "manual_correction"].includes(
+      String(authorityPayload.operational_authority || ""),
+    )
   ) {
     return true;
   }
@@ -925,8 +980,29 @@ function rawTranscriptPayloadHasTimingAuthority(payload: any): boolean {
     }
     const authority = String(segment.timing_authority || segment.timingAuthority || "");
     const status = String(segment.timing_status || segment.timingStatus || "");
+    const sourceTimeValid = segment.source_time_valid ?? segment.sourceTimeValid;
+    if (
+      [
+        "automatic_transcript_timestamp",
+        "inherited_after_vad_anchor",
+        "needs_per_line_sync",
+      ].includes(status) ||
+      [
+        "quick_sweep_transcript",
+        "quick_sweep_transcript_priority",
+        "chunked_fallback",
+        "tail_recovery_fallback",
+        "fallback_candidate",
+        "scaffold",
+        "text_only_no_source_timing",
+      ].includes(authority)
+    ) {
+      return false;
+    }
+    if (authority === "manual_correction") {
+      return sourceTimeValid !== false || status === "manual_correction";
+    }
     return (
-      authority === "manual_correction" ||
       authority === "original_whisper_timecode" ||
       authority === "full_pass" ||
       [
@@ -953,6 +1029,31 @@ function isManualTranscriptClockRow(segment: any): boolean {
     authority === "manual_correction" ||
     status === "manual_correction" ||
     source.startsWith("annotation_corrections.")
+  );
+}
+
+function transcriptRowHasCandidateOnlyTiming(segment: any): boolean {
+  const status = String(segment?.timing_status || segment?.timingStatus || "");
+  const authority = String(segment?.timing_authority || segment?.timingAuthority || "");
+  const source = String(segment?.timing_source || segment?.timingSource || "");
+  const sourceTimeValid = segment?.source_time_valid ?? segment?.sourceTimeValid;
+  return (
+    sourceTimeValid === false ||
+    [
+      "automatic_transcript_timestamp",
+      "inherited_after_vad_anchor",
+      "needs_per_line_sync",
+    ].includes(status) ||
+    [
+      "quick_sweep_transcript",
+      "quick_sweep_transcript_priority",
+      "chunked_fallback",
+      "tail_recovery_fallback",
+      "fallback_candidate",
+      "scaffold",
+      "text_only_no_source_timing",
+    ].includes(authority) ||
+    /chunked|fallback|scaffold|quick_sweep/i.test(source)
   );
 }
 
@@ -1019,7 +1120,7 @@ function buildWhisperClockPayloadWithMatureAnnotations(payload: any): any {
       end: clockSegment.end,
       source_start: clockSegment.start,
       source_end: clockSegment.end,
-      timing_status: "automatic_transcript_timestamp",
+      timing_status: "original_whisper_timecode",
       timing_authority: "original_whisper_timecode",
       timing_source: "whisper_timecode",
       source_time_valid: true,
@@ -1947,6 +2048,72 @@ function masterSchemaShotBoundaries(masterSchema: unknown): NonNullable<NonNulla
   };
 }
 
+function sourceMetadataMasterSchemaRecords(
+  metadata?: SourceMediaMetadata,
+  sceneCardSummary?: Record<string, unknown> | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  const annotations = metadata?.user_annotations;
+  const addConfirmed = (category: MasterSchemaResolvedEvidenceRecord["category"], field: string, values: unknown[]) => {
+    values.map((value) => looseString(value)).filter(Boolean).forEach((label, index) => records.push({
+      id: `source-metadata:${field}:${index}`,
+      category,
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "SourceMedia",
+      targetId: `source_media_metadata:${field}:${index}`,
+      maturityRoute: "source_media.user_confirmed_metadata",
+      mappingStatus: "user_confirmed",
+      metadata: { source_field: field, source_ref: `source_media_metadata:${field}` },
+    }));
+  };
+  addConfirmed("organization", "organizations", annotations?.organizations || []);
+  addConfirmed("place", "location", [
+    annotations?.location_place,
+    annotations?.location_city,
+    annotations?.location_country,
+    annotations?.location_room,
+  ]);
+
+  const organizationPattern = /^(?:[A-Z0-9]{2,12}|.*\b(?:agency|authority|company|corporation|department|institution|ministry|organization|service|syndicate)\b.*)$/i;
+  (annotations?.web_metadata_sources || []).forEach((source, sourceIndex) => {
+    (source.fields?.places || []).forEach((value, index) => {
+      const label = looseString(value);
+      if (!label) return;
+      const category = organizationPattern.test(label) && !/\b(?:prison|room|street|city|country|lake|grave|tomb)\b/i.test(label)
+        ? "organization"
+        : "place";
+      records.push({
+        id: `source-metadata:web:${sourceIndex}:${category}:${index}`,
+        category,
+        label,
+        authority: "interpreted_detection",
+        sourcePanel: "SourceMedia",
+        targetId: source.id || `web_metadata:${sourceIndex}`,
+        maturityRoute: "source_media.web_metadata_candidate",
+        mappingStatus: "candidate",
+        metadata: { source_url: source.url, review_state: "candidate", source_field: "web_metadata_sources.fields.places" },
+      });
+    });
+  });
+
+  const sceneCardCount = Number(sceneCardSummary?.scene_card_count || 0);
+  for (let index = 0; index < sceneCardCount; index += 1) {
+    records.push({
+      id: `scene-card:${index + 1}`,
+      category: "scene_card",
+      label: `Scene Card ${String(index + 1).padStart(3, "0")}`,
+      authority: "mature_triangulated",
+      sourcePanel: "SceneCards",
+      targetId: `scene-card:${index + 1}`,
+      maturityRoute: "mise_en_scene_scene_cards.scene_card_count",
+      mappingStatus: "governed",
+      metadata: { output_json_path: sceneCardSummary?.output_json_path },
+    });
+  }
+  return records;
+}
+
 function buildMasterSchemaResolvedEvidenceView({
   transcript,
   objects,
@@ -1959,6 +2126,8 @@ function buildMasterSchemaResolvedEvidenceView({
   evidenceProliferationMatches,
   masterSchema,
   analysisId,
+  sourceMediaMetadata,
+  sceneCardSummary,
 }: {
   transcript: TranscriptSegment[];
   objects: DetectedObject[];
@@ -1971,8 +2140,12 @@ function buildMasterSchemaResolvedEvidenceView({
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[] | null;
   masterSchema?: unknown;
   analysisId?: string;
+  sourceMediaMetadata?: SourceMediaMetadata;
+  sceneCardSummary?: Record<string, unknown> | null;
 }): MasterSchemaResolvedEvidenceView {
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
+
+  records.push(...sourceMetadataMasterSchemaRecords(sourceMediaMetadata, sceneCardSummary));
 
   records.push(
     ...masterSchemaScopedRecords(
@@ -2212,6 +2385,8 @@ function datasceneEntityTypeForMasterRecord(
     return "NARRATIVE_AGENT";
   }
   if (record.category === "object") return "OBJECT";
+  if (record.category === "organization") return "ORG";
+  if (record.category === "place") return "PLACE";
   if (record.category === "ocr" || record.category === "transcript") {
     return "SOURCE_MEDIA_ENTITY";
   }
@@ -3939,6 +4114,8 @@ export interface AnalysisData {
   entityRegistry?: DatasceneEntityRegistryView;
   contentSearch?: DatasceneContentSearchView;
   annotationCorrections?: AnnotationCorrections | null;
+  canonicalDecisionLedger?: AnalysisStatus["canonical_decision_ledger"];
+  projectedCanonicalClaims?: import("./api-service").ProjectedCanonicalClaimCollection;
   forensicRenderJobs?: ForensicRenderJob[];
   sourceSamples?: SourceSample[];
   identityRefinement?: IdentityRefinementStatus | null;
@@ -3946,6 +4123,7 @@ export interface AnalysisData {
   narrativeLensReading?: Record<string, unknown> | null;
   characterPathReading?: Record<string, unknown> | null;
   datasceneMeaningNetwork?: Record<string, unknown> | null;
+  miseEnSceneSceneCards?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
   audioDiarization?: AudioDiarizationScaffold | null;
@@ -4716,6 +4894,13 @@ export interface AnalysisStatus {
   source_media_metadata?: SourceMediaMetadata;
   source_media_annotations?: Record<string, unknown>;
   annotation_corrections?: AnnotationCorrections | null;
+  canonical_decision_ledger?: {
+    schema: "vaa1.canonical_decision_ledger.v0";
+    analysis_id: string;
+    version: 1;
+    decisions: Array<Record<string, unknown>>;
+  };
+  projected_canonical_claims?: import("./api-service").ProjectedCanonicalClaimCollection;
   transcript_timing_repair?: {
     status?: string;
     reason?: string;
@@ -5034,6 +5219,7 @@ export class VideoService {
   private static readonly analysisCache = new Map<
     string,
     {
+      cachedAt: number;
       completedAt?: string;
       correctionUpdatedAt?: string;
       transcriptTimingRepairKey?: string;
@@ -5102,7 +5288,7 @@ export class VideoService {
   static async get(id: string): Promise<VideoMetadata> {
     try {
       // Cast to our extended AnalysisStatus type
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status = (await apiService.getStatusSummary(id)) as AnalysisStatus;
 
       return {
         id: status.analysis_id,
@@ -5152,7 +5338,7 @@ export class VideoService {
    */
   static async getBlob(id: string): Promise<Blob | null> {
     try {
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      const status = (await apiService.getStatusSummary(id)) as AnalysisStatus;
 
       if (status.status === "completed") {
         try {
@@ -5177,6 +5363,10 @@ export class VideoService {
     const existingPromise = this.analysisPromiseCache.get(id);
     if (existingPromise) {
       return existingPromise;
+    }
+    const recentlyResolved = this.analysisCache.get(id);
+    if (recentlyResolved && Date.now() - recentlyResolved.cachedAt < 5_000) {
+      return recentlyResolved.data;
     }
 
     const loadPromise = (async () => {
@@ -5397,6 +5587,8 @@ export class VideoService {
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         masterSchema: status.vaa1_annotation_master_schema,
         analysisId: id,
+        sourceMediaMetadata: status.source_media_metadata,
+        sceneCardSummary: status.mise_en_scene_scene_cards || null,
       });
       const masterSchemaAudioEvents = masterSchemaAudioEventIntervals(status.vaa1_annotation_master_schema);
       const masterSchemaShotIntervals = masterSchemaShotBoundaries(status.vaa1_annotation_master_schema);
@@ -5462,6 +5654,8 @@ export class VideoService {
         entityRegistry,
         contentSearch,
         annotationCorrections: corrections,
+        canonicalDecisionLedger: status.canonical_decision_ledger,
+        projectedCanonicalClaims: status.projected_canonical_claims,
         forensicRenderJobs: status.forensic_render_jobs || [],
         sourceSamples: status.source_samples || [],
         identityRefinement: status.identity_refinement || null,
@@ -5469,6 +5663,7 @@ export class VideoService {
         narrativeLensReading: status.narrative_lens_reading || null,
         characterPathReading: status.character_path_reading || null,
         datasceneMeaningNetwork: status.datascene_meaning_network || null,
+        miseEnSceneSceneCards: status.mise_en_scene_scene_cards || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         liveMatureDataProliferationAudit:
           status.live_mature_data_proliferation_audit || null,
@@ -5592,6 +5787,7 @@ export class VideoService {
         },
       };
       this.analysisCache.set(id, {
+        cachedAt: Date.now(),
         completedAt: status.analysis_completed_at,
         correctionUpdatedAt: correctionUpdatedAt || undefined,
         transcriptTimingRepairKey: timingRepairCacheKey,
@@ -5648,6 +5844,49 @@ export class VideoService {
     const saved = await apiService.saveAnnotationCorrections(id, corrections);
     this.invalidateAnalysisCache(id);
     return saved;
+  }
+
+  static async getProjectedSubjectState(
+    id: string,
+    subjectRef: string,
+    timestampSeconds: number,
+  ) {
+    return apiService.getProjectedSubjectState(id, subjectRef, timestampSeconds);
+  }
+
+  static async resolveSourceClock(
+    id: string,
+    payload: Parameters<typeof apiService.resolveSourceClock>[1],
+  ) {
+    return apiService.resolveSourceClock(id, payload);
+  }
+
+  static async getProjectedSubjectStates(
+    id: string,
+    requests: Array<{ subject_ref: string; timestamp: number }>,
+  ) {
+    return apiService.getProjectedSubjectStates(id, requests);
+  }
+
+  static async createCanonicalDecision(
+    id: string,
+    decision: import("./api-service").CanonicalDecisionInput,
+  ) {
+    return apiService.createCanonicalDecision(id, decision);
+  }
+
+  static async getProjectedCanonicalClaims(
+    id: string,
+    request: Parameters<typeof apiService.getProjectedCanonicalClaims>[1],
+  ) {
+    return apiService.getProjectedCanonicalClaims(id, request);
+  }
+
+  static async invalidateCanonicalDecision(
+    id: string,
+    invalidation: Parameters<typeof apiService.invalidateCanonicalDecision>[1],
+  ) {
+    return apiService.invalidateCanonicalDecision(id, invalidation);
   }
 
   static async refreshAnalysis(id: string): Promise<AnalysisData> {
@@ -5861,10 +6100,28 @@ export class VideoService {
         }
       }
       transcriptData = buildWhisperClockPayloadWithMatureAnnotations(transcriptData);
+      const payloadCandidateOnlyTiming = [
+        "chunked_fallback",
+        "tail_recovery_fallback",
+        "quick_sweep_transcript",
+        "quick_sweep_transcript_priority",
+        "fallback_candidate",
+        "scaffold",
+      ].includes(String(transcriptData?.transcription_strategy || ""));
       const normalizeSegment = (seg: any): TranscriptSegment => {
         const timing = normalizeTranscriptSegmentTiming(seg || {});
+        const candidateOnlyTiming =
+          (payloadCandidateOnlyTiming || transcriptRowHasCandidateOnlyTiming(seg)) && !segmentHasRepairedTimingAuthority({
+            ...timing,
+            timingStatus: seg.timing_status || seg.timingStatus,
+            timingAuthority: seg.timing_authority || seg.timingAuthority,
+            timingSource: seg.timing_source || seg.timingSource,
+            sourceTimeValid: seg.source_time_valid ?? seg.sourceTimeValid,
+          } as TranscriptSegment);
         return {
           ...timing,
+          start: candidateOnlyTiming ? Number.NaN : timing.start,
+          end: candidateOnlyTiming ? Number.NaN : timing.end,
           text: seg.text || "",
           rawText: seg.raw_text || seg.rawText || seg.text || "",
           speaker: seg.speaker || seg.speaker_label || "Speaker 1",

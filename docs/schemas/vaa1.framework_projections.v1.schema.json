@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.framework_projections.v1.schema.json",
+  "title": "VAA1 governed framework projections",
+  "type": "object",
+  "required": ["schema", "analysis_id", "meaning_network", "narrative_agent", "boje_5b", "excluded_records", "governance"],
+  "properties": {
+    "schema": {"const": "vaa1.framework_projections.v1"},
+    "meaning_network": {"type": "object", "required": ["nodes", "edges"]},
+    "narrative_agent": {"type": "object", "required": ["readings", "state_transitions"]},
+    "boje_5b": {
+      "type": "object",
+      "description": "Candidate-only Boje analytical projection. Orientations are explicitly assigned and never inferred from keywords.",
+      "required": ["events", "rule"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["event_id", "orientation", "record_ref", "candidate_reading", "support_refs", "counter_evidence_refs", "framework_assignment", "authority", "canonical"],
+            "properties": {
+              "orientation": {"enum": ["bet", "beneath", "between", "beyond", "becoming"]},
+              "framework_assignment": {"const": "explicit"},
+              "authority": {"const": "candidate_service"},
+              "canonical": {"const": false}
+            }
+          }
+        },
+        "rule": {"type": "string"}
+      }
+    },
+    "excluded_records": {"type": "array"},
+    "governance": {
+      "type": "object",
+      "required": ["candidate_authority_preserved", "canonical_write", "observation_only_support_excluded", "counter_evidence_preserved"],
+      "properties": {
+        "candidate_authority_preserved": {"const": true},
+        "canonical_write": {"const": false},
+        "observation_only_support_excluded": {"const": true},
+        "counter_evidence_preserved": {"const": true}
+      }
+    }
+  }
+}

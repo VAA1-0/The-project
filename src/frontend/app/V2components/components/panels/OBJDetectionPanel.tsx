@@ -844,20 +844,20 @@ export default function OBJDetectionPanel() {
                   const startInputKey = `${rowKey}:start`;
                   const endInputKey = `${rowKey}:end`;
                   return (
-                  <div
+                  <details
                     key={rowKey}
-                    className={`cursor-pointer rounded border px-3 py-2 transition hover:bg-slate-900/35 ${
+                    className={`group rounded border transition ${
                       selected
                         ? "border-cyan-600/70 bg-cyan-950/15"
                         : obj.sourceType === "manual_visual"
                         ? "border-emerald-700/60 bg-emerald-950/20"
                         : "border-slate-800 bg-slate-950/20"
                     }`}
-                    onClick={() => {
-                      activateObjectInVideo(obj, rowKey);
-                    }}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <summary
+                      className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 marker:hidden"
+                      onClick={() => activateObjectInVideo(obj, rowKey)}
+                    >
                       <div className="min-w-0">
                         <div className="truncate text-[11px] text-slate-200">
                           {latestLabel}
@@ -866,7 +866,13 @@ export default function OBJDetectionPanel() {
                           Source: {sourceLabel}
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
+                      <span className="shrink-0 text-[10px] text-[var(--ui-passive-text)]">
+                        {formatPreciseTime(obj.startTimestamp ?? obj.timestamp)}
+                        {` · ${(obj.confidence * 100).toFixed(1)}%`}
+                      </span>
+                    </summary>
+                    <div className="border-t border-slate-800 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={(event) => {
@@ -887,11 +893,7 @@ export default function OBJDetectionPanel() {
                         >
                           Drop
                         </button>
-                        <span className="text-[10px] text-[var(--ui-passive-text)]">
-                          {(obj.confidence * 100).toFixed(1)}%
-                        </span>
                       </div>
-                    </div>
                     {manualOverride && (
                       <div className="mt-1 text-[10px] text-emerald-300/90">
                         Latest analyst label • source remains {sourceLabel}
@@ -1246,7 +1248,8 @@ export default function OBJDetectionPanel() {
                         {obj.demographicSummary.audioSupport.overlappingSegments === 1 ? "" : "s"}
                       </div>
                     )}
-                  </div>
+                    </div>
+                  </details>
                 );
                 })
               )}

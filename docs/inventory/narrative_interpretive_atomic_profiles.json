@@ -1,0 +1,60 @@
+{
+  "schema": "vaa1.inventory.narrative_interpretive_atomic_profiles.v1",
+  "profiles": [
+    {
+      "category_id": "narrative.lenses_structures",
+      "current_status": "partial",
+      "atomic_attributes": [
+        "lens.aristotelian",
+        "lens.bookerian",
+        "lens.campbellian",
+        "lens.freytagian",
+        "lens.fryean"
+      ],
+      "known_paths": [
+        "src/frontend/app/V2components/components/panels/MeaningPlotPanel.tsx",
+        "src/backend/analysis/narrative_lens_reading.py",
+        "docs/vaa1_interpretive_lens_schema_and_sprint_v1.json"
+      ],
+      "delivery_boundary": "Interpretive lenses remain explicit, versioned readings with support, counter-evidence, alternatives, and analyst commitment state; they are not empirical labels."
+    },
+    {
+      "category_id": "narrative.characters_agency_roles_archetypes",
+      "current_status": "partial",
+      "atomic_attributes": [
+        "agency.performed_shakespearean",
+        "archetype.symbolic_shadow_jungian_mythic",
+        "function.narrative_proppian",
+        "motive_scene.burkean_dramatistic",
+        "relation.actant_greimasian"
+      ],
+      "known_paths": [
+        "src/frontend/app/V2components/components/panels/MeaningPlotPanel.tsx",
+        "src/frontend/app/V2components/components/panels/NarrativeAgentPanel.tsx",
+        "docs/vaa1_core_ui_workflow_design_review_2026-06-30.md"
+      ],
+      "delivery_boundary": "Agency, function, archetype, actant, and motive-scene readings remain framework-qualified analytical propositions rather than fixed character facts."
+    },
+    {
+      "category_id": "narrative.values_virtues_vices_motives_themes",
+      "current_status": "nominal",
+      "atomic_attributes": [
+        "motive.interpretive",
+        "theme.interpretive",
+        "value.interpretive",
+        "vice.axis",
+        "vice.family",
+        "vice.value",
+        "virtue.axis",
+        "virtue.family",
+        "virtue.value"
+      ],
+      "known_paths": [
+        "src/frontend/app/V2components/components/panels/MeaningPlotPanel.tsx",
+        "src/backend/analysis/character_path_reading.py",
+        "docs/vaa1_datascene_meaning_network_schema.json"
+      ],
+      "delivery_boundary": "Values, virtues, vices, motives, and themes remain source-supported interpretive applications with framework provenance and revision lineage."
+    }
+  ]
+}

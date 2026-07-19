@@ -555,11 +555,20 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
             {results.map(({ row, record }) => {
               const primarySource = record.sources[0];
               return (
-                <div
+                <details
                   key={groupResultKey(row, record)}
-                  className="px-4 py-3 hover:bg-neutral-900/70"
+                  className="bg-neutral-950"
                   data-datascene-search-result="true"
                 >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 marker:hidden">
+                    <span className="min-w-0 truncate text-[12px] font-medium text-neutral-200">
+                      {record.canonical_name}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-neutral-500">
+                      {typeLabel(record.entity_type)} · {formatSeconds(record.start_time)} · {record.maturity_summary.highest_maturity}
+                    </span>
+                  </summary>
+                  <div className="border-t border-neutral-800 px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -653,7 +662,8 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
                       </span>
                     ))}
                   </div>
-                </div>
+                  </div>
+                </details>
               );
             })}
           </div>

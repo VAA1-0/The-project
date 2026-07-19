@@ -1,29 +1,14 @@
 @echo off
+setlocal
 title VAA1 Launcher
-set LOGDIR=%~dp0logs
-set LOGFILE=%LOGDIR%\vaa1-launch.log
 
-if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+set SCRIPT_DIR=%~dp0
+set REPO_ROOT=%SCRIPT_DIR%..\
 
-echo BASEDIR=%BASEDIR% >> "%LOGFILE%"
-echo =============================== >> "%LOGFILE%"
-echo VAA1 LAUNCH STARTED %DATE% %TIME% >> "%LOGFILE%"
+if not exist "%REPO_ROOT%run_vaa1.bat" (
+  echo Root VAA1 launcher was not found at "%REPO_ROOT%run_vaa1.bat".
+  exit /b 1
+)
 
-call scripts\check_docker.bat || goto :error
-call scripts\check_ports.bat || goto :error
-call scripts\check_backend_health.bat || goto :error
-call scripts\start_services.bat || goto :error
-
-
-
-echo VAA1 started successfully >> "%LOGFILE%"
-echo.
-echo VAA1 is running. You may now use the application.
-exit /b 0
-
-:error
-echo.
-echo ❌ VAA1 failed to start.
-echo Please see logs\vaa1-launch.log
-pause
-exit /b 1
+call "%REPO_ROOT%run_vaa1.bat" %*
+exit /b %ERRORLEVEL%

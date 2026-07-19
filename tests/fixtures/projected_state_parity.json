@@ -1,0 +1,32 @@
+{
+  "schema": "vaa1.projected_state_parity_fixture.v1",
+  "cases": [
+    {
+      "name": "manual correction outranks raw in interval",
+      "subject_ref": "track-1",
+      "timestamp": 2.0,
+      "tracked_objects": [{"track_id":"track-1","timestamp":"2.0","class_name":"person"}],
+      "manual_visual_annotations": [{"id":"manual-1","label":"James Bond","start_seconds":1.5,"end_seconds":3.0,"updated_at":"2026-07-14T10:00:00Z","metadata_correlation":{"target_id":"track-1","authority_state":"manual_correction","maturity_state":"manual_correction"}}],
+      "expected": {"projected_value":"James Bond","authority":"manual_correction","projection_status":"projected"}
+    },
+    {
+      "name": "raw remains when correction is outside interval",
+      "subject_ref": "track-1",
+      "timestamp": 5.0,
+      "tracked_objects": [{"track_id":"track-1","timestamp":"5.0","class_name":"person"}],
+      "manual_visual_annotations": [{"id":"manual-1","label":"James Bond","start_seconds":1.5,"end_seconds":3.0,"updated_at":"2026-07-14T10:00:00Z","metadata_correlation":{"target_id":"track-1","authority_state":"manual_correction"}}],
+      "expected": {"projected_value":"person","authority":"raw_detection","projection_status":"projected"}
+    },
+    {
+      "name": "latest scoped correction wins",
+      "subject_ref": "track-1",
+      "timestamp": 2.0,
+      "tracked_objects": [{"track_id":"track-1","timestamp":"2.0","class_name":"person"}],
+      "manual_visual_annotations": [
+        {"id":"manual-old","label":"Bond","start_seconds":1.0,"end_seconds":3.0,"updated_at":"2026-07-14T09:00:00Z","metadata_correlation":{"target_id":"track-1","authority_state":"manual_correction"}},
+        {"id":"manual-new","label":"James Bond","start_seconds":1.0,"end_seconds":3.0,"updated_at":"2026-07-14T10:00:00Z","metadata_correlation":{"target_id":"track-1","authority_state":"manual_correction"}}
+      ],
+      "expected": {"projected_value":"James Bond","authority":"manual_correction","projection_status":"projected"}
+    }
+  ]
+}

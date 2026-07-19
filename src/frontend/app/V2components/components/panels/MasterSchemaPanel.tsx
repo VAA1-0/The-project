@@ -13,6 +13,7 @@ import type {
   IdentityCandidate,
   IdentityCandidateLedger,
   ManualVisualAnnotation,
+  ProjectedCanonicalClaim,
   SecondOrderLabelInstruction,
 } from "@/lib/api-service";
 import {
@@ -29,6 +30,7 @@ import {
   openVideoAtTime,
 } from "@/lib/video-navigation";
 import { matureSceneSegmentsFromAnalysis } from "@/lib/scene-governance";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import { useLayoutHost } from "../LayoutHost";
 import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
 
@@ -175,6 +177,20 @@ type NarrativeAgentGraphEdge = {
 type NarrativeAgentGraphModel = {
   nodes: NarrativeAgentGraphNode[];
   edges: NarrativeAgentGraphEdge[];
+};
+
+type NarrativeAgentGraphContextMenu = {
+  x: number;
+  y: number;
+  kind: "node" | "edge";
+  node?: NarrativeAgentGraphNode;
+  edge?: NarrativeAgentGraphEdge;
+};
+
+type NarrativeAgentGraphAnnotationSheet = {
+  kind: "node" | "edge";
+  node?: NarrativeAgentGraphNode;
+  edge?: NarrativeAgentGraphEdge;
 };
 
 type NarrativeAgentRelevanceDimension = {
@@ -573,7 +589,10 @@ function upsertNarrativeAgentPathRow(
   rows.set(key, next);
 }
 
-function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[] {
+function buildNarrativeAgentPathRows(
+  analysisData: any,
+  canonicalClaims: ProjectedCanonicalClaim[] = [],
+): NarrativeAgentPathRow[] {
   const rows = new Map<string, NarrativeAgentPathRow>();
   const records: MasterSchemaResolvedEvidenceRecord[] =
     analysisData?.masterSchemaResolvedEvidence?.records || [];
@@ -678,6 +697,37 @@ function buildNarrativeAgentPathRows(analysisData: any): NarrativeAgentPathRow[]
         start_seconds: interval.start_seconds,
         end_seconds: interval.end_seconds,
       } as Record<string, unknown>,
+    });
+  }
+
+  for (const claim of canonicalClaims) {
+    if (
+      claim.projection_status !== "projected" ||
+      claim.property !== "narrative_agent.assignment" ||
+      typeof claim.projected_value !== "string"
+    ) {
+      continue;
+    }
+    const scope = claim.scope || {};
+    upsertNarrativeAgentPathRow(rows, {
+      label: claim.projected_value,
+      source: "Canonical decision projection",
+      start: numberFrom(scope.start_seconds),
+      end: numberFrom(scope.end_seconds),
+      manualCount: 1,
+      sceneRefs: [],
+      evidenceChips: ["canonical decision"],
+      sourceItem: claim as unknown as Record<string, unknown>,
+    });
+  }
+
+  for (const label of governedNarrativeAgentLabels(analysisData)) {
+    upsertNarrativeAgentPathRow(rows, {
+      label,
+      source: "Shared Narrative Agent registry",
+      sceneRefs: [],
+      evidenceChips: ["governed registry"],
+      sourceItem: { label, category: "Identification", registry: "analysis-scoped" },
     });
   }
 
@@ -1913,10 +1963,10 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
   const order: MatureEvidenceAuthority[] = resolved.authorityOrder || [];
   const counts = resolved.counts || {};
   return (
-    <section className="mb-2 rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <details className="mb-2 rounded border border-emerald-500/20 bg-emerald-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-2 marker:hidden">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-200">
+          <div className="text-[11px] font-semibold text-emerald-200">
             Evidence reliability
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -1933,8 +1983,8 @@ function MatureEvidenceStrip({ analysisData }: { analysisData: AnalysisData | nu
             </span>
           ))}
         </div>
-      </div>
-    </section>
+      </summary>
+    </details>
   );
 }
 
@@ -2075,10 +2125,10 @@ function ConfirmationProgramStrip({
     });
   };
   return (
-    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <details className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-3 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          <div className="text-[11px] font-semibold text-cyan-200">
             Analyst confirmations
           </div>
           <div className="mt-0.5 max-w-3xl text-[10px] text-[var(--ui-passive-text)]">
@@ -2086,16 +2136,14 @@ function ConfirmationProgramStrip({
               "User confirmed corrections and annotations anchor mature sense-making."}
           </div>
         </div>
-        <button
-          type="button"
-          className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:border-cyan-400/80 hover:bg-cyan-950/30"
-          onClick={inspectProgram}
-        >
-          {program?.consults_user_confirmed_anchor
-            ? "Inspect confirmed anchors"
-            : "Anchor consultation pending"}
-        </button>
-      </div>
+        <span className="shrink-0 text-[10px] text-cyan-100">
+          {anchorSurfaces.length} surfaces · {families.length} families
+        </span>
+      </summary>
+      <div className="border-t border-cyan-900/40 px-3 py-2">
+      <button type="button" className="rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100" onClick={inspectProgram}>
+        Inspect confirmed anchors
+      </button>
       {localInspection ? (
         <div
           className="mt-2 rounded border border-cyan-800/60 bg-cyan-950/20 px-2 py-2"
@@ -2193,7 +2241,8 @@ function ConfirmationProgramStrip({
           </div>
         </div>
       )}
-    </section>
+      </div>
+    </details>
   );
 }
 
@@ -2253,10 +2302,10 @@ function MasterSchemaSubjectStrip({
     });
   };
   return (
-    <section className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <details className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-2 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
+          <div className="text-[11px] font-semibold text-cyan-200">
             Known character profiles
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -2266,8 +2315,8 @@ function MasterSchemaSubjectStrip({
         <span className="shrink-0 rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100">
           {subjects.length} governed subject{subjects.length === 1 ? "" : "s"}
         </span>
-      </div>
-      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+      </summary>
+      <div className="grid gap-1.5 border-t border-cyan-900/40 p-2 md:grid-cols-2 xl:grid-cols-3">
         {subjects.slice(0, 18).map((subject) => {
           const subjectPresenceIntervals = presenceIntervalsForMasterSubject(presenceIntervals, subject);
           return (
@@ -2302,7 +2351,7 @@ function MasterSchemaSubjectStrip({
           </button>
         );})}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2320,10 +2369,10 @@ function MatureProliferationMatchStrip({
     return null;
   }
   return (
-    <section className="mb-2 rounded border border-amber-500/20 bg-amber-950/10 px-3 py-2">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <details className="mb-2 rounded border border-amber-500/20 bg-amber-950/10">
+      <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-2 px-3 py-2 marker:hidden">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-200">
+          <div className="text-[11px] font-semibold text-amber-200">
             Suggested matches
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -2333,8 +2382,8 @@ function MatureProliferationMatchStrip({
         <span className="shrink-0 rounded border border-amber-700/60 bg-[#111214] px-2 py-1 text-[10px] text-amber-100">
           {visibleMatches.length} run{visibleMatches.length === 1 ? "" : "s"}
         </span>
-      </div>
-      <div className="mt-2 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+      </summary>
+      <div className="grid gap-1.5 border-t border-amber-900/40 p-2 md:grid-cols-2 xl:grid-cols-3">
         {visibleMatches.slice(0, 12).map((match, index) => {
           const requestId = match.request_id || `proliferation_match:${index}`;
           const candidateCount = Number(match.candidate_count || 0);
@@ -2378,7 +2427,7 @@ function MatureProliferationMatchStrip({
           );
         })}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2387,63 +2436,117 @@ function PanelDropdownSection({
   summary,
   count,
   defaultOpen = false,
+  sectionId,
+  layoutOrder = "",
+  quiet = false,
   children,
 }: {
   title: string;
   summary?: string;
   count?: string | number;
   defaultOpen?: boolean;
+  sectionId?: string;
+  layoutOrder?: string;
+  quiet?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <details
-      className="mb-2 rounded border border-slate-800 bg-slate-950/20"
-      open={defaultOpen}
+      id={sectionId}
+      className={quiet
+        ? `${layoutOrder} group shrink-0 border-b border-white/8 bg-[#222222]`
+        : `${layoutOrder} mb-2 rounded border border-slate-800 bg-slate-950/20`}
+      open={defaultOpen ? true : undefined}
       data-vaa1-headline-dropdown="true"
+      data-vaa1-quiet-governance-section={quiet ? "true" : undefined}
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2 text-[11px] font-semibold text-slate-200 marker:content-none">
+      <summary className={quiet
+        ? "flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 marker:content-none hover:bg-white/[0.025]"
+        : "flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2 text-[11px] font-semibold text-slate-200 marker:content-none"}
+      >
         <span className="min-w-0">
-          <span className="block uppercase tracking-[0.12em] text-cyan-200">
+          <span className={quiet ? "block text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400" : "block text-cyan-200"}>
             {title}
           </span>
           {summary ? (
-            <span className="mt-0.5 block text-[9px] font-normal normal-case leading-relaxed text-[var(--ui-passive-text)]">
+            <span className={quiet
+              ? "mt-1 hidden max-w-[90ch] text-[9px] font-normal normal-case leading-relaxed text-[var(--ui-passive-text)] group-open:block"
+              : "mt-0.5 block text-[9px] font-normal normal-case leading-relaxed text-[var(--ui-passive-text)]"}
+            >
               {summary}
             </span>
           ) : null}
         </span>
         {count !== undefined ? (
-          <span className="shrink-0 rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] font-normal text-slate-300">
+          <span className={quiet
+            ? "shrink-0 rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] font-normal tabular-nums text-slate-300"
+            : "shrink-0 rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] font-normal text-slate-300"}
+          >
             {count}
           </span>
         ) : null}
       </summary>
-      <div className="p-2" data-vaa1-headline-dropdown-body="true">
+      <div className={quiet ? "space-y-2 bg-[#222222] px-3 py-2 text-slate-300" : "p-2"} data-vaa1-headline-dropdown-body="true">
         {children}
       </div>
     </details>
   );
 }
 
+function NarrativeAgentReadingRow({
+  label,
+  value,
+  detail,
+  onClick,
+}: {
+  label: string;
+  value?: React.ReactNode;
+  detail?: React.ReactNode;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
+      <span className="min-w-0 text-[10px] font-medium text-slate-300">{label}</span>
+      {detail ? <span className="min-w-0 max-w-[68ch] text-[9px] leading-[1.45] text-slate-400">{detail}</span> : <span />}
+      {value !== undefined || onClick ? (
+        <span className="flex shrink-0 items-center justify-end gap-2 text-right font-mono text-[9px] text-slate-300">
+          {value !== undefined ? <span>{value}</span> : null}
+          {onClick ? <span className="text-cyan-200">Open source</span> : null}
+        </span>
+      ) : null}
+    </>
+  );
+  const className = "grid w-full grid-cols-[minmax(120px,0.7fr)_minmax(220px,1.8fr)_auto] items-baseline gap-x-3 border-b border-white/8 px-1 py-2 text-left last:border-b-0";
+  return onClick ? (
+    <button type="button" className={`${className} hover:bg-slate-900/40`} onClick={onClick}>{content}</button>
+  ) : (
+    <div className={className}>{content}</div>
+  );
+}
+
 function NarrativeAgentCharacterPathsHome({
   analysisData,
+  canonicalClaims,
   videoId,
   openPanel,
   onCommitTimelineHandle,
 }: {
   analysisData: any;
+  canonicalClaims: ProjectedCanonicalClaim[];
   videoId: string;
   openPanel: (panelType: string, panelProps?: any) => void;
   onCommitTimelineHandle: (commit: NarrativeAgentTimelineHandleCommit) => void;
 }) {
   const rows = useMemo(
-    () => buildNarrativeAgentPathRows(analysisData),
-    [analysisData],
+    () => buildNarrativeAgentPathRows(analysisData, canonicalClaims),
+    [analysisData, canonicalClaims],
   );
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [activeNarrativeAgentArchetypeLens, setActiveNarrativeAgentArchetypeLens] =
     useState<NarrativeAgentArchetypeLensId>("shakespearean_performativity");
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("");
+  const [graphContextMenu, setGraphContextMenu] = useState<NarrativeAgentGraphContextMenu | null>(null);
+  const [graphAnnotationSheet, setGraphAnnotationSheet] = useState<NarrativeAgentGraphAnnotationSheet | null>(null);
   const [graphDurationDrafts, setGraphDurationDrafts] = useState<Record<string, { start: number; end: number }>>({});
   const [graphNodeHandleDrag, setGraphNodeHandleDrag] = useState<{
     nodeId: string;
@@ -2600,6 +2703,77 @@ function NarrativeAgentCharacterPathsHome({
       source_panel: "NarrativeAgentPanel",
     });
   };
+  const graphEdgeNodes = (edge: NarrativeAgentGraphEdge) => ({
+    source: selectedGraphModel.nodes.find((node) => node.id === edge.source),
+    target: selectedGraphModel.nodes.find((node) => node.id === edge.target),
+  });
+  const graphItemSourceTime = (item: NarrativeAgentGraphNode | NarrativeAgentGraphEdge) => {
+    if ("kind" in item && "x" in item) return item.time;
+    const nodes = graphEdgeNodes(item as NarrativeAgentGraphEdge);
+    return nodes.target?.time ?? nodes.source?.time;
+  };
+  const openNarrativeAgentGraphContextMenu = (
+    event: React.MouseEvent,
+    item: NarrativeAgentGraphNode | NarrativeAgentGraphEdge,
+    kind: "node" | "edge",
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (kind === "node") selectNarrativeAgentGraphNode(item as NarrativeAgentGraphNode);
+    setGraphContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      kind,
+      node: kind === "node" ? item as NarrativeAgentGraphNode : undefined,
+      edge: kind === "edge" ? item as NarrativeAgentGraphEdge : undefined,
+    });
+  };
+  const openNarrativeAgentGraphSheet = (
+    item: NarrativeAgentGraphNode | NarrativeAgentGraphEdge,
+    kind: "node" | "edge",
+  ) => {
+    setGraphAnnotationSheet({
+      kind,
+      node: kind === "node" ? item as NarrativeAgentGraphNode : undefined,
+      edge: kind === "edge" ? item as NarrativeAgentGraphEdge : undefined,
+    });
+    setGraphContextMenu(null);
+    eventBus.emit("narrativeAgentGraphAnnotationSheetOpened", {
+      videoId,
+      row_key: selectedRow?.key,
+      lens_id: activeNarrativeAgentArchetypeLens,
+      item_kind: kind,
+      node_id: kind === "node" ? (item as NarrativeAgentGraphNode).id : undefined,
+      edge_id: kind === "edge" ? (item as NarrativeAgentGraphEdge).id : undefined,
+      source_panel: "NarrativeAgentPanel",
+    });
+  };
+  const openNarrativeAgentGraphTraceback = (
+    item: NarrativeAgentGraphNode | NarrativeAgentGraphEdge,
+    kind: "node" | "edge",
+  ) => {
+    const sourceTime = graphItemSourceTime(item);
+    const label = kind === "node"
+      ? (item as NarrativeAgentGraphNode).label
+      : (item as NarrativeAgentGraphEdge).label;
+    const payload = {
+      videoId,
+      sourcePanel: "NarrativeAgentPanel",
+      claim_id: kind === "node" ? (item as NarrativeAgentGraphNode).id : (item as NarrativeAgentGraphEdge).id,
+      claim_label: label,
+      claim_type: kind === "node" ? `narrative_agent_${(item as NarrativeAgentGraphNode).kind}` : "narrative_agent_relation",
+      claim_status: "reviewable",
+      maturity_level: "governed_projection",
+      authority_level: "canonical_projection",
+      review_status: "reviewable",
+      source_refs: sourceTime === undefined ? {} : { time_range: { start: sourceTime, end: sourceTime } },
+      sourceItem: item,
+      lens_id: activeNarrativeAgentArchetypeLens,
+    };
+    eventBus.emit("openPanelRequest", { panelType: "TracebackDrawer", panelProps: { payload } });
+    eventBus.emit("tracebackOpenRequested", payload);
+    setGraphContextMenu(null);
+  };
   const updateSelectedGraphNodeDraft = (patch: Partial<{ start: number; end: number }>) => {
     if (!selectedGraphNode || selectedGraphNode.time === undefined) return;
     setGraphDurationDrafts((current) => {
@@ -2690,23 +2864,30 @@ function NarrativeAgentCharacterPathsHome({
       },
     });
   };
+  const focusWorkspaceSection = (sectionId: string) => {
+    const section = document.getElementById(sectionId) as HTMLDetailsElement | null;
+    if (!section) return;
+    section.open = true;
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   return (
     <section
-      className="mb-2 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2"
+      className="flex flex-col"
       data-vaa1-narrative-agent-character-paths="true"
+      data-vaa1-narrative-agent-reading-layout="operational-first"
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-3 border-b border-white/8 bg-[#141414] px-3 py-2">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-200">
-            Character workspace
+          <div className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+            Character governance
           </div>
-          <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+          <span className="sr-only">
             Start with one character, then inspect what Datascene knows, what is missing, and what should be confirmed next.
-          </div>
+          </span>
         </div>
         <button
           type="button"
-          className="rounded border border-cyan-700/60 bg-[#111214] px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/30"
+          className="shrink-0 rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
           onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
         >
           Open plot map
@@ -2717,16 +2898,18 @@ function NarrativeAgentCharacterPathsHome({
         title="Choose Character"
         summary="Pick one character to inspect. Everything below follows this selection."
         count={`${rows.length} profiles`}
-        defaultOpen
+        sectionId="narrative-agent-character-selection"
+        layoutOrder="order-1"
+        quiet
       >
       <div data-vaa1-narrative-agent-single-profile-selector="true">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <label className="min-w-[220px] flex-1">
-            <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+            <span className="block text-[10px] text-slate-400">
               Character
             </span>
             <select
-              className="mt-1 w-full rounded border border-slate-700 bg-[#0c0d0f] px-2 py-1 text-[11px] text-slate-100 outline-none focus:border-cyan-600"
+              className="mt-1 w-full rounded border border-white/8 bg-[#151515] px-3 py-2 text-[11px] text-slate-200 outline-none focus:border-slate-500"
               value={selectedAgentKey}
               data-vaa1-narrative-agent-profile-dropdown="true"
               onChange={(event) => setSelectedAgentKey(event.target.value)}
@@ -2754,13 +2937,11 @@ function NarrativeAgentCharacterPathsHome({
             className="mt-2 flex flex-wrap gap-1"
             data-vaa1-narrative-agent-combined-profile-aliases="true"
           >
-            <span className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-400">
-              combined labels
-            </span>
+            <span className="text-[9px] text-slate-500">Known labels:</span>
             {selectedRow.sourceLabels.slice(0, 8).map((label) => (
               <span
                 key={`narrative-agent-combined-label:${selectedRow.key}:${label}`}
-                className="rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100"
+                className="text-[9px] text-slate-400 after:ml-1 after:content-[','] last:after:content-none"
               >
                 {label}
               </span>
@@ -2774,144 +2955,70 @@ function NarrativeAgentCharacterPathsHome({
         title="StatsKit + Significance + Relevance"
         summary="Ranks this character's source-linked evidence for the current analyst task."
         count={selectedRelevanceSurface ? `${formatNarrativeAgentScore(selectedRelevanceSurface.overallScore)} relevance` : "pending"}
-        defaultOpen
+        sectionId="narrative-agent-analytical-metadata"
+        layoutOrder="order-6"
+        quiet
       >
         {selectedRelevanceSurface ? (
           <div
-            className="space-y-2"
+            className="mx-auto max-w-[920px]"
             data-vaa1-statskit-significance-relevance-surface="true"
             data-vaa1-relevance-radar-selected-character={selectedRow?.label || ""}
           >
-            <div className="grid gap-1.5 md:grid-cols-4">
-              <div className="rounded border border-cyan-800/60 bg-cyan-950/20 px-2 py-1.5">
-                <div className="text-[8px] uppercase tracking-[0.12em] text-cyan-300">
-                  Analyst goal
-                </div>
-                <div className="mt-0.5 text-[10px] text-slate-100">
-                  {selectedRelevanceSurface.context.analystGoal}
-                </div>
-              </div>
-              <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
-                  Active lens
-                </div>
-                <div className="mt-0.5 text-[10px] text-slate-100">
-                  {selectedRelevanceSurface.context.activeLens}
-                </div>
-              </div>
-              <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-                <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
-                  Scope
-                </div>
-                <div className="mt-0.5 text-[10px] text-slate-100">
-                  {selectedRelevanceSurface.context.scope}
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={selectedRelevanceSurface.firstSourceTime === undefined}
-                className="rounded border border-cyan-800/60 bg-[#101010] px-2 py-1.5 text-left text-[10px] text-cyan-100 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => {
-                  if (selectedRelevanceSurface.firstSourceTime !== undefined) {
-                    openVideoAtTime(videoId, selectedRelevanceSurface.firstSourceTime);
-                  }
-                }}
-              >
-                Source {selectedRelevanceSurface.firstSourceTime !== undefined
-                  ? formatSeconds(selectedRelevanceSurface.firstSourceTime)
-                  : "pending"}
-              </button>
-            </div>
-
-            <div className="grid gap-1.5 md:grid-cols-5" data-vaa1-statskit-source-signals="true">
+            <div className="mb-1 text-[9px] font-medium text-slate-400">Operational evidence</div>
+            <div className="border-y border-white/8" data-vaa1-statskit-source-signals="true">
               {selectedRelevanceSurface.statsSignals.map((signal) => (
-                <div
+                <NarrativeAgentReadingRow
                   key={`statskit-signal:${signal.label}`}
-                  className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
-                >
-                  <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">
-                    {signal.label}
-                  </div>
-                  <div className="mt-0.5 text-[14px] font-semibold text-slate-100">
-                    {signal.value}
-                  </div>
-                  <div className="mt-0.5 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
-                    {signal.detail}
-                  </div>
-                </div>
+                  label={signal.label}
+                  detail={signal.detail}
+                  value={signal.value}
+                />
               ))}
             </div>
 
-            <div className="grid gap-1.5 lg:grid-cols-2" data-vaa1-relevance-radar-dimensions="true">
+            <div className="mt-3 text-[9px] font-medium text-slate-400">Relevance dimensions</div>
+            <div className="mt-1 border-y border-white/8" data-vaa1-relevance-radar-dimensions="true">
               {selectedRelevanceSurface.dimensions.map((dimension) => (
-                <button
+                <NarrativeAgentReadingRow
                   key={`relevance-radar-dimension:${dimension.id}`}
-                  type="button"
-                  disabled={dimension.sourceTime === undefined}
-                  className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5 text-left hover:border-cyan-500/70 hover:bg-cyan-950/20 disabled:cursor-not-allowed disabled:opacity-70"
-                  data-vaa1-relevance-radar-dimension={dimension.id}
-                  onClick={() => {
-                    if (dimension.sourceTime !== undefined) {
-                      openVideoAtTime(videoId, dimension.sourceTime);
-                    }
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-semibold text-slate-100">
-                      {dimension.label}
-                    </span>
-                    <span className="rounded border border-cyan-800/60 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
-                      {formatNarrativeAgentScore(dimension.score)}
-                    </span>
-                  </div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-900">
-                    <div
-                      className="h-full rounded bg-cyan-400/80"
-                      style={{ width: `${Math.round(clampNarrativeAgentScore(dimension.score) * 100)}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
-                    {dimension.reason}
-                  </div>
-                  <div className="mt-1 text-[8px] uppercase tracking-[0.12em] text-slate-500">
-                    {dimension.evidenceCount} evidence signal{dimension.evidenceCount === 1 ? "" : "s"}
-                  </div>
-                </button>
+                  label={dimension.label}
+                  detail={`${dimension.reason} · ${dimension.evidenceCount} evidence signal${dimension.evidenceCount === 1 ? "" : "s"}`}
+                  value={formatNarrativeAgentScore(dimension.score)}
+                  onClick={dimension.sourceTime === undefined ? undefined : () => openVideoAtTime(videoId, dimension.sourceTime as number)}
+                />
               ))}
             </div>
 
-            <div className="grid gap-1.5 md:grid-cols-3" data-vaa1-significancekit-claims="true">
+            <div className="mt-3 text-[9px] font-medium text-slate-400">Interpretive claims</div>
+            <div className="mt-1 border-y border-white/8" data-vaa1-significancekit-claims="true">
               {selectedRelevanceSurface.significanceClaims.map((claim) => (
-                <button
+                <NarrativeAgentReadingRow
                   key={`significance-claim:${claim.level}:${claim.title}`}
-                  type="button"
-                  disabled={claim.sourceTime === undefined}
-                  className="rounded border border-emerald-900/60 bg-emerald-950/10 px-2 py-1.5 text-left hover:border-emerald-500/70 hover:bg-emerald-950/20 disabled:cursor-not-allowed disabled:opacity-70"
-                  data-vaa1-significancekit-scope={claim.level.toLowerCase()}
-                  onClick={() => {
-                    if (claim.sourceTime !== undefined) {
-                      openVideoAtTime(videoId, claim.sourceTime);
-                    }
-                  }}
-                >
-                  <div className="text-[8px] uppercase tracking-[0.12em] text-emerald-300">
-                    {claim.level}
-                  </div>
-                  <div className="mt-0.5 text-[10px] font-semibold text-slate-100">
-                    {claim.title}
-                  </div>
-                  <div className="mt-1 text-[9px] leading-relaxed text-[var(--ui-passive-text)]">
-                    {claim.text}
-                  </div>
-                  <div className="mt-1 text-[8px] uppercase tracking-[0.12em] text-emerald-200/70">
-                    {claim.evidenceCount} linked signal{claim.evidenceCount === 1 ? "" : "s"}
-                  </div>
-                </button>
+                  label={`${claim.level} · ${claim.title}`}
+                  detail={claim.text}
+                  value={`${claim.evidenceCount} linked`}
+                  onClick={claim.sourceTime === undefined ? undefined : () => openVideoAtTime(videoId, claim.sourceTime as number)}
+                />
               ))}
             </div>
+
+            <details className="mt-3 border-y border-white/8" data-vaa1-narrative-agent-context-metadata="true">
+              <summary className="cursor-pointer list-none px-1 py-1.5 text-[9px] font-medium text-slate-400">Analytical context · metadata and settings</summary>
+              <div className="border-t border-white/8">
+                <NarrativeAgentReadingRow label="Analyst goal" value={selectedRelevanceSurface.context.analystGoal} />
+                <NarrativeAgentReadingRow label="Active lens" value={selectedRelevanceSurface.context.activeLens} />
+                <NarrativeAgentReadingRow label="Scope" value={selectedRelevanceSurface.context.scope} />
+                <NarrativeAgentReadingRow
+                  label="First source"
+                  value={selectedRelevanceSurface.firstSourceTime !== undefined ? formatSeconds(selectedRelevanceSurface.firstSourceTime) : "pending"}
+                  onClick={selectedRelevanceSurface.firstSourceTime === undefined ? undefined : () => openVideoAtTime(videoId, selectedRelevanceSurface.firstSourceTime as number)}
+                />
+              </div>
+            </details>
           </div>
         ) : (
-          <div className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
+          <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[10px] text-slate-300">
             Select a governed character profile to calculate source-linked relevance and significance.
           </div>
         )}
@@ -2921,59 +3028,57 @@ function NarrativeAgentCharacterPathsHome({
         title="Recommended Next Steps"
         summary="Practical checks that would make this character more useful for analysis and matching."
         count={selectedCharacterRecommendations.length || "ready"}
-        defaultOpen
+        sectionId="narrative-agent-next-actions"
+        layoutOrder="order-5"
+        quiet
       >
         {selectedCharacterRecommendations.length > 0 ? (
-          <div className="grid gap-1.5 md:grid-cols-2" data-vaa1-narrative-agent-recommendations="true">
+          <div className="divide-y divide-white/8" data-vaa1-narrative-agent-recommendations="true">
             {selectedCharacterRecommendations.map((recommendation) => (
               <div
                 key={`${selectedRow?.key}:recommendation:${recommendation.title}`}
-                className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5"
+                className="grid gap-x-4 px-1 py-2 md:grid-cols-[minmax(150px,0.6fr)_minmax(260px,1.5fr)]"
               >
-                <div className="text-[10px] font-semibold text-cyan-100">
+                <div className="text-[10px] text-slate-200">
                   {recommendation.title}
                 </div>
-                <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
+                <div className="text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
                   {recommendation.detail}
                 </div>
-                <div className="mt-1 rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100">
+                <div className="mt-1 text-[9px] text-slate-400 md:col-start-2">
                   {recommendation.action}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="rounded border border-emerald-800/50 bg-emerald-950/10 px-2 py-1.5 text-[10px] text-emerald-100">
+          <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[10px] text-slate-300">
             This character already has the basic source-linked evidence needed for first-pass interpretation.
           </div>
         )}
       </PanelDropdownSection>
 
       <PanelDropdownSection
-        title="Review Modes"
-        summary="Switch between overview, evidence, semantics, continuity, and scene checks without leaving this panel."
-        count="5 modes"
+        title="Character analysis"
+        summary="Open the working surface needed for the next character-related decision."
+        count="workbench"
+        sectionId="narrative-agent-analysis-actions"
+        layoutOrder="order-2"
+        quiet
       >
         <div
-          className="flex flex-wrap items-start justify-between gap-2"
+          className="flex flex-wrap gap-x-4 gap-y-2"
           data-vaa1-narrative-agent-review-compass="true"
+          data-vaa1-narrative-agent-operational-actions="true"
         >
-          <div className="flex flex-wrap gap-1" data-vaa1-narrative-agent-review-modes="true">
-            {[
-              "Overview",
-              "Evidence",
-              "Semantics",
-              "Continuity",
-              "Scenes",
-            ].map((mode) => (
-              <span
-                key={`narrative-agent-review-mode:${mode}`}
-                className="rounded border border-slate-700 bg-[#101010] px-1.5 py-0.5 text-[9px] text-slate-300"
-              >
-                {mode}
-              </span>
-            ))}
-          </div>
+          <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => focusWorkspaceSection("narrative-agent-character-evidence")}>Review evidence</button>
+          <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => openPanel("SceneCards", videoId ? { videoId } : {})}>Review scenes</button>
+          <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => focusWorkspaceSection("narrative-agent-interpretation")}>Interpret character</button>
+          <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => focusWorkspaceSection("narrative-agent-next-actions")}>Govern next actions</button>
+          <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => focusWorkspaceSection("narrative-agent-analytical-metadata")}>Inspect analytical support</button>
+          {selectedRow?.start !== undefined ? (
+            <button type="button" className="text-[10px] text-slate-300 hover:text-white" onClick={() => openVideoAtTime(videoId, selectedRow.start || 0)}>Open first source</button>
+          ) : null}
         </div>
       </PanelDropdownSection>
 
@@ -2981,11 +3086,14 @@ function NarrativeAgentCharacterPathsHome({
         title="Matching Memory"
         summary="Shows whether this character has source-linked visual/audio samples that can support future matching."
         count={selectedIdentityMemory ? "memory linked" : "memory pending"}
+        sectionId="narrative-agent-matching-memory"
+        layoutOrder="order-7"
+        quiet
       >
       <div data-vaa1-narrative-agent-proliferation-provenance="true">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-200">
+            <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400">
               Matching memory
             </div>
             <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
@@ -2993,11 +3101,11 @@ function NarrativeAgentCharacterPathsHome({
             </div>
           </div>
           <div className="flex flex-wrap gap-1">
-            <span className="rounded border border-emerald-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-emerald-100">
+            <span className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300">
               {selectedIdentityMemory ? "memory linked" : "memory pending"}
             </span>
             <span
-              className="rounded border border-cyan-800/70 bg-[#101010] px-1.5 py-0.5 text-[9px] text-cyan-100"
+              className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300"
               data-vaa1-narrative-agent-constellational-matching-governance="true"
             >
               constellation governed
@@ -3008,7 +3116,7 @@ function NarrativeAgentCharacterPathsHome({
           <>
             <div className="mt-2 grid gap-1.5 md:grid-cols-3">
               <div
-                className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5"
+                className="rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-multi-visual-samples="true"
               >
                 <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
@@ -3022,7 +3130,7 @@ function NarrativeAgentCharacterPathsHome({
                 </div>
               </div>
               <div
-                className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5"
+                className="rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-audiovisual-memory="true"
               >
                 <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
@@ -3035,7 +3143,7 @@ function NarrativeAgentCharacterPathsHome({
                   audiovisual samples pair appearance with voice or source-audio windows
                 </div>
               </div>
-              <div className="rounded border border-slate-800 bg-[#0c0d0f] px-2 py-1.5">
+              <div className="rounded border border-white/8 bg-[#151515] px-3 py-3">
                 <div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">
                   continuity candidates
                 </div>
@@ -3055,7 +3163,7 @@ function NarrativeAgentCharacterPathsHome({
                   <button
                     key={stringFrom(slot.sample_id) || `av-memory:${index}`}
                     type="button"
-                    className="rounded border border-emerald-800/60 bg-[#101010] px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/30"
+                    className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
                     title={stringFrom(slot.sample_state) || "audiovisual identity memory"}
                     onClick={() => {
                       if (start !== undefined) openVideoAtTime(videoId, start);
@@ -3072,7 +3180,7 @@ function NarrativeAgentCharacterPathsHome({
                   <button
                     key={stringFrom(candidate.candidate_id) || `continuity:${index}`}
                     type="button"
-                    className="rounded border border-amber-800/60 bg-amber-950/15 px-1.5 py-0.5 text-[9px] text-amber-100 hover:bg-amber-950/30"
+                    className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
                     title="Review continuity candidate from Mature Data Proliferation bus"
                     onClick={() => {
                       if (start !== undefined) openVideoAtTime(videoId, start);
@@ -3085,7 +3193,7 @@ function NarrativeAgentCharacterPathsHome({
             </div>
           </>
         ) : (
-          <div className="mt-2 rounded border border-dashed border-slate-800 px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
+          <div className="mt-2 rounded border border-white/8 bg-[#171717] px-3 py-3 text-[10px] text-slate-300">
             Confirm this agent in a source-time/BBox anchored annotation to create audiovisual identity memory for proliferation.
           </div>
         )}
@@ -3096,10 +3204,13 @@ function NarrativeAgentCharacterPathsHome({
         title="Interpretation Lenses"
         summary="Optional theory views for reading the character. These do not overwrite source evidence or identity labels."
         count={activeNarrativeAgentArchetype.tradition}
+        sectionId="narrative-agent-interpretation"
+        layoutOrder="order-4"
+        quiet
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="max-w-3xl text-[10px] leading-relaxed text-[var(--ui-passive-text)]">
-            <span className="font-semibold text-cyan-100">
+            <span className="font-medium text-slate-300">
               {activeNarrativeAgentArchetype.label} / {activeNarrativeAgentArchetype.tradition}.
             </span>{" "}
             {activeNarrativeAgentArchetype.description} {activeNarrativeAgentArchetype.graphDescription}
@@ -3117,8 +3228,8 @@ function NarrativeAgentCharacterPathsHome({
                 type="button"
                 className={`rounded border px-1.5 py-0.5 text-[9px] ${
                   active
-                    ? "border-cyan-400 bg-cyan-950/50 text-cyan-100"
-                    : "border-slate-700 bg-[#101010] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                    ? "border-slate-500 bg-white/5 text-slate-200"
+                    : "border-white/10 bg-[#101010] text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
                 title={lens.description}
                 data-vaa1-narrative-agent-archetype-local-control="true"
@@ -3143,16 +3254,19 @@ function NarrativeAgentCharacterPathsHome({
         title="Character Evidence Graph"
         summary="Trace source moments, scene presence, cues, and quick confirmations for the selected character."
         count={selectedGraphModel.nodes.length ? `${selectedGraphModel.nodes.length} nodes` : "no graph"}
+        sectionId="narrative-agent-character-evidence"
+        layoutOrder="order-3"
+        quiet
       >
       <div className="space-y-1.5">
         {rows.length === 0 ? (
-          <div className="rounded border border-slate-800 bg-[#111214] px-2 py-2 text-[10px] text-[var(--ui-passive-text)]">
+          <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[10px] text-slate-300">
             No governed Narrative Agent paths yet. Confirm or name an agent to seed this home.
           </div>
         ) : selectedRow ? (
               <div
                 key={selectedRow.key}
-                className="rounded border border-slate-800 bg-[#111214] px-2 py-2"
+                className="rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-path-row="true"
                 data-vaa1-narrative-agent-single-profile-view="true"
               >
@@ -3170,7 +3284,7 @@ function NarrativeAgentCharacterPathsHome({
                   {selectedRow.start !== undefined && (
                     <button
                       type="button"
-                      className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-600 hover:text-cyan-100"
+                      className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
                       onClick={() => openVideoAtTime(videoId, selectedRow.start || 0)}
                     >
                       source {formatSeconds(selectedRow.start)}
@@ -3178,7 +3292,7 @@ function NarrativeAgentCharacterPathsHome({
                   )}
                   <button
                     type="button"
-                    className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300 hover:border-cyan-600 hover:text-cyan-100"
+                    className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
                     onClick={() => openPanel("MeaningPlot", videoId ? { videoId } : {})}
                   >
                     plot map
@@ -3198,14 +3312,14 @@ function NarrativeAgentCharacterPathsHome({
                 {selectedRow.evidenceChips.slice(0, 6).map((chip) => (
                   <span
                     key={chip}
-                    className="rounded border border-cyan-900/50 bg-cyan-950/20 px-1.5 py-0.5 text-[9px] text-cyan-100"
+                    className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300"
                   >
                     {chip}
                   </span>
                 ))}
               </div>
               <div
-                className="mt-2 rounded border border-slate-800 bg-[#0c0d0f] px-2 py-2"
+                className="mt-2 rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-timeline-strip="true"
               >
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -3307,13 +3421,13 @@ function NarrativeAgentCharacterPathsHome({
                 ) : null}
               </div>
               <div
-                className="mt-2 rounded border border-cyan-900/40 bg-[#0c0d0f] px-2 py-2"
+                className="mt-2 rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-operational-graph="true"
                 data-vaa1-narrative-agent-graph-active-lens={activeNarrativeAgentArchetypeLens}
               >
                 <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-200">
+                    <div className="text-[9px] uppercase tracking-[0.12em] text-slate-400">
                       Agent graph / {activeNarrativeAgentArchetype.tradition}
                     </div>
                     <div className="mt-0.5 text-[10px] text-[var(--ui-passive-text)]">
@@ -3352,8 +3466,12 @@ function NarrativeAgentCharacterPathsHome({
                           x2={target.x}
                           y2={target.y}
                           stroke="rgba(34, 211, 238, 0.35)"
-                          strokeWidth="0.5"
+                          strokeWidth="1.2"
+                          pointerEvents="stroke"
                           data-vaa1-narrative-agent-graph-edge={edge.kind}
+                          data-vaa1-narrative-agent-graph-edge-context-menu="true"
+                          onContextMenu={(event) => openNarrativeAgentGraphContextMenu(event, edge, "edge")}
+                          onDoubleClick={() => openNarrativeAgentGraphSheet(edge, "edge")}
                         />
                       );
                     })}
@@ -3372,7 +3490,8 @@ function NarrativeAgentCharacterPathsHome({
                         data-vaa1-narrative-agent-graph-node-handle-label="true"
                         data-vaa1-narrative-agent-graph-node-selected={selected ? "true" : "false"}
                         onClick={() => selectNarrativeAgentGraphNode(node)}
-                        onDoubleClick={openSelectedAgentAnnotationCard}
+                        onDoubleClick={() => openNarrativeAgentGraphSheet(node, "node")}
+                        onContextMenu={(event) => openNarrativeAgentGraphContextMenu(event, node, "node")}
                       >
                         <span>{narrativeAgentGraphNodeShortLabel(node)}</span>
                         {node.time !== undefined ? (
@@ -3420,6 +3539,144 @@ function NarrativeAgentCharacterPathsHome({
                     );
                   })}
                 </div>
+                {graphContextMenu ? (() => {
+                  const item = graphContextMenu.node || graphContextMenu.edge;
+                  if (!item) return null;
+                  const sourceTime = graphItemSourceTime(item);
+                  return (
+                    <div
+                      className="fixed z-[80] min-w-[190px] rounded border border-white/10 bg-[#151515] p-1 shadow-2xl shadow-black/70"
+                      style={{
+                        left: typeof window === "undefined"
+                          ? graphContextMenu.x
+                          : Math.min(graphContextMenu.x, Math.max(16, window.innerWidth - 220)),
+                        top: typeof window === "undefined"
+                          ? graphContextMenu.y
+                          : Math.min(graphContextMenu.y, Math.max(16, window.innerHeight - 230)),
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      onContextMenu={(event) => event.preventDefault()}
+                      data-vaa1-narrative-agent-graph-context-menu="true"
+                      data-vaa1-narrative-agent-graph-context-kind={graphContextMenu.kind}
+                    >
+                      <div className="border-b border-white/8 px-2 py-1.5">
+                        <div className="truncate text-[10px] font-medium text-slate-200">
+                          {graphContextMenu.node?.label || graphContextMenu.edge?.label || graphContextMenu.kind}
+                        </div>
+                        <div className="mt-0.5 text-[9px] text-slate-500">
+                          {activeNarrativeAgentArchetype.label} / {activeNarrativeAgentArchetype.tradition}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-1 block w-full px-2 py-1.5 text-left text-[10px] text-slate-300 hover:bg-white/5 hover:text-white"
+                        onClick={() => openNarrativeAgentGraphSheet(item, graphContextMenu.kind)}
+                        data-vaa1-narrative-agent-graph-context-open-sheet="true"
+                      >
+                        Open annotation sheet
+                      </button>
+                      <button
+                        type="button"
+                        disabled={sourceTime === undefined}
+                        className="block w-full px-2 py-1.5 text-left text-[10px] text-slate-300 hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={() => {
+                          if (sourceTime !== undefined) seekNarrativeAgentGraphSource(videoId, sourceTime);
+                          setGraphContextMenu(null);
+                        }}
+                        data-vaa1-narrative-agent-graph-context-jump-source="true"
+                      >
+                        Jump to source
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-2 py-1.5 text-left text-[10px] text-slate-300 hover:bg-white/5 hover:text-white"
+                        onClick={() => openNarrativeAgentGraphTraceback(item, graphContextMenu.kind)}
+                        data-vaa1-narrative-agent-graph-context-traceback="true"
+                      >
+                        Open traceback
+                      </button>
+                      {graphContextMenu.node ? (
+                        <button
+                          type="button"
+                          className="block w-full px-2 py-1.5 text-left text-[10px] text-slate-300 hover:bg-white/5 hover:text-white"
+                          onClick={() => {
+                            openSelectedAgentAnnotationCard();
+                            setGraphContextMenu(null);
+                          }}
+                          data-vaa1-narrative-agent-graph-context-linked-card="true"
+                        >
+                          Open linked annotation card
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })() : null}
+                {graphAnnotationSheet ? (() => {
+                  const node = graphAnnotationSheet.node;
+                  const edge = graphAnnotationSheet.edge;
+                  const item = node || edge;
+                  if (!item) return null;
+                  const edgeNodes = edge ? graphEdgeNodes(edge) : null;
+                  const sourceTime = graphItemSourceTime(item);
+                  return (
+                    <div
+                      className="mt-2 rounded border border-white/8 bg-[#171717] p-3"
+                      data-vaa1-narrative-agent-graph-annotation-sheet="true"
+                      data-vaa1-narrative-agent-graph-annotation-sheet-kind={graphAnnotationSheet.kind}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[9px] uppercase tracking-[0.14em] text-slate-400">
+                            Narrative Agent annotation sheet / {graphAnnotationSheet.kind}
+                          </div>
+                          <div className="mt-1 truncate text-[11px] font-medium text-slate-200">
+                            {node?.label || edge?.label}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
+                          onClick={() => setGraphAnnotationSheet(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="mt-2 border-y border-white/8">
+                        <NarrativeAgentReadingRow label="Character" value={selectedRow?.label || "pending"} />
+                        <NarrativeAgentReadingRow label="Active reading" value={`${activeNarrativeAgentArchetype.label} / ${activeNarrativeAgentArchetype.tradition}`} />
+                        {node ? <NarrativeAgentReadingRow label="Node type" value={node.kind} detail={node.time === undefined ? "Source pending" : `Source ${formatSeconds(node.time)}`} /> : null}
+                        {edge ? <NarrativeAgentReadingRow label="Relation" value={edge.kind} detail={`${edgeNodes?.source?.label || edge.source} → ${edgeNodes?.target?.label || edge.target}`} /> : null}
+                        <NarrativeAgentReadingRow label="Source time" value={sourceTime === undefined ? "pending" : formatSeconds(sourceTime)} />
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={sourceTime === undefined}
+                          className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => sourceTime !== undefined && seekNarrativeAgentGraphSource(videoId, sourceTime)}
+                        >
+                          Jump to source
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
+                          onClick={() => openNarrativeAgentGraphTraceback(item, graphAnnotationSheet.kind)}
+                        >
+                          Traceback
+                        </button>
+                        {node ? (
+                          <button
+                            type="button"
+                            className="rounded-full border border-white/10 bg-[#101010] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
+                            onClick={openSelectedAgentAnnotationCard}
+                          >
+                            Linked annotation card
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })() : null}
                 {selectedGraphNode ? (
                   <div
                     className="mt-2 flex flex-wrap items-center gap-1"
@@ -3558,6 +3815,7 @@ export default function MasterSchemaPanel({
   const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState(initialVideoId);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const [canonicalClaims, setCanonicalClaims] = useState<ProjectedCanonicalClaim[]>([]);
   const [identityLedger, setIdentityLedger] =
     useState<IdentityCandidateLedger | null>(null);
   const [identityActionMessage, setIdentityActionMessage] = useState("");
@@ -3620,6 +3878,7 @@ export default function MasterSchemaPanel({
       analysisLoadRequestRef.current = requestId;
       if (!videoId) {
         setAnalysisData(null);
+        setCanonicalClaims([]);
         setIsLoading(false);
         return;
       }
@@ -3633,7 +3892,12 @@ export default function MasterSchemaPanel({
       }
       setIsLoading(true);
       try {
-        const nextAnalysisData = await VideoService.getAnalysis(requestedVideoId);
+        const [nextAnalysisData, projectedClaims] = await Promise.all([
+          VideoService.getAnalysis(requestedVideoId),
+          VideoService.getProjectedCanonicalClaims(requestedVideoId, {
+            properties: ["narrative_agent.assignment"],
+          }).catch(() => null),
+        ]);
         if (
           analysisLoadRequestRef.current !== requestId ||
           requestedVideoId !== videoId ||
@@ -3642,6 +3906,7 @@ export default function MasterSchemaPanel({
           return;
         }
         setAnalysisData(nextAnalysisData);
+        setCanonicalClaims(projectedClaims?.claims || []);
       } catch (error) {
         console.error("Failed to load master schema annotations:", error);
         if (analysisLoadRequestRef.current === requestId) {
@@ -4020,9 +4285,15 @@ export default function MasterSchemaPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
-        <div className="my-2 rounded border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-[11px] text-sky-100">
-          {panelDescription}
+      <div className={category === "Identification"
+        ? "flex-1 overflow-y-auto bg-[#222222]"
+        : "flex-1 overflow-y-auto px-3 pb-3"}
+      >
+        <div className={category === "Identification"
+          ? "border-b border-white/8 px-3 py-2 text-xs text-slate-400"
+          : "my-2 rounded border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-[11px] text-sky-100"}
+        >
+          {category === "Identification" ? `video id: ${videoId}` : panelDescription}
         </div>
 
         {isLoading && !analysisData ? (
@@ -4042,6 +4313,7 @@ export default function MasterSchemaPanel({
             {category === "Identification" && (
               <NarrativeAgentCharacterPathsHome
                 analysisData={analysisData}
+                canonicalClaims={canonicalClaims}
                 videoId={videoId}
                 openPanel={openPanel}
                 onCommitTimelineHandle={(commit) => {
@@ -4055,6 +4327,7 @@ export default function MasterSchemaPanel({
                   title="Evidence Reliability"
                   summary="Shows how much evidence is analyst-confirmed, interpreted, triangulated, or still raw."
                   defaultOpen={false}
+                  quiet
                 >
                   <MatureEvidenceStrip analysisData={analysisData} />
                 </PanelDropdownSection>
@@ -4062,6 +4335,7 @@ export default function MasterSchemaPanel({
                   title="Analyst Confirmations"
                   summary="Shows which confirmed annotations Datascene can trust before wider matching."
                   defaultOpen={false}
+                  quiet
                 >
                   <ConfirmationProgramStrip analysisData={analysisData} videoId={videoId} />
                 </PanelDropdownSection>
@@ -4069,6 +4343,7 @@ export default function MasterSchemaPanel({
                   title="Known Character Profiles"
                   summary="Confirmed or governed character records available to this analysis."
                   defaultOpen={false}
+                  quiet
                 >
                   <MasterSchemaSubjectStrip analysisData={analysisData} videoId={videoId} />
                 </PanelDropdownSection>
@@ -4077,6 +4352,7 @@ export default function MasterSchemaPanel({
                   summary="Matcher results that may help confirm more appearances of known characters."
                   count={Array.isArray(analysisData?.evidenceProliferationMatches) ? analysisData.evidenceProliferationMatches.length : undefined}
                   defaultOpen={false}
+                  quiet
                 >
                   <MatureProliferationMatchStrip
                     matches={analysisData?.evidenceProliferationMatches}
@@ -4101,6 +4377,7 @@ export default function MasterSchemaPanel({
                   title="Suggested Labels"
                   summary="Candidate meanings and labels that can be reviewed before becoming mature evidence."
                   defaultOpen={false}
+                  quiet
                 >
                   <SecondOrderLabelReviewTray
                     plan={analysisData?.secondOrderLabelProliferation}
@@ -4111,6 +4388,7 @@ export default function MasterSchemaPanel({
                   summary="Possible character identity candidates that can be refreshed and promoted."
                   count={identityLedger?.candidates?.length ?? 0}
                   defaultOpen={false}
+                  quiet
                 >
                   <AutomaticEvidenceSection
                     category={category}
@@ -4128,28 +4406,39 @@ export default function MasterSchemaPanel({
               </>
             ) : (
               <>
-                <SecondOrderLabelReviewTray
-                  plan={analysisData?.secondOrderLabelProliferation}
-                />
-                <AutomaticEvidenceSection
-                  category={category}
-                  analysisData={analysisData}
-                  videoId={videoId}
-                  identityLedger={identityLedger}
-                  identityActionMessage={identityActionMessage}
-                  isIdentityActionBusy={isIdentityActionBusy}
-                  identityDrafts={identityDrafts}
-                  onCreateIdentityCandidates={createIdentityCandidates}
-                  onIdentityDraftChange={updateIdentityDraft}
-                  onPromoteIdentityCandidate={promoteIdentityCandidate}
-                />
+                <PanelDropdownSection
+                  title="Suggested labels"
+                  summary="Candidate labels awaiting analyst review."
+                >
+                  <SecondOrderLabelReviewTray
+                    plan={analysisData?.secondOrderLabelProliferation}
+                  />
+                </PanelDropdownSection>
+                <PanelDropdownSection
+                  title={`${category} evidence`}
+                  summary="Computed evidence and candidate records for this leaf."
+                >
+                  <AutomaticEvidenceSection
+                    category={category}
+                    analysisData={analysisData}
+                    videoId={videoId}
+                    identityLedger={identityLedger}
+                    identityActionMessage={identityActionMessage}
+                    isIdentityActionBusy={isIdentityActionBusy}
+                    identityDrafts={identityDrafts}
+                    onCreateIdentityCandidates={createIdentityCandidates}
+                    onIdentityDraftChange={updateIdentityDraft}
+                    onPromoteIdentityCandidate={promoteIdentityCandidate}
+                  />
+                </PanelDropdownSection>
               </>
             )}
             <PanelDropdownSection
               title={category === "Identification" ? "Source Annotations" : "Manual Annotations"}
               summary="Source-time and BBox/ROI anchored analyst annotations."
               count={totalAnnotations}
-              defaultOpen={category !== "Identification"}
+              defaultOpen={false}
+              quiet={category === "Identification"}
             >
             {groupedAnnotations.length === 0 ? (
           <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">

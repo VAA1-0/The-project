@@ -483,18 +483,32 @@ export default function OCRPanel() {
                 </div>
               ) : (
                 displayedOCRResults.map((obj: any, idx: number) => (
-                  <div
+                  <details
                     key={`${obj.text}-${idx}`}
-                    className="cursor-pointer rounded border border-slate-800 bg-slate-950/20 px-3 py-2 transition hover:bg-slate-900/35"
-                    onClick={() => {
-                      openVideoAtTime(videoId, obj.timestamp);
-                    }}
+                    className="group rounded border border-slate-800 bg-slate-950/20"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="line-clamp-2 text-[11px] text-slate-200">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 marker:hidden">
+                      <span className="min-w-0 truncate text-[11px] text-slate-200">
                         {obj.text}
                       </span>
-                      <div className="flex shrink-0 items-center gap-2">
+                      <span className="shrink-0 text-[10px] text-[var(--ui-passive-text)]">
+                        {obj.timestamp.toFixed(2)}s
+                        {obj.count > 1 ? ` · ${obj.count} hits` : ""}
+                        {` · ${(obj.confidence * 100).toFixed(1)}%`}
+                      </span>
+                    </summary>
+                    <div className="border-t border-slate-800 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openVideoAtTime(videoId, obj.timestamp);
+                          }}
+                          className="rounded bg-slate-800/60 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/70 hover:text-slate-50"
+                        >
+                          Show in video
+                        </button>
                         <button
                           type="button"
                           onClick={(event) => {
@@ -515,15 +529,7 @@ export default function OCRPanel() {
                         >
                           Drop
                         </button>
-                        <span className="text-[10px] text-[var(--ui-passive-text)]">
-                          {(obj.confidence * 100).toFixed(1)}%
-                        </span>
                       </div>
-                    </div>
-                    <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
-                      Seen {obj.timestamp.toFixed(2)}s
-                      {obj.count > 1 ? ` • ${obj.count} hits` : ""}
-                    </div>
                     {obj.variants?.length > 1 && (
                       <div className="mt-1 line-clamp-2 text-[10px] text-[var(--ui-passive-text)]">
                         Variants:{" "}
@@ -550,7 +556,8 @@ export default function OCRPanel() {
                         Revert
                       </button>
                     </div>
-                  </div>
+                    </div>
+                  </details>
                 ))
               )}
             </div>

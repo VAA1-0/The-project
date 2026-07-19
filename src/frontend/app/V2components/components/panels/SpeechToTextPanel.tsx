@@ -36,7 +36,7 @@ import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-naviga
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 
 function formatSpeechSeconds(value?: number | null): string {
-  const safe = Number(value ?? 0);
+  const safe = Number(value);
   if (!Number.isFinite(safe)) return "0:00.000";
   const clamped = Math.max(0, safe);
   const minutes = Math.floor(clamped / 60);
@@ -44,21 +44,56 @@ function formatSpeechSeconds(value?: number | null): string {
   return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
 }
 
+const VERIFIED_TRANSCRIPT_REPAIR_STATUSES = new Set(["manual_correction", "original_whisper_timecode"]);
+const NON_AUTHORITATIVE_TRANSCRIPT_TIMING_STATUSES = new Set([
+  "automatic_transcript_timestamp",
+  "inherited_after_vad_anchor",
+  "needs_per_line_sync",
+]);
+const NON_AUTHORITATIVE_TRANSCRIPT_TIMING_AUTHORITIES = new Set([
+  "quick_sweep_transcript",
+  "quick_sweep_transcript_priority",
+  "chunked_fallback",
+  "tail_recovery_fallback",
+  "fallback_candidate",
+  "scaffold",
+  "text_only_no_source_timing",
+]);
+
 function rowHasTimingAuthority(row: any): boolean {
   const timingStatus = String(row?.timingStatus || row?.timing_status || "").trim();
   const timingAuthority = String(row?.timingAuthority || row?.timing_authority || "").trim();
+  const sourceTimeValid = row?.sourceTimeValid ?? row?.source_time_valid;
+  if (
+    NON_AUTHORITATIVE_TRANSCRIPT_TIMING_STATUSES.has(timingStatus) ||
+    NON_AUTHORITATIVE_TRANSCRIPT_TIMING_AUTHORITIES.has(timingAuthority)
+  ) {
+    return false;
+  }
+  if (timingAuthority === "manual_correction") {
+    return sourceTimeValid !== false || timingStatus === "manual_correction";
+  }
   return (
-    timingAuthority === "manual_correction" ||
     timingAuthority === "original_whisper_timecode" ||
     timingAuthority === "full_pass" ||
-    timingAuthority === "anchored_vad_timing_repair" ||
-    timingAuthority === "vad_anchor_verified" ||
+    VERIFIED_TRANSCRIPT_REPAIR_STATUSES.has(timingStatus) ||
     [
       "manual_correction",
       "original_whisper_timecode",
-      "anchored_vad_timing_repair",
-      "vad_anchor_verified",
     ].includes(timingStatus)
+  );
+}
+
+function rowHasCandidateOnlyTiming(row: any): boolean {
+  const timingStatus = String(row?.timingStatus || row?.timing_status || "").trim();
+  const timingAuthority = String(row?.timingAuthority || row?.timing_authority || "").trim();
+  const timingSource = String(row?.timingSource || row?.timing_source || "").trim();
+  const sourceTimeValid = row?.sourceTimeValid ?? row?.source_time_valid;
+  return (
+    sourceTimeValid === false ||
+    NON_AUTHORITATIVE_TRANSCRIPT_TIMING_STATUSES.has(timingStatus) ||
+    NON_AUTHORITATIVE_TRANSCRIPT_TIMING_AUTHORITIES.has(timingAuthority) ||
+    /chunked|fallback|scaffold|quick_sweep/i.test(timingSource)
   );
 }
 
@@ -107,8 +142,16 @@ function transcriptPayloadHasTimingAuthority(payload: any): boolean {
 function normalizeTranscriptPayloadRows(rows: any[] = []) {
   return rows.map((row) => {
     const timing = normalizeTranscriptSegmentTiming(row || {});
+    const hasSourceTiming = rowHasTimingAuthority(row);
+    const candidateOnlyTiming = rowHasCandidateOnlyTiming(row);
+    const displayStart = candidateOnlyTiming && !hasSourceTiming ? null : timing.start;
+    const displayEnd = candidateOnlyTiming && !hasSourceTiming ? null : timing.end;
     return {
       ...timing,
+      start: displayStart,
+      end: displayEnd,
+      candidateStart: row?.candidate_start ?? row?.candidateStart,
+      candidateEnd: row?.candidate_end ?? row?.candidateEnd,
       text: row?.text || "",
       rawText: row?.raw_text || row?.rawText || row?.text || "",
       speaker: row?.speaker || row?.speaker_label || "Speaker 1",
@@ -154,6 +197,8 @@ type TranscriptEditorDraft = {
   source: "transcript" | "manual";
   targetId?: string;
   rawText?: string;
+  targetStart?: number;
+  targetEnd?: number;
   start: string;
   end: string;
   text: string;
@@ -187,7 +232,7 @@ export default function SpeechToTextPanel({
   const [editorMessage, setEditorMessage] = useState<string | null>(null);
 
   // State for show/hide summary
-  const [showSummary, setShowSummary] = useState(true);
+  const [showSummary, setShowSummary] = useState(false);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
@@ -269,7 +314,7 @@ export default function SpeechToTextPanel({
               metadata: {
                 ...((analysis.metadata || {}) as Record<string, unknown>),
                 transcriptSourceDecision:
-                  "rejected scaffold transcript rows; surfaced anchored_vad_timing_repair artifact",
+                  "rejected scaffold transcript rows; surfaced original Whisper timecode artifact",
               },
             } as unknown as typeof analysis;
           }
@@ -670,6 +715,8 @@ export default function SpeechToTextPanel({
       source: row?.correctionSource === "manual" ? "manual" : "transcript",
       targetId: row?.targetId,
       rawText: String(row?.rawText || row?.text || "").trim(),
+      targetStart: Number(row?.sourceStart ?? row?.start ?? 0),
+      targetEnd: Number(row?.sourceEnd ?? row?.end ?? row?.start ?? 0),
       start: String(Number(row?.start ?? 0)),
       end: String(Number(row?.end ?? row?.start ?? 0)),
       text:
@@ -769,8 +816,10 @@ export default function SpeechToTextPanel({
       nextCorrections = mergeCorrectionRule(
         nextCorrections,
         buildCorrectionRule("text", rawText, normalizedText, editorDraft.note.trim(), {
-          targetStartTimestamp: start,
-          targetEndTimestamp: end,
+          targetStartTimestamp: editorDraft.targetStart,
+          targetEndTimestamp: editorDraft.targetEnd,
+          correctedStartTimestamp: start,
+          correctedEndTimestamp: end,
         }),
       );
     }
@@ -1056,10 +1105,11 @@ export default function SpeechToTextPanel({
                 </div>
               ) : null}
             </div>
-            <div className="mb-2 shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">
-              Audio prosody
-            </div>
-            <div className={prosodySectionClass}>
+            <details className="mb-2 shrink-0 border border-white/8 bg-[#141414]">
+              <summary className="cursor-pointer px-3 py-2 text-slate-400">
+                Audio prosody
+              </summary>
+            <div className={`${prosodySectionClass} border-t border-white/8 p-2`}>
               {isAudioMode ? (
                 <div className="rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-3">
                   <div className="mb-2 flex items-center justify-between gap-3">
@@ -1220,8 +1270,9 @@ export default function SpeechToTextPanel({
                 ))
               )}
             </div>
+            </details>
             <div className="mb-2 shrink-0 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
-              {isAudioMode ? "Transcript Support:" : "Speech to Text:"}
+              {isAudioMode ? "Transcript support" : "Speech to text"}
             </div>
             {selectedWord ? (
               <div className="mb-2 shrink-0 rounded border border-white/8 bg-[#171717] px-3 py-2">
@@ -1351,10 +1402,14 @@ export default function SpeechToTextPanel({
                           {segmentLabel}
                         </div>
                         <div className="text-slate-200">
-                          {formatSpeechSeconds(row.start)} ~ {formatSpeechSeconds(row.end)}
+                          {hasSourceTiming
+                            ? `${formatSpeechSeconds(row.start)} ~ ${formatSpeechSeconds(row.end)}`
+                            : "Unresolved source time"}
                         </div>
                         <div>
-                          duration {formatSpeechSeconds(Number(row.end ?? 0) - Number(row.start ?? 0))}
+                          {hasSourceTiming
+                            ? `duration ${formatSpeechSeconds(Number(row.end) - Number(row.start))}`
+                            : "duration unresolved"}
                         </div>
                       </div>
                       {isSynthetic ? (

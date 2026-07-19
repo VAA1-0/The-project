@@ -17,6 +17,18 @@
  */
 
 import { buildAnalysisSearchParams } from "./analysis-request";
+import type { CanonicalSourceClockScope } from "./source-clock";
+
+export type SourceClockResolution = {
+  analysis_id: string;
+  selected_time_scope: CanonicalSourceClockScope & {
+    authority_rank: number;
+    candidate_count: number;
+    superseded_time_refs: string[];
+  };
+  affected_dependent_refs: string[];
+  invalidation?: Record<string, unknown> | null;
+};
 
 export interface UploadResponse {
   analysis_id: string;
@@ -197,6 +209,13 @@ export interface AnalysisStatus {
     }>;
   } | null;
   annotation_corrections?: AnnotationCorrections | null;
+  canonical_decision_ledger?: {
+    schema: "vaa1.canonical_decision_ledger.v0";
+    analysis_id: string;
+    version: 1;
+    decisions: Array<Record<string, unknown>>;
+  };
+  projected_canonical_claims?: ProjectedCanonicalClaimCollection;
   cvat_ingest?: {
     status?: string;
     job_id?: number;
@@ -911,6 +930,7 @@ export interface SourceMediaMetadata {
     scope?: string;
     description?: string;
     persons?: string[];
+    organizations?: string[];
     character_roles?: string[];
     character_definitions?: Array<{
       character_name?: string;
@@ -1116,6 +1136,8 @@ export interface AnnotationCorrectionRule {
   target_timestamp?: number;
   target_start_timestamp?: number;
   target_end_timestamp?: number;
+  corrected_start_timestamp?: number;
+  corrected_end_timestamp?: number;
   target_track_id?: number;
   note?: string;
   updated_at?: string;
@@ -1247,6 +1269,23 @@ export interface ManualVisualAnnotation {
     }>;
     master_schema_presence_interval_id?: string;
     source_range_source?: string;
+    bbox_classification_entries?: Array<{
+      id: string;
+      category: ManualVisualAnnotation["category"];
+      subcategory?: string;
+      label: string;
+      narrativeAgentName?: string;
+    }>;
+    source_time_corrections?: Array<{
+      corrected_at: string;
+      corrected_by: string;
+      clock_id: "source_media.clock" | string;
+      previous_start_seconds: number;
+      previous_end_seconds: number;
+      corrected_start_seconds: number;
+      corrected_end_seconds: number;
+      authority: "explicit_user_correction" | string;
+    }>;
     quick_annotations?: string[];
     maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
@@ -1319,6 +1358,87 @@ export interface AnnotationCorrections {
   }>;
 }
 
+export interface ProjectedSubjectState {
+  schema: "vaa1.projected_subject_state.v0.compatibility";
+  analysis_id: string;
+  subject_ref: { type: string; id: string };
+  timestamp_seconds: number;
+  raw_value: string | null;
+  projected_value: string | null;
+  authority: string;
+  authority_rank: number;
+  maturity: string;
+  validity: "current" | "stale" | "invalid" | "unknown";
+  review_status: string;
+  conflict_status: string;
+  projection_status: "projected" | "unavailable" | "suppressed" | "stale";
+  scope: Record<string, unknown>;
+  evidence_refs: string[];
+  correction_refs: string[];
+  decision_refs: string[];
+  invalidated_decision_refs?: string[];
+  traceback_refs: string[];
+  compatibility_mode: true;
+  indication: null | {
+    tone: "quiet";
+    code: string;
+    message: string;
+    suggested_action?: string;
+  };
+}
+
+export interface CanonicalDecisionInput {
+  decision_id?: string;
+  decision_action?: "correct_assignment";
+  subject_ref: { type: "visual_track_or_observation"; id: string };
+  property: "label";
+  scope: {
+    start_seconds: number;
+    end_seconds: number;
+    geometry?: Record<string, unknown> | null;
+  };
+  value: string;
+  authority?: "explicit_user_correction";
+  maturity?: "analyst_confirmed";
+  evidence_refs?: string[];
+  correction_refs?: string[];
+  provenance?: Record<string, unknown>;
+  created_at?: string;
+  created_by?: string;
+}
+
+export interface ProjectedCanonicalClaim {
+  schema: "vaa1.projected_claim.v0";
+  analysis_id: string;
+  subject_ref: { type: string; id: string };
+  property: string;
+  projected_value: unknown;
+  authority: string;
+  maturity: string;
+  validity: "current" | "stale" | "invalid" | "unknown";
+  projection_status: "projected" | "suppressed" | "stale" | "unavailable";
+  scope: Record<string, unknown>;
+  decision_refs: string[];
+  evidence_refs: string[];
+  correction_refs: string[];
+  traceback_refs: string[];
+}
+
+export interface ProjectedCanonicalClaimCollection {
+  schema: "vaa1.projected_claim_collection.v0";
+  analysis_id: string;
+  claim_count: number;
+  claims: ProjectedCanonicalClaim[];
+}
+
+export interface ProjectedSubjectStateBatch {
+  schema: "vaa1.projected_subject_state_batch.v0.compatibility";
+  analysis_id: string;
+  projection_count: number;
+  projections: ProjectedSubjectState[];
+  compatibility_mode: true;
+}
+
 export type WorkspacePathType = "results" | "imports";
 
 export interface MorphologyCatalogItem {
@@ -1348,11 +1468,35 @@ export interface MorphologyCatalogItem {
 class ApiService {
   private baseURL: string;
   private useMock: boolean;
+  private readonly statusCache = new Map<string, { expiresAt: number; value: any }>();
+  private readonly statusPromises = new Map<string, Promise<any>>();
+  private readonly artifactCache = new Map<string, { expiresAt: number; value: Blob }>();
+  private readonly artifactPromises = new Map<string, Promise<Blob>>();
 
   constructor() {
     this.useMock = process.env.NEXT_PUBLIC_USE_MOCK === "true" || false;
     // Direct connection to FastAPI backend
     this.baseURL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  }
+
+  invalidateReadCaches(analysisId?: string) {
+    if (!analysisId) {
+      this.statusCache.clear();
+      this.statusPromises.clear();
+      this.artifactCache.clear();
+      this.artifactPromises.clear();
+      return;
+    }
+    this.statusCache.delete(analysisId);
+    this.statusCache.delete(`summary:${analysisId}`);
+    this.statusPromises.delete(analysisId);
+    this.statusPromises.delete(`summary:${analysisId}`);
+    for (const key of [...this.artifactCache.keys()]) {
+      if (key.startsWith(`${analysisId}:`)) this.artifactCache.delete(key);
+    }
+    for (const key of [...this.artifactPromises.keys()]) {
+      if (key.startsWith(`${analysisId}:`)) this.artifactPromises.delete(key);
+    }
   }
 
   /**
@@ -1498,14 +1642,19 @@ class ApiService {
   /**
    * Get the current status of an analysis
    */
-  async getStatus(analysisId: string): Promise<any> {
-    console.log("Fetching status for:", analysisId);
-
+  async getStatus(analysisId: string, options: { fresh?: boolean } = {}): Promise<any> {
     // If mock ID, return mock status
     if (analysisId.startsWith("mock-")) {
       return this.getMockStatus(analysisId);
     }
 
+    if (options.fresh) this.statusCache.delete(analysisId);
+    const cached = this.statusCache.get(analysisId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const existingPromise = this.statusPromises.get(analysisId);
+    if (existingPromise) return existingPromise;
+
+    const request = (async () => {
     try {
       const response = await fetch(`${this.baseURL}/api/status/${analysisId}`);
 
@@ -1517,7 +1666,9 @@ class ApiService {
         );
       }
 
-      return response.json();
+      const value = await response.json();
+      this.statusCache.set(analysisId, { expiresAt: Date.now() + 5_000, value });
+      return value;
     } catch (error) {
       console.warn("Status check failed:", error);
       if (this.useMock) {
@@ -1525,9 +1676,40 @@ class ApiService {
       }
       const localResponse = await fetch(`/api/local-analysis/${analysisId}`);
       if (localResponse.ok) {
-        return localResponse.json();
+        const value = await localResponse.json();
+        this.statusCache.set(analysisId, { expiresAt: Date.now() + 5_000, value });
+        return value;
       }
       throw error;
+    }
+    })();
+    this.statusPromises.set(analysisId, request);
+    try {
+      return await request;
+    } finally {
+      this.statusPromises.delete(analysisId);
+    }
+  }
+
+  async getStatusSummary(analysisId: string): Promise<any> {
+    const cacheKey = `summary:${analysisId}`;
+    const cached = this.statusCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const existingPromise = this.statusPromises.get(cacheKey);
+    if (existingPromise) return existingPromise;
+    const request = fetch(`${this.baseURL}/api/status/${analysisId}/summary`)
+      .then(async (response) => {
+        if (!response.ok) return this.getStatus(analysisId);
+        const value = await response.json();
+        this.statusCache.set(cacheKey, { expiresAt: Date.now() + 15_000, value });
+        return value;
+      })
+      .catch(() => this.getStatus(analysisId));
+    this.statusPromises.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      this.statusPromises.delete(cacheKey);
     }
   }
 
@@ -1868,6 +2050,14 @@ class ApiService {
       return new Blob([mockContent], { type: this.getMimeType(fileType) });
     }
 
+    const cacheable = !["source_video", "video", "annotated_video"].includes(fileType);
+    const cacheKey = `${analysisId}:${fileType}`;
+    const cached = cacheable ? this.artifactCache.get(cacheKey) : undefined;
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const existingPromise = cacheable ? this.artifactPromises.get(cacheKey) : undefined;
+    if (existingPromise) return existingPromise;
+
+    const request = (async () => {
     const noCacheToken = Date.now().toString(36);
     let response: Response;
     try {
@@ -1891,7 +2081,9 @@ class ApiService {
             { cache: "no-store" },
           );
       if (localResponse.ok) {
-        return localResponse.blob();
+        const value = await localResponse.blob();
+        if (cacheable) this.artifactCache.set(cacheKey, { expiresAt: Date.now() + 30_000, value });
+        return value;
       }
       const errorText = await localResponse.text();
       throw new Error(
@@ -1899,10 +2091,22 @@ class ApiService {
       );
     }
 
-    return response.blob();
+    const value = await response.blob();
+    if (cacheable) this.artifactCache.set(cacheKey, { expiresAt: Date.now() + 30_000, value });
+    return value;
+    })();
+    if (cacheable) this.artifactPromises.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      if (cacheable) this.artifactPromises.delete(cacheKey);
+    }
   }
 
   getDownloadUrl(analysisId: string, fileType: string): string {
+    if (fileType === "source_video") {
+      return `${this.baseURL}/api/download/${analysisId}/${fileType}`;
+    }
     const noCacheToken = Date.now().toString(36);
     return `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`;
   }
@@ -1940,6 +2144,102 @@ class ApiService {
 
   getBundleDownloadUrl(analysisId: string): string {
     return `${this.baseURL}/api/download-bundle/${analysisId}`;
+  }
+
+  async getProjectedSubjectState(
+    analysisId: string,
+    subjectRef: string,
+    timestampSeconds: number,
+  ): Promise<ProjectedSubjectState> {
+    const params = new URLSearchParams({
+      subject_ref: subjectRef,
+      timestamp: String(timestampSeconds),
+    });
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/projected-state?${params.toString()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      throw new Error(`Projected state unavailable (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async getProjectedSubjectStates(
+    analysisId: string,
+    requests: Array<{ subject_ref: string; timestamp: number }>,
+  ): Promise<ProjectedSubjectStateBatch> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/projected-state/batch`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requests }),
+        cache: "no-store",
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Projected states unavailable (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async createCanonicalDecision(
+    analysisId: string,
+    decision: CanonicalDecisionInput,
+  ): Promise<{ status: "appended" | "unchanged"; decision: Record<string, unknown> }> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(decision),
+    });
+    if (!response.ok) {
+      throw new Error(`Canonical decision unavailable (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async getProjectedCanonicalClaims(
+    analysisId: string,
+    request: { subject_refs?: string[]; properties?: string[]; timestamp?: number },
+  ): Promise<ProjectedCanonicalClaimCollection> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/claims/projected`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`Canonical claim projection unavailable (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async invalidateCanonicalDecision(
+    analysisId: string,
+    invalidation: {
+      decision_id?: string;
+      target_decision_refs?: string[];
+      correction_ref?: string;
+      reason_code: string;
+      reason?: string;
+      dependency_ref?: string;
+      created_at?: string;
+      created_by?: string;
+    },
+  ): Promise<{ status: "appended" | "unchanged"; invalidation: Record<string, unknown> }> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/decisions/invalidate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(invalidation),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Canonical invalidation unavailable (${response.status})`);
+    }
+    return response.json();
   }
 
   async getAnnotationCorrections(analysisId: string): Promise<AnnotationCorrections> {
@@ -1997,6 +2297,7 @@ class ApiService {
         : await localSave();
       if (localResponse.ok) {
         const result = await localResponse.json();
+        this.invalidateReadCaches(analysisId);
         return result.annotation_corrections || {};
       }
       const errorText = await localResponse.text();
@@ -2005,9 +2306,11 @@ class ApiService {
       );
     } else if (response.url.includes("/api/local-analysis/")) {
       const result = await response.json();
+      this.invalidateReadCaches(analysisId);
       return result.annotation_corrections || {};
     }
     const result = await response.json();
+    this.invalidateReadCaches(analysisId);
     return result.annotation_corrections || {};
   }
 
@@ -2046,7 +2349,7 @@ class ApiService {
 
       const poll = async () => {
         try {
-          const status = await this.getStatus(analysisId);
+          const status = await this.getStatus(analysisId, { fresh: true });
           onProgress(status);
 
           if (status.status === "completed") {
@@ -2327,6 +2630,7 @@ class ApiService {
       scope?: string;
       description?: string;
       persons?: string[];
+      organizations?: string[];
       character_roles?: string[];
       character_definitions?: Array<Record<string, unknown>>;
       narrative_agent_profiles?: Array<Record<string, unknown>>;
@@ -2558,6 +2862,29 @@ class ApiService {
     }
     const data = await response.json();
     return Array.isArray(data.labels) ? data.labels : [];
+  }
+
+  async resolveSourceClock(
+    analysisId: string,
+    payload: {
+      candidates: CanonicalSourceClockScope[];
+      dependents?: Array<Record<string, unknown>>;
+      apply_invalidation?: boolean;
+      authority?: string;
+    },
+  ): Promise<SourceClockResolution> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source-clock resolution failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
   }
 
   async saveSharedTaxonomyLabel(payload: {

@@ -34,6 +34,7 @@ import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
 import AudioPanel from "./panels/AudioPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { installIdlePrecompute } from "@/lib/idle-precompute";
 
 // --- Context Setup ---
 type LayoutHostContextType = {
@@ -403,6 +404,7 @@ export default function LayoutHost({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<GoldenLayout | null>(null);
+  useEffect(() => installIdlePrecompute(), []);
   const PANEL_TITLES: Record<string, string> = {
     Audio: "Audio",
     CvatPluginPanel: "CVAT plugin",

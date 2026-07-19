@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { EMPIRICAL_TAXONOMY_ATTRIBUTES } from "@/lib/empirical-taxonomy";
 import {
   VideoService,
   type AnalysisData,
@@ -167,6 +168,17 @@ type StatsTableRow = {
   visualizationTypes: VisualizationMode[];
 };
 
+type InlineEvidenceRecord = {
+  id: string;
+  label: string;
+  start?: number;
+  end?: number;
+  authority: string;
+  source: string;
+};
+
+const INLINE_EVIDENCE_PAGE_SIZE = 12;
+
 type MissingDataRow = {
   id: string;
   sourceLayer: string;
@@ -230,6 +242,7 @@ type MasterSchemaStatsCategory =
   | "topics"
   | "expressions"
   | "cameraShots"
+  | "sceneCards"
   | "speakers"
   | "sounds"
   | "music"
@@ -301,6 +314,7 @@ type StatsComparisonStudioPackage = {
 };
 
 type StatsFamily =
+  | "taxonomy"
   | "descriptive"
   | "cross_tabulation"
   | "correlation"
@@ -324,7 +338,20 @@ type VisualizationMode =
   | "network_graph"
   | "table";
 
+const VISUALIZATION_MODE_OPTIONS: Array<{ id: VisualizationMode; label: string }> = [
+  { id: "bar_chart", label: "Bar chart" },
+  { id: "percent_bars", label: "Percent bars" },
+  { id: "duration_bars", label: "Duration / rate bars" },
+  { id: "histogram", label: "Histogram" },
+  { id: "boxplot", label: "Boxplot" },
+  { id: "heatmap", label: "Heatmap" },
+  { id: "timeline", label: "Timeline" },
+  { id: "network_graph", label: "Network graph" },
+  { id: "table", label: "Table" },
+];
+
 const STAT_FAMILY_OPTIONS: Array<{ id: StatsFamily; label: string; description: string }> = [
+  { id: "taxonomy", label: "Taxonomy / Attribute readiness", description: "All canonical empirical attributes, including operational, partial, contracted, experimental, and missing layers." },
   { id: "descriptive", label: "Level I / Descriptive", description: "Counts, percentages, durations, means, medians, variance, and standard deviation." },
   { id: "cross_tabulation", label: "Level II / Cross-tabs", description: "Relationships between categorical variables such as speaker x topic or location x expression." },
   { id: "correlation", label: "Level III / Correlation", description: "Variables that move together, visualized as matrices or heatmaps." },
@@ -431,6 +458,31 @@ function sourceTextHas(pattern: RegExp, ...values: unknown[]): number {
   return values.some((value) => pattern.test(JSON.stringify(value || ""))) ? 1 : 0;
 }
 
+function confirmedMetadataValues(metadata: SourceMediaMetadata | null, keys: string[]): string[] {
+  const annotations: Record<string, unknown> = isRecord(metadata?.user_annotations) ? metadata.user_annotations : {};
+  const values = keys.flatMap((key) => {
+    const value = annotations[key];
+    if (Array.isArray(value)) return value.map(String);
+    return typeof value === "string" ? [value] : [];
+  });
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function userAnnotationValueCount(metadata: SourceMediaMetadata | null): number {
+  const annotations: Record<string, unknown> = isRecord(metadata?.user_annotations) ? metadata.user_annotations : {};
+  return Object.values(annotations).reduce<number>((sum, value) => {
+    if (Array.isArray(value)) return sum + value.length;
+    if (isRecord(value)) return sum + Object.keys(value).length;
+    if (typeof value === "string") return sum + (value.trim() ? 1 : 0);
+    return sum + (value === null || value === undefined ? 0 : 1);
+  }, 0);
+}
+
+function artifactReadings(artifact: unknown): Array<Record<string, unknown>> {
+  if (!isRecord(artifact) || !Array.isArray(artifact.readings)) return [];
+  return artifact.readings.filter(isRecord);
+}
+
 function masterAuditStatus(row: Omit<MasterSchemaStatsAuditRow, "status">): MasterSchemaStatsAuditRow["status"] {
   if (row.masterSchemaCount > 0) return "master_schema";
   if (row.entityRegistryCount > 0) return "governed_candidate";
@@ -471,8 +523,13 @@ function buildMasterSchemaStatsAudit(
   const audioEventIntervals = analysisData?.metadata?.audioEventIntervals?.intervals || [];
   const shotSamples = analysisData?.metadata?.cinematicClues?.shotSize?.samples || [];
   const transitionSamples = analysisData?.metadata?.cinematicClues?.transitionClues?.samples || [];
+  const sceneCardArtifact = analysisData?.miseEnSceneSceneCards;
+  const sceneCards = Array.isArray(sceneCardArtifact?.scene_cards) ? sceneCardArtifact.scene_cards : [];
+  const sceneCardSummaryCount = num(sceneCardArtifact?.scene_card_count);
   const spatialToneSamples = analysisData?.metadata?.spatialToneScan?.samples || [];
   const evidenceCounts = evidenceCountBag(metadata);
+  const confirmedOrganizations = confirmedMetadataValues(metadata, ["organizations"]);
+  const confirmedPlaces = confirmedMetadataValues(metadata, ["location_place", "location_city", "location_country", "location_room"]);
   const objectCountFromMetadata = sumCounts(evidenceCounts, [/object/i, /tracked_objects/i, /ocr_items/i]);
 
   const personRawCount = rawObjects.filter((item) => normalizedText(item.class_name || item.raw_class_name) === "person").length;
@@ -525,18 +582,30 @@ function buildMasterSchemaStatsAudit(
       label: "Organizations",
       statLabel: "organizations detected",
       masterSchemaCount: countMasterRecords(analysisData, (record) => /org|organization|institution/i.test(`${record.label} ${record.rawLabel || ""}`)),
-      entityRegistryCount: countEntities(analysisData, (entity) => entity.entity_type === "ORG"),
+      entityRegistryCount: Math.max(
+        countEntities(analysisData, (entity) => entity.entity_type === "ORG"),
+        confirmedOrganizations.length,
+      ),
       rawSubstrateCount: sumCounts(evidenceCounts, [/org/i, /organization/i, /institution/i]),
-      sourcePath: "entityRegistry[ORG] + source metadata organization fields",
+      sourcePath: "user_annotations.organizations + entityRegistry[ORG] + source metadata organization fields",
+      note: confirmedOrganizations.length
+        ? "Includes user-confirmed Source Media organizations; user authority is retained through Mature Data Proliferation."
+        : undefined,
     }),
     makeMasterAuditRow({
       id: "places",
       label: "Places",
       statLabel: "places detected",
       masterSchemaCount: countMasterRecords(analysisData, (record) => /place|location|setting|city|country/i.test(`${record.label} ${record.rawLabel || ""}`)),
-      entityRegistryCount: countEntities(analysisData, (entity) => entity.entity_type === "PLACE"),
+      entityRegistryCount: Math.max(
+        countEntities(analysisData, (entity) => entity.entity_type === "PLACE"),
+        confirmedPlaces.length,
+      ),
       rawSubstrateCount: sumCounts(evidenceCounts, [/place/i, /location/i, /setting/i, /geo/i]),
-      sourcePath: "entityRegistry[PLACE] + Master Schema location/setting records",
+      sourcePath: "user_annotations.location_* + entityRegistry[PLACE] + Master Schema location/setting records",
+      note: confirmedPlaces.length
+        ? "Includes user-confirmed Source Media place fields; user authority is retained through Mature Data Proliferation."
+        : undefined,
     }),
     makeMasterAuditRow({
       id: "objects",
@@ -577,16 +646,26 @@ function buildMasterSchemaStatsAudit(
     makeMasterAuditRow({
       id: "cameraShots",
       label: "Camera shots",
-      statLabel: "camera shots detected",
-      masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "shot_boundary") + countManualCategory(analysisData, "Cinematic Cues") + countManualCategory(analysisData, "Scene"),
+      statLabel: "Camera shots",
+      masterSchemaCount: countMasterRecords(analysisData, (record) => record.category === "shot_boundary") + countManualCategory(analysisData, "Cinematic Cues"),
       entityRegistryCount: 0,
-      rawSubstrateCount: Math.max(shotBoundaryIntervals.length, sceneSegments.length, shotSamples.length, transitionSamples.length, sumCounts(evidenceCounts, [/shot/i, /scene_segment/i, /scene_card/i, /camera/i])),
-      sourcePath: "Master Schema shot_boundary_interval segments + motionSceneBasis.sceneSegments + cinematicClues.transitionClues/shotSize + manual Cinematic Cues",
+      rawSubstrateCount: Math.max(shotBoundaryIntervals.length, shotSamples.length, transitionSamples.length, sumCounts(evidenceCounts, [/shot_boundary/i, /camera_shot/i])),
+      sourcePath: "Master Schema shot_boundary_interval segments + cinematicClues.transitionClues/shotSize + manual Cinematic Cues",
       note: shotBoundaryIntervals.length
         ? "Shot count comes from governed Master Schema shot-boundary intervals."
-        : sceneSegments.length && sceneSegments.length <= 10
-          ? "This is a scene/transition proxy count, not a finished shot-boundary count. A trailer can have many more cuts than this."
-          : undefined,
+        : "Scene Cards and scene intervals are excluded: they are governed scene units, not measured camera shots.",
+    }),
+    makeMasterAuditRow({
+      id: "sceneCards",
+      label: "Scene Cards",
+      statLabel: "Scene Cards",
+      masterSchemaCount: countMasterRecords(analysisData, (record) => /scene_card|scene_interval/i.test(`${record.category} ${record.label}`)),
+      entityRegistryCount: 0,
+      rawSubstrateCount: Math.max(sceneCardSummaryCount, sceneCards.length, sceneSegments.length),
+      sourcePath: "mise_en_scene_scene_cards.scene_cards + motionSceneBasis.sceneSegments",
+      note: sceneCardSummaryCount || sceneCards.length
+        ? "Governed Scene Card count from the persisted mise-en-scene report; kept separate from measured shot boundaries."
+        : undefined,
     }),
     makeMasterAuditRow({
       id: "speakers",
@@ -761,6 +840,22 @@ function shotDurationValues(analysisData: AnalysisData | null): number[] {
     .map((segment) => intervalDuration(segment.start, segment.end))
     .filter((value) => value > 0);
   if (shotDurations.length) return shotDurations;
+  return (analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [])
+    .map((segment) => intervalDuration(segment.start, segment.end))
+    .filter((value) => value > 0);
+}
+
+function sceneCardDurationValues(analysisData: AnalysisData | null): number[] {
+  const artifact = analysisData?.miseEnSceneSceneCards;
+  const cards = Array.isArray(artifact?.scene_cards) ? artifact.scene_cards : [];
+  const cardDurations = cards
+    .map((item) => {
+      if (!item || typeof item !== "object") return 0;
+      const interval = (item as { time_interval?: { start_ms?: unknown; end_ms?: unknown } }).time_interval;
+      return intervalDuration(interval?.start_ms, interval?.end_ms) / 1000;
+    })
+    .filter((value) => value > 0);
+  if (cardDurations.length) return cardDurations;
   return (analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [])
     .map((segment) => intervalDuration(segment.start, segment.end))
     .filter((value) => value > 0);
@@ -942,6 +1037,7 @@ function buildSubstanceRows(
   const topics = auditCounts.topics || 0;
   const expressions = auditCounts.expressions || 0;
   const cameraShots = auditCounts.cameraShots || 0;
+  const sceneCards = auditCounts.sceneCards || 0;
   const speakers = auditCounts.speakers || 0;
   const sounds = auditCounts.sounds || 0;
   const music = auditCounts.music || 0;
@@ -963,31 +1059,136 @@ function buildSubstanceRows(
   const speakerDominanceStdDev = stdDev(speakerDurationValues(analysisData));
   const shotDurationStdDev = stdDev(shotDurationValues(analysisData));
   const shotDurations = shotDurationValues(analysisData);
+  const sceneCardDurations = sceneCardDurationValues(analysisData);
   const movementStdDev = stdDev(motionIntensityValues(analysisData));
-  const auditByStatLabel = new Map(masterAuditRows.map((row) => [row.statLabel, row]));
+  const auditById = new Map(masterAuditRows.map((row) => [row.id, row]));
   const descriptiveEntries: Array<[string, number, string, MasterSchemaStatsAuditRow | undefined]> = [
-    ["persons", persons, "Master Schema person/narrative-agent audit", auditByStatLabel.get("persons detected")],
-    ["organizations", organizations, "Master Schema organization audit", auditByStatLabel.get("organizations detected")],
-    ["places", places, "Master Schema place/location audit", auditByStatLabel.get("places detected")],
-    ["objects", objects, "Master Schema object/detection audit", auditByStatLabel.get("objects detected")],
-    ["actions", actions, "Master Schema action/POS/manual audit", auditByStatLabel.get("actions detected")],
-    ["topics", topics, "Master Schema topic/meaning/quant audit", auditByStatLabel.get("topics detected")],
-    ["expressions", expressions, "Master Schema expression audit", auditByStatLabel.get("expressions detected")],
-    ["camera shots", cameraShots, "Master Schema scene/camera audit", auditByStatLabel.get("camera shots detected")],
-    ["speakers", speakers, "Master Schema speaker/transcript/audio audit", auditByStatLabel.get("speakers detected")],
-    ["sounds", sounds, "Master Schema audio/sound audit", auditByStatLabel.get("sounds detected")],
-    ["music", music, "Master Schema music/audio audit", auditByStatLabel.get("music detected")],
-    ["colors", colors, "Master Schema color/visual cue audit", auditByStatLabel.get("colors detected")],
+    ["Actions", actions, "Master Schema action/POS/manual audit", auditById.get("actions")],
+    ["Camera shots", cameraShots, "Master Schema shot-boundary audit", auditById.get("cameraShots")],
+    ["Colors", colors, "Master Schema color/visual cue audit", auditById.get("colors")],
+    ["Expressions", expressions, "Master Schema expression audit", auditById.get("expressions")],
+    ["Music", music, "Master Schema music/audio audit", auditById.get("music")],
+    ["Objects", objects, "Master Schema object/detection audit", auditById.get("objects")],
+    ["Organizations", organizations, "Master Schema organization audit", auditById.get("organizations")],
+    ["Persons", persons, "Master Schema person/narrative-agent audit", auditById.get("persons")],
+    ["Places", places, "Master Schema place/location audit", auditById.get("places")],
+    ["Scene Cards", sceneCards, "Governed mise-en-scene Scene Card audit", auditById.get("sceneCards")],
+    ["Source annotations", userAnnotationValueCount(metadata), "source_media_metadata.user_annotations (analyst-authored source evidence)", undefined],
+    ["Sounds", sounds, "Master Schema audio/sound audit", auditById.get("sounds")],
+    ["Speakers", speakers, "Master Schema speaker/transcript/audio audit", auditById.get("speakers")],
+    ["Topics", topics, "Master Schema topic/meaning/quant audit", auditById.get("topics")],
   ];
 
+  const taxonomyRows: StatsTableRow[] = EMPIRICAL_TAXONOMY_ATTRIBUTES.map((attribute) => ({
+    id: `taxonomy:${attribute.categoryId}:${attribute.attributeId}`,
+    level: "Taxonomy",
+    family: "taxonomy",
+    method: attribute.categoryLabel,
+    statistic: attribute.attributeLabel,
+    value: attribute.attributeStatus,
+    unit: "attribute",
+    scope: attribute.theme,
+    evidence: attribute.knownPaths.length ? attribute.knownPaths.join(" + ") : "No runtime path registered yet",
+    status: attribute.attributeStatus,
+    note: attribute.description,
+    requiredLayer: attribute.categoryId,
+    sourceAction: `datascene://taxonomy/${attribute.categoryId}/${attribute.attributeId}`,
+    visualizationTypes: ["table"],
+  }));
+
+  const pos = analysisData?.posAnalysis?.[0];
+  const quant = analysisData?.quantAnalysis?.[0];
+  const narrativeLensArtifact = analysisData?.narrativeLensReading;
+  const narrativeLensReadings = artifactReadings(narrativeLensArtifact);
+  const characterPathArtifact = analysisData?.characterPathReading;
+  const characterPathReadings = artifactReadings(characterPathArtifact);
+  const posTaggedTokens = Object.values(pos?.pos_counts || {}).reduce((sum, value) => sum + num(value), 0);
+  const linguisticRows: StatsTableRow[] = [
+    statRow(
+      "descriptive", "Level I", "POS", "POS tagged tokens",
+      pos ? (pos.token_count || posTaggedTokens) : "not computed", "tokens",
+      "posAnalysis.token_count + posAnalysis.pos_counts", pos ? "computed" : "not computed",
+      "Part-of-speech observations produced from the loaded transcript language pipeline.", "language.pos_dependency_sfl", ["table", "bar_chart"],
+    ),
+    statRow(
+      "descriptive", "Level I", "POS", "POS categories represented",
+      pos ? Object.values(pos.pos_counts || {}).filter((value) => num(value) > 0).length : "not computed", "categories",
+      "posAnalysis.pos_counts", pos ? "computed" : "not computed",
+      "Number of POS categories with at least one observed token.", "language.pos_dependency_sfl", ["table", "bar_chart"],
+    ),
+    statRow(
+      "descriptive", "Level I", "Quant", "Quant tokens",
+      quant ? quant.token_info?.tokens?.length || 0 : "not computed", "tokens",
+      "quantAnalysis.token_info.tokens", quant ? "computed" : "not computed",
+      "Corpus tokens retained by the Quant analysis artifact.", "language.quant_corpus", ["table", "bar_chart"],
+    ),
+    statRow(
+      "descriptive", "Level I", "Quant", "Unique terms",
+      quant ? Object.keys(quant.token_info?.freq_dist || {}).length : "not computed", "terms",
+      "quantAnalysis.token_info.freq_dist", quant ? "computed" : "not computed",
+      "Distinct terms in the governed Quant frequency distribution.", "language.quant_corpus", ["table", "bar_chart"],
+    ),
+    statRow(
+      "descriptive", "Level I", "Quant", "Bigrams",
+      quant ? quant.bigrams?.length || 0 : "not computed", "bigrams",
+      "quantAnalysis.bigrams + quantAnalysis.evidence_map.bigrams", quant ? "computed" : "not computed",
+      "Two-token sequences retained by the Quant artifact; evidence-map entries preserve source spans when available.", "language.quant_corpus", ["table", "bar_chart"],
+    ),
+    statRow(
+      "descriptive", "Level I", "Quant", "Concordance lines",
+      quant ? quant.concordance?.lines?.length || 0 : "not computed", "lines",
+      "quantAnalysis.concordance.lines + quantAnalysis.evidence_map.concordance", quant ? "computed" : "not computed",
+      "Source-linked concordance contexts available for the active Quant keyword.", "language.quant_corpus", ["table", "bar_chart"],
+    ),
+  ];
+  const plotLensRows: StatsTableRow[] = [
+    ["Aristotle", "aristotelian"],
+    ["Booker", "bookerian"],
+    ["Campbell", "campbellian"],
+    ["Freytag", "freytagian"],
+    ["Frye", "fryean"],
+  ].map(([label, lensId]) => statRow(
+    "descriptive", "Interpretive", "Plot lens readings", label,
+    narrativeLensArtifact ? narrativeLensReadings.filter((reading) => reading.lens_id === lensId).length : "not computed",
+    "readings", `narrativeLensReading.readings[lens_id=${lensId}]`, narrativeLensArtifact ? "computed" : "not computed",
+    `Count of governed ${label} reading candidates. A reading remains an interpretation, not an empirical fact.`,
+    "narrative.lenses_structures", ["table", "bar_chart"],
+  ));
+  const frameworkRows: StatsTableRow[] = [
+    ["Performed agency / Shakespearean", "shakespearean_performativity"],
+    ["Narrative function / Proppian", "proppian_function"],
+    ["Symbolic shadow / Jungian / Mythic", "jungian_symbolic"],
+    ["Actant relation / Greimasian", "greimasian_actant"],
+    ["Motive scene / Burkean / Dramatistic", "burkean_motive"],
+  ].map(([label, frameworkId]) => {
+    const matching = characterPathReadings.filter((reading) =>
+      [reading.framework_id, reading.archetype_id, reading.lens_id, reading.tradition]
+        .map((value) => String(value || "").toLowerCase())
+        .includes(frameworkId),
+    );
+    return statRow(
+      "descriptive", "Interpretive", "Agency and character frameworks", label,
+      matching.length ? matching.length : "not computed", "readings",
+      `characterPathReading.readings[framework=${frameworkId}]`, matching.length ? "computed" : "not computed",
+      matching.length
+        ? `Count of source-linked ${label} reading candidates.`
+        : "The framework is available in Meaning / Plot, but no framework-explicit governed reading was persisted for this analysis.",
+      "narrative.characters_agency_roles_archetypes", ["table", "bar_chart"],
+    );
+  });
+
   const rows: StatsTableRow[] = [
+    ...taxonomyRows,
+    ...linguisticRows,
+    ...plotLensRows,
+    ...frameworkRows,
     ...descriptiveEntries.map(([label, value, evidence, audit]) =>
       statRow(
         "descriptive",
         "Level I",
         "frequency",
-        `${label} detected`,
-        value,
+        label,
+        audit?.status === "not_found" ? "not computed" : value,
         "count",
         audit?.sourcePath || evidence,
         computedOrMissing(value),
@@ -1000,7 +1201,7 @@ function buildSubstanceRows(
         "descriptive",
         "Level I",
         "percentage",
-        `${label} share of harvested events`,
+        `${label} share`,
         asPercent(value, totalEvents),
         "%",
         audit?.sourcePath || evidence,
@@ -1040,12 +1241,14 @@ function buildSubstanceRows(
       "descriptive",
       "Level I",
       "mean",
-      "mean scene length",
-      cameraShots && duration ? Math.round((duration / cameraShots) * 100) / 100 : "not computed",
+      "Mean scene length",
+      roundStat(mean(sceneCardDurations)),
       "seconds",
-      "source duration + scene/shot evidence count",
-      cameraShots && duration ? "candidate" : "needs source layer",
-      "Count-derived approximation until exact scene/shot boundaries are loaded.",
+      "mise_en_scene_scene_cards.scene_cards.time_interval",
+      sceneCardDurations.length ? "computed" : "needs source layer",
+      sceneCardDurations.length
+        ? "Computed from governed scene intervals; no shot-count proxy is used."
+        : "Needs persisted Scene Card or governed scene intervals.",
     ),
     statRow(
       "descriptive",
@@ -2743,7 +2946,16 @@ function buildMissingDataRows(rows: StatsTableRow[]): MissingDataRow[] {
 }
 
 function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
-  const [activeAnalysisId, setActiveAnalysisId] = useState(analysisId || videoId || "");
+  const [activeAnalysisId, setActiveAnalysisId] = useState(() => {
+    const remembered = eventBus.getLast<unknown>("videoIdChanged");
+    const rememberedId = typeof remembered === "string"
+      ? remembered
+      : isRecord(remembered)
+        ? String(remembered.analysisId || remembered.videoId || remembered.id || "")
+        : "";
+    return analysisId || videoId || rememberedId;
+  });
+  const [sourceMetadataRefreshNonce, setSourceMetadataRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -2754,9 +2966,12 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [scope, setScope] = useState<"scene" | "video" | "collection">("video");
   const [audience, setAudience] = useState<"analyst" | "editor" | "researcher" | "journalist">("analyst");
   const [statFamily, setStatFamily] = useState<StatsFamily>("descriptive");
+  const [taxonomyTheme, setTaxonomyTheme] = useState("all");
   const [visualization, setVisualization] = useState<VisualizationMode>("bar_chart");
   const [visualizationTarget, setVisualizationTarget] = useState<VisualizationTarget>("stats");
   const [selectedStatId, setSelectedStatId] = useState("");
+  const [expandedEvidenceRowId, setExpandedEvidenceRowId] = useState("");
+  const [inlineEvidencePage, setInlineEvidencePage] = useState(0);
   const [selectedStatIds, setSelectedStatIds] = useState<string[]>([]);
   const [selectedScannerRowId, setSelectedScannerRowId] = useState("");
   const [selectedScannerRowIds, setSelectedScannerRowIds] = useState<string[]>([]);
@@ -2793,10 +3008,26 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   }, []);
 
   useEffect(() => {
+    const handler = (payload?: unknown) => {
+      const changedId = isRecord(payload) ? String(payload.analysisId || payload.videoId || "") : String(payload || "");
+      if (!changedId || changedId === activeAnalysisId) {
+        setSourceMetadataRefreshNonce((value) => value + 1);
+      }
+    };
+    eventBus.on("sourceMediaMetadataUpdated", handler);
+    return () => eventBus.off("sourceMediaMetadataUpdated", handler);
+  }, [activeAnalysisId]);
+
+  useEffect(() => {
     const nextId = analysisId || videoId || "";
     if (!nextId) return;
     void Promise.resolve().then(() => setActiveAnalysisId(nextId));
   }, [analysisId, videoId]);
+
+  useEffect(() => {
+    setExpandedEvidenceRowId("");
+    setInlineEvidencePage(0);
+  }, [activeAnalysisId, statFamily, taxonomyTheme]);
 
   useEffect(() => {
     if (!activeAnalysisId) return;
@@ -2843,7 +3074,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [activeAnalysisId]);
+  }, [activeAnalysisId, sourceMetadataRefreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3032,16 +3263,101 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     [schemaBundle, runArtifact, claims, radar, operationalStatsRows],
   );
   const selectedFamily = STAT_FAMILY_OPTIONS.find((option) => option.id === statFamily) || STAT_FAMILY_OPTIONS[0];
-  const visibleStatsRows = operationalStatsRows.filter((row) => row.family === statFamily);
+  const methodOrder = ["frequency", "percentage", "duration", "mean", "median", "variance", "standard_deviation"];
+  const visibleStatsRows = operationalStatsRows
+    .filter((row) => row.family === statFamily && (statFamily !== "taxonomy" || taxonomyTheme === "all" || row.scope === taxonomyTheme))
+    .sort((left, right) => {
+      if (statFamily === "taxonomy") {
+        return left.method.localeCompare(right.method, undefined, { sensitivity: "base" }) ||
+          left.statistic.localeCompare(right.statistic, undefined, { sensitivity: "base" });
+      }
+      const leftMethod = methodOrder.indexOf(left.method);
+      const rightMethod = methodOrder.indexOf(right.method);
+      const methodDifference = (leftMethod < 0 ? methodOrder.length : leftMethod) - (rightMethod < 0 ? methodOrder.length : rightMethod);
+      return methodDifference || left.statistic.localeCompare(right.statistic, undefined, { sensitivity: "base" });
+    });
   const visibleStatsRowIds = visibleStatsRows.map((row) => row.id).join("|");
   const selectedStat = visibleStatsRows.find((row) => row.id === selectedStatId) || visibleStatsRows[0] || null;
+  const inlineEvidenceRecords = useMemo<InlineEvidenceRecord[]>(() => {
+    if (!selectedStat) return [];
+    const basis = `${selectedStat.statistic} ${selectedStat.method} ${selectedStat.requiredLayer} ${selectedStat.evidence}`.toLowerCase();
+    const category = basis.includes("camera shot") || basis.includes("shot_boundary")
+      ? "shot_boundary"
+      : basis.includes("scene card")
+        ? "scene_card"
+        : basis.includes("organization")
+          ? "organization"
+          : basis.includes("place") || basis.includes("location")
+            ? "place"
+            : basis.includes("expression")
+              ? "expression"
+              : basis.includes("object")
+                ? "object"
+                : basis.includes("speaker")
+                  ? "speaker_diarization"
+                  : basis.includes("transcript") || basis.includes("speech")
+                    ? "transcript"
+                    : null;
+    const masterRows = (analysisData?.masterSchemaResolvedEvidence?.records || [])
+      .filter((record) => !category || record.category === category)
+      .map((record) => ({
+        id: record.id,
+        label: record.label,
+        start: record.start,
+        end: record.end,
+        authority: record.authority,
+        source: record.sourcePanel,
+      }));
+    if (category) return masterRows;
+
+    if (selectedStat.method === "Plot lens readings") {
+      const lensId = selectedStat.evidence.match(/lens_id=([^\]]+)/)?.[1];
+      return artifactReadings(analysisData?.narrativeLensReading)
+        .filter((reading) => !lensId || reading.lens_id === lensId)
+        .map((reading, index) => {
+          const target = isRecord(reading.target) ? reading.target : {};
+          const span = isRecord(target.time_span) ? target.time_span : {};
+          return {
+            id: String(reading.reading_id || `lens-reading:${index}`),
+            label: String(reading.claim_prose || reading.claim_label || selectedStat.statistic),
+            start: Number(span.start_ms) / 1000,
+            end: Number(span.end_ms) / 1000,
+            authority: String(reading.authority_level || reading.maturity_state || "interpretive reading"),
+            source: "narrative_lens_reading",
+          };
+        });
+    }
+
+    if (selectedStat.statistic === "Source annotations") {
+      const annotations = isRecord(metadata?.user_annotations) ? metadata.user_annotations : {};
+      return Object.entries(annotations).flatMap(([field, value]) => {
+        const values = Array.isArray(value) ? value : [value];
+        return values.filter((item) => item !== null && item !== undefined && String(item).trim()).map((item, index) => ({
+          id: `source-annotation:${field}:${index}`,
+          label: `${field.replaceAll("_", " ")}: ${typeof item === "string" ? item : JSON.stringify(item)}`,
+          authority: "user confirmed source metadata",
+          source: "source_media_metadata.user_annotations",
+        }));
+      });
+    }
+    return [];
+  }, [analysisData, metadata, selectedStat]);
+  const inlineEvidencePageCount = Math.max(1, Math.ceil(inlineEvidenceRecords.length / INLINE_EVIDENCE_PAGE_SIZE));
+  const safeInlineEvidencePage = Math.min(inlineEvidencePage, inlineEvidencePageCount - 1);
+  const inlineEvidencePageStart = safeInlineEvidencePage * INLINE_EVIDENCE_PAGE_SIZE;
+  const visibleInlineEvidenceRecords = inlineEvidenceRecords.slice(
+    inlineEvidencePageStart,
+    inlineEvidencePageStart + INLINE_EVIDENCE_PAGE_SIZE,
+  );
   const selectedStatsForVisualization = visibleStatsRows.filter((row) => selectedStatIds.includes(row.id));
   const visualizationRows = selectedStatsForVisualization.length
     ? selectedStatsForVisualization
     : selectedStat
       ? [selectedStat]
       : [];
-  const computedRows = visibleStatsRows.filter((row) => ["computed", "candidate", "raw"].includes(row.status)).length;
+  const computedRows = visibleStatsRows.filter((row) => statFamily === "taxonomy"
+    ? !["missing", "profile_pending", "not_operational"].includes(row.status)
+    : ["computed", "candidate", "raw"].includes(row.status)).length;
   const missingRows = visibleStatsRows.length - computedRows;
   const filteredSignificanceRows = significanceWorkbenchRows.filter((row) =>
     (significancePositionFilter === "all" || row.position === significancePositionFilter) &&
@@ -3142,7 +3458,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     `${analysisData?.masterSchemaResolvedEvidence?.records?.length || 0} master records`,
     `${visibleStatsRows.length} ${selectedFamily.label}`,
     `${visualizationRows.length} selected`,
-    `${computedRows} computed / ${missingRows} missing`,
+    statFamily === "taxonomy"
+      ? `${computedRows} mapped / ${missingRows} target-only`
+      : `${computedRows} computed / ${missingRows} missing`,
     `${runStatus}`,
   ];
 
@@ -3220,8 +3538,8 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const resetColumnWidths = () => setStatColumnWidths(DEFAULT_STAT_COLUMN_WIDTHS);
 
   return (
-    <section className="h-full overflow-auto bg-[#151515] p-3 text-[11px] text-slate-200" data-vaa1-statskit-panel="true">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-900/50 bg-[#101010] px-3 py-2">
+    <section className="flex h-full flex-col overflow-auto bg-[#151515] p-3 text-[11px] text-slate-200" data-vaa1-statskit-panel="true">
+      <div className="order-1 flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-900/50 bg-[#101010] px-3 py-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200">StatsKit</div>
           <div className="mt-1 truncate text-[10px] text-slate-400">{sourceName}</div>
@@ -3235,7 +3553,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </div>
 
-      <div className="mt-2 grid gap-2 xl:grid-cols-[1fr_190px_150px_150px_150px_130px]">
+      <div className="order-2 mt-2 grid gap-2 xl:grid-cols-[1fr_190px_150px_150px_130px]">
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
           <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Active analysis</span>
           <input
@@ -3269,24 +3587,6 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             <option value="collection">Collection</option>
           </select>
         </label>
-        <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Visualization</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100"
-            value={visualization}
-            onChange={(event) => setVisualization(event.target.value as VisualizationMode)}
-          >
-            <option value="bar_chart">Bar chart</option>
-            <option value="percent_bars">Percent bars</option>
-            <option value="duration_bars">Duration/rate bars</option>
-            <option value="histogram">Histogram</option>
-            <option value="boxplot">Boxplot</option>
-            <option value="heatmap">Heatmap</option>
-            <option value="timeline">Timeline</option>
-            <option value="network_graph">Network graph</option>
-            <option value="table">Table</option>
-          </select>
-        </label>
         <label className="hidden rounded border border-slate-800 bg-[#101010] px-2 py-1.5 xl:block">
           <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Audience</span>
           <select
@@ -3312,7 +3612,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </div>
 
       {(isLoading || loadError || runSummary) && (
-        <div className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 text-[10px] text-slate-300">
+        <div className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 text-[10px] text-slate-300">
           {isLoading ? "Loading source metadata..." : null}
           {loadError ? <span className="text-amber-200">{loadError}</span> : null}
           {runSummary ? (
@@ -3321,10 +3621,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       )}
 
-      <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" open data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
+      <details className="order-7 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">StatsKit comparison studio</div>
+            <div className="text-[11px] font-semibold text-slate-200">StatsKit comparison studio</div>
             <div className="mt-0.5 text-[9px] text-slate-500">Corpus to reproducible package; local Datascene data is the default runtime.</div>
           </div>
           <div className="font-mono text-[9px] text-cyan-100">
@@ -3852,11 +4152,11 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </details>
 
-      <div className="mt-2 grid gap-2 xl:grid-cols-[1.35fr_0.65fr]" data-vaa1-statskit-ordered-workbench-layout="true">
-        <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010] xl:col-start-1 xl:row-start-1" open data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
+      <div className="order-4 mt-2 grid gap-2" data-vaa1-statskit-ordered-workbench-layout="true" data-vaa1-statskit-layout-priority="workbench-visualization-support">
+        <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Stats workbench table</div>
+              <div className="text-[11px] font-semibold text-slate-200">Stats workbench table</div>
               <div className="mt-0.5 text-[9px] text-slate-500">{selectedFamily.description}</div>
             </div>
             <div className="text-right text-[9px] uppercase tracking-[0.12em] text-slate-500">
@@ -3865,6 +4165,33 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             </div>
           </summary>
           <div className="border-b border-slate-800 px-3 py-2" data-vaa1-statskit-column-controls="true">
+            {statFamily === "taxonomy" ? (
+              <label className="mb-2 grid max-w-sm gap-1 text-[9px] text-slate-400" data-vaa1-statskit-taxonomy-theme-filter="true">
+                <span>Theme</span>
+                <select
+                  value={taxonomyTheme}
+                  onChange={(event) => setTaxonomyTheme(event.target.value)}
+                  className="rounded border border-slate-700 bg-[#090909] px-2 py-1.5 text-[10px] text-slate-200"
+                >
+                  {[
+                    "all",
+                    "analytics",
+                    "audio",
+                    "external and delivery",
+                    "governance",
+                    "language",
+                    "method and architecture",
+                    "narrative",
+                    "research",
+                    "scene",
+                    "source",
+                    "visual",
+                  ].map((theme) => (
+                    <option key={theme} value={theme}>{theme === "all" ? "All themes" : theme.charAt(0).toUpperCase() + theme.slice(1)}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-1">
                 <button
@@ -3918,7 +4245,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           </div>
           <div className="overflow-x-auto" data-vaa1-statskit-workbench-table-uses-panel-height="true">
             <table
-              className="table-fixed border-collapse text-left text-[10px]"
+              className="table-fixed border-collapse text-left text-[11px]"
               style={{ minWidth: Object.values(statColumnWidths).reduce((sum, width) => sum + width, 0) }}
             >
               <colgroup>
@@ -3947,10 +4274,17 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
               </thead>
               <tbody>
                 {visibleStatsRows.map((row) => (
+                  <React.Fragment key={row.id}>
                   <tr
-                    key={row.id}
                     className={`cursor-pointer border-b border-slate-900 hover:bg-cyan-950/10 ${selectedStat?.id === row.id ? "bg-cyan-950/20 outline outline-1 outline-cyan-800/60" : ""}`}
-                    onClick={() => setSelectedStatId(row.id)}
+                    onClick={() => {
+                      setSelectedStatId(row.id);
+                      setExpandedEvidenceRowId((current) => {
+                        const next = current === row.id ? "" : row.id;
+                        if (next) setInlineEvidencePage(0);
+                        return next;
+                      });
+                    }}
                     data-vaa1-statskit-selectable-row="true"
                     data-vaa1-statskit-selected-row={selectedStat?.id === row.id ? "true" : "false"}
                   >
@@ -3974,16 +4308,93 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                     <td className={row.status === "computed" || row.status === "candidate" || row.status === "raw" ? "px-3 py-2 text-cyan-200" : "px-3 py-2 text-amber-200"} title={row.status}>{row.status}</td>
                     <td className="px-3 py-2 text-slate-500" title={row.note}>{row.note}</td>
                   </tr>
+                  {expandedEvidenceRowId === row.id ? (
+                    <tr data-vaa1-statskit-inline-evidence="true">
+                      <td colSpan={9} className="border-b border-slate-800 bg-[#0c0c0c] px-4 py-3">
+                        <div className="grid gap-2 text-[10px] text-slate-400">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-semibold text-slate-200">Evidence inspection</div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-[9px] text-slate-500">{inlineEvidenceRecords.length} linked record(s)</div>
+                              <button
+                                type="button"
+                                className="rounded border border-slate-700 px-2 py-0.5 text-[9px] text-slate-400 hover:text-slate-200"
+                                onClick={() => setExpandedEvidenceRowId("")}
+                                data-vaa1-statskit-close-inline-evidence="true"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
+                          <div><span className="text-slate-500">Evidence layer:</span> {row.evidence}</div>
+                          <div><span className="text-slate-500">Required layer:</span> {row.requiredLayer}</div>
+                          <div><span className="text-slate-500">Data note:</span> {row.note}</div>
+                          {inlineEvidenceRecords.length ? (
+                            <div className="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                              {visibleInlineEvidenceRecords.map((record) => {
+                                const sourceStart = typeof record.start === "number" && Number.isFinite(record.start) ? record.start : null;
+                                const timed = sourceStart !== null;
+                                return (
+                                  <button
+                                    key={record.id}
+                                    type="button"
+                                    disabled={!timed}
+                                    onClick={() => sourceStart !== null && eventBus.emit("videoTimeLineChanged", sourceStart)}
+                                    className="rounded border border-slate-800 bg-[#111111] px-2 py-1.5 text-left text-[9px] text-slate-300 enabled:hover:border-slate-600 disabled:cursor-default"
+                                    title={timed ? "Seek the existing video to this source time" : "Untimed source record"}
+                                  >
+                                    <div className="line-clamp-2">{record.label}</div>
+                                    <div className="mt-1 font-mono text-slate-500">
+                                      {sourceStart !== null ? `${sourceStart.toFixed(3)}s${typeof record.end === "number" ? `–${record.end.toFixed(3)}s` : ""}` : "untimed"} · {record.authority} · {record.source}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-slate-500">No record-level anchors are loaded for this row. The evidence contract remains visible without leaving StatsKit.</div>
+                          )}
+                          {inlineEvidenceRecords.length > INLINE_EVIDENCE_PAGE_SIZE ? (
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-900 pt-2" data-vaa1-statskit-inline-evidence-pagination="true">
+                              <div className="text-[9px] text-slate-500">
+                                {inlineEvidencePageStart + 1}–{Math.min(inlineEvidencePageStart + INLINE_EVIDENCE_PAGE_SIZE, inlineEvidenceRecords.length)} of {inlineEvidenceRecords.length} linked records
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={safeInlineEvidencePage === 0}
+                                  onClick={() => setInlineEvidencePage((page) => Math.max(0, page - 1))}
+                                  className="rounded border border-slate-700 px-2 py-1 text-[9px] text-slate-400 enabled:hover:text-slate-200 disabled:opacity-40"
+                                >
+                                  Previous
+                                </button>
+                                <span className="px-1 font-mono text-[9px] text-slate-500">{safeInlineEvidencePage + 1} / {inlineEvidencePageCount}</span>
+                                <button
+                                  type="button"
+                                  disabled={safeInlineEvidencePage >= inlineEvidencePageCount - 1}
+                                  onClick={() => setInlineEvidencePage((page) => Math.min(inlineEvidencePageCount - 1, page + 1))}
+                                  className="rounded border border-slate-700 px-2 py-1 text-[9px] text-slate-400 enabled:hover:text-slate-200 disabled:opacity-40"
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         </details>
 
-        <details className="order-5 rounded border border-slate-800 bg-[#101010] px-3 py-2 xl:sticky xl:top-2 xl:col-start-2 xl:row-span-4 xl:row-start-1 xl:self-start" open data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="right-visualization">
+        <details className="order-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="B">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Visualization</div>
+              <div className="text-[11px] font-semibold text-slate-200">Visualization</div>
               <div className="mt-0.5 text-[9px] text-slate-500">{visualizationTarget} / {selectedFamily.label}</div>
             </div>
             <div className="rounded border border-cyan-900/60 px-2 py-1 text-[10px] text-cyan-100">{visualization.replace(/_/g, " ")}</div>
@@ -4002,9 +4413,21 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                 <option value="comparison">Comparison studio</option>
               </select>
             </label>
-            <div className="rounded border border-slate-800 bg-[#090909] px-2 py-1.5 text-[9px] text-slate-400">
-              {plottedData.length} numeric row(s) available for {visualization.replace(/_/g, " ")}.
-            </div>
+            <label className="grid gap-1 text-[9px] uppercase tracking-[0.12em] text-slate-500" data-vaa1-visualization-mode-selector="true">
+              Chart type
+              <select
+                className="rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] normal-case tracking-normal text-slate-100"
+                value={visualization}
+                onChange={(event) => setVisualization(event.target.value as VisualizationMode)}
+              >
+                {VISUALIZATION_MODE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="mt-2 rounded border border-slate-800 bg-[#090909] px-2 py-1.5 text-[9px] text-slate-400">
+            {plottedData.length} numeric row(s) available for {visualization.replace(/_/g, " ")}.
           </div>
           <div
             className="mt-3 rounded border border-slate-800 bg-[#090909] px-3 py-2"
@@ -4026,7 +4449,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                   <div><span className="text-slate-500">Value:</span> <span className="font-mono text-cyan-100">{selectedStat.value}</span> {selectedStat.unit}</div>
                   <div><span className="text-slate-500">Evidence:</span> {selectedStat.evidence}</div>
                   <div><span className="text-slate-500">Required layer:</span> {selectedStat.requiredLayer}</div>
-                  <div><span className="text-slate-500">Source action:</span> {selectedStat.sourceAction || "source pending"}</div>
+                  <div><span className="text-slate-500">Inspection:</span> available directly beneath the selected workbench row</div>
                   <div><span className="text-slate-500">Visualization eligibility:</span> {selectedStat.visualizationTypes.join(", ")}</div>
                 </div>
                 {!selectedCanVisualize ? (
@@ -4044,10 +4467,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           </div>
         </details>
 
-        <details className="order-3 overflow-hidden rounded border border-slate-800 bg-[#101010] xl:col-start-1 xl:row-start-3" data-vaa1-relevance-scanner="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-relevance-scanner-default-collapsed="true" data-vaa1-statskit-layout-slot="C">
+        <details className="order-3 overflow-hidden rounded border border-slate-800 bg-[#101010]" data-vaa1-relevance-scanner="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-relevance-scanner-default-collapsed="true" data-vaa1-statskit-layout-slot="C">
           <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-800 px-3 py-2">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">Relevance scanner</div>
+              <div className="text-[11px] font-semibold text-slate-200">Relevance scanner</div>
               <div className="mt-0.5 text-[9px] text-slate-500">Relevance and significance rows ranked for review.</div>
             </div>
             <div className="font-mono text-[9px] text-cyan-100">{pct(overall)} mean</div>
@@ -4129,14 +4552,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           </div>
         </details>
 
-      <details className="order-4 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 xl:col-start-1 xl:row-start-4" data-vaa1-stats-metadata-view="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="D">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+      <details className="order-8 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-stats-metadata-view="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="F">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Stats metadata view
           <span className="ml-2 font-mono text-[9px] text-slate-500">schema coverage, audits, source-layer plan, and JSON contracts</span>
         </summary>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-master-schema-category-audit="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Master Schema category audit
           <span className="ml-2 font-mono text-[9px] text-slate-500">{masterAuditRows.length} StatsKit categories</span>
         </summary>
@@ -4179,7 +4602,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-source-layer-delivery-plan="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           StatsKit source-layer delivery plan
           <span className="ml-2 font-mono text-[9px] text-slate-500">{sourceLayerDeliverables.length} required layers</span>
         </summary>
@@ -4214,7 +4637,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-missing-data-audit="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Missing data audit
           <span className="ml-2 font-mono text-[9px] text-slate-500">{missingDataRows.length} blocked source layer(s)</span>
         </summary>
@@ -4251,7 +4674,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-schema-coverage="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           StatsKit JSON contract coverage
           <span className="ml-2 font-mono text-[9px] text-slate-500">{schemaCoverageRows.length} objects / {selectedResultCount} StatsResult refs</span>
         </summary>
@@ -4282,7 +4705,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-significance-relevance-delivery-audit="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Significance / Relevance delivery audit
           <span className="ml-2 font-mono text-[9px] text-slate-500">schema vs operational substance</span>
         </summary>
@@ -4315,7 +4738,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-significance-relevance-json-schema-bundle="true" data-vaa1-statskit-box-collapsible="true">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Significance / Relevance JSON schema objects
           <span className="ml-2 font-mono text-[9px] text-slate-500">StatsKit + SignificanceKit + RelevanceRadar</span>
         </summary>
@@ -4337,8 +4760,8 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
       </details>
 
-      <details className="order-2 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 xl:col-start-1 xl:row-start-2" data-vaa1-significancekit-claims="true" data-vaa1-statskit-significance-relevance-surface="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="B">
-        <summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-200">
+      <details className="order-6 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-significancekit-claims="true" data-vaa1-statskit-significance-relevance-surface="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="D">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Significance workbench
           <span className="ml-2 font-mono text-[9px] text-slate-500">{filteredSignificanceRows.length} schema row(s)</span>
         </summary>

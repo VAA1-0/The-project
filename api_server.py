@@ -73,6 +73,7 @@ from src.backend.analysis.transcript_timing_guard import (
     build_transcript_timing_authority,
     promote_automatic_transcript_timing,
     rebuild_transcript_from_quick_sweep_candidate,
+    transcript_timing_looks_scaffolded,
     transcript_timing_repair_needed,
 )
 from src.backend.analysis.evidence_linker import link_transcript_to_trace
@@ -129,6 +130,40 @@ from src.backend.analysis.ai_agent_feature_starters import (
     write_feature_starter_manifest,
 )
 from src.backend.analysis.statskit_agent import StatsKitAgent, StatsKitAgentError
+from src.backend.analysis.projected_state import project_subject_state, project_subject_states
+from src.backend.analysis.decision_ledger import (
+    append_decision,
+    append_dependency_invalidation,
+    append_invalidation,
+    empty_decision_ledger,
+)
+from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
+from src.backend.analysis.claim_projection import project_canonical_claims
+from src.backend.analysis.source_clock_authority import (
+    clock_affected_decision_refs,
+    overlapping_dependents,
+    select_authoritative_time_scope,
+)
+from src.backend.analysis.evidence_quality import assess_evidence_quality, evaluate_quality_use
+from src.backend.analysis.execution_graph_planner import load_execution_graph, plan_affected_branches
+from src.backend.analysis.reproducible_measurement import ReproducibleMeasurementService
+from src.backend.analysis.shot_boundary_measurement import measure_shot_boundaries
+from src.backend.analysis.interpretation_registry import InterpretationRegistry
+from src.backend.analysis.framework_projection import (
+    build_framework_projections,
+    confirm_proposition_to_ledger,
+    write_framework_projections,
+)
+from src.backend.analysis.governed_reporting import GovernedReportService
+from src.backend.analysis.source_policy_service import evaluate_source_use
+from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
+from src.backend.analysis.vocabulary_service import (
+    VocabularyError,
+    list_vocabularies,
+    load_vocabulary_registry,
+    public_registry,
+    resolve_term,
+)
 from fastapi import Form
 
 
@@ -1188,6 +1223,7 @@ def build_narrative_agent_profile(
             "source_preference": source_preference,
         },
         "evidence_slots": {
+            "lines": [],
             "speaker_timeline": [],
             "audio_samples": [],
             "visual_patterns": [],
@@ -1240,6 +1276,7 @@ def build_narrative_agent_profile(
             )
         ]
         if agent_turns:
+            profile["evidence_slots"]["lines"] = agent_turns
             profile["evidence_slots"]["speaker_timeline"] = agent_turns
 
     return {key: item for key, item in profile.items() if annotation_has_value(item)}
@@ -3040,6 +3077,7 @@ def build_source_media_metadata_payload(
             "expected_identities": user_annotations.get("expected_identities", []),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
+            "source_policy": user_annotations.get("source_policy", {}),
         },
         "annotation_maturity": status.get("source_media_annotation_maturity", {}),
         "video_internal_harvest": status.get("source_media_video_internal_harvest", {}),
@@ -3120,6 +3158,96 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
             "transcript_clock_offset_seconds"
         ),
     }
+
+
+def tracked_objects_for_projection(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Load tracked observations for the read-only compatibility projector."""
+    visual = ((status.get("results") or {}).get("visual_analysis") or {})
+    inline = visual.get("tracked_objects")
+    if isinstance(inline, list):
+        return [item for item in inline if isinstance(item, dict)]
+
+    raw_path = (status.get("output_files") or {}).get("tracked_objects_json")
+    if raw_path:
+        try:
+            payload = json.loads(Path(str(raw_path)).read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
+            if isinstance(payload, dict):
+                items = payload.get("tracked_objects") or payload.get("items") or []
+                return [item for item in items if isinstance(item, dict)]
+        except (OSError, ValueError, TypeError):
+            return []
+    return []
+
+
+def decision_ledger_for_status(status: Dict[str, Any]) -> Dict[str, Any]:
+    analysis_id = str(status.get("analysis_id") or "")
+    inline = status.get("canonical_decision_ledger")
+    if isinstance(inline, dict):
+        ledger = inline
+    else:
+        ledger = None
+    path_value = (status.get("output_files") or {}).get("decision_ledger")
+    if ledger is None and path_value:
+        try:
+            payload = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                status["canonical_decision_ledger"] = payload
+                ledger = payload
+        except (OSError, ValueError, TypeError):
+            pass
+    if ledger is None:
+        ledger = empty_decision_ledger(analysis_id)
+    status["canonical_decision_ledger"] = ledger
+
+    corrections = status.get("annotation_corrections")
+    if isinstance(corrections, dict) and any(
+        corrections.get(collection)
+        for collection in ("manual_visual_annotations", "label_overrides", "proliferation_decisions")
+    ):
+        created_at = str(corrections.get("updated_at") or utc_now_iso())
+        created_by = str(corrections.get("updated_by") or "analyst")
+        ledger, backfilled = sync_corrections_to_ledger(
+            ledger,
+            {},
+            corrections,
+            analysis_id=analysis_id,
+            created_at=created_at,
+            created_by=created_by,
+        )
+        status["canonical_decision_ledger"] = ledger
+        if backfilled:
+            analysis_dir = RESULTS_DIR / analysis_id
+            analysis_dir.mkdir(parents=True, exist_ok=True)
+            path = analysis_dir / "decision_ledger.json"
+            path.write_text(json.dumps(ledger, indent=2, ensure_ascii=False), encoding="utf-8")
+            status.setdefault("output_files", {})["decision_ledger"] = str(path)
+            append_analysis_event(
+                status,
+                "canonical_ledger_backfilled",
+                details={
+                    "event_count": len(backfilled),
+                    "decision_refs": [event["decision_id"] for event in backfilled],
+                },
+            )
+            persist_analysis_record_for_status(status)
+    return ledger
+
+
+def write_decision_ledger_file(status: Dict[str, Any]) -> Path:
+    analysis_id = str(status.get("analysis_id") or "")
+    analysis_dir = RESULTS_DIR / analysis_id
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    path = analysis_dir / "decision_ledger.json"
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(decision_ledger_for_status(status), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    status.setdefault("output_files", {})["decision_ledger"] = str(path)
+    return path
 
 
 def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
@@ -3220,6 +3348,8 @@ def read_json_artifact_if_available(path_value: Any) -> Optional[Dict[str, Any]]
 def transcript_payload_has_timing_authority(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
+    if transcript_timing_looks_scaffolded(payload):
+        return False
     timing_authority = payload.get("timing_authority")
     if isinstance(timing_authority, dict):
         operational_authority = str(timing_authority.get("operational_authority") or "")
@@ -3267,21 +3397,21 @@ def transcript_artifact_has_timing_authority(path_value: Any) -> bool:
 
 
 def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
-    """Keep the repaired global-clock transcript as the only transcript export."""
+    """Prefer the preserved Whisper/manual clock artifact over candidates."""
     analysis_id = str(status.get("analysis_id") or "").strip()
     if not analysis_id:
         return False
 
     output_files = status.setdefault("output_files", {})
     current_transcript = output_files.get("transcript")
-    if transcript_artifact_has_timing_authority(current_transcript):
-        return False
 
     candidates: List[Any] = []
     record = read_json_artifact_if_available(get_analysis_record_path(analysis_id))
     if isinstance(record, dict):
         record_output_files = record.get("output_files") or {}
         if isinstance(record_output_files, dict):
+            candidates.append(record_output_files.get("raw_whisper_transcript"))
+            candidates.append(record_output_files.get("operational_transcript"))
             candidates.append(record_output_files.get("transcript"))
         record_transcript = (
             (record.get("results") or {})
@@ -3309,7 +3439,13 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         source_stem = Path(str(source_video_path)).stem.replace("_source_video", "")
         candidates.append(source_dir / f"{source_stem}_transcript.json")
     if current_transcript:
+        candidates.append(current_transcript)
         current_path = Path(str(current_transcript))
+        candidates.append(
+            current_path.with_name(
+                current_path.name.replace("_transcript", "_transcript_raw_whisper")
+            )
+        )
         candidates.append(
             current_path.with_name(
                 current_path.name.replace("_extracted_audio_transcript", "_transcript")
@@ -3329,7 +3465,11 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         candidate_payload = read_json_artifact_if_available(candidate_path)
         if not transcript_payload_has_timing_authority(candidate_payload):
             continue
+        if str(candidate_path) == str(current_transcript):
+            return False
         output_files["transcript"] = str(candidate_path)
+        if candidate_payload.get("transcription_strategy") == "original_whisper_timecode":
+            output_files.setdefault("raw_whisper_transcript", str(candidate_path))
         audio_analysis["transcript"] = candidate_payload
         status["output_files"] = output_files
         status["transcript_timing_repair"] = candidate_payload.get(
@@ -7067,6 +7207,27 @@ def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
             encoding="utf-8",
         )
 
+    if prefer_authoritative_transcript_artifact(status):
+        status["transcript_timing_repair"] = {
+            "status": "relinked",
+            "reason": "preserved_whisper_or_manual_clock_artifact_selected",
+            "quality_before": quality_report,
+            "backup_path": str(backup_path),
+            "vad_policy": "auxiliary_only_not_transcript_clock",
+            "fallback_policy": "candidate_not_operational_source_truth",
+        }
+        return True
+
+    status["transcript_timing_repair"] = {
+        "status": "blocked",
+        "reason": "automatic_repair_disabled_original_whisper_or_manual_clock_required",
+        "quality_before": quality_report,
+        "backup_path": str(backup_path),
+        "vad_policy": "auxiliary_only_not_transcript_clock",
+        "fallback_policy": "candidate_not_operational_source_truth",
+    }
+    return False
+
     try:
         repaired = AudioTranscriptionPipeline(str(audio_path)).rerun_with_chunked_fallback(
             primary_transcript=transcript,
@@ -8148,9 +8309,18 @@ def run_complete_analysis(
                         "transcription_fallback",
                         "Transcript coverage degraded. Retrying with chunked relay windows.",
                     )
-                    transcript = audio_pipeline.rerun_with_chunked_fallback(
+                    fallback_candidate = audio_pipeline.rerun_with_chunked_fallback(
                         primary_transcript=transcript,
                     )
+                    transcript["automatic_fallback_candidate"] = {
+                        "transcription_strategy": fallback_candidate.get("transcription_strategy"),
+                        "fallback_used": fallback_candidate.get("fallback_used"),
+                        "chunking": fallback_candidate.get("chunking"),
+                        "segments": fallback_candidate.get("segments", []),
+                        "created_at": fallback_candidate.get("created_at"),
+                        "fallback_comparison": fallback_candidate.get("fallback_comparison"),
+                        "candidate_reason": "chunked_fallback_preserved_as_candidate_not_transcript_clock",
+                    }
                     transcript_quality = build_transcript_quality_report(
                         transcript,
                         media_duration_seconds=(
@@ -8165,9 +8335,10 @@ def run_complete_analysis(
                         stage="transcription_fallback",
                         message="Chunked transcript fallback completed.",
                         details={
-                            "strategy": transcript.get("transcription_strategy"),
+                            "strategy": fallback_candidate.get("transcription_strategy"),
                             "quality": transcript_quality,
-                            "comparison": transcript.get("fallback_comparison") or {},
+                            "comparison": fallback_candidate.get("fallback_comparison") or {},
+                            "clock_policy": "fallback_candidate_not_transcript_time_authority",
                         },
                     )
 
@@ -8217,6 +8388,7 @@ def run_complete_analysis(
                 # Step 3: Prepare organized paths
                 audio_filename = f"{analysis_id}_audio.wav"
                 transcript_filename = f"{analysis_id}_transcript.json"  # Whisper output stays with original name
+                raw_whisper_transcript_filename = f"{analysis_id}_transcript_raw_whisper.json"
                 lm_transcript_filename = f"{analysis_id}_lm_transcript.json"
                 audio_prosody_filename = f"{analysis_id}_audio_prosody.json"
                 audio_event_intervals_filename = f"{analysis_id}_audio_event_intervals.json"
@@ -8225,6 +8397,7 @@ def run_complete_analysis(
 
                 organized_audio_path = AUDIO_DIR / audio_filename
                 organized_transcript_path = TRANSCRIPTS_DIR / transcript_filename
+                organized_raw_whisper_path = TRANSCRIPTS_DIR / raw_whisper_transcript_filename
                 organized_lm_path = TRANSCRIPTS_DIR / lm_transcript_filename
                 organized_audio_prosody_path = TRANSCRIPTS_DIR / audio_prosody_filename
                 organized_audio_event_intervals_path = TRANSCRIPTS_DIR / audio_event_intervals_filename
@@ -8241,6 +8414,7 @@ def run_complete_analysis(
                 # Step 5: Locate transcript file
                 original_transcript_dir = Path(audio_path).parent / "transcripts"
                 original_transcript_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript.json"
+                original_raw_whisper_path = original_transcript_dir / f"{Path(audio_path).stem}_transcript_raw_whisper.json"
 
                 if not original_transcript_path.exists():
                     alternative_path = audio_pipeline.output_dir / f"{Path(audio_path).stem}_transcript.json"
@@ -8253,8 +8427,22 @@ def run_complete_analysis(
                 shutil.move(str(original_transcript_path), organized_transcript_path)
                 with open(organized_transcript_path, "w", encoding="utf-8") as f:
                     json.dump(transcript, f, indent=2, ensure_ascii=False)
+                if original_raw_whisper_path.exists():
+                    shutil.copy2(str(original_raw_whisper_path), organized_raw_whisper_path)
+                else:
+                    with open(organized_raw_whisper_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {
+                                **transcript,
+                                "transcription_strategy": "original_whisper_timecode",
+                            },
+                            f,
+                            indent=2,
+                            ensure_ascii=False,
+                        )
                 output_files["audio"] = str(organized_audio_path)
                 output_files["transcript"] = str(organized_transcript_path)
+                output_files["raw_whisper_transcript"] = str(organized_raw_whisper_path)
                 write_linked_transcript_artifact(status, transcript, output_files)
 
                 try:
@@ -8933,6 +9121,11 @@ async def refresh_evidence_proliferation_matcher_endpoint(
             "candidate_count": result.get("candidate_count"),
         },
     )
+    # Scanner refresh is also the analyst-facing recomputation boundary for the
+    # live maturation audit. Never retain hypotheses produced by a superseded
+    # governance policy (for example, disabled track-derived promotion).
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
 
     return make_json_safe(result)
@@ -9024,6 +9217,55 @@ async def get_audio_timing_health(analysis_id: str) -> dict:
     return make_json_safe(build_audio_timing_health_report(status))
 
 
+@app.get("/api/status/{analysis_id}/summary", response_model=dict)
+async def get_analysis_status_summary(analysis_id: str) -> dict:
+    """Return the bounded shell/panel bootstrap view without materializing artifacts."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+    audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+    source_video_path = status.get("source_video_path")
+    return make_json_safe({
+        "schema": "vaa1.analysis_status_summary.v1",
+        "analysis_id": analysis_id,
+        "status": status.get("status"),
+        "progress": status.get("progress"),
+        "mission_stage": status.get("mission_stage"),
+        "mission_message": status.get("mission_message"),
+        "filename": status.get("original_filename"),
+        "error": status.get("error"),
+        "pipeline_type": status.get("pipeline_type", "full"),
+        "analysis_tier": status.get("analysis_tier", "science_scan"),
+        "modality_focus": status.get("modality_focus", "multimodal"),
+        "uploaded_at": status.get("uploaded_at"),
+        "analysis_started_at": status.get("analysis_started_at"),
+        "analysis_completed_at": status.get("analysis_completed_at"),
+        "cvatID": status.get("cvatID", 0),
+        "source_video_path": source_video_path,
+        "source_video_exists": bool(source_video_path and Path(str(source_video_path)).exists()),
+        "source_media_metadata": status.get("source_media_metadata"),
+        "transcript_timing_repair": status.get("transcript_timing_repair"),
+        "summary": {
+            "yolo_detections": len(visual.get("yolo_results") or []),
+            "tracked_objects": len(visual.get("tracked_objects") or []),
+            "ocr_detections": len(visual.get("ocr_results") or []),
+            "expression_samples": len(visual.get("expression_results") or []),
+            "expression_status": visual.get("expression_status", "not_run"),
+            "motion_evidence": visual.get("motion_evidence", {}),
+            "scene_segments": visual.get("scene_segments", {}),
+            "audio_segments": len((audio.get("transcript") or {}).get("segments") or []),
+            "audio_language": (audio.get("transcript") or {}).get("language", "unknown"),
+        },
+        "canonical_summary": {
+            "decision_count": len((status.get("canonical_decision_ledger") or {}).get("decisions") or []),
+            "corrections_updated_at": (status.get("annotation_corrections") or {}).get("updated_at"),
+        },
+        "download_links": build_download_links(analysis_id, status.get("output_files") or {}),
+    })
+
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -9032,6 +9274,12 @@ async def get_analysis_status(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    canonical_ledger = decision_ledger_for_status(status)
+    canonical_projection = project_canonical_claims(
+        analysis_id=analysis_id,
+        decisions=canonical_ledger.get("decisions", []),
+    )
 
     response_data = {
         "analysis_id": analysis_id,
@@ -9056,6 +9304,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_video_path": status.get("source_video_path"),
         "source_media_metadata": status.get("source_media_metadata"),
         "annotation_corrections": status.get("annotation_corrections"),
+        "canonical_decision_ledger": canonical_ledger,
+        "projected_canonical_claims": canonical_projection,
         "cvat_ingest": status.get("cvat_ingest"),
         "internal_artifacts": status.get("internal_artifacts"),
         "forensic_render_jobs": status.get("forensic_render_jobs", []),
@@ -9646,6 +9896,10 @@ async def download_file(analysis_id: str, file_type: str):
         ),
         "datascene_meaning_network": (
             "datascene_meaning_network.json",
+            "application/json",
+        ),
+        "vaa1_annotation_master_schema": (
+            "vaa1_annotation_master_schema.json",
             "application/json",
         ),
         "mise_en_scene_scene_cards": ("mise_en_scene_scene_card_report.json", "application/json"),
@@ -10262,6 +10516,8 @@ async def refresh_source_media_maturity(analysis_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
     write_source_media_metadata_files(status)
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
     metadata = status.get("source_media_metadata", {})
     append_analysis_event(
@@ -10426,6 +10682,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "scope",
         "description",
         "persons",
+        "organizations",
         "character_roles",
         "character_definitions",
         "narrative_agent_profiles",
@@ -10454,11 +10711,14 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "reference_source",
         "confidence",
         "notes",
+        "source_policy",
     ):
         if key in payload:
             value = payload.get(key)
-            if key in ("persons", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
+            if key in ("persons", "organizations", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
+            elif key == "source_policy":
+                annotations[key] = value if isinstance(value, dict) else {}
             else:
                 annotations[key] = value or ""
 
@@ -10477,6 +10737,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "scope",
                     "description",
                     "persons",
+                    "organizations",
                     "character_roles",
                     "character_definitions",
                     "narrative_agent_profiles",
@@ -10505,11 +10766,14 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "reference_source",
                     "confidence",
                     "notes",
+                    "source_policy",
                 )
                 if key in payload
             ]
         },
     )
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
 
     return {
@@ -10517,6 +10781,399 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "analysis_id": analysis_id,
         "source_media_metadata": status.get("source_media_metadata", {}),
     }
+
+
+@app.get("/api/vocabularies", response_model=dict)
+async def get_canonical_vocabularies(include_terms: bool = False) -> dict:
+    """Return versioned vocabulary contracts used by governed applications."""
+    try:
+        registry = load_vocabulary_registry()
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "vocabularies": public_registry(registry)["vocabularies"]
+        if include_terms
+        else list_vocabularies(registry),
+    }
+
+
+@app.post("/api/vocabularies/resolve", response_model=dict)
+async def resolve_canonical_vocabulary_term(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Resolve a stable term id, version, label, and replacement lineage."""
+    try:
+        term = resolve_term(
+            load_vocabulary_registry(),
+            str(payload.get("vocabulary_id") or ""),
+            str(payload.get("term_id") or ""),
+            version=payload.get("vocabulary_version"),
+            language=str(payload.get("language") or "en"),
+            follow_replacement=bool(payload.get("follow_replacement", True)),
+        )
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "resolved", "term": term}
+
+
+@app.post("/api/source-media/{analysis_id}/policy/evaluate", response_model=dict)
+async def evaluate_source_media_policy(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Evaluate a local, provider, transfer, or export use without changing evidence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    try:
+        decision = evaluate_source_use(
+            metadata,
+            str(payload.get("purpose") or ""),
+            provider_id=payload.get("provider_id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    append_analysis_event(
+        status,
+        "source_policy_evaluated",
+        details={
+            "purpose": decision["purpose"],
+            "provider_id": decision["provider_id"],
+            "allowed": decision["allowed"],
+            "review_state": decision["review_state"],
+            "reason_codes": decision["reason_codes"],
+        },
+    )
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "policy_decision": decision}
+
+
+@app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
+async def resolve_analysis_source_clock(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Resolve timing authority and identify only overlapping dependents."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        raise HTTPException(status_code=400, detail="candidates must be a list")
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    duration = safe_float(metadata.get("duration_seconds"))
+    try:
+        selected = select_authoritative_time_scope(candidates, duration_seconds=duration)
+        affected = overlapping_dependents(
+            selected,
+            payload.get("dependents") if isinstance(payload.get("dependents"), list) else [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    invalidation = None
+    if bool(payload.get("apply_invalidation")):
+        ledger = decision_ledger_for_status(status)
+        target_decision_refs = clock_affected_decision_refs(ledger, selected)
+        if target_decision_refs:
+            try:
+                ledger, invalidation, appended = append_dependency_invalidation(
+                    ledger,
+                    {
+                        "dependency_ref": "source_media.clock",
+                        "target_decision_refs": target_decision_refs,
+                        "reason_code": "source_clock_changed",
+                        "reason": "The canonical source timing changed within this decision scope.",
+                        "validity_effect": "stale",
+                        "authority": str(payload.get("authority") or "explicit_user_correction"),
+                        "created_by": str(payload.get("created_by") or "analyst"),
+                    },
+                    analysis_id=analysis_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            status["canonical_decision_ledger"] = ledger
+            write_decision_ledger_file(status)
+            if appended:
+                append_analysis_event(
+                    status,
+                    "source_clock_dependency_invalidation",
+                    details={
+                        "target_decision_refs": target_decision_refs,
+                        "changed_scope": selected,
+                    },
+                )
+            persist_analysis_record_for_status(status)
+    return {
+        "analysis_id": analysis_id,
+        "selected_time_scope": selected,
+        "affected_dependent_refs": affected,
+        "invalidation": invalidation,
+    }
+
+
+@app.post("/api/evidence-quality/assess", response_model=dict)
+async def assess_evidence_quality_route(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Assess evidence fitness while keeping every result calmly inspectable."""
+    try:
+        assessment = assess_evidence_quality(payload)
+        uses = payload.get("evaluate_uses") or [
+            "inspect",
+            "exploratory_analysis",
+            "descriptive_measurement",
+            "comparative_inference",
+            "proposition_candidate",
+            "mature_projection",
+            "verified_report_claim",
+        ]
+        evaluations = {
+            str(use): evaluate_quality_use(assessment, str(use)) for use in uses
+        }
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "assessed", "assessment": assessment, "use_evaluations": evaluations}
+
+
+@app.post("/api/analysis/{analysis_id}/execution-graph/affected-plan", response_model=dict)
+async def plan_analysis_affected_branches(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Return deterministic downstream work for changed scientific feature stages."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    changed_nodes = payload.get("changed_nodes")
+    if not isinstance(changed_nodes, list):
+        raise HTTPException(status_code=400, detail="changed_nodes must be a list")
+    try:
+        plan = plan_affected_branches(
+            load_execution_graph(),
+            changed_nodes,
+            include_operational_edges=bool(payload.get("include_operational_edges")),
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, "affected_branch_plan": plan}
+
+
+@app.post("/api/analysis/{analysis_id}/measurement-runs/native-core", response_model=dict)
+async def run_native_core_measurements(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Run source-traceable transcript, speaker, VAD, and scene measurements."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        service = ReproducibleMeasurementService(
+            analysis_id,
+            RESULTS_DIR / analysis_id,
+            RESULTS_DIR.parent,
+        )
+        return service.run(
+            persist=bool(payload.get("persist", True)),
+            parameters=payload.get("parameters") if isinstance(payload.get("parameters"), dict) else None,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/shot-boundaries/measure", response_model=dict)
+async def measure_analysis_shot_boundaries(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Measure true source-video shot intervals with the local governed provider."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    persist = bool(payload.get("persist", True))
+    output_path = RESULTS_DIR / analysis_id / "shot_boundaries.json" if persist else None
+    try:
+        measured = measure_shot_boundaries(
+            source,
+            analysis_id=analysis_id,
+            threshold=float(payload.get("threshold", 27.0)),
+            min_scene_len_frames=int(payload.get("min_scene_len_frames", 10)),
+            output_path=output_path,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        status.setdefault("output_files", {})["shot_boundaries"] = str(output_path)
+        status.setdefault("results", {}).setdefault("visual_analysis", {})["shot_boundaries"] = measured
+        refresh_master_schema_metadata_surfaces(status)
+        persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "persisted": persist, "shot_boundaries": measured}
+
+
+def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegistry:
+    return InterpretationRegistry(
+        analysis_id,
+        RESULTS_DIR / analysis_id / "interpretation_registry.json",
+    )
+
+
+def governed_report_service_for_analysis(analysis_id: str) -> GovernedReportService:
+    return GovernedReportService(analysis_id, RESULTS_DIR / analysis_id / "governed_reports.json")
+
+
+def governed_report_sources_for_analysis(analysis_id: str, status: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Expose governed objects with their evidence chain intact for report verification."""
+    registry = interpretation_registry_for_analysis(analysis_id).view()
+    records = {str(item.get("record_id")): dict(item) for item in registry.get("records", []) if item.get("record_id")}
+
+    def evidence_for(ref: str, visited: set[str] | None = None) -> list[str]:
+        visited = set(visited or ())
+        if ref in visited or ref not in records:
+            return []
+        visited.add(ref)
+        item = records[ref]
+        direct = [str(value) for value in item.get("evidence_refs", []) if value]
+        support = [str(value) for value in item.get("support_refs", []) if value]
+        inherited = [evidence_ref for value in support for evidence_ref in evidence_for(value, visited)]
+        return list(dict.fromkeys([*direct, *inherited]))
+
+    for ref, item in records.items():
+        item["evidence_refs"] = evidence_for(ref)
+    for item in decision_ledger_for_status(status).get("decisions", []):
+        decision_id = str(item.get("decision_id") or "")
+        if decision_id and item.get("decision_action") != "invalidate":
+            records[decision_id] = {"kind": "decision", **item, "effective_validity": item.get("validity", "current")}
+    return records
+
+
+@app.get("/api/analysis/{analysis_id}/interpretation-registry", response_model=dict)
+async def get_interpretation_registry(analysis_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return interpretation_registry_for_analysis(analysis_id).view()
+
+
+@app.post("/api/analysis/{analysis_id}/interpretation-registry/{record_kind}", response_model=dict)
+async def append_interpretation_record(
+    analysis_id: str, record_kind: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    registry = interpretation_registry_for_analysis(analysis_id)
+    handlers = {
+        "claims": registry.append_claim,
+        "propositions": registry.append_proposition,
+        "relations": registry.append_relation,
+        "state-transitions": registry.append_transition,
+        "invalidations": registry.invalidate,
+    }
+    if record_kind not in handlers:
+        raise HTTPException(status_code=404, detail="Unknown interpretation record kind")
+    try:
+        result = handlers[record_kind](payload, persist=bool(payload.get("persist", True)))
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/framework-projections", response_model=dict)
+async def project_analysis_frameworks(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    projections = build_framework_projections(
+        analysis_id,
+        interpretation_registry_for_analysis(analysis_id).view(),
+    )
+    persisted = bool(payload.get("persist", True))
+    if persisted:
+        write_framework_projections(
+            RESULTS_DIR / analysis_id / "framework_projections.json",
+            projections,
+        )
+    return {"analysis_id": analysis_id, "persisted": persisted, "framework_projections": projections}
+
+
+@app.post("/api/analysis/{analysis_id}/interpretation-registry/propositions/{proposition_id}/confirm", response_model=dict)
+async def confirm_interpretation_proposition(
+    analysis_id: str, proposition_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    registry = interpretation_registry_for_analysis(analysis_id).view()
+    proposition = next(
+        (item for item in registry.get("records", []) if item.get("record_id") == proposition_id),
+        None,
+    )
+    if proposition is None:
+        raise HTTPException(status_code=404, detail="Proposition not found")
+    try:
+        ledger, decision, appended = confirm_proposition_to_ledger(
+            analysis_id=analysis_id,
+            ledger=decision_ledger_for_status(status),
+            proposition=proposition,
+            payload=payload,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "appended": appended, "decision": decision}
+
+
+@app.get("/api/analysis/{analysis_id}/governed-reports", response_model=dict)
+async def get_governed_reports(analysis_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return governed_report_service_for_analysis(analysis_id).view()
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/claims", response_model=dict)
+async def create_governed_report_claim(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        result = governed_report_service_for_analysis(analysis_id).create_claim(
+            payload, governed_report_sources_for_analysis(analysis_id, status), persist=bool(payload.get("persist", True))
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/invalidations", response_model=dict)
+async def invalidate_governed_report_claims(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        result = governed_report_service_for_analysis(analysis_id).invalidate_sources(
+            payload.get("changed_source_refs") or [], reason=str(payload.get("reason") or "A governed source changed."),
+            persist=bool(payload.get("persist", True)),
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, **result}
+
+
+@app.post("/api/analysis/{analysis_id}/governed-reports/export", response_model=dict)
+async def export_governed_report(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    export_id = str(payload.get("export_id") or uuid.uuid4().hex)
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", export_id):
+        raise HTTPException(status_code=400, detail="export_id contains unsupported characters")
+    output_path = RESULTS_DIR / analysis_id / "reports" / f"{export_id}.json"
+    try:
+        result = governed_report_service_for_analysis(analysis_id).export(payload.get("claim_refs") or [], output_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"analysis_id": analysis_id, "report_run": result["report_run"], "export_path": result["export_path"]}
+
+
+@app.get("/api/analysis/{analysis_id}/governed-reports/claims/{claim_id}/traceback", response_model=dict)
+async def get_governed_report_traceback(analysis_id: str, claim_id: str) -> dict:
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        return governed_report_service_for_analysis(analysis_id).traceback(claim_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/source-media/{analysis_id}/references", response_model=dict)
@@ -10944,6 +11601,231 @@ async def get_annotation_corrections(analysis_id: str) -> dict:
     }
 
 
+@app.get("/api/analysis/{analysis_id}/projected-state", response_model=dict)
+async def get_projected_state(
+    analysis_id: str,
+    subject_ref: str,
+    timestamp: float,
+) -> dict:
+    """Return a calm, read-only projection over current legacy evidence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return project_subject_state(
+        analysis_id=analysis_id,
+        subject_ref=subject_ref,
+        timestamp=timestamp,
+        tracked_objects=tracked_objects_for_projection(status),
+        corrections=build_annotation_corrections_payload(status),
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+    )
+
+
+@app.post("/api/analysis/{analysis_id}/projected-state/batch", response_model=dict)
+async def get_projected_state_batch(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve visible subjects in one quiet, read-only request."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    requests = payload.get("requests") or []
+    if not isinstance(requests, list):
+        raise HTTPException(status_code=400, detail="requests must be a list")
+    if len(requests) > 500:
+        raise HTTPException(status_code=400, detail="At most 500 projections may be requested")
+    return project_subject_states(
+        analysis_id=analysis_id,
+        requests=requests,
+        tracked_objects=tracked_objects_for_projection(status),
+        corrections=build_annotation_corrections_payload(status),
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+    )
+
+
+@app.post("/api/analysis/{analysis_id}/claims/projected", response_model=dict)
+async def get_projected_canonical_claims(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve canonical claims for any governed subject/property family."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    subject_refs = payload.get("subject_refs") or []
+    properties = payload.get("properties") or []
+    if not isinstance(subject_refs, list) or not isinstance(properties, list):
+        raise HTTPException(status_code=400, detail="subject_refs and properties must be lists")
+    if len(subject_refs) > 1000 or len(properties) > 100:
+        raise HTTPException(status_code=400, detail="Projection request is too large")
+    timestamp = payload.get("timestamp")
+    if timestamp is not None:
+        timestamp = safe_float(timestamp)
+        if timestamp is None or timestamp < 0:
+            raise HTTPException(status_code=400, detail="timestamp must be a non-negative number")
+    return project_canonical_claims(
+        analysis_id=analysis_id,
+        decisions=decision_ledger_for_status(status).get("decisions", []),
+        subject_refs=subject_refs,
+        properties=properties,
+        timestamp=timestamp,
+    )
+
+
+@app.get("/api/analysis/{analysis_id}/decisions", response_model=dict)
+async def get_canonical_decisions(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return {"status": "ok", "decision_ledger": decision_ledger_for_status(status)}
+
+
+@app.post("/api/analysis/{analysis_id}/taxonomy-applications", response_model=dict)
+async def create_taxonomy_application(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Resolve a canonical term and append its scoped analyst application."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, decision, appended = apply_taxonomy_term(
+            decision_ledger_for_status(status),
+            load_vocabulary_registry(),
+            payload,
+            analysis_id=analysis_id,
+        )
+    except (OSError, ValueError, VocabularyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "taxonomy_application_appended",
+            details={
+                "decision_id": decision["decision_id"],
+                "subject_ref": decision["subject_ref"],
+                "term_ref": (decision.get("provenance") or {}).get("term_ref"),
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "taxonomy_application": decision,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/decisions", response_model=dict)
+async def create_canonical_decision(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Append an accepted pilot decision without rewriting earlier records."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, decision, appended = append_decision(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_decision_appended",
+            details={"decision_id": decision["decision_id"], "property": decision["property"]},
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "decision": decision,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/decisions/invalidate", response_model=dict)
+async def invalidate_canonical_decisions(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Append a validity event; original decisions remain immutable."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        ledger, event, appended = append_invalidation(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_decision_invalidated",
+            details={
+                "invalidation_id": event["decision_id"],
+                "target_decision_refs": event["target_decision_refs"],
+                "reason_code": event["reason_code"],
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "invalidation": event,
+        "decision_count": len(ledger.get("decisions", [])),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/decisions/dependency-change", response_model=dict)
+async def invalidate_decisions_for_dependency_change(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Apply a declared clock, track, geometry, evidence, or taxonomy change."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    dependency_ref = str(payload.get("dependency_ref") or "").strip()
+    if not dependency_ref:
+        raise HTTPException(status_code=400, detail="dependency_ref is required")
+    try:
+        ledger, event, appended = append_dependency_invalidation(
+            decision_ledger_for_status(status), payload, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status["canonical_decision_ledger"] = ledger
+    write_decision_ledger_file(status)
+    if appended:
+        append_analysis_event(
+            status,
+            "canonical_dependency_invalidation",
+            details={
+                "dependency_ref": dependency_ref,
+                "validity_effect": event["validity_effect"],
+                "target_decision_refs": event["target_decision_refs"],
+            },
+        )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "appended" if appended else "unchanged",
+        "analysis_id": analysis_id,
+        "invalidation": event,
+    }
+
+
 @app.post("/api/annotation-corrections/{analysis_id}", response_model=dict)
 async def update_annotation_corrections(
     analysis_id: str, payload: Dict[str, Any] = Body(...)
@@ -10953,6 +11835,7 @@ async def update_annotation_corrections(
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
     corrections = status.setdefault("annotation_corrections", {})
+    previous_corrections = json.loads(json.dumps(corrections, default=str))
     corrections["version"] = 1
     corrections["updated_at"] = utc_now_iso()
     corrections["updated_by"] = payload.get("updated_by") or "analyst"
@@ -11008,6 +11891,50 @@ async def update_annotation_corrections(
         )
     else:
         corrections.setdefault("transcript_clock_offset_seconds", None)
+
+    ledger, canonical_events = sync_corrections_to_ledger(
+        decision_ledger_for_status(status),
+        previous_corrections,
+        corrections,
+        analysis_id=analysis_id,
+        created_at=corrections["updated_at"],
+        created_by=corrections["updated_by"],
+    )
+    status["canonical_decision_ledger"] = ledger
+    previous_clock_offset = previous_corrections.get("transcript_clock_offset_seconds")
+    current_clock_offset = corrections.get("transcript_clock_offset_seconds")
+    if previous_clock_offset != current_clock_offset:
+        try:
+            ledger, clock_event, clock_appended = append_dependency_invalidation(
+                ledger,
+                {
+                    "dependency_ref": "source_media.clock",
+                    "reason_code": "transcript_clock_offset_changed",
+                    "reason": "The operational media clock changed; time-scoped decisions require review.",
+                    "validity_effect": "stale",
+                    "require_temporal_scope": True,
+                    "created_at": corrections["updated_at"],
+                    "created_by": corrections["updated_by"],
+                },
+                analysis_id=analysis_id,
+            )
+        except ValueError:
+            clock_event = None
+            clock_appended = False
+        if clock_appended and clock_event:
+            canonical_events.append(clock_event)
+            status["canonical_decision_ledger"] = ledger
+    if canonical_events:
+        write_decision_ledger_file(status)
+        append_analysis_event(
+            status,
+            "canonical_correction_sync",
+            details={
+                "event_count": len(canonical_events),
+                "decision_refs": [event["decision_id"] for event in canonical_events],
+                "actions": [event["decision_action"] for event in canonical_events],
+            },
+        )
 
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)

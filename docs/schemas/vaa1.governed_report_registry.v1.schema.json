@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.governed_report_registry.v1.schema.json",
+  "title": "VAA1 governed report registry",
+  "type": "object",
+  "required": ["schema", "analysis_id", "version", "records"],
+  "properties": {
+    "schema": {"const": "vaa1.governed_report_registry.v1"},
+    "analysis_id": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["schema", "record_id", "kind", "analysis_id", "validity", "created_at", "provenance"],
+        "properties": {
+          "kind": {"enum": ["report_claim", "report_invalidation", "report_run"]},
+          "status": {"enum": ["verified", "candidate", "conflicting", "limited", "analyst_authored"]},
+          "canonical": {"const": false},
+          "source_object_refs": {"type": "array", "items": {"type": "string"}},
+          "citations": {"type": "array"},
+          "source_traceback": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["source_object_ref", "source_object_sha256", "evidence_refs", "source_locations"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

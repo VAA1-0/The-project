@@ -510,9 +510,9 @@ function mergeMicroScenes(
 export default function ToolsPanel() {
   const { openPanel } = useLayoutHost();
   const selectSurfaceClassName =
-    "w-full max-w-[260px] border-white/12 bg-[#202020] text-slate-200 data-[placeholder]:text-slate-400";
+    "h-8 w-full max-w-[260px] rounded-sm border-slate-700 bg-[#14171c] px-2 text-[12px] text-slate-200 shadow-none data-[placeholder]:text-slate-500";
   const selectContentClassName =
-    "border-white/12 bg-[#202020] text-slate-200";
+    "rounded-sm border-slate-700 bg-[#14171c] text-[12px] text-slate-200 shadow-lg shadow-black/20";
   const morphologySectionRef = React.useRef<HTMLDivElement | null>(null);
   const faceSectionRef = React.useRef<HTMLDivElement | null>(null);
   const languageSectionRef = React.useRef<HTMLDivElement | null>(null);
@@ -637,16 +637,16 @@ export default function ToolsPanel() {
     useState<AnnotationPluginView>("menu");
 
   const workspaceOptions: Array<{ key: ToolsWorkspace; label: string }> = [
+    { key: "ai_agent", label: "AI Agent processes" },
     { key: "analysis", label: "Analysis setup" },
     { key: "annotation", label: "Annotation workspace" },
-    { key: "visual", label: "Visual cues" },
-    { key: "morphology", label: "Morphology catalog" },
+    { key: "expression", label: "Expression records" },
     { key: "face", label: "Face records" },
+    { key: "forensic", label: "Forensic render" },
     { key: "language", label: "Language records" },
     { key: "mission", label: "Mission records" },
-    { key: "expression", label: "Expression records" },
-    { key: "forensic", label: "Forensic render" },
-    { key: "ai_agent", label: "AI Agent processes" },
+    { key: "morphology", label: "Morphology catalog" },
+    { key: "visual", label: "Visual cues" },
   ];
 
   const activateWorkspaceSection = (section: ToolsWorkspace) => {
@@ -2478,6 +2478,33 @@ export default function ToolsPanel() {
                 : "overflow-y-auto"
             }`}
           >
+            <div className="mb-2 flex flex-wrap items-end justify-between gap-2 border-b border-white/8 pb-2">
+              <label className="min-w-[220px] max-w-[320px] flex-1">
+                <span className="mb-1 block text-[10px] text-slate-500">Tools</span>
+                <Select
+                  value={activeWorkspace}
+                  onValueChange={(value) => activateWorkspaceSection(value as ToolsWorkspace)}
+                >
+                  <SelectTrigger className={selectSurfaceClassName}>
+                    <SelectValue placeholder="Choose tool" />
+                  </SelectTrigger>
+                  <SelectContent className={selectContentClassName}>
+                    {workspaceOptions.map((item) => (
+                      <SelectItem
+                        key={item.key}
+                        value={item.key}
+                        className="text-[12px] focus:bg-slate-800/60 focus:text-slate-100"
+                      >
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <span className="text-[10px] text-slate-500">
+                Supporting records stay closed until opened
+              </span>
+            </div>
             <div
               className={
                 activeWorkspace === "annotation"
@@ -4112,7 +4139,11 @@ export default function ToolsPanel() {
               )}
 
               {(activeWorkspace === "analysis" || activeWorkspace === "morphology") && (
-              <div className="space-y-3 rounded-md border border-white/10 bg-[#1b1b1b] p-3">
+              <details className="rounded-md border border-white/10 bg-[#1b1b1b]">
+                <summary className="cursor-pointer list-none px-3 py-2 text-sm text-slate-200 marker:hidden">
+                  Analysis and morphology setup
+                </summary>
+                <div className="space-y-3 border-t border-white/10 p-3">
                 <div className="space-y-1">
                   <Label htmlFor="analysis-tier">Analysis tier</Label>
                   <Select
@@ -4396,7 +4427,8 @@ export default function ToolsPanel() {
                     </CollapsibleContent>
                   </div>
                 </Collapsible>
-              </div>
+                </div>
+              </details>
               )}
 
               {activeWorkspace === "face" && (
@@ -4879,25 +4911,6 @@ export default function ToolsPanel() {
               {activeWorkspace === "annotation"
                 ? "Choose an annotation method from Annotation tools. CVAT is currently the optional manual visual annotation plugin."
                 : "Use Annotation workspace when you want to add optional manual annotation plugins alongside the core VAA1 workflow."}
-            </div>
-            <div className="mt-3 max-w-[240px]">
-              <Select
-                value={activeWorkspace}
-                onValueChange={(value) =>
-                  activateWorkspaceSection(value as ToolsWorkspace)
-                }
-              >
-                <SelectTrigger className={selectSurfaceClassName}>
-                  <SelectValue placeholder="Tools menu" />
-                </SelectTrigger>
-                <SelectContent className={selectContentClassName}>
-                  {workspaceOptions.map((item) => (
-                    <SelectItem key={item.key} value={item.key}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
         </div>

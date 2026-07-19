@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional, Dict
 import whisper
 from src.backend.utils.logger import get_logger
+from src.backend.analysis.transcript_timing_guard import transcript_timing_looks_scaffolded
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,19 @@ class AudioTranscriptionPipeline:
         fallback_used: bool = False,
         diarization: Optional[Any] = None,
     ) -> dict[str, Any]:
+        raw_segments = result.get("segments") or []
+        scaffolded = transcript_timing_looks_scaffolded({"segments": raw_segments})
+        timing_status = (
+            "needs_per_line_sync" if scaffolded else "original_whisper_timecode"
+        )
+        timing_authority = (
+            "text_only_no_source_timing" if scaffolded else "original_whisper_timecode"
+        )
+        timing_source = (
+            "openai_whisper.full_pass_scaffold_rejected"
+            if scaffolded
+            else "openai_whisper.full_pass"
+        )
         return {
             "audio_file": str(self.audio_path),
             "language": result.get("language", "unknown"),
@@ -75,8 +89,13 @@ class AudioTranscriptionPipeline:
                     "start": round(seg["start"], 2),
                     "end": round(seg["end"], 2),
                     "text": seg["text"].strip(),
+                    "words": seg.get("words", []),
+                    "timing_status": timing_status,
+                    "timing_authority": timing_authority,
+                    "timing_source": timing_source,
+                    "source_time_valid": not scaffolded,
                 }
-                for seg in result["segments"]
+                for seg in raw_segments
             ],
             "created_at": datetime.utcnow().isoformat(),
             "transcription_strategy": strategy,
@@ -89,6 +108,35 @@ class AudioTranscriptionPipeline:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(transcript_data, f, indent=2, ensure_ascii=False)
         logger.info(f"Transcription saved: {output_file}")
+        source_time_operational = bool(
+            transcript_data.get("segments")
+            and all(
+                segment.get("source_time_valid") is not False
+                and segment.get("timing_authority") == "original_whisper_timecode"
+                for segment in transcript_data.get("segments", [])
+                if isinstance(segment, dict)
+            )
+        )
+        if (
+            source_time_operational
+            and transcript_data.get("transcription_strategy") in {"full_pass", "original_whisper_timecode"}
+        ):
+            raw_output_file = self.output_dir / f"{self.audio_path.stem}_transcript_raw_whisper.json"
+            raw_payload = {
+                **transcript_data,
+                "transcription_strategy": "original_whisper_timecode",
+                "timing_authority": {
+                    "schema": "vaa1.transcript_timing_authority.v1",
+                    "operational_authority": "original_whisper_timecode",
+                    "manual_correction_policy": "manual_corrections_override_whisper_clock",
+                    "vad_policy": "auxiliary_only_not_transcript_clock",
+                    "fallback_policy": "candidate_not_operational_source_truth",
+                    "source_time_operational": True,
+                },
+            }
+            with open(raw_output_file, "w", encoding="utf-8") as f:
+                json.dump(raw_payload, f, indent=2, ensure_ascii=False)
+            logger.info(f"Raw Whisper timecode saved: {raw_output_file}")
 
     def _assign_speakers(self, transcript: Dict[str, Any], diarization: Any) -> Dict[str, Any]:
         if not PYANNOTE_AVAILABLE or not diarization:
@@ -113,7 +161,7 @@ class AudioTranscriptionPipeline:
         return transcript
 
     def _transcribe_with_model(self, model: Any, audio_path: Path | str, diarization: Optional[Any] = None) -> dict[str, Any]:
-        result = model.transcribe(str(audio_path), fp16=False)
+        result = model.transcribe(str(audio_path), fp16=False, word_timestamps=True)
         transcript = self._build_transcript_data(result, diarization=diarization)
         # Align speakers even if diarization is from a separate step
         if diarization is not None:
@@ -376,5 +424,4 @@ class AudioTranscriptionPipeline:
             "improvement_seconds": round(improvement, 3),
             "selected_strategy": chosen.get("transcription_strategy"),
         }
-        self._write_transcript_file(chosen)
         return chosen

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.projected_subject_state.compatibility.schema.json",
+  "title": "VAA1 Projected Subject State Compatibility Contract",
+  "type": "object",
+  "required": ["schema", "analysis_id", "subject_ref", "timestamp_seconds", "projected_value", "authority", "maturity", "validity", "projection_status", "evidence_refs", "correction_refs", "traceback_refs", "compatibility_mode"],
+  "properties": {
+    "schema": {"const": "vaa1.projected_subject_state.v0.compatibility"},
+    "analysis_id": {"type": "string", "minLength": 1},
+    "subject_ref": {"type": "object", "required": ["type", "id"]},
+    "timestamp_seconds": {"type": "number", "minimum": 0},
+    "raw_value": {"type": ["string", "null"]},
+    "projected_value": {"type": ["string", "null"]},
+    "authority": {"type": "string"},
+    "authority_rank": {"type": "integer"},
+    "maturity": {"type": "string"},
+    "validity": {"enum": ["current", "stale", "invalid", "unknown"]},
+    "review_status": {"type": "string"},
+    "conflict_status": {"type": "string"},
+    "projection_status": {"enum": ["projected", "unavailable", "suppressed", "stale"]},
+    "scope": {"type": "object"},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "correction_refs": {"type": "array", "items": {"type": "string"}},
+    "decision_refs": {"type": "array", "items": {"type": "string"}},
+    "invalidated_decision_refs": {"type": "array", "items": {"type": "string"}},
+    "suppressed_validity_effects": {"type": "array", "items": {"enum": ["stale", "invalid"]}},
+    "traceback_refs": {"type": "array", "items": {"type": "string"}},
+    "compatibility_mode": {"const": true},
+    "indication": {
+      "type": ["object", "null"],
+      "properties": {"tone": {"const": "quiet"}, "message": {"type": "string"}}
+    }
+  },
+  "additionalProperties": true
+}

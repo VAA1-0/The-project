@@ -8,6 +8,7 @@ import {
 } from "@/lib/api-service";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
   getLearnedTaxonomyLabels,
@@ -365,6 +366,9 @@ function entityRegistryMetadataCandidateRows(
     } else if (entity.entity_type === "PLACE") {
       add("location_place", label, evidence);
       add("keywords", label, evidence);
+    } else if (entity.entity_type === "ORG") {
+      add("organizations", label, evidence);
+      add("keywords", label, evidence);
     } else if (entity.entity_type === "EVENT") {
       add("situation_event", label, evidence);
       add("keywords", label, evidence);
@@ -384,6 +388,7 @@ function entityRegistryMetadataCandidateRows(
 
   const labels: Record<string, string> = {
     persons: "People / roles",
+    organizations: "Organizations",
     character_roles: "Character roles",
     location_place: "Place",
     situation_event: "Situation",
@@ -490,6 +495,7 @@ export default function SourceMediaMetadataPanel() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const governedNarrativeAgents = useMemo(() => governedNarrativeAgentLabels(analysisData), [analysisData]);
   const [presenceIntervals, setPresenceIntervals] = useState<MeaningNetworkPresenceInterval[]>([]);
   const [editorNotes, setEditorNotes] = useState("");
   const [sourceContext, setSourceContext] = useState("");
@@ -498,6 +504,7 @@ export default function SourceMediaMetadataPanel() {
   const [scope, setScope] = useState("");
   const [description, setDescription] = useState("");
   const [persons, setPersons] = useState("");
+  const [organizations, setOrganizations] = useState("");
   const [characterRoles, setCharacterRoles] = useState("");
   const [relations, setRelations] = useState("");
   const [locationCountry, setLocationCountry] = useState("");
@@ -556,6 +563,7 @@ export default function SourceMediaMetadataPanel() {
     setScope(nextMetadata.user_annotations?.scope || "");
     setDescription(nextMetadata.user_annotations?.description || "");
     setPersons((nextMetadata.user_annotations?.persons || []).join(", "));
+    setOrganizations((nextMetadata.user_annotations?.organizations || []).join(", "));
     setCharacterRoles((nextMetadata.user_annotations?.character_roles || []).join("\n"));
     setRelations(nextMetadata.user_annotations?.relations || "");
     setLocationCountry(nextMetadata.user_annotations?.location_country || "");
@@ -645,6 +653,7 @@ export default function SourceMediaMetadataPanel() {
         setScope("");
         setDescription("");
         setPersons("");
+        setOrganizations("");
         setCharacterRoles("");
         setRelations("");
         setLocationCountry("");
@@ -738,6 +747,10 @@ export default function SourceMediaMetadataPanel() {
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean),
+        organizations: organizations
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
         character_roles: characterRoles
           .split("\n")
           .map((value) => value.trim())
@@ -789,6 +802,7 @@ export default function SourceMediaMetadataPanel() {
         notes,
       });
       setMetadata(saved);
+      eventBus.emit("sourceMediaMetadataUpdated", { analysisId: videoId });
       setSaveMessage("Metadata notes saved.");
       window.setTimeout(() => setSaveMessage(null), 1800);
     } catch (error) {
@@ -817,6 +831,10 @@ export default function SourceMediaMetadataPanel() {
         scope,
         description,
         persons: persons
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        organizations: organizations
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean),
@@ -1374,6 +1392,7 @@ export default function SourceMediaMetadataPanel() {
   const candidateFieldConfig = [
     { key: "title", label: "Title", current: userTitle },
     { key: "persons", label: "People / roles", current: persons },
+    { key: "organizations", label: "Organizations", current: organizations },
     { key: "character_roles", label: "Character roles", current: characterRoles },
     { key: "location_place", label: "Place", current: locationPlace },
     { key: "location_city", label: "City", current: locationCity },
@@ -1397,6 +1416,7 @@ export default function SourceMediaMetadataPanel() {
     sourceMediaEntityRows,
     {
       persons,
+      organizations,
       character_roles: characterRoles,
       location_place: locationPlace,
       situation_event: situationEvent,
@@ -1512,6 +1532,7 @@ export default function SourceMediaMetadataPanel() {
     try {
       const refreshed = await apiService.refreshSourceMediaMaturity(videoId);
       hydrateMetadataState(refreshed);
+      eventBus.emit("sourceMediaMetadataUpdated", { analysisId: videoId });
       const iteration = refreshed.maturity_iteration;
       setSaveMessage(
         `Maturity refreshed: ${iteration?.filled_count || 0} filled, ${iteration?.manual_protected_count || 0} manual protected, ${iteration?.review_candidate_count || 0} review candidates.`,
@@ -1563,7 +1584,14 @@ export default function SourceMediaMetadataPanel() {
         </div>
       ) : (
         <>
-          <div className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-950/10 p-3">
+          <details className="mt-3 rounded border border-slate-800 bg-slate-950/20">
+            <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-medium text-slate-300 marker:hidden">
+              Primary metadata
+              <span className="ml-2 text-[10px] font-normal text-slate-500">
+                Editable Master Schema source fields
+              </span>
+            </summary>
+            <div className="border-t border-slate-800 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.16em] text-cyan-200/80">
@@ -1607,6 +1635,15 @@ export default function SourceMediaMetadataPanel() {
                 <input
                   value={persons}
                   onChange={(e) => setPersons(e.target.value)}
+                  placeholder="Comma separated"
+                  className={compactInputClass}
+                />
+              </label>
+              <label className="block">
+                <div className={fieldLabelClass}>Organizations</div>
+                <input
+                  value={organizations}
+                  onChange={(e) => setOrganizations(e.target.value)}
                   placeholder="Comma separated"
                   className={compactInputClass}
                 />
@@ -1728,15 +1765,18 @@ export default function SourceMediaMetadataPanel() {
             {saveMessage ? (
               <div className="mt-2 text-xs text-slate-400">{saveMessage}</div>
             ) : null}
-            {narrativeAgentProfileCount > 0 ? (
+            {governedNarrativeAgents.length > 0 ? (
               <div className="mt-3 rounded-md border border-cyan-500/10 bg-slate-950/25 p-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/70">
                     Narrative Agent Profiles
                   </div>
                   <div className="text-[10px] text-slate-500">
-                    {narrativeAgentProfileCount} profiles
+                    {governedNarrativeAgents.length} governed agents
                   </div>
+                </div>
+                <div className="mt-2 border-y border-white/8 py-2 text-[11px] text-slate-300" data-vaa1-shared-narrative-agent-registry="true">
+                  {governedNarrativeAgents.join(" · ")}
                 </div>
                 <div className="mt-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[11px] leading-relaxed text-slate-400">
                   <div>{narrativeAgentProfileGovernance.identityBoundary}</div>
@@ -2010,9 +2050,10 @@ export default function SourceMediaMetadataPanel() {
                 )}
               </div>
             </details>
-          </div>
+            </div>
+          </details>
 
-          <details open className={detailClass}>
+          <details className={detailClass}>
             <summary className={summaryClass}>
               Media Facts
               <span className="ml-2 normal-case tracking-normal text-slate-500">
@@ -2669,8 +2710,8 @@ export default function SourceMediaMetadataPanel() {
             </summary>
             <div className="border-t border-slate-800 p-3">
             <div className="space-y-2">
-              <details open className={subDetailClass}>
-                <summary className={subSummaryClass}>Primary Description</summary>
+              <details className={subDetailClass}>
+                <summary className={subSummaryClass}>Primary description</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2712,7 +2753,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>People and Narrative Agents</summary>
+                <summary className={subSummaryClass}>People and narrative agents</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2751,7 +2792,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Time and Space</summary>
+                <summary className={subSummaryClass}>Time and space</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="block">
@@ -2830,7 +2871,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Situation and Description Evidence</summary>
+                <summary className={subSummaryClass}>Situation and description evidence</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2889,7 +2930,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>Genre and Governance Axes</summary>
+                <summary className={subSummaryClass}>Genre and governance axes</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <CustomizableSelectField
                 label="Genre"
@@ -3120,7 +3161,7 @@ export default function SourceMediaMetadataPanel() {
                 </div>
               </details>
               <details className={subDetailClass}>
-                <summary className={subSummaryClass}>References and Audit</summary>
+                <summary className={subSummaryClass}>References and audit</summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
               <label className="block">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">

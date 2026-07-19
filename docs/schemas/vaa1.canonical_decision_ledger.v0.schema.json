@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vaa1.canonical_decision_ledger.v0.schema.json",
+  "title": "VAA1 Canonical Decision Ledger Pilot",
+  "type": "object",
+  "required": ["schema", "analysis_id", "version", "decisions"],
+  "properties": {
+    "schema": { "const": "vaa1.canonical_decision_ledger.v0" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "version": { "const": 1 },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/decision" },
+          { "$ref": "#/$defs/invalidation" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "required": [
+        "schema", "decision_id", "analysis_id", "decision_action",
+        "subject_ref", "property", "scope", "value", "authority",
+        "maturity", "validity", "review_status", "projection_status",
+        "supersedes", "created_at", "created_by"
+      ],
+      "properties": {
+        "schema": { "const": "vaa1.canonical_decision.v0" },
+        "decision_id": { "type": "string", "minLength": 1 },
+        "analysis_id": { "type": "string", "minLength": 1 },
+        "decision_action": {
+          "enum": [
+            "correct_assignment", "drop_assignment", "confirm_candidate",
+            "reject_candidate", "defer_candidate", "review_candidate"
+          ]
+        },
+        "subject_ref": {
+          "type": "object",
+          "required": ["type", "id"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "property": { "type": "string", "minLength": 1 },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "start_seconds": { "type": "number", "minimum": 0 },
+            "end_seconds": { "type": "number", "minimum": 0 },
+            "geometry": { "type": ["object", "null"] }
+          }
+        },
+        "value": { "type": "string", "minLength": 1 },
+        "authority": { "const": "explicit_user_correction" },
+        "maturity": { "const": "analyst_confirmed" },
+        "validity": { "const": "current" },
+        "review_status": { "const": "accepted" },
+        "conflict_status": { "type": "string" },
+        "projection_status": { "const": "active" },
+        "evidence_refs": { "type": "array", "items": { "type": "string" } },
+        "correction_refs": { "type": "array", "items": { "type": "string" } },
+        "supersedes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "provenance": { "type": "object" },
+        "created_at": { "type": "string" },
+        "created_by": { "type": "string", "minLength": 1 }
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "required": [
+        "schema", "decision_id", "analysis_id", "decision_action",
+        "target_decision_refs", "reason_code", "authority", "validity",
+        "review_status", "projection_status", "created_at", "created_by"
+      ],
+      "properties": {
+        "schema": { "const": "vaa1.canonical_invalidation.v0" },
+        "decision_id": { "type": "string", "minLength": 1 },
+        "analysis_id": { "type": "string", "minLength": 1 },
+        "decision_action": { "const": "invalidate" },
+        "target_decision_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string" },
+        "dependency_ref": { "type": ["string", "null"] },
+        "validity_effect": { "enum": ["stale", "invalid"] },
+        "authority": { "type": "string" },
+        "validity": { "const": "current" },
+        "review_status": { "const": "accepted" },
+        "projection_status": { "const": "active" },
+        "created_at": { "type": "string" },
+        "created_by": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

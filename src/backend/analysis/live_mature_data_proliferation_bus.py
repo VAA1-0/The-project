@@ -31,6 +31,11 @@ except ModuleNotFoundError:
 
 SCHEMA = "vaa1.live_mature_data_proliferation_audit.v1"
 
+# Object tracking remains raw traceback substrate until a configured tracker has
+# passed identity-continuity, scene-boundary, and cross-character bleed tests.
+# Mature review operates on individual, source-timed detections in the interim.
+TRACK_DERIVED_PROMOTION_ENABLED = False
+
 PERSON_HINTS = {
     "person",
     "people",
@@ -71,12 +76,16 @@ STOPWORDS = {
 
 SOURCE_METADATA_MATURE_FIELDS = (
     "title",
+    "persons",
+    "character_roles",
+    "organizations",
     "source_context",
     "description",
     "situation_event",
     "location_country",
     "location_city",
     "location_place",
+    "location_room",
     "time_moment",
     "time_year",
     "genre",
@@ -333,18 +342,19 @@ def collect_content_derived_mature_observations(status: Dict[str, Any]) -> List[
             values = [safe_text(value)] if safe_text(value) else []
         for index, label in enumerate(values):
             confidence = confidence_percent(field_confidences.get(key), 0.86)
+            user_confirmed = key in annotations and bool(annotations.get(key))
             seeds.append(
                 {
                     "seed_id": f"source_metadata:{key}:{index}",
                     "source_panel": "source_media_metadata",
-                    "authority": "content_derived_mature_observation",
-                    "authority_class": "content_derived_mature_observation",
+                    "authority": "user_confirmed_source_metadata" if user_confirmed else "content_derived_mature_observation",
+                    "authority_class": "user_confirmed_source_metadata" if user_confirmed else "content_derived_mature_observation",
                     "label": label,
                     "category": f"source_metadata:{key}",
                     "time": {"start": None, "end": None},
                     "confidence_percent": confidence,
                     "confidence": round(confidence / 100, 2),
-                    "maturity_projection_state": "mature_with_confidence_rating",
+                    "maturity_projection_state": "user_confirmed" if user_confirmed else "mature_with_confidence_rating",
                     "teaches_regime": True,
                     "source_ref": f"source_media_metadata:{key}",
                     "tokens": sorted(tokens_for(label, key)),
@@ -425,21 +435,41 @@ def label_from_track(item: Dict[str, Any], index: int) -> str:
     )
 
 
-def track_candidate(item: Dict[str, Any], index: int) -> Dict[str, Any]:
-    label = label_from_track(item, index)
+def track_candidate(
+    item: Dict[str, Any],
+    index: int,
+    status: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    raw_label = label_from_track(item, index)
     source_ref = safe_text(item.get("track_id"), f"tracked_object:{index}")
     category = safe_text(item.get("category") or item.get("class_name") or item.get("class"), "Object")
-    return {
+    manual_identity = canonical_manual_identity_for_track(status or {}, item, index)
+    label = safe_text(manual_identity.get("label"), raw_label)
+    candidate = {
         "candidate_id": f"tracked_object:{source_ref}",
         "source_panel": "objects_panel",
         "source_kind": "tracked_object",
         "source_ref": source_ref,
         "label": label,
+        "detector_label": raw_label,
         "category": category,
         "time": time_range(item),
+        "bbox": normalized_bbox_from_track(item),
         "confidence": item.get("confidence"),
         "tokens": sorted(tokens_for(label, category)),
     }
+    if manual_identity:
+        candidate.update(
+            {
+                "canonical_identity_label": manual_identity.get("label"),
+                "canonical_identity_status": "manual_confirmed",
+                "manual_identity_anchor_ref": manual_identity.get("annotation_ref"),
+                "manual_identity_match_basis": manual_identity.get("match_basis"),
+                "manual_identity_bbox": manual_identity.get("bbox"),
+                "promotion_required": False,
+            }
+        )
+    return candidate
 
 
 def normalized_bbox_from_track(item: Dict[str, Any]) -> Optional[Dict[str, float]]:
@@ -557,7 +587,13 @@ def canonical_identity_key(label: str) -> str:
 
 def bbox_from_manual_annotation(item: Dict[str, Any]) -> Optional[Dict[str, float]]:
     metadata = as_dict(item.get("metadata_correlation"))
-    bbox = as_dict(item.get("bbox") or item.get("roi") or metadata.get("bbox") or metadata.get("roi"))
+    bbox = as_dict(
+        item.get("bbox")
+        or item.get("roi")
+        or item.get("coordinates")
+        or metadata.get("bbox")
+        or metadata.get("roi")
+    )
     x = to_float(bbox.get("x") or bbox.get("left") or item.get("x"))
     y = to_float(bbox.get("y") or bbox.get("top") or item.get("y"))
     width = to_float(
@@ -601,6 +637,110 @@ def bbox_from_manual_annotation(item: Dict[str, Any]) -> Optional[Dict[str, floa
         "w": max(0.0, min(1.0, width)),
         "h": max(0.0, min(1.0, height)),
     }
+
+
+def bbox_iou(left: Optional[Dict[str, float]], right: Optional[Dict[str, float]]) -> float:
+    if not left or not right:
+        return 0.0
+    left_x2 = left["x"] + left["w"]
+    left_y2 = left["y"] + left["h"]
+    right_x2 = right["x"] + right["w"]
+    right_y2 = right["y"] + right["h"]
+    intersection_w = max(0.0, min(left_x2, right_x2) - max(left["x"], right["x"]))
+    intersection_h = max(0.0, min(left_y2, right_y2) - max(left["y"], right["y"]))
+    intersection = intersection_w * intersection_h
+    union = left["w"] * left["h"] + right["w"] * right["h"] - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def time_ranges_overlap(
+    left: Dict[str, Any],
+    right: Dict[str, Any],
+    tolerance_seconds: float = 0.25,
+) -> bool:
+    left_start = to_float(left.get("start"))
+    right_start = to_float(right.get("start"))
+    if left_start is None or right_start is None:
+        return False
+    left_end = to_float(left.get("end"))
+    right_end = to_float(right.get("end"))
+    left_end = left_start if left_end is None else left_end
+    right_end = right_start if right_end is None else right_end
+    return left_start <= right_end + tolerance_seconds and right_start <= left_end + tolerance_seconds
+
+
+def canonical_manual_identity_for_track(
+    status: Dict[str, Any],
+    track: Dict[str, Any],
+    index: int,
+) -> Dict[str, Any]:
+    """Resolve a track to canonical manual identity without trusting detector labels.
+
+    Explicit track references win. When panel-local IDs differ, a time-overlapping
+    BBox with meaningful spatial overlap can establish the same source occurrence.
+    Ambiguous spatial matches are deliberately rejected.
+    """
+    corrections = as_dict(status.get("annotation_corrections"))
+    source_ref = safe_text(track.get("track_id"), f"tracked_object:{index}")
+    track_refs = {
+        source_ref,
+        f"tracked_object:{source_ref}",
+        safe_text(track.get("id")),
+        safe_text(track.get("object_id")),
+    } - {""}
+    track_time = time_range(track)
+    track_bbox = normalized_bbox_from_track(track)
+    matches: List[Dict[str, Any]] = []
+
+    for annotation_index, item in enumerate(as_list(corrections.get("manual_visual_annotations"))):
+        if not isinstance(item, dict):
+            continue
+        label = identity_label_from_manual(item)
+        if not label:
+            continue
+        metadata = as_dict(item.get("metadata_correlation"))
+        annotation_refs = {
+            safe_text(metadata.get("target_id")),
+            safe_text(metadata.get("geometry_track_id")),
+            safe_text(metadata.get("track_id")),
+            safe_text(item.get("track_id")),
+            safe_text(item.get("target_id")),
+        } - {""}
+        for reference in (
+            safe_text(item.get("id")),
+            safe_text(metadata.get("target_id")),
+            safe_text(as_dict(metadata.get("manual_confirmation_event")).get("bbox_roi_id")),
+        ):
+            object_match = re.search(r"(?:^|:)indication:object:([^:]+)", reference)
+            if object_match:
+                annotation_refs.add(object_match.group(1))
+        explicit = bool(track_refs & annotation_refs)
+        manual_bbox = bbox_from_manual_annotation(item)
+        overlap = bbox_iou(track_bbox, manual_bbox)
+        spatial = time_ranges_overlap(track_time, time_range(item)) and overlap >= 0.35
+        if not explicit and not spatial:
+            continue
+        matches.append(
+            {
+                "label": label,
+                "annotation_ref": safe_text(item.get("id"), f"manual_identity:{annotation_index}"),
+                "match_basis": "explicit_track_reference" if explicit else "source_time_bbox_overlap",
+                "bbox": manual_bbox,
+                "iou": round(overlap, 4),
+            }
+        )
+
+    identity_keys = {canonical_identity_key(safe_text(match.get("label"))) for match in matches}
+    identity_keys.discard("")
+    if len(identity_keys) != 1:
+        return {}
+    return max(
+        matches,
+        key=lambda match: (
+            match.get("match_basis") == "explicit_track_reference",
+            float(match.get("iou") or 0.0),
+        ),
+    )
 
 
 def transcript_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -909,8 +1049,10 @@ def confirmation_need_from_track(
     index: int,
     confirmed_track_ids: Set[str],
 ) -> Optional[Dict[str, Any]]:
-    candidate = track_candidate(item, index)
+    candidate = track_candidate(item, index, status)
     if not candidate_looks_person(candidate):
+        return None
+    if candidate.get("canonical_identity_status") == "manual_confirmed":
         return None
     source_ref = safe_text(candidate.get("source_ref"))
     if source_ref and source_ref in confirmed_track_ids:
@@ -962,6 +1104,8 @@ def confirmation_need_from_track(
 
 
 def collect_confirmation_needs(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not TRACK_DERIVED_PROMOTION_ENABLED:
+        return []
     confirmed_track_ids = manually_confirmed_track_ids(status)
     needs: List[Dict[str, Any]] = []
     seen: Set[str] = set()
@@ -1201,12 +1345,16 @@ def collect_candidate_opportunities(
 ) -> List[Dict[str, Any]]:
     opportunities: List[Dict[str, Any]] = []
     seen: Set[str] = set()
-    candidates = [
-        track_candidate(item, index)
-        for index, item in enumerate(visual_tracked_objects(status))
-    ] + entity_match_candidates(status)
+    candidates = entity_match_candidates(status)
+    if TRACK_DERIVED_PROMOTION_ENABLED:
+        candidates = [
+            track_candidate(item, index, status)
+            for index, item in enumerate(visual_tracked_objects(status))
+        ] + candidates
     for seed in mature_seeds:
         for candidate in candidates:
+            if candidate.get("canonical_identity_status") == "manual_confirmed":
+                continue
             if candidate["source_ref"] == seed.get("source_ref"):
                 continue
             if not starts_after_seed(seed, candidate):
@@ -1241,6 +1389,11 @@ def collect_candidate_opportunities(
                     "candidate_source_panel": candidate.get("source_panel"),
                     "candidate_source_ref": candidate.get("source_ref"),
                     "candidate_time": candidate.get("time"),
+                    "candidate_bbox": candidate.get("bbox"),
+                    "canonical_identity_label": candidate.get("canonical_identity_label"),
+                    "canonical_identity_status": candidate.get("canonical_identity_status"),
+                    "manual_identity_anchor_ref": candidate.get("manual_identity_anchor_ref"),
+                    "manual_identity_match_basis": candidate.get("manual_identity_match_basis"),
                     "confidence": round(confidence, 3) if confidence is not None else None,
                     "match_reason": reason,
                     "constellational_support": constellational_support,
@@ -1393,7 +1546,13 @@ def build_governed_mature_hypotheses(
                 "candidate_category": opportunity.get("candidate_category"),
                 "candidate_source_panel": opportunity.get("candidate_source_panel"),
                 "candidate_source_ref": opportunity.get("candidate_source_ref"),
+                "source_kind": opportunity.get("source_kind"),
                 "candidate_time": opportunity.get("candidate_time"),
+                "candidate_bbox": opportunity.get("candidate_bbox"),
+                "canonical_identity_label": opportunity.get("canonical_identity_label"),
+                "canonical_identity_status": opportunity.get("canonical_identity_status"),
+                "manual_identity_anchor_ref": opportunity.get("manual_identity_anchor_ref"),
+                "manual_identity_match_basis": opportunity.get("manual_identity_match_basis"),
                 "confidence": opportunity.get("confidence"),
                 "match_reason": opportunity.get("match_reason"),
                 "traceback_refs": [
@@ -1448,8 +1607,14 @@ def build_live_mature_data_proliferation_audit(status: Dict[str, Any]) -> Dict[s
         [
             seed
             for seed in seeds
-            if seed.get("authority_class") == "content_derived_mature_observation"
+            if seed.get("authority_class") in {
+                "content_derived_mature_observation",
+                "user_confirmed_source_metadata",
+            }
         ]
+    )
+    user_confirmed_source_metadata_count = len(
+        [seed for seed in seeds if seed.get("authority_class") == "user_confirmed_source_metadata"]
     )
     blocked_promotions = [
         {
@@ -1497,6 +1662,7 @@ def build_live_mature_data_proliferation_audit(status: Dict[str, Any]) -> Dict[s
             "candidate_opportunity_count": len(opportunities),
             "suppressed_candidate_opportunity_count": len(suppressed_opportunities),
             "content_derived_mature_observation_count": content_observation_count,
+            "user_confirmed_source_metadata_count": user_confirmed_source_metadata_count,
             "genre_rule_observation_count": len(genre_rule_observations),
             "proposed_audiovisual_sample_count": len(proposed_audiovisual_samples),
             "governed_mature_hypothesis_count": len(governed_hypotheses),
