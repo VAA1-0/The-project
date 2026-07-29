@@ -154,6 +154,46 @@ def _label_override_payload(item: Dict[str, Any], *, created_at: str, created_by
     return payload
 
 
+def _speaker_assignment_payload(item: Dict[str, Any], *, created_at: str, created_by: str) -> Dict[str, Any] | None:
+    correction_ref = _text(item.get("id"))
+    speaker = _text(item.get("speaker_confirmation"))
+    normalized_speaker = speaker.lower().replace("_", " ")
+    if (
+        not correction_ref
+        or not speaker
+        or normalized_speaker in {"unknown", "unknown speaker", "speaker", "speaker 1"}
+        or normalized_speaker.startswith("speaker ")
+    ):
+        return None
+    start = item.get("corrected_start_timestamp", item.get("target_start_timestamp"))
+    end = item.get("corrected_end_timestamp", item.get("target_end_timestamp"))
+    scope = _scope(start, end)
+    if "start_seconds" not in scope:
+        return None
+    source_class = speaker.lower() in {"background noise", "crowd"}
+    payload = {
+        "decision_action": "correct_assignment",
+        "subject_ref": {"type": "transcript_span", "id": correction_ref},
+        "property": "audio.source_class" if source_class else "speaker.assignment",
+        "scope": scope,
+        "value": speaker,
+        "authority": "explicit_user_confirmation",
+        "maturity": "analyst_confirmed",
+        "evidence_refs": [correction_ref],
+        "correction_refs": [correction_ref],
+        "provenance": {
+            "source_surface": "annotation_corrections.text_substitutions",
+            "writer_class": "analyst_interaction",
+            "assignment_kind": "audio_source_class" if source_class else "speaker_identity_or_role",
+            "raw_text": _text(item.get("raw_value")),
+        },
+        "created_at": item.get("updated_at") or created_at,
+        "created_by": item.get("updated_by") or created_by,
+    }
+    payload["decision_id"] = _content_decision_id("speaker-assignment", payload)
+    return payload
+
+
 def _proliferation_payload(item: Dict[str, Any], *, created_at: str, created_by: str) -> Dict[str, Any] | None:
     candidate_id = _text(item.get("candidate_id"))
     legacy_id = _text(item.get("decision_id"))
@@ -265,4 +305,14 @@ def sync_corrections_to_ledger(
                 continue
             if appended:
                 appended_events.append(event)
+    for item in current.get("text_substitutions", []):
+        if not isinstance(item, dict):
+            continue
+        payload = _speaker_assignment_payload(item, created_at=created_at, created_by=created_by)
+        if payload is None or payload["decision_id"] in existing_decision_ids:
+            continue
+        result, event, appended = append_decision(result, payload, analysis_id=analysis_id)
+        if appended:
+            appended_events.append(event)
+            existing_decision_ids.add(event["decision_id"])
     return result, appended_events

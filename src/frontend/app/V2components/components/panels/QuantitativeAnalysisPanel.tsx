@@ -484,7 +484,11 @@ export default function QuantitativeAnalysisPanel() {
       segmentRefs.length === 0 && fallbackNeedle
         ? deriveTranscriptOccurrences(fallbackNeedle)
         : [];
-    const displaySegments = segmentRefs.length > 0 ? segmentRefs : derivedOccurrences;
+    const displaySegments = [...(segmentRefs.length > 0 ? segmentRefs : derivedOccurrences)]
+      .sort(
+        (left: any, right: any) =>
+          segmentNavigationTime(left) - segmentNavigationTime(right),
+      );
     return (
       <div className="mt-2">
         <button
@@ -505,7 +509,7 @@ export default function QuantitativeAnalysisPanel() {
                     className="block w-full rounded-md bg-slate-900/35 px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-slate-900/60 hover:text-slate-50"
                   >
                     <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                      <span>{index + 1}.</span>
+                      <span>{fallbackNeedle || "term"} · {index + 1}</span>
                       <span>{segment.t || `${segment.start ?? 0}s - ${segment.end ?? 0}s`}</span>
                     </div>
                     <div className="leading-relaxed">
@@ -524,7 +528,9 @@ export default function QuantitativeAnalysisPanel() {
                       onClick={() => jumpToTime(findTranscriptTimeForText(snippet))}
                       className="block w-full rounded-md bg-slate-900/35 px-2.5 py-2 text-left text-xs text-slate-200 hover:bg-slate-900/60 hover:text-slate-50"
                     >
-                      <div className="mb-1 text-[11px] text-slate-400">{index + 1}.</div>
+                      <div className="mb-1 text-[11px] text-slate-400">
+                        {fallbackNeedle || "term"} · {index + 1}
+                      </div>
                       <div className="leading-relaxed">
                         {renderHighlightedOccurrence(snippet, fallbackNeedle)}
                       </div>

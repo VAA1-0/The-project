@@ -550,16 +550,26 @@ export default function POSAnalyzePanel() {
       {words.length === 0 ? (
         <span className="text-xs text-slate-500">none</span>
       ) : (
-        words.map((word, index) => (
+        words.map((word, index) => {
+          const occurrence =
+            words
+              .slice(0, index + 1)
+              .filter(
+                (candidate) =>
+                  String(candidate).trim().toLocaleLowerCase() ===
+                  String(word).trim().toLocaleLowerCase(),
+              ).length;
+          return (
           <button
             key={`${label}-${word}-${index}`}
             type="button"
             onClick={() => jumpToTime(findTranscriptTimeForText(word))}
             className="rounded bg-slate-900/45 px-2 py-1 text-xs text-slate-200 hover:bg-slate-900/70 hover:text-slate-50"
           >
-            {word}
+            {word} · {occurrence}
           </button>
-        ))
+          );
+        })
       )}
     </div>
   );

@@ -1541,8 +1541,18 @@ function prosodyCueToMeaningNode(cue: AudioProsodyCue, index: number): MeaningNe
       rhythm: cue.rhythm_profile?.label,
       tonality: cue.tonality_profile?.label,
       sound_environment: cue.sound_environment?.label,
+      confirmed_speaker: cue.confirmedSpeaker,
+      confirmed_audio_source_class: cue.confirmedAudioSourceClass,
+      speaker_assignment_refs: cue.speakerAssignmentRefs,
+      multimodal_motor_targets: cue.multimodalMotorTargets,
     },
-    maturity: { level: "machine_inferred", authority: "audio_prosody", confidence: 0.68 },
+    maturity: cue.confirmedSpeaker || cue.confirmedAudioSourceClass
+      ? {
+          level: "governed_evidence_link",
+          authority: "explicit_user_confirmation+audio_prosody",
+          confidence: 0.82,
+        }
+      : { level: "machine_inferred", authority: "audio_prosody", confidence: 0.68 },
     evidence_refs: [
       {
         evidence_id: cue.cue_id || `prosody:${index}`,
@@ -4094,9 +4104,89 @@ export default function MeaningPlotPanel({
             });
           });
       });
+      const speakerAssignmentNodes = masterSchemaMeaningNodes.filter(
+        (node) => node.attributes?.category === "speaker_assignment",
+      );
+      speakerAssignmentNodes.forEach((assignment) => {
+        const assignmentStart = meaningNetworkEvidenceStart(assignment.evidence_refs);
+        const transcriptNode = transcriptMeaningNodes.find((node) => {
+          const transcriptStart = meaningNetworkEvidenceStart(node.evidence_refs);
+          return (
+            normalizeAgentKey(node.attributes?.speaker) === normalizeAgentKey(assignment.label) &&
+            Math.abs(transcriptStart - assignmentStart) <= 0.05
+          );
+        });
+        if (transcriptNode) {
+          edges.push({
+            edge_id: `edge:${transcriptNode.node_id}:speaker-assignment:${assignment.node_id}`,
+            source_node_id: transcriptNode.node_id,
+            target_node_id: assignment.node_id,
+            edge_type: "has_speaker_assignment",
+            weight: 1,
+            maturity: assignment.maturity,
+            evidence_refs: assignment.evidence_refs,
+            ui: {
+              quick_confirm_enabled: false,
+              copy_paste_enabled: true,
+              update_enabled: true,
+              source_navigation_enabled: true,
+            },
+          });
+        }
+        const agentNode = narrativeAgentProfileMeaningNodes.find(
+          (node) => normalizeAgentKey(node.label) === normalizeAgentKey(assignment.label),
+        );
+        if (transcriptNode && agentNode) {
+          edges.push({
+            edge_id: `edge:${transcriptNode.node_id}:spoken-by:${agentNode.node_id}`,
+            source_node_id: transcriptNode.node_id,
+            target_node_id: agentNode.node_id,
+            edge_type: "spoken_by",
+            weight: 1,
+            maturity: assignment.maturity,
+            evidence_refs: assignment.evidence_refs,
+            ui: {
+              quick_confirm_enabled: false,
+              copy_paste_enabled: true,
+              update_enabled: true,
+              source_navigation_enabled: true,
+            },
+          });
+        }
+      });
+      prosodyMeaningNodes.forEach((prosodyNode) => {
+        const confirmedSpeaker = normalizeAgentKey(prosodyNode.attributes?.confirmed_speaker);
+        if (!confirmedSpeaker) return;
+        const agentNode = narrativeAgentProfileMeaningNodes.find(
+          (node) => normalizeAgentKey(node.label) === confirmedSpeaker,
+        );
+        if (!agentNode) return;
+        edges.push({
+          edge_id: `edge:${prosodyNode.node_id}:prosody-of:${agentNode.node_id}`,
+          source_node_id: prosodyNode.node_id,
+          target_node_id: agentNode.node_id,
+          edge_type: "prosody_of",
+          weight: 1,
+          maturity: prosodyNode.maturity,
+          evidence_refs: prosodyNode.evidence_refs,
+          ui: {
+            quick_confirm_enabled: false,
+            copy_paste_enabled: true,
+            update_enabled: true,
+            source_navigation_enabled: true,
+          },
+        });
+      });
       return edges;
     },
-    [masterSchemaMeaningNodes, sceneMeaningNodes, meaningNetworkSceneSegments],
+    [
+      masterSchemaMeaningNodes,
+      meaningNetworkSceneSegments,
+      narrativeAgentProfileMeaningNodes,
+      prosodyMeaningNodes,
+      sceneMeaningNodes,
+      transcriptMeaningNodes,
+    ],
   );
   const meaningNetworkEdges = useMemo(
     () =>
@@ -4133,7 +4223,7 @@ export default function MeaningPlotPanel({
   const reviewableMeaningNetworkEdges = useMemo(
     () =>
       meaningNetworkEdges
-        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as", "traceable_similarity", "constellational_match_candidate"].includes(edge.edge_type) || isMatcherSomMeaningEdge(edge))
+        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as", "has_speaker_assignment", "spoken_by", "prosody_of", "traceable_similarity", "constellational_match_candidate"].includes(edge.edge_type) || isMatcherSomMeaningEdge(edge))
         .sort((left, right) => meaningNetworkEvidenceStart(left.evidence_refs) - meaningNetworkEvidenceStart(right.evidence_refs)),
     [meaningNetworkEdges],
   );
@@ -4270,20 +4360,57 @@ export default function MeaningPlotPanel({
   const characterTimelineGroups = useMemo(
     () => {
       const groups = new Map<string, MeaningNetworkNode[]>();
+      const canonicalLabel = (rawLabel: string) => {
+        const normalized = normalizeAgentKey(rawLabel);
+        const matchedProfile = narrativeAgentProfiles.find((profile) =>
+          narrativeAgentProfileAliases(profile).some(
+            (alias) =>
+              alias === normalized ||
+              normalized.includes(alias) ||
+              alias.includes(normalized),
+          ),
+        );
+        return matchedProfile?.narrative_agent_name || rawLabel;
+      };
+      narrativeAgentProfiles.forEach((profile) => {
+        const label = profile.narrative_agent_name;
+        if (label) groups.set(normalizeAgentKey(label), []);
+      });
       characterTimelineNodes.forEach((node) => {
-        const label = renamedMeaningNetworkMarkers[node.node_id] || node.label || "Unknown narrative agent";
-        const key = label.toLowerCase();
+        const rawLabel =
+          renamedMeaningNetworkMarkers[node.node_id] ||
+          node.label ||
+          "Unknown narrative agent";
+        const label = canonicalLabel(rawLabel);
+        const key = normalizeAgentKey(label);
         const existing = groups.get(key) || [];
-        existing.push(node);
+        const hasSourceTime = (node.evidence_refs || []).some(
+          (reference) =>
+            reference.time_range &&
+            Number.isFinite(Number(reference.time_range.start)),
+        );
+        if (hasSourceTime) existing.push(node);
         groups.set(key, existing);
       });
       return [...groups.entries()].map(([key, nodes]) => ({
         key,
-        label: renamedMeaningNetworkMarkers[nodes[0]?.node_id || ""] || nodes[0]?.label || "Unknown narrative agent",
-        nodes,
+        label:
+          narrativeAgentProfiles.find(
+            (profile) => normalizeAgentKey(profile.narrative_agent_name) === key,
+          )?.narrative_agent_name ||
+          canonicalLabel(
+            renamedMeaningNetworkMarkers[nodes[0]?.node_id || ""] ||
+              nodes[0]?.label ||
+              "Unknown narrative agent",
+          ),
+        nodes: nodes.sort(
+          (left, right) =>
+            meaningNetworkEvidenceStart(left.evidence_refs) -
+            meaningNetworkEvidenceStart(right.evidence_refs),
+        ),
       }));
     },
-    [characterTimelineNodes, renamedMeaningNetworkMarkers],
+    [characterTimelineNodes, narrativeAgentProfiles, renamedMeaningNetworkMarkers],
   );
   const continuityLaneRows = useMemo(
     () =>

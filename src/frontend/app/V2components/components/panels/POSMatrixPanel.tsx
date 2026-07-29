@@ -477,7 +477,7 @@ export default function POSMatrixPanel({
     return words
       .map((word) => String(word || "").trim())
       .filter(Boolean)
-      .map((word, index) => {
+      .map((word, index, normalizedWords) => {
         const normalized = word.toLowerCase();
         const relativeIndex = transcript
           .slice(searchStartIndex)
@@ -491,14 +491,23 @@ export default function POSMatrixPanel({
         }
         return {
           word,
-          occurrence: index + 1,
+          occurrence:
+            normalizedWords
+              .slice(0, index + 1)
+              .filter((candidate) => candidate.toLowerCase() === normalized).length,
+          arrayIndex: index,
           segmentIndex,
           time:
             segmentIndex !== Number.MAX_SAFE_INTEGER
               ? normalizeTranscriptSegmentTiming(transcript[segmentIndex] || {}).start
               : findTranscriptTimeForText(analysisData, word),
         };
-      });
+      })
+      .sort(
+        (left, right) =>
+          left.segmentIndex - right.segmentIndex ||
+          left.arrayIndex - right.arrayIndex,
+      );
   };
 
   const renderOrderedWordList = (
@@ -519,8 +528,8 @@ export default function POSMatrixPanel({
             onClick={() => jumpToAnalysisTime(analysisId, entry.time)}
             className="block text-left text-[11px] text-slate-300 hover:text-slate-100"
           >
-            <span className="text-slate-500">{entry.occurrence}.</span>
-            <span className="ml-2">{entry.word}</span>
+            <span>{entry.word}</span>
+            <span className="ml-2 text-slate-500">· {entry.occurrence}</span>
           </button>
         ))}
       </div>

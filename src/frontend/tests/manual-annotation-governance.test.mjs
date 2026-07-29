@@ -23,6 +23,7 @@ const videoPanel = read("app/V2components/components/panels/VideoPanel.tsx");
 const toolsPanel = read("app/V2components/components/panels/ToolsPanel.tsx");
 const ocrPanel = read("app/V2components/components/panels/OCRPanel.tsx");
 const expressionPanel = read("app/V2components/components/panels/ExpressionPanel.tsx");
+const expressionWeighting = read("lib/expression-weighting.ts");
 const posAnalyzePanel = read("app/V2components/components/panels/POSAnalyzePanel.tsx");
 const posMatrixPanel = read("app/V2components/components/panels/POSMatrixPanel.tsx");
 const quantAnalysisPanel = read("app/V2components/components/panels/QuantitativeAnalysisPanel.tsx");
@@ -38,6 +39,77 @@ const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const dataMaturationPanel = read("app/V2components/components/panels/DataMaturationPanel.tsx");
 const statsKitPanel = read("app/V2components/components/panels/StatsKitPanel.tsx");
+
+test("POS and Quant repeated terms retain source order and per-term occurrence numbers", () => {
+  assert.match(
+    posAnalyzePanel,
+    /slice\(0, index \+ 1\)[\s\S]*toLocaleLowerCase\(\)[\s\S]*\{word\} · \{occurrence\}/,
+    "POS analysis must number each repeated term within its displayed data array",
+  );
+  assert.match(
+    posMatrixPanel,
+    /normalizedWords[\s\S]*slice\(0, index \+ 1\)[\s\S]*segmentIndex - right\.segmentIndex[\s\S]*· \{entry\.occurrence\}/,
+    "POS matrix must source-order occurrences and number repetitions per normalized term",
+  );
+  for (const source of [quantAnalysisPanel, quantMatrixPanel]) {
+    assert.match(
+      source,
+      /\.sort\([\s\S]*segmentNavigationTime[\s\S]*\{fallbackNeedle \|\| "term"\} · \{index \+ 1\}/,
+      "Quant evidence must be source-ordered and visibly numbered within each term array",
+    );
+  }
+});
+
+test("no-face expression samples remain audit gaps and never become zero-score labels", () => {
+  assert.match(
+    expressionWeighting,
+    /hasExpressionSourceEvidence[\s\S]*quality !== "no_face"[\s\S]*expression_evidence\?\.level !== "none"/,
+    "the shared expression boundary must reject no-face and no-evidence samples",
+  );
+  assert.match(
+    expressionWeighting,
+    /sourceEvidenceAvailable[\s\S]*label: "unavailable", score: 0/,
+    "an all-zero expression family must resolve to unavailable rather than its first label",
+  );
+  assert.match(
+    videoService,
+    /correctedExpressionSamples\.filter\([\s\S]*hasExpressionSourceEvidence[\s\S]*expressionSamplingCoverage/,
+    "no-face samples must be removed before expression data reaches downstream consumers",
+  );
+  assert.match(
+    expressionPanel,
+    /source-linked[\s\S]*no-face[\s\S]*sampling gaps excluded/,
+    "Expressions must retain a quiet audit count for excluded sampling gaps",
+  );
+});
+
+test("manual visual identities proliferate as source-timed Character Timeline marks", () => {
+  assert.match(
+    videoService,
+    /nativeAnnotations\.forEach[\s\S]*identity_affirmation[\s\S]*category: "identity"[\s\S]*manual_visual\.identity_affirmation/,
+    "every mature Identification or object annotation must project separately as an identity occurrence",
+  );
+  assert.match(
+    videoService,
+    /source_annotation_ref: annotationId[\s\S]*source_object_ref[\s\S]*geometry_preserved_on_manual_annotation: true[\s\S]*data_maturation_proliferation: "confirmed_identity_occurrence"/,
+    "the identity projection must retain its source annotation, geometry traceback, and maturation route",
+  );
+  assert.match(
+    meaningPlotPanel,
+    /canonicalLabel[\s\S]*narrativeAgentProfileAliases[\s\S]*hasSourceTime[\s\S]*characterTimelineGroups/,
+    "Character Timeline must merge mature aliases into canonical rows and count only source-timed marks",
+  );
+  assert.match(
+    masterSchemaPanel,
+    /Confirmed visual identity occurrences[\s\S]*manual_visual\.identity_affirmation[\s\S]*ConfirmedVisualIdentityStrip/,
+    "Master Schema must visibly retain the source-timed identity projection in the proliferation loop",
+  );
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-master-schema-visual-identity-occurrences="true"[\s\S]*source_object_ref/,
+    "the Master Schema identity surface must retain its linked geometry-bearing object reference",
+  );
+});
 const audioPanel = read("app/V2components/components/panels/AudioPanel.tsx");
 const adminObservabilityPanel = read("app/V2components/components/panels/AdminObservabilityPanel.tsx");
 const sceneCardPanel = read("app/V2components/components/panels/SceneCardPanel.tsx");
@@ -49,6 +121,8 @@ const secondOrderAffirmations = read(
   "app/V2components/components/panels/SecondOrderLabelAffirmations.tsx",
 );
 const videoService = read("lib/video-service.ts");
+const sourceClock = read("lib/source-clock.ts");
+const manualAnnotationTaxonomy = read("lib/manual-annotation-taxonomy.ts");
 const evidenceAuthority = read("lib/evidence-authority.ts");
 const bboxAuthority = read("lib/bbox-authority.ts");
 const annotationCorrections = read("lib/annotation-corrections.ts");
@@ -65,7 +139,7 @@ function manualCategoryUnion() {
 }
 
 function nativeAnnotationCategories() {
-  const block = videoPanel.match(
+  const block = manualAnnotationTaxonomy.match(
     /const NATIVE_ANNOTATION_CATEGORIES[\s\S]*?=\s*\[([\s\S]*?)\];/,
   )?.[1];
   assert.ok(block, "NATIVE_ANNOTATION_CATEGORIES was not found");
@@ -128,7 +202,7 @@ function registeredPanelTypes() {
 }
 
 function keyExistsForCategoryInSubcategoryMap(category) {
-  const block = videoPanel.match(
+  const block = manualAnnotationTaxonomy.match(
     /const NATIVE_ANNOTATION_SUBCATEGORIES[\s\S]*?=\s*\{([\s\S]*?)\};/,
   )?.[1];
   assert.ok(block, "NATIVE_ANNOTATION_SUBCATEGORIES was not found");
@@ -1624,6 +1698,24 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-context-menu="true"[\s\S]*Open annotation sheet[\s\S]*Jump to source[\s\S]*Open traceback/,
+    "Narrative Agent graph must reuse the Meaning Network right-click navigation grammar",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-edge-context-menu="true"/,
+    "Narrative Agent graph edges must expose the same context navigation as nodes",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /data-vaa1-narrative-agent-graph-annotation-sheet="true"[\s\S]*Narrative Agent annotation sheet \/ \{graphAnnotationSheet\.kind\}/,
+    "Narrative Agent graph nodes and edges must open a dedicated annotation sheet",
+  );
+
+  assert.match(
+    masterSchemaPanel,
     /data-vaa1-statskit-significance-relevance-surface="true"/,
     "Narrative Agent panel must surface StatsKit, SignificanceKit, and RelevanceRadar for the selected character",
   );
@@ -1755,14 +1847,56 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /rawDetectedObjects\[class_name=person\][\s\S]*persons detected/,
+    /rawDetectedObjects\[class_name=person\][\s\S]*auditById\.get\("persons"\)/,
     "StatsKit person counts must audit raw person detections instead of reporting zero when detections exist",
   );
 
   assert.match(
     statsKitPanel,
-    /scene\/transition proxy count, not a finished shot-boundary count/,
-    "StatsKit camera shot rows must not pretend sparse scene proxies are true trailer shot-boundary counts",
+    /Scene Cards and scene intervals are excluded:[\s\S]*mise_en_scene_scene_cards\.scene_cards/,
+    "StatsKit must keep governed Scene Cards separate from measured camera-shot counts",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /Taxonomy \/ Attribute readiness[\s\S]*EMPIRICAL_TAXONOMY_ATTRIBUTES\.map/,
+    "StatsKit must expose the complete empirical taxonomy instead of a hand-selected measured subset",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /\["Aristotle", "aristotelian"\][\s\S]*\["Booker", "bookerian"\][\s\S]*\["Campbell", "campbellian"\][\s\S]*\["Freytag", "freytagian"\][\s\S]*\["Frye", "fryean"\]/,
+    "StatsKit must expose plot-lens reading counts as explicit statistics",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /Performed agency \/ Shakespearean[\s\S]*Narrative function \/ Proppian[\s\S]*Symbolic shadow \/ Jungian \/ Mythic[\s\S]*Actant relation \/ Greimasian[\s\S]*Motive scene \/ Burkean \/ Dramatistic/,
+    "StatsKit must expose framework-explicit character and agency statistics without fabricating absent readings",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /Source annotations[\s\S]*userAnnotationValueCount\(metadata\)[\s\S]*POS tagged tokens[\s\S]*Quant tokens/,
+    "StatsKit must keep analyst-authored source annotations and POS/Quant layers visible",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-statskit-inline-evidence="true"[\s\S]*videoTimeLineChanged/,
+    "StatsKit row inspection must stay inline and seek timed evidence on the existing video surface",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /eventBus\.getLast<unknown>\("videoIdChanged"\)[\s\S]*data-vaa1-statskit-close-inline-evidence="true"/,
+    "StatsKit must recover the current analysis when a restored panel mounts and let inline evidence close independently",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /INLINE_EVIDENCE_PAGE_SIZE = 12[\s\S]*data-vaa1-statskit-inline-evidence-pagination="true"[\s\S]*Previous[\s\S]*Next/,
+    "Dense inline evidence must provide local previous/next pagination instead of truncating after twelve records",
   );
 
   assert.match(
@@ -1947,20 +2081,20 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /data-vaa1-statskit-ordered-workbench-layout="true"[\s\S]*data-vaa1-statskit-layout-slot="A"[\s\S]*data-vaa1-statskit-layout-slot="right-visualization"[\s\S]*data-vaa1-statskit-layout-slot="C"[\s\S]*data-vaa1-statskit-layout-slot="D"[\s\S]*data-vaa1-statskit-layout-slot="B"/,
-    "StatsKit must declare ordered layout slots for Stats, Significance, Relevance, Metadata, and the right-column visualization",
+    /data-vaa1-statskit-ordered-workbench-layout="true"[\s\S]*data-vaa1-statskit-layout-priority="workbench-visualization-support"[\s\S]*data-vaa1-statskit-layout-slot="A"[\s\S]*data-vaa1-statskit-layout-slot="B"[\s\S]*data-vaa1-statskit-layout-slot="C"/,
+    "StatsKit must declare a full-width primary sequence for the workbench, visualization, and supporting scanner",
   );
 
   assert.match(
     statsKitPanel,
-    /xl:col-start-1 xl:row-start-2[\s\S]*data-vaa1-statskit-layout-slot="B"[\s\S]*Significance workbench/,
-    "Significance workbench must occupy the second left-column dropdown slot",
+    /order-6[\s\S]*data-vaa1-statskit-layout-slot="D"[\s\S]*Significance workbench/,
+    "Significance workbench must remain a secondary disclosure after the primary analytical surfaces",
   );
 
   assert.match(
     statsKitPanel,
-    /xl:sticky xl:top-2 xl:col-start-2 xl:row-span-4[\s\S]*data-vaa1-statskit-layout-slot="right-visualization"/,
-    "Visualization must stay in the right column beside the ordered dropdown stack",
+    /order-2 rounded[\s\S]*data-vaa1-statskit-visualization="true"[\s\S]*data-vaa1-statskit-layout-slot="B"/,
+    "Visualization must occupy a full-width secondary disclosure instead of permanently reducing workbench width",
   );
 
   assert.match(
@@ -2003,6 +2137,18 @@ test("Narrative Agent panel owns Character Paths home", () => {
     statsKitPanel,
     /data-vaa1-operational-visualization-renderer="true"[\s\S]*data-vaa1-visualization-target=\{visualizationTarget\}/,
     "StatsKit must use one operational renderer instead of a bar-chart-only visualization block",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /data-vaa1-visualization-mode-selector="true"[\s\S]*VISUALIZATION_MODE_OPTIONS\.map/,
+    "StatsKit must surface the complete visualization registry inside the Visualization disclosure",
+  );
+
+  assert.match(
+    statsKitPanel,
+    /bar_chart[\s\S]*percent_bars[\s\S]*duration_bars[\s\S]*histogram[\s\S]*boxplot[\s\S]*heatmap[\s\S]*timeline[\s\S]*network_graph[\s\S]*table/,
+    "StatsKit must register bars, distributions, heatmap, timeline, network, and table modes",
   );
 
   assert.match(
@@ -2157,14 +2303,14 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /Overview[\s\S]*Evidence[\s\S]*Semantics[\s\S]*Continuity[\s\S]*Scenes/,
-    "Narrative Agent review compass must name overview, evidence, semantics, continuity, and scenes",
+    /data-vaa1-narrative-agent-operational-actions="true"[\s\S]*Review evidence[\s\S]*Review scenes[\s\S]*Interpret character[\s\S]*Govern next actions[\s\S]*Inspect analytical support/,
+    "Narrative Agent workbench must expose concrete character-governance actions",
   );
 
   assert.match(
     masterSchemaPanel,
-    /Switch between overview, evidence, semantics, continuity, and scene checks without leaving this panel/,
-    "Narrative Agent review modes must keep character analysis in place",
+    /focusWorkspaceSection[\s\S]*section\.open = true[\s\S]*scrollIntoView/,
+    "Narrative Agent workbench actions must open and focus their operational surface",
   );
 
   assert.match(
@@ -2457,8 +2603,26 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /title="Choose Character"[\s\S]*title="Recommended Next Steps"[\s\S]*title="Review Modes"[\s\S]*title="Matching Memory"[\s\S]*title="Interpretation Lenses"[\s\S]*title="Character Evidence Graph"/,
-    "Narrative Agent primary work areas must start character-first and each have their own focused dropdown headline",
+    /sectionId="narrative-agent-character-selection"[\s\S]*layoutOrder="order-1"[\s\S]*sectionId="narrative-agent-analysis-actions"[\s\S]*layoutOrder="order-2"/,
+    "Narrative Agent primary work areas must start with character selection and operational actions",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /sectionId="narrative-agent-character-evidence"[\s\S]*layoutOrder="order-3"/,
+    "Narrative Agent evidence must be the primary working surface after operational actions",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /sectionId="narrative-agent-interpretation"[\s\S]*layoutOrder="order-4"/,
+    "Narrative Agent interpretation must follow source evidence",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /sectionId="narrative-agent-analytical-metadata"[\s\S]*layoutOrder="order-6"[\s\S]*sectionId="narrative-agent-matching-memory"[\s\S]*layoutOrder="order-7"/,
+    "Narrative Agent analytical metadata and matching support must remain secondary disclosures",
   );
 
   assert.match(
@@ -3125,8 +3289,44 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
+    /h-full overflow-auto bg-\[#222222\] text-slate-300/,
+    "Data Maturation must use the shared calm governance work surface",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /<details[\s\S]*data-vaa1-data-maturation-lane=\{dataAttr\}[\s\S]*<summary/,
+    "Maturation lanes must be single-row disclosures rather than dashboard cards",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /divide-y divide-white\/8 border-t border-white\/8 bg-\[#222222\]/,
+    "Maturation functional categories must use smooth global separators",
+  );
+
+  assert.match(
+    dataMaturationPanel,
     /data-vaa1-data-maturation-dynamic-controls="true"/,
     "Data Maturation panel must expose guarded, dynamic, and research postures",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /unresolvedPersonTrack[\s\S]*identity linkage required[\s\S]*canConfirm: timeRange\.start !== null && Boolean\(candidateBBox\) && !unresolvedPersonTrack/,
+    "unresolved generic person tracks must not be promotable without canonical identity and BBox linkage",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /Confirmation blocked: resolve source BBox and canonical identity linkage first/,
+    "blocked track confirmation must explain its missing governance prerequisites",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /catch \(error\)[\s\S]*Decision failed:/,
+    "maturation decisions must surface persistence failures instead of failing silently",
   );
 
   assert.match(
@@ -3169,6 +3369,18 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
     dataMaturationPanel,
     /data-vaa1-data-maturation-live-proliferation-bus-lane=\{/,
     "Data Maturation panel must surface the live proliferation bus as the v2 delivery requirement",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /records=\{metrics\.governanceMatrixRows\.filter[\s\S]*data-vaa1-data-maturation-lane-record=\{row\.id\}[\s\S]*formatTimeRange\(row\.timeRange\)[\s\S]*row\.authority[\s\S]*row\.maturity/,
+    "Maturation governance lanes must expose their existing operational records with time and authority",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /No operational records are currently available\./,
+    "empty governance lanes must report an honest unavailable state",
   );
 
   assert.match(
@@ -3263,6 +3475,12 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
+    /manualVisualAnnotations\.forEach[\s\S]*governed-bbox:[\s\S]*governed label:[\s\S]*queue: "bbox"/,
+    "the BBox view must include canonical governed manual BBoxes, not only detector candidates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
     /bboxConfirmationCandidate[\s\S]*detectedObjects[\s\S]*rawDetectedObjects/,
     "Maturation must harvest BBox confirmation rows from the same object detections used by the video overlay",
   );
@@ -3270,7 +3488,7 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
   assert.match(
     dataMaturationPanel,
     /function buildBBoxConfirmationAggregates/,
-    "BBox confirmation rows must be aggregated into analyst-scale track intervals instead of frame-level forensic volume",
+    "BBox confirmation rows must be derived as individual detection evidence",
   );
 
   assert.match(
@@ -3281,8 +3499,26 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
-    /item\.trackId \|\| item\.track_id[\s\S]*spatial:\$\{family\}:\$\{bboxSpatialBucket/,
-    "BBox confirmation aggregation must not invent one unique untracked id per frame",
+    /const spatialKey = bboxSpatialBucket\(bbox\)[\s\S]*timeRange\.start\.toFixed\(3\)/,
+    "BBox confirmation identity must prioritize source time and coordinates",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /Label candidate:[\s\S]*matures this detection only/,
+    "a governed label may mature its individual detection without silently relabeling a track",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /item\.candidate_id\)\.startsWith\("tracked_object:"\)[\s\S]*return/,
+    "untrusted track hypotheses must stay out of the Maturation confirmation queue",
+  );
+
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-context-menu="true"[\s\S]*Inspect detection[\s\S]*Jump to source[\s\S]*Open annotation sheet[\s\S]*Open traceback/,
+    "Maturation rows must expose Datascene right-click evidence navigation",
   );
 
   assert.match(
@@ -5156,6 +5392,16 @@ test("Video panel swaps loaded media atomically without duplicate preload frames
   );
 });
 
+test("Video source recovery remounts stalled media and preserves pending navigation", () => {
+  assert.match(videoPanel, /source_load=\$\{Date\.now\(\)\.toString\(36\)\}/);
+  assert.match(videoPanel, /preload="auto"/);
+  assert.match(
+    videoPanel,
+    /onLoadedMetadata[\s\S]*pendingTime[\s\S]*videoRef\.current\.currentTime = pendingTime/,
+    "a navigation received before media metadata must be applied once the source becomes seekable",
+  );
+});
+
 test("browser refresh shortcuts remain reserved for the browser", () => {
   assert.match(
     videoPanel,
@@ -5227,5 +5473,209 @@ test("Meaning Network and Master Schema consume shared canonical claim projectio
     masterSchemaPanel,
     /getProjectedCanonicalClaims[\s\S]*narrative_agent\.assignment[\s\S]*canonicalClaims/,
     "Master Schema Narrative Agent paths must consume canonical projections",
+  );
+});
+
+test("Video and Maturation keep governed BBox focus bidirectional", () => {
+  assert.match(
+    videoPanel,
+    /emit<GovernedBBoxFocus>\("governedBBoxFocusChanged"[\s\S]*evidenceId:[\s\S]*bbox:/,
+    "selecting a Video BBox must publish its governed identity and geometry",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /on<GovernedBBoxFocus>\("governedBBoxFocusChanged"[\s\S]*setActiveQueue\("bbox"\)/,
+    "Maturation must consume Video BBox focus and activate the BBox queue",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /source: "DataMaturation"[\s\S]*evidenceId: row\.sourceRef \|\| row\.id/,
+    "selecting a Maturation BBox must publish the canonical source reference",
+  );
+  assert.match(
+    videoPanel,
+    /focus\.source === "VideoPanel"[\s\S]*setPendingGovernedBBoxFocus[\s\S]*setSelectedOverlayKey\(match\.key\)/,
+    "Video must consume Maturation focus without reflecting its own event",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /exactReference[\s\S]*timeOverlap[\s\S]*normalizedBBoxIoU[\s\S]*labelSupport[\s\S]*score:/,
+    "Video-to-Maturation focus must rank canonical reference, source time, geometry, and governed label",
+  );
+  assert.match(
+    videoPanel,
+    /exactReference[\s\S]*calculateDraftBoxIoU[\s\S]*labelSupport[\s\S]*eligible/,
+    "Maturation-to-Video focus must recover compatibility projections without track-id matching",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-data-maturation-governance-row-selected=\{selectedIssue\.id === row\.id\}/,
+    "the resolved Maturation row must expose a live selected state",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /queueRows\.findIndex\(\(row\) => row\.id === promotedGovernanceRowId\)[\s\S]*queueRows\[promotedIndex\]/,
+    "a BBox sought from Video must become the first visible Maturation row",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /setPromotedGovernanceRowId\(match\.id\)/,
+    "the resolved Video focus must identify the Maturation row to promote",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /scrollIntoView\(\{ block: "start" \}\)/,
+    "the sought Maturation row must align to the start of the visible worktable",
+  );
+});
+
+test("Maturation owns BBox navigation while its confirmation worktable is open", () => {
+  assert.match(
+    dataMaturationPanel,
+    /emit\("maturationWorkbenchActive", true\)[\s\S]*emit\("maturationWorkbenchActive", false\)/,
+    "Maturation must publish the lifetime of its active worktable",
+  );
+  assert.match(
+    videoPanel,
+    /getLast<boolean>\("maturationWorkbenchActive"\)[\s\S]*videoTimeLineChanged[\s\S]*return;/,
+    "Video BBox navigation must seek without opening a replacement panel during maturation",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /formatPreciseSourceTime,[\s\S]*from "@\/lib\/source-clock"[\s\S]*formatPreciseSourceTime\(range\.start\)/,
+    "Maturation must use the Video panel minute-second-millisecond source clock",
+  );
+  assert.match(
+    videoPanel,
+    /formatPreciseSourceTime,[\s\S]*from "@\/lib\/source-clock"[\s\S]*return formatPreciseSourceTime\(value\)/,
+    "Video and Maturation must consume the same precise source-clock implementation",
+  );
+  assert.doesNotMatch(
+    dataMaturationPanel,
+    /label:\s*`\$\{(?:timeRange\.start|item\.start)\.toFixed\(3\)/,
+    "Maturation row labels must not bypass the shared source clock with raw seconds",
+  );
+});
+
+test("program-wide source time names one confirmed clock authority", () => {
+  assert.match(
+    sourceClock,
+    /CANONICAL_SOURCE_CLOCK_ID = "source_media\.clock"/,
+    "the frontend source-clock contract must name the backend canonical clock",
+  );
+  assert.match(
+    apiService,
+    /resolveSourceClock[\s\S]*\/source-clock\/resolve/,
+    "the canonical backend clock resolver must be available through the frontend API boundary",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /VideoService\.resolveSourceClock[\s\S]*clock_id: CANONICAL_SOURCE_CLOCK_ID[\s\S]*apply_invalidation: false/,
+    "Maturation navigation must verify its displayed interval against clock authority without mutating evidence",
+  );
+  assert.match(
+    videoPanel,
+    /clockId: CANONICAL_SOURCE_CLOCK_ID[\s\S]*focus\.clockId !== CANONICAL_SOURCE_CLOCK_ID/,
+    "cross-panel BBox focus must identify and enforce the canonical source clock",
+  );
+});
+
+test("Maturation context menu opens a source-bound BBox annotation sheet", () => {
+  assert.match(
+    dataMaturationPanel,
+    /const openAnnotationSheet[\s\S]*setAnnotationSheet\(\{ row, annotation \}\)/,
+    "the context command must open Maturation's local governed annotation sheet",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /MATURATION_TAXONOMY_DIMENSIONS[\s\S]*virtue_strength[\s\S]*Maturation annotation sheet[\s\S]*Save taxonomy/,
+    "the sheet must expose the broader governed taxonomy, including virtues and vices",
+  );
+  for (const branch of [
+    "shakespearean_performativity",
+    "proppian_function",
+    "jungian_symbolic",
+    "greimasian_actant",
+    "burkean_motive",
+    "continuity_state",
+    "vocal_affect",
+    "match_basis",
+  ]) {
+    assert.match(dataMaturationPanel, new RegExp(branch), `Maturation is missing ${branch}`);
+  }
+  assert.match(
+    dataMaturationPanel,
+    /MATURATION_TAXONOMY_DIMENSIONS\.map\(\(\{ key, label, options \}\)[\s\S]*<select[\s\S]*options\.map/,
+    "Narrative Agent schema rows must provide operational dropdown choices",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /BBox annotation classification[\s\S]*NATIVE_ANNOTATION_CATEGORIES/,
+    "Maturation must expose the same category, subcategory, and label choices as BBox navigation",
+  );
+  assert.match(dataMaturationPanel, /NATIVE_ANNOTATION_SUBCATEGORIES\[entry\.category\]/);
+  assert.match(dataMaturationPanel, /NATIVE_ANNOTATION_LABELS\[`\$\{entry\.category\}::\$\{entry\.subcategory\}`\]/);
+  assert.match(
+    dataMaturationPanel,
+    /bboxClassificationDrafts\.map[\s\S]*Add classification/,
+    "BBox classification must support multiple independently governed category entries",
+  );
+  assert.match(dataMaturationPanel, /bbox_classification_entries: classificationEntries/);
+  assert.match(
+    dataMaturationPanel,
+    /sourceWidth[\s\S]*sourceHeight[\s\S]*timeOverlap[\s\S]*spatialOverlap/,
+    "detector rows must recover their governed source BBox by canonical source time and spatial overlap",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /option === "Identification" \? "Narrative Agent"[\s\S]*Enter governed agent name/,
+    "Maturation must name a governed Narrative Agent rather than exposing an Identification-only state",
+  );
+  assert.match(dataMaturationPanel, /identity_affirmation: narrativeAgentName/);
+  assert.match(
+    dataMaturationPanel,
+    /governedNarrativeAgentLabels\(analysisData\)[\s\S]*data-vaa1-golden-narrative-agent-menu/,
+    "Maturation must consume the analysis-scoped governed Narrative Agent registry",
+  );
+  assert.match(videoPanel, /governedNarrativeAgentLabels\(analysisData\)/);
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-maturation-source-time-correction[\s\S]*On-screen start[\s\S]*On-screen end/,
+    "Maturation must expose precise occurrence-scoped source-time correction",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /source_time_corrections:[\s\S]*previous_start_seconds[\s\S]*corrected_start_seconds[\s\S]*explicit_user_correction/,
+    "source-time corrections must retain the previous interval for traceback",
+  );
+  assert.match(
+    videoPanel,
+    /sourceChanged[\s\S]*navigationRequestedAtRef[\s\S]*setVideoTimeLine\(0\)/,
+    "a newly opened analysis must start at canonical zero unless its navigation transaction supplies a source time",
+  );
+  assert.match(
+    manualAnnotationTaxonomy,
+    /"Genre::Media genre"[\s\S]*"Genre::Media subgenre"[\s\S]*"Genre::Situational genre"[\s\S]*"Genre::Situational subgenre"/,
+    "Genre branches must resolve to populated canonical label registries",
+  );
+  assert.match(
+    videoPanel,
+    /from "@\/lib\/manual-annotation-taxonomy"/,
+    "Video and Maturation must share one BBox annotation taxonomy",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /const editSourceBBox[\s\S]*openManualAnnotationInVideo[\s\S]*forensicRegionDraftOpen/,
+    "source geometry editing must remain a separate explicit operation",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /saveMaturationAnnotationSheet[\s\S]*quick_annotations:[\s\S]*VideoService\.saveAnnotationCorrections/,
+    "taxonomy values must persist on the governed source annotation",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /openAnnotationSheet\(contextMenu\.row\)[\s\S]{0,500}Open annotation sheet/,
+    "the right-click command must invoke the annotation-sheet operation",
   );
 });

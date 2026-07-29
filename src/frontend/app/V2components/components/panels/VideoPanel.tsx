@@ -12,6 +12,18 @@ import {
 } from "lucide-react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
+  CANONICAL_SOURCE_CLOCK_ID,
+  formatPreciseSourceTime,
+  sourceClockStatusForAuthority,
+  type SourceClockTimingStatus,
+} from "@/lib/source-clock";
+import {
+  NATIVE_ANNOTATION_CATEGORIES,
+  NATIVE_ANNOTATION_LABELS,
+  NATIVE_ANNOTATION_SUBCATEGORIES,
+} from "@/lib/manual-annotation-taxonomy";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+import {
   VideoService,
   type AnalysisData,
   type DetectedObject,
@@ -150,6 +162,18 @@ type OverlayBox = {
   w: number;
   h: number;
   sourceItem?: any;
+};
+
+type GovernedBBoxFocus = {
+  videoId: string;
+  source: "VideoPanel" | "DataMaturation";
+  evidenceId?: string;
+  timestamp: number;
+  timeRange?: { start: number | null; end: number | null };
+  bbox?: Record<string, unknown> | null;
+  label?: string;
+  clockId: typeof CANONICAL_SOURCE_CLOCK_ID;
+  timingStatus: SourceClockTimingStatus;
 };
 
 type RestoreEvidenceToAnalysisRequest = {
@@ -418,24 +442,6 @@ function manualSubcategoryDisplayLabel(
   return subcategory;
 }
 
-const NATIVE_ANNOTATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
-  "Action",
-  "Audio",
-  "Cinematic Cues",
-  "Expressions",
-  "Genre",
-  "Identification",
-  "Interaction",
-  "Metadata",
-  "Movement",
-  "Notes",
-  "OBJ",
-  "OCR",
-  "Role",
-  "Scene",
-  "Transcription",
-];
-
 const BBOX_ROI_APPLY_SCOPE_OPTIONS: Array<{
   value: BBoxRoiApplyScope;
   label: string;
@@ -562,65 +568,6 @@ const MANUAL_CATEGORY_PANEL_MAP: Record<
   Role: "ManualRole",
   Scene: "ManualScene",
   Transcription: "ManualTranscription",
-};
-
-const NATIVE_ANNOTATION_SUBCATEGORIES: Record<
-  ManualVisualAnnotation["category"],
-  string[]
-> = {
-  Action: ["Action"],
-  Audio: ["Ambience", "Foley", "Music", "Prosody", "Sound event", "Speaker-state"],
-  "Cinematic Cues": ["Composition", "Lighting", "Shot size", "Transition"],
-  Expressions: ["Emotion", "Expression"],
-  Genre: [
-    "Media genre",
-    "Media subgenre",
-    "Situational genre",
-    "Situational subgenre",
-    "Situational taxonomy",
-  ],
-  Identification: ["Character", "Identity"],
-  Interaction: ["Exchange", "Interaction"],
-  Metadata: ["Context", "Correlation"],
-  Movement: ["Camera movement", "Subject movement"],
-  Notes: ["Timestamped note"],
-  OBJ: ["Object label"],
-  OCR: ["Visible text"],
-  Role: ["Role affirmation"],
-  Scene: ["Location", "Scene type"],
-  Transcription: ["Speech content", "Transcript note"],
-};
-
-const NATIVE_ANNOTATION_LABELS: Record<string, string[]> = {
-  "Action::Action": ["Driving", "Entering", "Exiting", "Holding", "Running", "Sitting", "Standing", "Walking"],
-  "Audio::Ambience": ["Crowd noise", "Indoor hum", "Street noise", "Wind"],
-  "Audio::Foley": ["Door close", "Footsteps", "Glass impact", "Walking on snow"],
-  "Audio::Music": ["Background score", "Dissonant cue", "Suspense cue", "Theme cue"],
-  "Audio::Prosody": ["Emphasis", "Flat delivery", "Raised voice", "Whisper"],
-  "Audio::Sound event": ["Door slam", "Explosion", "Gun shot", "Phone ring"],
-  "Audio::Speaker-state": ["Agitated", "Calm", "Fearful", "Urgent"],
-  "Cinematic Cues::Composition": ["Center-weighted", "Foreground obstruction", "Symmetry", "Wide isolation"],
-  "Cinematic Cues::Lighting": ["Backlit", "Cold lighting", "High contrast", "Low-key lighting"],
-  "Cinematic Cues::Shot size": ["Close-up", "Extreme close-up", "Long shot", "Medium shot"],
-  "Cinematic Cues::Transition": ["Cut", "Dissolve", "Fade", "Match cut"],
-  "Expressions::Emotion": ["Anger", "Fear", "Joy", "Sadness", "Surprise"],
-  "Expressions::Expression": ["Concern", "Determination", "Neutral", "Tension"],
-  "Identification::Character": ["Character present", "Unidentified person"],
-  "Identification::Identity": ["Narrative Agent affirmed", "Narrative Agent uncertain"],
-  "Interaction::Exchange": ["Confrontation", "Conversation", "Observation", "Pursuit"],
-  "Interaction::Interaction": ["Assistance", "Conflict", "Contact", "Threat"],
-  "Metadata::Context": ["Metadata supports annotation", "Metadata updated from annotation"],
-  "Metadata::Correlation": ["Contradicts metadata", "Extends metadata", "Matches metadata", "Supports metadata"],
-  "Movement::Camera movement": ["Pan", "Static camera", "Tilt", "Zoom"],
-  "Movement::Subject movement": ["Approach", "Retreat", "Turn", "Walk"],
-  "Notes::Timestamped note": ["Analyst note", "Correction note", "Open note"],
-  "OBJ::Object label": ["Bag", "Car", "Door", "Person", "Phone", "Weapon"],
-  "OCR::Visible text": ["Name card", "On-screen caption", "Signage", "Subtitle"],
-  "Role::Role affirmation": ["Authority", "Customer service", "Driver", "Guard", "Police officer"],
-  "Scene::Location": ["Indoor", "Outdoor", "Street", "Waiting area"],
-  "Scene::Scene type": ["Arrival", "Checkpoint", "Conversation scene", "Transition scene"],
-  "Transcription::Speech content": ["Correct transcript", "Missing utterance", "Speaker overlap"],
-  "Transcription::Transcript note": ["Ambiguous phrase", "Manual clarification", "Timestamp note"],
 };
 
 const NARRATIVE_AGENT_QUICK_CHOICES = ["by-stander", "friend", "foe", "crowd"];
@@ -1071,14 +1018,7 @@ function formatTime(value: number): string {
 }
 
 function formatPreciseTime(value: number): string {
-  if (!Number.isFinite(value) || value < 0) {
-    return "0:00.000";
-  }
-
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.floor(value % 60);
-  const milliseconds = Math.floor((value - Math.floor(value)) * 1000);
-  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+  return formatPreciseSourceTime(value);
 }
 
 function formatCandidateTime(candidate: EvidenceProliferationCandidate): string {
@@ -2085,6 +2025,8 @@ export default function VideoPanel() {
   const [primaryPlaying, setPrimaryPlaying] = useState(false);
   const [primaryPlaybackRate, setPrimaryPlaybackRate] = useState(1);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [pendingGovernedBBoxFocus, setPendingGovernedBBoxFocus] =
+    useState<GovernedBBoxFocus | null>(null);
   const [activeOverlayEditorKey, setActiveOverlayEditorKey] = useState<string | null>(null);
   const [selectedOverlaySnapshot, setSelectedOverlaySnapshot] =
     useState<OverlayBox | null>(null);
@@ -2211,6 +2153,9 @@ export default function VideoPanel() {
   const lastObjectUrl = React.useRef<string | null>(null);
   const lastCompareObjectUrl = React.useRef<string | null>(null);
   const lastBroadcastTimeRef = React.useRef<number>(-1);
+  const pendingSourceTimeRef = React.useRef(0);
+  const navigationRequestedAtRef = React.useRef(0);
+  const loadedVideoIdRef = React.useRef("");
   const compareSyncLockRef = React.useRef(false);
   const [isLoading, setIsLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -2237,9 +2182,12 @@ export default function VideoPanel() {
   const loadVideoSource = React.useCallback(async (analysisId: string) => {
     const nextMetadata = await VideoService.get(analysisId);
     if (nextMetadata.status === "completed" && nextMetadata.sourceVideoExists) {
+      const sourceUrl = apiService.getDownloadUrl(analysisId, "source_video");
       return {
         metadata: nextMetadata,
-        videoUrl: apiService.getDownloadUrl(analysisId, "source_video"),
+        // A fresh URL forces Chrome to remount a source that previously stalled at
+        // HAVE_NOTHING instead of retaining an inert element with 0 duration.
+        videoUrl: `${sourceUrl}${sourceUrl.includes("?") ? "&" : "?"}source_load=${Date.now().toString(36)}`,
         blobMissing: false,
       };
     }
@@ -2352,6 +2300,8 @@ export default function VideoPanel() {
 
   const jumpToTime = React.useCallback((nextTime: number) => {
     const safeTime = clamp(nextTime, 0, duration || Number.MAX_SAFE_INTEGER);
+    pendingSourceTimeRef.current = safeTime;
+    navigationRequestedAtRef.current = Date.now();
     setCurrentTime(safeTime);
     setVideoTimeLine(safeTime);
     if (videoRef.current) {
@@ -2664,6 +2614,8 @@ export default function VideoPanel() {
       if (Math.abs(nextVideoTimeLine - lastBroadcastTimeRef.current) < 0.05) {
         return;
       }
+      pendingSourceTimeRef.current = nextVideoTimeLine;
+      navigationRequestedAtRef.current = Date.now();
       setVideoTimeLine(nextVideoTimeLine);
     };
     eventBus.on("videoTimeLineChanged", handler);
@@ -3101,6 +3053,14 @@ export default function VideoPanel() {
   useEffect(() => {
     const loadToken = ++activeLoadTokenRef.current;
     let cancelled = false;
+    const sourceChanged = loadedVideoIdRef.current !== videoId;
+    if (sourceChanged && Date.now() - navigationRequestedAtRef.current > 250) {
+      pendingSourceTimeRef.current = 0;
+      setVideoTimeLine(0);
+      setCurrentTime(0);
+    } else if (!sourceChanged) {
+      pendingSourceTimeRef.current = currentTime;
+    }
 
     async function load() {
       if (!videoId) {
@@ -3136,8 +3096,9 @@ export default function VideoPanel() {
         }
         setMetadata(mediaSource.metadata);
         setAnalysisData(nextAnalysis);
-        setCurrentTime(0);
-        setVideoTimeLine(0);
+        setCurrentTime(pendingSourceTimeRef.current);
+        setVideoTimeLine(pendingSourceTimeRef.current);
+        loadedVideoIdRef.current = videoId;
         setDuration(0);
         setFrameReadyTime(null);
         lastBroadcastTimeRef.current = -1;
@@ -3410,56 +3371,7 @@ export default function VideoPanel() {
   const faceResults = analysisData?.faceResults ?? null;
   const videoWidth = videoRef.current?.videoWidth || 1920;
   const videoHeight = videoRef.current?.videoHeight || 1080;
-  const knownCharacters = useMemo(() => {
-    const labels = new Set<string>();
-    const records = analysisData?.masterSchemaResolvedEvidence?.records || [];
-    records.forEach((record: MasterSchemaResolvedEvidenceRecord) => {
-      if (
-        ["narrative_agent_profile", "character_role", "identity"].includes(
-          record.category,
-        ) &&
-        record.authority !== "raw_detection"
-      ) {
-        appendKnownNarrativeAgentLabel(labels, record.label);
-      }
-    });
-
-    const sourceMediaMetadata = analysisData?.metadata?.sourceMediaMetadata;
-    appendKnownNarrativeAgentValues(
-      labels,
-      sourceMediaMetadata?.user_annotations?.narrative_agent_profiles,
-    );
-    appendKnownNarrativeAgentValues(
-      labels,
-      sourceMediaMetadata?.user_annotations?.character_definitions,
-    );
-    appendKnownNarrativeAgentValues(
-      labels,
-      sourceMediaMetadata?.user_annotations?.character_roles,
-    );
-    (sourceMediaMetadata?.user_annotations?.web_metadata_sources || []).forEach(
-      (source) => {
-        appendKnownNarrativeAgentValues(labels, source.fields?.character_roles);
-        appendKnownNarrativeAgentValues(labels, source.fields?.persons);
-      },
-    );
-
-    (analysisData?.annotationCorrections?.manual_visual_annotations || []).forEach(
-      (entry: ManualVisualAnnotation) => {
-        appendKnownNarrativeAgentLabel(labels, entry.identity_affirmation);
-        if (entry.category === "Identification") {
-          appendKnownNarrativeAgentLabel(labels, entry.label);
-          appendKnownNarrativeAgentLabel(labels, entry.custom_label);
-        }
-      },
-    );
-
-    return Array.from(labels).sort((left, right) => left.localeCompare(right));
-  }, [
-    analysisData?.annotationCorrections?.manual_visual_annotations,
-    analysisData?.masterSchemaResolvedEvidence?.records,
-    analysisData?.metadata?.sourceMediaMetadata,
-  ]);
+  const knownCharacters = useMemo(() => governedNarrativeAgentLabels(analysisData), [analysisData]);
   const fallbackShotSizeSummary = useMemo(() => {
     const personItems = rawDetectedObjects.filter(
       (item) => (item.class_name || item.raw_class_name || "").toLowerCase() === "person",
@@ -5829,9 +5741,103 @@ export default function VideoPanel() {
       setSelectedWorkspaceAnnotationId(attachedManual?.id || null);
       setSelectedOverlayKey(overlay.key);
       setSelectedOverlaySnapshot(overlay);
+      if (videoId) {
+        const timestamp = getOverlayInteractionTime(overlay);
+        eventBus.emit<GovernedBBoxFocus>("governedBBoxFocusChanged", {
+          videoId,
+          source: "VideoPanel",
+          evidenceId: attachedManual?.id || source.id || source.annotation_id || overlay.key,
+          timestamp,
+          timeRange: {
+            start: Number.isFinite(Number(source.start_seconds ?? source.start_time))
+              ? Number(source.start_seconds ?? source.start_time)
+              : timestamp,
+            end: Number.isFinite(Number(source.end_seconds ?? source.end_time))
+              ? Number(source.end_seconds ?? source.end_time)
+              : timestamp,
+          },
+          bbox: getOverlayNormalizedBox(overlay),
+          label: overlay.label,
+          clockId: CANONICAL_SOURCE_CLOCK_ID,
+          timingStatus: sourceClockStatusForAuthority(
+            attachedManual ? "explicit_user_correction" : "source_measured",
+          ),
+        });
+      }
     },
-    [buildIndicationEditForOverlay, getAttachedManualAnnotation, selectedOverlayKey],
+    [
+      buildIndicationEditForOverlay,
+      getAttachedManualAnnotation,
+      getOverlayInteractionTime,
+      getOverlayNormalizedBox,
+      selectedOverlayKey,
+      videoId,
+    ],
   );
+
+  useEffect(() => {
+    const handler = (focus: GovernedBBoxFocus) => {
+      if (!focus || focus.source === "VideoPanel") return;
+      if (focus.clockId !== CANONICAL_SOURCE_CLOCK_ID) return;
+      if (focus.videoId && videoId && focus.videoId !== videoId) return;
+      setPendingGovernedBBoxFocus(focus);
+      eventBus.emit("videoTimeLineChanged", focus.timestamp);
+    };
+    eventBus.on<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
+    return () => eventBus.off<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
+  }, [videoId]);
+
+  useEffect(() => {
+    if (!pendingGovernedBBoxFocus || overlayBoxes.length === 0) return;
+    const evidenceId = pendingGovernedBBoxFocus.evidenceId || "";
+    const focusBox = pendingGovernedBBoxFocus.bbox as DraftBox | null | undefined;
+    const focusLabel = normalizeEvidenceLabel(pendingGovernedBBoxFocus.label || "");
+    const rankedMatches = overlayBoxes.map((overlay) => {
+      const source = overlay.sourceItem || {};
+      const attachedManual =
+        overlay.modality === "manual"
+          ? (source as ManualVisualAnnotation)
+          : getAttachedManualAnnotation(source);
+      const references = [overlay.key, source.id, source.annotation_id, attachedManual?.id]
+        .filter(Boolean)
+        .map(String);
+      const exactReference = Boolean(
+        evidenceId && references.some((value) =>
+          value === evidenceId ||
+          `manual-${value}` === evidenceId ||
+          evidenceId.includes(value) ||
+          value.includes(evidenceId),
+        ),
+      );
+      const overlayBox = getOverlayNormalizedBox(overlay);
+      const spatialOverlap = focusBox
+        ? calculateDraftBoxIoU(overlayBox, focusBox)
+        : 0;
+      const overlayLabel = normalizeEvidenceLabel(overlay.label || source.displayLabel || source.class_name || "");
+      const labelSupport = Boolean(
+        focusLabel && overlayLabel &&
+          (focusLabel === overlayLabel || focusLabel.includes(overlayLabel) || overlayLabel.includes(focusLabel)),
+      );
+      return {
+        overlay,
+        score: (exactReference ? 1000 : 0) + spatialOverlap * 100 + (labelSupport ? 25 : 0),
+        eligible: exactReference || spatialOverlap >= 0.12 || labelSupport,
+      };
+    });
+    const match = rankedMatches
+      .filter((candidate) => candidate.eligible)
+      .sort((left, right) => right.score - left.score)[0]?.overlay;
+    if (!match) return;
+    const source = match.sourceItem || {};
+    const attachedManual =
+      match.modality === "manual"
+        ? (source as ManualVisualAnnotation)
+        : getAttachedManualAnnotation(source);
+    setSelectedWorkspaceAnnotationId(attachedManual?.id || null);
+    setSelectedOverlayKey(match.key);
+    setSelectedOverlaySnapshot(match);
+    setPendingGovernedBBoxFocus(null);
+  }, [getAttachedManualAnnotation, getOverlayNormalizedBox, overlayBoxes, pendingGovernedBBoxFocus]);
 
   useEffect(() => {
     if (!pendingObjectOverlayEdit || overlayBoxes.length === 0) {
@@ -5890,6 +5896,15 @@ export default function VideoPanel() {
 
       const source = overlay.sourceItem || {};
       const timestamp = getOverlayInteractionTime(overlay);
+
+      // Maturation owns the current BBox worktable while it is open. Overlay
+      // navigation remains bidirectional, but must not replace that workflow
+      // with an implicit Objects or leaf-panel route.
+      if (eventBus.getLast<boolean>("maturationWorkbenchActive")) {
+        eventBus.emit("videoIdChanged", videoId);
+        eventBus.emit("videoTimeLineChanged", timestamp);
+        return;
+      }
 
       let panelType = "MasterSchema";
       if (overlay.modality === "object") {
@@ -8154,6 +8169,7 @@ export default function VideoPanel() {
                   key={videoUrl}
                   ref={videoRef}
                   src={videoUrl}
+                  preload="auto"
                   controls={false}
                   controlsList="nofullscreen"
                   className="h-full w-full object-contain"
@@ -8162,6 +8178,14 @@ export default function VideoPanel() {
                       return;
                     }
                     setDuration(videoRef.current.duration || 0);
+                    const requestedTime = pendingSourceTimeRef.current;
+                    const pendingTime = Number.isFinite(requestedTime)
+                      ? Math.max(0, Math.min(requestedTime, videoRef.current.duration || requestedTime))
+                      : 0;
+                    if (Math.abs(videoRef.current.currentTime - pendingTime) > 0.01) {
+                      videoRef.current.currentTime = pendingTime;
+                    }
+                    setCurrentTime(pendingTime);
                     setFrameReadyTime(null);
                     overlayArmedRef.current = false;
                     updateRenderedVideoRect();
@@ -9768,6 +9792,7 @@ export default function VideoPanel() {
                       key={videoUrl}
                       ref={videoRef}
                       src={videoUrl}
+                      preload="auto"
                       controls={false}
                       className="h-full w-full object-contain"
                       onLoadedMetadata={() => {
@@ -9775,6 +9800,14 @@ export default function VideoPanel() {
                           return;
                         }
                         setDuration(videoRef.current.duration || 0);
+                        const requestedTime = pendingSourceTimeRef.current;
+                        const pendingTime = Number.isFinite(requestedTime)
+                          ? Math.max(0, Math.min(requestedTime, videoRef.current.duration || requestedTime))
+                          : 0;
+                        if (Math.abs(videoRef.current.currentTime - pendingTime) > 0.01) {
+                          videoRef.current.currentTime = pendingTime;
+                        }
+                        setCurrentTime(pendingTime);
                       }}
                       onTimeUpdate={() => {
                         if (!videoRef.current) {
@@ -9852,6 +9885,7 @@ export default function VideoPanel() {
                         key={compareSource.videoUrl}
                         ref={compareVideoRef}
                         src={compareSource.videoUrl}
+                        preload="auto"
                         controls={false}
                         className="h-full w-full object-contain"
                         onLoadedMetadata={() => {

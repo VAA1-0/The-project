@@ -24,6 +24,41 @@ bus = load_bus_module()
 
 
 class LiveMatureDataProliferationBusTests(unittest.TestCase):
+    def setUp(self):
+        # Legacy bus tests exercise the optional future track path explicitly.
+        # Production remains conservative with this switch disabled.
+        bus.TRACK_DERIVED_PROMOTION_ENABLED = True
+
+    def tearDown(self):
+        bus.TRACK_DERIVED_PROMOTION_ENABLED = False
+
+    def test_track_derived_promotion_is_disabled_by_default_policy(self):
+        bus.TRACK_DERIVED_PROMOTION_ENABLED = False
+        status = {
+            "analysis_id": "analysis-untrusted-track",
+            "annotation_corrections": {"manual_visual_annotations": []},
+            "results": {
+                "visual_analysis": {
+                    "tracked_objects": [
+                        {
+                            "track_id": "10",
+                            "class_name": "person",
+                            "label": "person track 10",
+                            "start": 35.0,
+                            "end": 35.2,
+                            "confidence": 0.95,
+                            "bbox": {"x": 0.3, "y": 0.2, "w": 0.4, "h": 0.6},
+                        }
+                    ]
+                }
+            },
+        }
+
+        audit = bus.build_live_mature_data_proliferation_audit(status)
+
+        self.assertEqual(audit["summary"]["confirmation_need_count"], 0)
+        self.assertEqual(audit["summary"]["governed_mature_hypothesis_count"], 0)
+
     def test_bus_surfaces_later_opportunities_without_promoting_them(self):
         status = {
             "analysis_id": "analysis-live-bus",
@@ -579,6 +614,19 @@ class LiveMatureDataProliferationBusTests(unittest.TestCase):
         self.assertGreaterEqual(len(memory["audiovisual_sample_slots"]), 2)
         self.assertTrue(memory["sample_policy"]["audiovisual_sample_required"])
         self.assertTrue(memory["sample_policy"]["multiple_visual_samples_required"])
+        self.assertEqual(
+            memory["meta_anchor"]["schema"],
+            "vaa1.narrative_agent_meta_anchor.v1",
+        )
+        self.assertEqual(
+            memory["meta_anchor"]["canonical_identity_key"],
+            "james bond",
+        )
+        self.assertTrue(memory["meta_anchor"]["automatic_confirmation_ready"])
+        self.assertEqual(
+            memory["meta_anchor"]["proliferation_scope"],
+            "source_occurrence_only",
+        )
         self.assertIn(
             "voice_similarity",
             memory["constellational_matching_policy"]["allowed_match_basis"],
@@ -589,8 +637,57 @@ class LiveMatureDataProliferationBusTests(unittest.TestCase):
         )
         self.assertEqual(candidates[0]["candidate_label"], "James Bond")
         self.assertEqual(candidates[0]["target_source_ref"], "99")
-        self.assertTrue(candidates[0]["promotion_requires_decision"])
+        self.assertTrue(candidates[0]["automatic_confirmation_eligible"])
+        self.assertFalse(candidates[0]["promotion_requires_decision"])
+        self.assertEqual(
+            candidates[0]["meta_anchor_ref"],
+            memory["meta_anchor"]["anchor_id"],
+        )
         self.assertTrue(candidates[0]["candidate_is_not_promotion"])
+
+    def test_verbose_and_short_agent_labels_share_one_canonical_meta_anchor(self):
+        status = {
+            "analysis_id": "analysis-canonical-agent-anchor",
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "bond-short",
+                        "category": "Identification",
+                        "label": "James Bond",
+                        "start_seconds": 10.0,
+                        "end_seconds": 11.0,
+                        "bbox": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.3},
+                    },
+                    {
+                        "id": "bond-verbose",
+                        "category": "Identification",
+                        "label": "James Bond (Daniel Craig): protagonist",
+                        "start_seconds": 20.0,
+                        "end_seconds": 21.0,
+                        "bbox": {"x": 0.2, "y": 0.1, "w": 0.2, "h": 0.3},
+                    },
+                ],
+            },
+            "transcript_segments": [
+                {
+                    "id": "bond-voice",
+                    "speaker": "James Bond",
+                    "start": 10.0,
+                    "end": 11.0,
+                    "text": "Bond. James Bond.",
+                }
+            ],
+        }
+
+        memories = bus.collect_narrative_agent_identity_memories(status)
+
+        self.assertEqual(len(memories), 1)
+        memory = memories[0]
+        self.assertEqual(memory["canonical_label"], "James Bond")
+        self.assertIn("James Bond", memory["aliases"])
+        self.assertIn("James Bond (Daniel Craig): protagonist", memory["aliases"])
+        self.assertEqual(memory["manual_anchor_count"], 2)
+        self.assertTrue(memory["meta_anchor"]["automatic_confirmation_ready"])
 
     def test_manual_decision_can_drop_confirmable_cluster_from_live_bus(self):
         base_status = {
@@ -651,6 +748,95 @@ class LiveMatureDataProliferationBusTests(unittest.TestCase):
                 for item in audit["suppressed_candidate_opportunities"]
             )
         )
+
+    def test_user_confirmed_source_metadata_becomes_authoritative_mature_seed(self):
+        audit = bus.build_live_mature_data_proliferation_audit(
+            {
+                "analysis_id": "analysis-source-confirmations",
+                "source_media_metadata": {
+                    "user_annotations": {
+                        "organizations": ["MGM", "Universal"],
+                        "location_place": "Gravina in Puglia",
+                        "location_room": "MI6 briefing room",
+                    }
+                },
+            }
+        )
+
+        confirmed = [
+            seed
+            for seed in audit["mature_seeds"]
+            if seed.get("authority") == "user_confirmed_source_metadata"
+        ]
+        self.assertEqual(
+            {seed["label"] for seed in confirmed},
+            {"MGM", "Universal", "Gravina in Puglia", "MI6 briefing room"},
+        )
+        self.assertTrue(all(seed["maturity_projection_state"] == "user_confirmed" for seed in confirmed))
+        self.assertTrue(all(seed["source_panel"] == "source_media_metadata" for seed in confirmed))
+
+    def test_manual_identity_recovers_track_link_from_time_and_bbox(self):
+        track = {
+            "track_id": "10",
+            "class_name": "person",
+            "label": "person track 10",
+            "start": 35.0,
+            "end": 35.2,
+            "bbox": {"x": 0.40, "y": 0.18, "w": 0.22, "h": 0.60},
+        }
+        status = {
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "manual-james-bond-bbox",
+                        "category": "Identification",
+                        "identity_affirmation": "James Bond",
+                        "start_seconds": 35.0,
+                        "end_seconds": 35.2,
+                        "bbox": {"x": 0.41, "y": 0.19, "w": 0.21, "h": 0.59},
+                        "metadata_correlation": {"target_id": "indication:object:2"},
+                    }
+                ]
+            }
+        }
+
+        candidate = bus.track_candidate(track, 0, status)
+
+        self.assertEqual(candidate["label"], "James Bond")
+        self.assertEqual(candidate["canonical_identity_status"], "manual_confirmed")
+        self.assertEqual(candidate["manual_identity_match_basis"], "source_time_bbox_overlap")
+        self.assertFalse(candidate["promotion_required"])
+
+    def test_conflicting_manual_identities_do_not_resolve_track(self):
+        track = {
+            "track_id": "10",
+            "class_name": "person",
+            "label": "person track 10",
+            "start": 35.0,
+            "end": 35.2,
+            "bbox": {"x": 0.40, "y": 0.18, "w": 0.22, "h": 0.60},
+        }
+        annotations = []
+        for index, label in enumerate(("James Bond", "Madeleine Swann")):
+            annotations.append(
+                {
+                    "id": f"manual-identity-{index}",
+                    "category": "Identification",
+                    "identity_affirmation": label,
+                    "start_seconds": 35.0,
+                    "end_seconds": 35.2,
+                    "bbox": {"x": 0.40, "y": 0.18, "w": 0.22, "h": 0.60},
+                }
+            )
+
+        candidate = bus.track_candidate(
+            track,
+            0,
+            {"annotation_corrections": {"manual_visual_annotations": annotations}},
+        )
+
+        self.assertEqual(candidate["label"], "person track 10")
+        self.assertNotIn("canonical_identity_status", candidate)
 
 
 if __name__ == "__main__":

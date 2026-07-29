@@ -17,6 +17,18 @@
  */
 
 import { buildAnalysisSearchParams } from "./analysis-request";
+import type { CanonicalSourceClockScope } from "./source-clock";
+
+export type SourceClockResolution = {
+  analysis_id: string;
+  selected_time_scope: CanonicalSourceClockScope & {
+    authority_rank: number;
+    candidate_count: number;
+    superseded_time_refs: string[];
+  };
+  affected_dependent_refs: string[];
+  invalidation?: Record<string, unknown> | null;
+};
 
 export interface UploadResponse {
   analysis_id: string;
@@ -918,6 +930,7 @@ export interface SourceMediaMetadata {
     scope?: string;
     description?: string;
     persons?: string[];
+    organizations?: string[];
     character_roles?: string[];
     character_definitions?: Array<{
       character_name?: string;
@@ -1123,6 +1136,9 @@ export interface AnnotationCorrectionRule {
   target_timestamp?: number;
   target_start_timestamp?: number;
   target_end_timestamp?: number;
+  corrected_start_timestamp?: number;
+  corrected_end_timestamp?: number;
+  speaker_confirmation?: string;
   target_track_id?: number;
   note?: string;
   updated_at?: string;
@@ -1254,6 +1270,23 @@ export interface ManualVisualAnnotation {
     }>;
     master_schema_presence_interval_id?: string;
     source_range_source?: string;
+    bbox_classification_entries?: Array<{
+      id: string;
+      category: ManualVisualAnnotation["category"];
+      subcategory?: string;
+      label: string;
+      narrativeAgentName?: string;
+    }>;
+    source_time_corrections?: Array<{
+      corrected_at: string;
+      corrected_by: string;
+      clock_id: "source_media.clock" | string;
+      previous_start_seconds: number;
+      previous_end_seconds: number;
+      corrected_start_seconds: number;
+      corrected_end_seconds: number;
+      authority: "explicit_user_correction" | string;
+    }>;
     quick_annotations?: string[];
     maturity_policy?: string;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
@@ -1272,6 +1305,7 @@ export interface ManualTranscriptEntry {
   text?: string;
   status?: "confirmed" | "unconfirmed";
   note?: string;
+  speaker_confirmation?: string;
   updated_at?: string;
   updated_by?: string;
 }
@@ -2598,6 +2632,7 @@ class ApiService {
       scope?: string;
       description?: string;
       persons?: string[];
+      organizations?: string[];
       character_roles?: string[];
       character_definitions?: Array<Record<string, unknown>>;
       narrative_agent_profiles?: Array<Record<string, unknown>>;
@@ -2829,6 +2864,29 @@ class ApiService {
     }
     const data = await response.json();
     return Array.isArray(data.labels) ? data.labels : [];
+  }
+
+  async resolveSourceClock(
+    analysisId: string,
+    payload: {
+      candidates: CanonicalSourceClockScope[];
+      dependents?: Array<Record<string, unknown>>;
+      apply_invalidation?: boolean;
+      authority?: string;
+    },
+  ): Promise<SourceClockResolution> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Source-clock resolution failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
   }
 
   async saveSharedTaxonomyLabel(payload: {

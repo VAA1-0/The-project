@@ -549,6 +549,23 @@ function rankScores(scores: Record<string, number>) {
     .map(([label, score]) => ({ label, score: Number(score.toFixed(4)) }));
 }
 
+export function hasExpressionSourceEvidence(sample: ExpressionSample): boolean {
+  const bbox = sample.bbox;
+  const hasBBox =
+    bbox !== undefined &&
+    Number.isFinite(Number(bbox.x)) &&
+    Number.isFinite(Number(bbox.y)) &&
+    Number(bbox.w) > 0 &&
+    Number(bbox.h) > 0;
+  return (
+    hasBBox &&
+    sample.quality !== "no_face" &&
+    sample.quality !== "error" &&
+    sample.face_signal?.face_count_in_frame !== 0 &&
+    sample.expression_evidence?.level !== "none"
+  );
+}
+
 export function buildExpressionWeighting(
   sample: ExpressionSample,
   metadata?: SourceMediaMetadata | null,
@@ -563,7 +580,10 @@ export function buildExpressionWeighting(
     expertise_axis: slugify(annotations?.expertise_axis),
   };
 
-  const base_scores = buildBaseExpressionScores(sample);
+  const sourceEvidenceAvailable = hasExpressionSourceEvidence(sample);
+  const base_scores = sourceEvidenceAvailable
+    ? buildBaseExpressionScores(sample)
+    : emptyScores();
   const per_label_weights = getPerLabelCombinedWeights(context);
   const weighted_raw = Object.fromEntries(
     Object.entries(base_scores).map(([label, value]) => [
@@ -584,12 +604,17 @@ export function buildExpressionWeighting(
 
   const rankedBase = rankScores(base_scores);
   const rankedWeighted = rankScores(weighted_scores);
-  const primary = rankedWeighted[0] || { label: "unavailable", score: 0 };
-  const runnerUp = rankedWeighted[1] || { label: "unavailable", score: 0 };
+  const primary = sourceEvidenceAvailable
+    ? rankedWeighted[0] || { label: "unavailable", score: 0 }
+    : { label: "unavailable", score: 0 };
+  const runnerUp = sourceEvidenceAvailable
+    ? rankedWeighted[1] || { label: "unavailable", score: 0 }
+    : { label: "unavailable", score: 0 };
   const margin = Number((primary.score - runnerUp.score).toFixed(4));
 
   return {
     context,
+    source_evidence_available: sourceEvidenceAvailable,
     base_scores,
     applied_weights: {
       expression: {

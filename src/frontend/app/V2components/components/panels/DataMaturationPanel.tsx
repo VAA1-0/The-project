@@ -2,9 +2,26 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
-import { openVideoAtTime } from "@/lib/video-navigation";
+import {
+  CANONICAL_SOURCE_CLOCK_ID,
+  formatPreciseSourceTime,
+  parsePreciseSourceTime,
+  sourceClockStatusForAuthority,
+  type SourceClockTimingStatus,
+} from "@/lib/source-clock";
+import {
+  NATIVE_ANNOTATION_CATEGORIES,
+  NATIVE_ANNOTATION_LABELS,
+  NATIVE_ANNOTATION_SUBCATEGORIES,
+} from "@/lib/manual-annotation-taxonomy";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 import { VideoService, type AnalysisData, type DetectedObject } from "@/lib/video-service";
-import type { AnnotationCorrections, ProliferationDecision } from "@/lib/api-service";
+import type {
+  AnnotationCorrections,
+  ManualVisualAnnotation,
+  ProliferationDecision,
+} from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
 
 type ProliferationMode = "guarded" | "dynamic" | "research";
@@ -48,6 +65,79 @@ type GovernanceMatrixRow = {
   canDropCandidate?: boolean;
   canDropCluster?: boolean;
   queue: MaturationQueue;
+};
+
+type MaturationContextMenu = {
+  x: number;
+  y: number;
+  row: GovernanceMatrixRow;
+};
+
+type MaturationAnnotationSheet = {
+  row: GovernanceMatrixRow;
+  annotation: ManualVisualAnnotation | null;
+};
+
+type BBoxClassificationEntry = {
+  id: string;
+  category: ManualVisualAnnotation["category"];
+  subcategory: string;
+  label: string;
+  narrativeAgentName?: string;
+};
+
+const newBBoxClassificationEntry = (
+  category: ManualVisualAnnotation["category"] = "Identification",
+): BBoxClassificationEntry => {
+  const subcategory = NATIVE_ANNOTATION_SUBCATEGORIES[category]?.[0] || "";
+  return {
+    id: `bbox-classification-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    category,
+    subcategory,
+    label: NATIVE_ANNOTATION_LABELS[`${category}::${subcategory}`]?.[0] || "",
+    narrativeAgentName: "",
+  };
+};
+
+const MATURATION_TAXONOMY_DIMENSIONS = [
+  {
+    key: "characteristic_family",
+    label: "Characteristic family",
+    options: ["Persona / alias", "Visual appearance", "Voice / speech", "Expression / affect", "Gesture / action", "Role / function", "Relation", "Scene trajectory", "Object / prop association", "Linguistic register", "Continuity / negative evidence"],
+  },
+  { key: "appearance_state", label: "Appearance state", options: ["Confirmed", "Candidate", "Conflicted", "Rejected", "Traceback only", "Missing evidence"] },
+  { key: "evidence_state", label: "Evidence state", options: ["Confirmed", "Candidate", "Conflicted", "Rejected", "Missing", "Source pending"] },
+  { key: "authority", label: "Authority", options: ["Explicit user correction", "Anchor verified", "Source measured", "Candidate service", "Inherited", "Degraded"] },
+  { key: "maturity", label: "Maturity", options: ["Raw", "Candidate", "Reviewed", "Confirmed", "Mature", "Conflicted", "Rejected", "Traceback only"] },
+  { key: "action_event", label: "Action / event", options: ["Entering", "Leaving", "Speaking", "Listening", "Looking", "Handling object", "Following", "Pursuing", "Protecting", "Threatening", "Cooperating", "Conflicting"] },
+  { key: "relation", label: "Relation", options: ["Agent to agent", "Agent to object", "Agent to place", "Agent to institution", "Support", "Opposition", "Trust", "Distrust", "Dominance", "Care", "Conflict"] },
+  { key: "scene_trajectory", label: "Scene trajectory", options: ["Entrance", "Presence", "Exit", "Recurrence", "Disappearance", "Pursuit", "Return", "Absence", "Contradiction"] },
+  { key: "vocal_affect", label: "Vocal affect", options: ["Warmth", "Reassurance", "Delight", "Tenderness", "Confidence", "Relief", "Distress", "Anger", "Fear", "Contempt", "Grief", "Hostility", "Calm", "Composure", "Restraint", "Formal neutrality", "Reflection", "Measured delivery", "Irony", "Hesitation", "Uncertainty", "Mixed affect", "Masking", "Performative control"] },
+  { key: "emotional_continuity", label: "Emotional continuity", options: ["Trust", "Courage", "Cooperation", "Hope", "Joy", "Reconciliation", "Uncertainty", "Fear", "Anger", "Despair", "Cruelty", "Collapse", "Mixed state", "Transition", "Counterforce"] },
+  { key: "shakespearean_performativity", label: "Performed agency / Shakespearean", options: ["Public role", "Private motive", "Status pressure", "Rhetorical agency", "Role shift", "Double speech", "Dominance", "Submission", "Masking", "Revelation"] },
+  { key: "proppian_function", label: "Narrative function / Proppian", options: ["Hero", "Villain", "Donor", "Helper", "Princess / sought-for person", "Dispatcher", "False hero", "Task relation", "Obstacle", "Reward"] },
+  { key: "jungian_symbolic", label: "Symbolic shadow / Jungian", options: ["Self", "Shadow", "Persona / mask", "Mentor", "Trickster", "Anima", "Animus", "Projection", "Double", "Threshold figure"] },
+  { key: "greimasian_actant", label: "Actant relation / Greimasian", options: ["Subject", "Object", "Sender", "Receiver", "Helper", "Opponent", "Goal", "Exchange", "Pursuit"] },
+  { key: "burkean_motive", label: "Motive scene / Burkean", options: ["Act", "Scene", "Agent", "Agency", "Purpose", "Attitude", "Motive", "Guilt", "Conflict", "Situation"] },
+  { key: "continuity_state", label: "Continuity state", options: ["Candidate continuity", "Confirmed continuity", "Rejected continuity", "Conflict", "Deferred", "Traceback only"] },
+  { key: "match_basis", label: "Proliferation match basis", options: ["Manual agent assertion", "Appearance similarity", "Voice similarity", "Role / relation context", "Object association", "Scene co-occurrence", "Transcript speaker link", "Negative evidence"] },
+  { key: "sfl_judgement", label: "SFL judgement", options: ["Acceptance", "Affirmation", "Support", "Trust", "Legitimization", "Rejection", "Denial", "Hostility", "Distrust", "Delegitimization", "Guidance", "Authorization", "Coercion", "Domination", "Care", "Compassion", "Respect", "Cruelty", "Contempt", "Exclusion"] },
+  { key: "motive", label: "Motive", options: ["Duty", "Survival", "Protection", "Love", "Loyalty", "Power", "Revenge", "Justice", "Discovery", "Escape", "Belonging", "Recognition", "Control", "Redemption"] },
+  { key: "theme", label: "Theme", options: ["Trust", "Betrayal", "Identity", "Loyalty", "Secrecy", "Power", "Duty", "Freedom", "Justice", "Sacrifice", "Mortality", "Transformation", "Belonging", "Alienation"] },
+  { key: "virtue_strength", label: "Virtue / strength", options: ["Creativity", "Curiosity", "Critical thinking", "Love of learning", "Perspective", "Courage", "Persistence", "Integrity", "Vitality", "Love", "Kindness", "Social intelligence", "Citizenship", "Fairness", "Leadership", "Forgiveness", "Humility", "Prudence", "Self-regulation", "Hope", "Humor", "Spirituality"] },
+  { key: "vice_antithesis", label: "Vice / antithesis", options: ["Rigidity", "Dogmatism", "Apathy", "Bias", "Prejudice", "Cowardice", "Dishonesty", "Cruelty", "Alienation", "Corruption", "Oppression", "Arrogance", "Compulsion", "Nihilism", "Despair", "Hostility", "Domination", "Exclusion"] },
+] as const;
+
+type GovernedBBoxFocus = {
+  videoId: string;
+  source: "VideoPanel" | "DataMaturation";
+  evidenceId?: string;
+  timestamp: number;
+  timeRange?: { start: number | null; end: number | null };
+  bbox?: Record<string, unknown> | null;
+  label?: string;
+  clockId: typeof CANONICAL_SOURCE_CLOCK_ID;
+  timingStatus: SourceClockTimingStatus;
 };
 
 type QualityTicket = {
@@ -189,9 +279,9 @@ function searchRowTimeRange(record: Record<string, unknown>): { start: number | 
 function formatTimeRange(range?: { start: number | null; end: number | null }): string {
   if (!range || range.start === null || range.start === undefined) return "not anchored here";
   if (range.end !== null && range.end !== undefined && Math.abs(range.end - range.start) > 0.01) {
-    return `${range.start.toFixed(2)}-${range.end.toFixed(2)}s`;
+    return `${formatPreciseSourceTime(range.start)}-${formatPreciseSourceTime(range.end)}`;
   }
-  return `${range.start.toFixed(2)}s`;
+  return formatPreciseSourceTime(range.start);
 }
 
 function formatBBox(bbox?: Record<string, unknown> | null): string {
@@ -209,6 +299,44 @@ function formatBBox(bbox?: Record<string, unknown> | null): string {
     return `x1 ${Number(x).toFixed(1)}, y1 ${Number(y).toFixed(1)}, x2 ${Number(x2).toFixed(1)}, y2 ${Number(y2).toFixed(1)}`;
   }
   return "BBox/ROI reference present";
+}
+
+function normalizedBBoxFromRow(
+  bbox?: Record<string, unknown> | null,
+): { x: number; y: number; w: number; h: number } | null {
+  if (!bbox) return null;
+  const x = Number(bbox.x ?? bbox.x1);
+  const y = Number(bbox.y ?? bbox.y1);
+  const w = Number(
+    bbox.w ?? bbox.width ?? (Number.isFinite(Number(bbox.x2)) ? Number(bbox.x2) - x : NaN),
+  );
+  const h = Number(
+    bbox.h ?? bbox.height ?? (Number.isFinite(Number(bbox.y2)) ? Number(bbox.y2) - y : NaN),
+  );
+  if (![x, y, w, h].every(Number.isFinite)) return null;
+  if (Math.max(Math.abs(x), Math.abs(y), Math.abs(w), Math.abs(h)) > 1.001) return null;
+  return { x, y, w, h };
+}
+
+function normalizedBBoxIoU(
+  left?: Record<string, unknown> | null,
+  right?: Record<string, unknown> | null,
+): number {
+  const a = normalizedBBoxFromRow(left);
+  const b = normalizedBBoxFromRow(right);
+  if (!a || !b) return 0;
+  const intersectionWidth = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const intersectionHeight = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const intersection = intersectionWidth * intersectionHeight;
+  const union = a.w * a.h + b.w * b.h - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function normalizedFocusLabel(value: unknown): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function bboxConfirmationLabel(item: Record<string, unknown>): string {
@@ -273,8 +401,9 @@ function bboxSpatialBucket(bbox: Record<string, unknown> | null): string {
 }
 
 function buildBBoxConfirmationAggregates(objects: DetectedObject[]): BBoxAggregate[] {
-  const aggregates = new Map<string, BBoxAggregate>();
-  objects.forEach((object) => {
+  const detections: BBoxAggregate[] = [];
+  const seen = new Set<string>();
+  objects.forEach((object, index) => {
     const item = object as unknown as Record<string, unknown>;
     if (!bboxConfirmationCandidate(item)) return;
     const timeRange = rangeFromRecord({
@@ -286,21 +415,13 @@ function buildBBoxConfirmationAggregates(objects: DetectedObject[]): BBoxAggrega
     const bbox = firstBBoxFromRecord(item);
     const rawTrackId = textFrom(item.trackId || item.track_id);
     const family = textFrom(item.class_name || item.raw_class_name, "object");
-    const trackId = rawTrackId || `spatial:${family}:${bboxSpatialBucket(bbox)}`;
-    const key = `${trackId}:${family}`;
+    const trackId = rawTrackId || "unconfigured";
+    const spatialKey = bboxSpatialBucket(bbox);
+    const key = `${timeRange.start.toFixed(3)}:${spatialKey}:${index}`;
     const confidence = numberFrom(item.confidence);
-    const existing = aggregates.get(key);
-    if (existing) {
-      existing.start = Math.min(existing.start, timeRange.start);
-      existing.end = Math.max(existing.end, timeRange.end ?? timeRange.start);
-      existing.maxConfidence = Math.max(existing.maxConfidence, confidence);
-      existing.count += 1;
-      if (!existing.bbox && firstBBoxFromRecord(item)) {
-        existing.bbox = firstBBoxFromRecord(item);
-      }
-      return;
-    }
-    aggregates.set(key, {
+    if (confidence < 0.55 || seen.has(key)) return;
+    seen.add(key);
+    detections.push({
       id: `bbox-confirmation:${key}`,
       label: textFrom(item.displayLabel) || bboxConfirmationLabel(item),
       family,
@@ -312,9 +433,7 @@ function buildBBoxConfirmationAggregates(objects: DetectedObject[]): BBoxAggrega
       count: 1,
     });
   });
-  return [...aggregates.values()]
-    .filter((item) => item.count >= 2 || item.maxConfidence >= 0.55)
-    .sort((left, right) => left.start - right.start);
+  return detections.sort((left, right) => left.start - right.start);
 }
 
 function temporalCoverageAudit(source: Record<string, unknown>): {
@@ -467,6 +586,34 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
     });
   });
 
+  manualVisualAnnotations.forEach((item, index) => {
+    const bbox = firstBBoxFromRecord(item);
+    const timeRange = rangeFromRecord(item);
+    if (!bbox || timeRange.start === null || textFrom(item.geometry_type) !== "box") {
+      return;
+    }
+    const metadata = asRecord(item.metadata_correlation);
+    const id = textFrom(item.id, `governed-bbox-${index}`);
+    const governedLabel = manualAnnotationLabel(item);
+    rows.push({
+      id: `governed-bbox:${id}`,
+      label: `${formatTimeRange(timeRange)} · ${formatBBox(bbox)}`,
+      family: governedLabel,
+      authority: textFrom(metadata.authority_state, "manual_correction"),
+      maturity: textFrom(metadata.maturity_state, "manual_correction"),
+      source: textFrom(metadata.source_panel, "BBox/ROI"),
+      propagation: metadata.propagation_required === false ? "local" : "governed projection",
+      traceback: textFrom(metadata.geometry_track_id || id, id),
+      panel: "VideoPanel",
+      reviewNeed: `governed label: ${governedLabel} · editable for this detection only`,
+      timestamp: timeRange.start,
+      timeRange,
+      bbox,
+      sourceRef: id,
+      queue: "bbox",
+    });
+  });
+
   resolvedEvidence.slice(0, 6).forEach((item, index) => {
     const metadata = asRecord(item.metadata);
     const timeRange = rangeFromRecord({ ...metadata, ...item });
@@ -489,7 +636,10 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
     });
   });
 
-  proliferationDecisions.slice(0, 4).forEach((item, index) => {
+  proliferationDecisions
+    .filter((item) => !textFrom(item.candidate_id).startsWith("tracked_object:"))
+    .slice(0, 4)
+    .forEach((item, index) => {
     const timeRange = rangeFromRecord(item);
     const sourceAnchors = asArray<Record<string, unknown>>(item.source_anchors);
     const anchorBBox = sourceAnchors.map(firstBBoxFromRecord).find(Boolean) || null;
@@ -545,10 +695,25 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
   });
 
   liveHypotheses.slice(0, 6).forEach((item, index) => {
+    if (
+      textFrom(item.source_kind) === "tracked_object" ||
+      textFrom(item.candidate_id).startsWith("tracked_object:")
+    ) {
+      return;
+    }
     const timeRange = rangeFromRecord(item);
+    const candidateBBox =
+      firstBBoxFromRecord(item) || firstBBoxFromRecord({ bbox: item.candidate_bbox });
+    const unresolvedPersonTrack =
+      textFrom(item.source_kind) === "tracked_object" &&
+      !textFrom(item.canonical_identity_label) &&
+      /(?:person\s+)?track\s*\d+|^person$/i.test(textFrom(item.candidate_label));
     rows.push({
       id: textFrom(item.hypothesis_id || item.candidate_id, `governed-hypothesis-${index}`),
-      label: textFrom(item.candidate_label || item.seed_label, "governed hypothesis"),
+      label: textFrom(
+        item.canonical_identity_label || item.candidate_label || item.seed_label,
+        "governed hypothesis",
+      ),
       family: textFrom(item.candidate_category, "proliferation"),
       authority: "governed_mature_hypothesis",
       maturity: textFrom(item.maturity_projection_state, "review_visible_not_mature"),
@@ -556,16 +721,18 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
       propagation: "automatic review projection",
       traceback: textFrom(item.source_opportunity_id || item.candidate_source_ref, "traceback required"),
       panel: "MeaningNetwork",
-      reviewNeed: textFrom(item.review_badge, "needs_review"),
+      reviewNeed: unresolvedPersonTrack
+        ? "identity linkage required"
+        : textFrom(item.review_badge, "needs_review"),
       candidateId: textFrom(item.candidate_id),
       clusterKey: textFrom(item.cluster_key),
       hypothesisId: textFrom(item.hypothesis_id),
       opportunityId: textFrom(item.source_opportunity_id),
       timestamp: timeRange.start,
       timeRange,
-      bbox: firstBBoxFromRecord(item),
+      bbox: candidateBBox,
       sourceRef: textFrom(item.candidate_source_ref || item.source_opportunity_id),
-      canConfirm: timeRange.start !== null,
+      canConfirm: timeRange.start !== null && Boolean(candidateBBox) && !unresolvedPersonTrack,
       canDefer: true,
       canDropCandidate: true,
       canDropCluster: Boolean(textFrom(item.cluster_key)),
@@ -605,21 +772,21 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
   buildBBoxConfirmationAggregates(bboxSourceObjects).forEach((item) => {
     rows.push({
       id: item.id,
-      label: `${item.label} (${item.count} detections)`,
-      family: item.family,
+      label: `${formatTimeRange({ start: item.start, end: item.end })} · ${formatBBox(item.bbox)}`,
+      family: item.label,
       authority: "bbox_detection",
       maturity: "needs_manual_annotation",
       source: "Video BBox/ROI",
       propagation: "stage manual annotation",
-      traceback: `object-track:${item.trackId}`,
+      traceback: `individual-detection:${item.id}`,
       panel: "VideoPanel",
-      reviewNeed: `${Math.round(item.maxConfidence * 100)}% max confidence`,
+      reviewNeed: `label candidate: ${item.label} · matures this detection only · ${Math.round(item.maxConfidence * 100)}% detector confidence`,
       candidateId: item.id,
       opportunityId: item.id,
       timestamp: item.start,
       timeRange: { start: item.start, end: item.end },
       bbox: item.bbox,
-      sourceRef: `track:${item.trackId}`,
+      sourceRef: `detection:${item.id}`,
       canStageAnnotation: true,
       canDefer: true,
       canDropCandidate: true,
@@ -967,14 +1134,29 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
   const [mode, setMode] = useState<ProliferationMode>("dynamic");
   const [activeQueue, setActiveQueue] = useState<MaturationQueue>("confirmations");
   const [saveMessage, setSaveMessage] = useState("");
+  const [contextMenu, setContextMenu] = useState<MaturationContextMenu | null>(null);
+  const [annotationSheet, setAnnotationSheet] = useState<MaturationAnnotationSheet | null>(null);
+  const [taxonomyDraft, setTaxonomyDraft] = useState<Record<string, string>>({});
+  const [bboxClassificationDrafts, setBBoxClassificationDrafts] = useState<BBoxClassificationEntry[]>([]);
+  const [sourceTimeDraft, setSourceTimeDraft] = useState({ start: "", end: "" });
+  const [agentPickerOpenId, setAgentPickerOpenId] = useState<string | null>(null);
+  const [pendingBBoxFocus, setPendingBBoxFocus] = useState<GovernedBBoxFocus | null>(null);
+  const [promotedGovernanceRowId, setPromotedGovernanceRowId] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedIssue, setSelectedIssue] = useState<GovernanceIssue>(() =>
     issueFromPosture("dynamic"),
   );
+  const governedNarrativeAgents = useMemo(() => governedNarrativeAgentLabels(analysisData), [analysisData]);
+
+  useEffect(() => {
+    eventBus.emit("maturationWorkbenchActive", true);
+    return () => eventBus.emit("maturationWorkbenchActive", false);
+  }, []);
 
   useEffect(() => {
     const videoHandler = (id: string) => {
       setVideoId(id || "");
+      setPromotedGovernanceRowId(null);
     };
     const correctionHandler = (id?: string) => {
       if (!id || id === videoId) {
@@ -988,6 +1170,17 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       eventBus.off("videoIdChanged", videoHandler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
+  }, [videoId]);
+
+  useEffect(() => {
+    const handler = (focus: GovernedBBoxFocus) => {
+      if (!focus || focus.source === "DataMaturation") return;
+      if (focus.clockId !== CANONICAL_SOURCE_CLOCK_ID) return;
+      if (focus.videoId && videoId && focus.videoId !== videoId) return;
+      setPendingBBoxFocus(focus);
+    };
+    eventBus.on<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
+    return () => eventBus.off<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
   }, [videoId]);
 
   useEffect(() => {
@@ -1160,14 +1353,96 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
   );
 
   const visibleGovernanceRows = useMemo(() => {
-    if (activeQueue === "all") return metrics.governanceMatrixRows;
-    return metrics.governanceMatrixRows.filter((row) => row.queue === activeQueue);
-  }, [activeQueue, metrics.governanceMatrixRows]);
+    const queueRows = activeQueue === "all"
+      ? metrics.governanceMatrixRows
+      : metrics.governanceMatrixRows.filter((row) => row.queue === activeQueue);
+    if (!promotedGovernanceRowId) return queueRows;
+    const promotedIndex = queueRows.findIndex((row) => row.id === promotedGovernanceRowId);
+    if (promotedIndex <= 0) return queueRows;
+    return [
+      queueRows[promotedIndex],
+      ...queueRows.slice(0, promotedIndex),
+      ...queueRows.slice(promotedIndex + 1),
+    ];
+  }, [activeQueue, metrics.governanceMatrixRows, promotedGovernanceRowId]);
+
+  useEffect(() => {
+    if (!pendingBBoxFocus) return;
+    const focusTime = pendingBBoxFocus.timestamp;
+    const focusLabel = normalizedFocusLabel(pendingBBoxFocus.label);
+    const rankedMatches = metrics.governanceMatrixRows.flatMap((row) => {
+      if (row.queue !== "bbox") return [];
+      const exactReference = Boolean(
+        pendingBBoxFocus.evidenceId &&
+          [row.id, row.sourceRef, row.traceback].some((value) =>
+            Boolean(value) && (
+              value === pendingBBoxFocus.evidenceId ||
+              String(value).includes(String(pendingBBoxFocus.evidenceId)) ||
+              String(pendingBBoxFocus.evidenceId).includes(String(value))
+            ),
+          ),
+      );
+      const start = row.timeRange?.start ?? row.timestamp;
+      const end = row.timeRange?.end ?? start;
+      const timeOverlap = start !== null && start !== undefined && end !== null && end !== undefined &&
+        focusTime >= start - 0.12 && focusTime <= end + 0.12;
+      if (!exactReference && !timeOverlap) return [];
+      const spatialOverlap = normalizedBBoxIoU(row.bbox, pendingBBoxFocus.bbox);
+      const rowLabels = [row.family, row.label].map(normalizedFocusLabel).filter(Boolean);
+      const labelSupport = Boolean(
+        focusLabel && rowLabels.some((label) => label === focusLabel || label.includes(focusLabel) || focusLabel.includes(label)),
+      );
+      if (!exactReference && spatialOverlap < 0.12 && !labelSupport) return [];
+      return [{
+        row,
+        score: (exactReference ? 1000 : 0) + (timeOverlap ? 100 : 0) + spatialOverlap * 100 + (labelSupport ? 25 : 0),
+      }];
+    });
+    const match = rankedMatches.sort((left, right) => right.score - left.score)[0]?.row;
+    if (!match) return;
+    setActiveQueue("bbox");
+    setSelectedIssue(issueFromGovernanceRow(match));
+    setPromotedGovernanceRowId(match.id);
+    setPendingBBoxFocus(null);
+    window.setTimeout(() => {
+      const rowElement = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-vaa1-data-maturation-governance-row]"),
+      ).find((element) => element.dataset.vaa1DataMaturationGovernanceRow === match.id);
+      rowElement?.scrollIntoView({ block: "start" });
+    }, 0);
+  }, [metrics.governanceMatrixRows, pendingBBoxFocus]);
 
   const selectGovernanceRow = (row: GovernanceMatrixRow) => {
     setSelectedIssue(issueFromGovernanceRow(row));
     if (row.timestamp !== null && row.timestamp !== undefined && videoId) {
+      const timingStatus = sourceClockStatusForAuthority(row.authority);
+      void VideoService.resolveSourceClock(videoId, {
+        candidates: [{
+          clock_id: CANONICAL_SOURCE_CLOCK_ID,
+          source_ref: row.sourceRef || row.id,
+          start_seconds: row.timeRange?.start ?? row.timestamp,
+          end_seconds: row.timeRange?.end ?? row.timestamp,
+          timing_status: timingStatus,
+          precision_seconds: 0.001,
+        }],
+        apply_invalidation: false,
+      }).catch((error) => {
+        console.warn("Source-clock authority check failed:", error);
+      });
       openVideoAtTime(videoId, row.timestamp);
+      if (row.queue === "bbox") {
+        eventBus.emit<GovernedBBoxFocus>("governedBBoxFocusChanged", {
+          videoId,
+          source: "DataMaturation",
+          evidenceId: row.sourceRef || row.id,
+          timestamp: row.timestamp,
+          timeRange: row.timeRange,
+          bbox: row.bbox,
+          label: row.label,
+          clockId: CANONICAL_SOURCE_CLOCK_ID,
+          timingStatus,
+        });
+      }
     }
   };
 
@@ -1201,19 +1476,219 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     openGovernedPanel(panelType);
   };
 
+  const sourceAnnotationForRow = (row: GovernanceMatrixRow) => {
+    const manualAnnotations = asArray<ManualVisualAnnotation>(
+      analysisData?.annotationCorrections?.manual_visual_annotations,
+    );
+    const direct = manualAnnotations.find((item) =>
+      [row.sourceRef, row.id].includes(item.id),
+    );
+    if (direct) return direct;
+
+    const rowRange = row.timeRange || { start: row.timestamp ?? null, end: row.timestamp ?? null };
+    const sourceWidth = Number(analysisData?.metadata?.sourceMediaMetadata?.width || 0);
+    const sourceHeight = Number(analysisData?.metadata?.sourceMediaMetadata?.height || 0);
+    const rowBox = normalizedBBoxFromRow(row.bbox) || (() => {
+      if (!row.bbox || sourceWidth <= 0 || sourceHeight <= 0) return null;
+      const x = Number(row.bbox.x ?? row.bbox.x1);
+      const y = Number(row.bbox.y ?? row.bbox.y1);
+      const w = Number(row.bbox.w ?? row.bbox.width ?? (Number(row.bbox.x2) - x));
+      const h = Number(row.bbox.h ?? row.bbox.height ?? (Number(row.bbox.y2) - y));
+      return [x, y, w, h].every(Number.isFinite)
+        ? { x: x / sourceWidth, y: y / sourceHeight, w: w / sourceWidth, h: h / sourceHeight }
+        : null;
+    })();
+    const candidates = manualAnnotations.flatMap((item) => {
+      const itemRange = rangeFromRecord(item as unknown as Record<string, unknown>);
+      if (rowRange.start === null || itemRange.start === null) return [];
+      const rowEnd = rowRange.end ?? rowRange.start;
+      const itemEnd = itemRange.end ?? itemRange.start;
+      const timeOverlap = Math.min(rowEnd, itemEnd) >= Math.max(rowRange.start, itemRange.start) - 0.075;
+      if (!timeOverlap) return [];
+      const itemBox = firstBBoxFromRecord(item as unknown as Record<string, unknown>);
+      const spatialOverlap = rowBox && itemBox
+        ? normalizedBBoxIoU(rowBox, itemBox)
+        : 0;
+      if (spatialOverlap < 0.12) return [];
+      return [{ item, score: spatialOverlap }];
+    }).sort((left, right) => right.score - left.score);
+    return candidates[0]?.item || null;
+  };
+
+  const openAnnotationSheet = (row: GovernanceMatrixRow) => {
+    const annotation = sourceAnnotationForRow(row);
+    const existing = annotation?.metadata_correlation?.quick_annotations || [];
+    const storedEntries = annotation?.metadata_correlation?.bbox_classification_entries || [];
+    setBBoxClassificationDrafts(storedEntries.length > 0
+      ? storedEntries.map((entry) => ({
+          id: entry.id,
+          category: entry.category,
+          subcategory: entry.subcategory || NATIVE_ANNOTATION_SUBCATEGORIES[entry.category]?.[0] || "",
+          label: entry.label,
+          narrativeAgentName: entry.narrativeAgentName || "",
+        }))
+      : [{
+          id: `bbox-classification-${annotation?.id || row.id}`,
+          category: annotation?.category || "Identification",
+          subcategory: annotation?.subcategory || "Character",
+          label: annotation?.custom_label || annotation?.label || "",
+          narrativeAgentName: annotation?.identity_affirmation || annotation?.custom_label || "",
+        }]);
+    const sourceRange = annotation
+      ? rangeFromRecord(annotation as unknown as Record<string, unknown>)
+      : row.timeRange || { start: row.timestamp ?? null, end: row.timestamp ?? null };
+    setSourceTimeDraft({
+      start: sourceRange.start === null ? "" : formatPreciseSourceTime(sourceRange.start),
+      end: sourceRange.end === null ? "" : formatPreciseSourceTime(sourceRange.end),
+    });
+    setAgentPickerOpenId(null);
+    setTaxonomyDraft(
+      {
+        ...Object.fromEntries(
+        MATURATION_TAXONOMY_DIMENSIONS.map(({ key }) => {
+          const prefix = `taxonomy:${key}:`;
+          const token = existing.find((item) => item.startsWith(prefix));
+          return [key, token ? token.slice(prefix.length) : ""];
+        }),
+        ),
+      },
+    );
+    setAnnotationSheet({ row, annotation });
+  };
+
+  const editSourceBBox = (row: GovernanceMatrixRow) => {
+    if (!videoId) return;
+    const annotation = sourceAnnotationForRow(row);
+    if (annotation) {
+      openManualAnnotationInVideo(videoId, annotation, { focusVideoPanel: false });
+      return;
+    }
+    const normalizedRegion = normalizedBBoxFromRow(row.bbox);
+    if (normalizedRegion && row.timestamp !== null && row.timestamp !== undefined) {
+      eventBus.emit("videoIdChanged", videoId);
+      eventBus.emit("videoTimeLineChanged", row.timestamp);
+      eventBus.emit("forensicRegionDraftOpen", {
+        videoId,
+        time: row.timestamp,
+        normalizedRegion,
+      });
+      return;
+    }
+    setSaveMessage("Annotation sheet unavailable: this record has no governed BBox geometry.");
+  };
+
+  const saveMaturationAnnotationSheet = async () => {
+    if (!videoId || !annotationSheet?.annotation || !analysisData) {
+      setSaveMessage("Taxonomy save blocked: create or govern the source annotation first.");
+      return;
+    }
+    const annotation = annotationSheet.annotation;
+    const existingTokens = annotation.metadata_correlation?.quick_annotations || [];
+    const retainedTokens = existingTokens.filter((token) => !token.startsWith("taxonomy:"));
+    const taxonomyTokens = MATURATION_TAXONOMY_DIMENSIONS.flatMap(({ key }) => {
+      const value = String(taxonomyDraft[key] || "").trim();
+      return value ? [`taxonomy:${key}:${value}`] : [];
+    });
+    const classificationEntries = bboxClassificationDrafts.filter((entry) => entry.label.trim());
+    const primaryClassification = classificationEntries[0];
+    const narrativeAgentName = classificationEntries.find((entry) =>
+      entry.category === "Identification" && entry.narrativeAgentName?.trim(),
+    )?.narrativeAgentName?.trim();
+    const previousRange = rangeFromRecord(annotation as unknown as Record<string, unknown>);
+    const correctedStart = parsePreciseSourceTime(sourceTimeDraft.start);
+    const correctedEnd = parsePreciseSourceTime(sourceTimeDraft.end || sourceTimeDraft.start);
+    if (correctedStart === null || correctedEnd === null || correctedEnd < correctedStart) {
+      setSaveMessage("Taxonomy save blocked: enter a valid source interval in m:ss.mmm format.");
+      return;
+    }
+    const timingChanged = previousRange.start !== null && (
+      Math.abs(correctedStart - previousRange.start) > 0.0005 ||
+      Math.abs(correctedEnd - (previousRange.end ?? previousRange.start)) > 0.0005
+    );
+    const now = new Date().toISOString();
+    const updatedAnnotation: ManualVisualAnnotation = {
+      ...annotation,
+      category: primaryClassification?.category || annotation.category,
+      subcategory: primaryClassification?.subcategory || annotation.subcategory,
+      label: primaryClassification?.label || annotation.label,
+      custom_label: primaryClassification?.label || annotation.custom_label,
+      identity_affirmation: narrativeAgentName || annotation.identity_affirmation,
+      timestamp_seconds: correctedStart,
+      start_seconds: correctedStart,
+      end_seconds: correctedEnd,
+      metadata_correlation: {
+        ...(annotation.metadata_correlation || {}),
+        bbox_classification_entries: classificationEntries,
+        authority_state: timingChanged ? "explicit_user_correction" : annotation.metadata_correlation?.authority_state,
+        source_range_source: timingChanged ? "maturation_explicit_user_correction" : annotation.metadata_correlation?.source_range_source,
+        source_time_corrections: timingChanged ? [
+          ...(annotation.metadata_correlation?.source_time_corrections || []),
+          {
+            corrected_at: now,
+            corrected_by: "analyst",
+            clock_id: CANONICAL_SOURCE_CLOCK_ID,
+            previous_start_seconds: previousRange.start ?? correctedStart,
+            previous_end_seconds: previousRange.end ?? previousRange.start ?? correctedEnd,
+            corrected_start_seconds: correctedStart,
+            corrected_end_seconds: correctedEnd,
+            authority: "explicit_user_correction",
+          },
+        ] : annotation.metadata_correlation?.source_time_corrections,
+        quick_annotations: [...retainedTokens, ...taxonomyTokens],
+      },
+      updated_at: now,
+      updated_by: "analyst",
+    };
+    const existing = analysisData.annotationCorrections || {};
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: [...(existing.text_substitutions || [])],
+      label_overrides: [...(existing.label_overrides || [])],
+      manual_transcript_entries: [...(existing.manual_transcript_entries || [])],
+      proliferation_decisions: [...(existing.proliferation_decisions || [])],
+      manual_visual_annotations: [
+        ...(existing.manual_visual_annotations || []).filter((item) => item.id !== annotation.id),
+        updatedAnnotation,
+      ],
+    };
+    setSaveMessage("Saving governed taxonomy annotation...");
+    try {
+      const saved = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      setAnalysisData((current) => current ? { ...current, annotationCorrections: saved } : current);
+      setAnnotationSheet({ ...annotationSheet, annotation: updatedAnnotation });
+      setSaveMessage("Governed taxonomy annotation saved.");
+      eventBus.emit("analysisCorrectionsChanged", videoId);
+    } catch (error) {
+      setSaveMessage(`Taxonomy save failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+  };
+
   const persistProliferationDecision = async (
     row: GovernanceMatrixRow,
     decisionKind: MaturationDecision,
     scope: "candidate" | "cluster" | "hypothesis" = "candidate",
   ) => {
-    if (!videoId) return;
+    if (!videoId) {
+      setSaveMessage("Decision not saved: no active analysis.");
+      return;
+    }
     const target =
       scope === "cluster"
         ? row.clusterKey || row.candidateId || row.hypothesisId
         : scope === "hypothesis"
           ? row.hypothesisId || row.candidateId
           : row.candidateId || row.hypothesisId || row.id;
-    if (!target) return;
+    if (!target) {
+      setSaveMessage("Decision not saved: candidate identity is unresolved.");
+      return;
+    }
+    if (decisionKind === "confirmed" && !row.canConfirm) {
+      setSaveMessage("Confirmation blocked: resolve source BBox and canonical identity linkage first.");
+      return;
+    }
     const existing: AnnotationCorrections = analysisData?.annotationCorrections || {};
     const now = new Date().toISOString();
     const confirmed = decisionKind === "confirmed";
@@ -1306,25 +1781,43 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
             ? "Staging annotation..."
             : "Deferring candidate...",
     );
-    const saved = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    setAnalysisData((current) =>
-      current ? { ...current, annotationCorrections: saved } : current,
-    );
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
-    eventBus.emit("analysisCorrectionsChanged", videoId);
-    setSaveMessage(
-      confirmed
-        ? "Proliferation confirmed."
+    try {
+      const saved = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      setAnalysisData((current) =>
+        current ? { ...current, annotationCorrections: saved } : current,
+      );
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      eventBus.emit("analysisCorrectionsChanged", videoId);
+      const completedMessage = confirmed
+        ? "Proliferation confirmed and canonical projections refreshed."
         : canceled
           ? scope === "cluster"
             ? "Cluster dropped."
             : "Candidate dropped."
           : stagedAnnotation
             ? "Annotation staged."
-            : "Candidate deferred.",
-    );
-    setSelectedIssue(issueFromGovernanceRow(row));
+            : "Candidate deferred.";
+      setSaveMessage(completedMessage);
+      setSelectedIssue(
+        issueFromGovernanceRow({
+          ...row,
+          maturity: confirmed ? "confirmed" : row.maturity,
+          propagation: confirmed ? "confirmed projection" : row.propagation,
+          reviewNeed: completedMessage,
+          canConfirm: false,
+        }),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown persistence error";
+      setSaveMessage(`Decision failed: ${detail}`);
+      setSelectedIssue(
+        issueFromGovernanceRow({
+          ...row,
+          reviewNeed: `Decision failed: ${detail}`,
+        }),
+      );
+    }
   };
 
   const persistIssueDecision = async (
@@ -1368,24 +1861,25 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
 
   return (
     <div
-      className="h-full overflow-auto bg-[#181818] px-4 py-4 text-slate-200"
+      className="h-full overflow-auto bg-[#222222] text-slate-300"
       data-vaa1-data-maturation-panel="true"
       data-vaa1-data-maturation-mode={mode}
+      onClick={() => setContextMenu(null)}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-3">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-white/8 bg-[#141414] px-3 py-2">
         <div>
           <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
             Data Maturation Proliferation
           </div>
-          <h2 className="mt-1 text-base font-semibold text-slate-100">
+          <h2 className="mt-0.5 text-sm font-medium text-slate-300">
             Proliferation governance
           </h2>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
+          <p className="hidden">
             Inspect whether confirmed evidence, constellational candidates, and
             non-user-confirmed detections are becoming mature usable data.
           </p>
         </div>
-        <div className="rounded border border-white/10 bg-[#111111] px-3 py-2 text-right text-[11px] text-slate-400">
+        <div className="text-right text-[10px] text-slate-500">
           <div className="text-slate-500">Analysis</div>
           <div className="max-w-[220px] truncate font-mono text-slate-200">
             {videoId || "No active analysis"}
@@ -1396,25 +1890,25 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       </div>
 
       <section
-        className="mb-4 rounded border border-white/10 bg-[#101010] p-3"
+        className="border-b border-white/8 bg-[#222222] px-3 py-2"
         data-vaa1-data-maturation-dynamic-controls="true"
       >
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
               Operating posture
             </div>
-            <div className="text-sm font-semibold text-slate-100">
+            <div className="text-[11px] text-slate-400">
               Move from conservative storage to governed dynamic proliferation
             </div>
           </div>
-          <div className="flex overflow-hidden rounded border border-white/10 bg-[#181818] text-[11px]">
+          <div className="flex text-[10px]">
             {(["guarded", "dynamic", "research"] as ProliferationMode[]).map((item) => (
               <button
                 key={item}
                 type="button"
-                className={`px-3 py-1.5 capitalize ${
-                  mode === item ? "bg-cyan-500/20 text-cyan-100" : "text-slate-400 hover:bg-white/5"
+                className={`border-l border-white/8 px-3 py-1 capitalize ${
+                  mode === item ? "bg-slate-700/40 text-slate-200" : "text-slate-500 hover:bg-white/5"
                 }`}
                 onClick={() => {
                   setMode(item);
@@ -1427,7 +1921,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           </div>
         </div>
         <div
-          className={`rounded border px-3 py-2 text-xs ${panelStatusClass(metrics.busStatus)}`}
+          className="mt-1 text-[10px] text-slate-500"
           data-vaa1-data-maturation-bus-health="true"
         >
           {metrics.busStatus === "ok"
@@ -1438,11 +1932,11 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         </div>
       </section>
 
-      <details className="rounded border border-white/10 bg-[#101010]">
-        <summary className="cursor-pointer list-none px-3 py-2 text-[12px] text-slate-300 marker:hidden">
+      <details className="border-b border-white/8 bg-[#222222]">
+        <summary className="cursor-pointer list-none px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-slate-400 marker:hidden hover:bg-white/[0.03]">
           Maturation overview · {metrics.matureWriteCount} mature writes · {metrics.confirmationRows} awaiting confirmation
         </summary>
-        <div className="grid gap-2 border-t border-white/10 p-2 lg:grid-cols-4">
+        <div className="divide-y divide-white/8 border-t border-white/8">
         <MetricCard label="Manual anchors" value={metrics.manualAnchorCount} detail={`${metrics.manualVisualAnnotations} visual, ${metrics.confirmedDecisions} accepted decisions`} active={activeQueue === "manual"} onInspect={(issue) => activateQueue("manual", issue)} />
         <MetricCard label="Needs confirmation" value={metrics.confirmationRows} detail="mature-data candidates requiring promote/defer/drop" active={activeQueue === "confirmations"} onInspect={(issue) => activateQueue("confirmations", issue)} />
         <MetricCard label="BBox confirmations" value={metrics.bboxConfirmationRows} detail="timebound BBox/ROI detections needing manual annotation" active={activeQueue === "bbox"} onInspect={(issue) => activateQueue("bbox", issue)} />
@@ -1452,7 +1946,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         <MetricCard label="Review pressure" value={metrics.agentPersistence.review + metrics.rejectedDecisions + metrics.governedMatureHypotheses} detail={`${metrics.agentPersistence.labels} persistence labels tracked`} onInspect={setSelectedIssue} />
         </div>
 
-      <div className="grid gap-2 border-t border-white/10 p-2 lg:grid-cols-3">
+      <div className="divide-y divide-white/8 border-t border-white/8">
         <MetricCard
           label="Entity Registry"
           value={metrics.entityRecords}
@@ -1484,33 +1978,34 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       </details>
 
       <section
-        className="mt-4 rounded border border-white/10 bg-[#101010] p-3"
+        className="bg-[#222222]"
         data-vaa1-data-maturation-governance-matrix="true"
       >
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-white/8 px-3 py-2">
           <div>
             <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
               Active queue: {activeQueue}
             </div>
-            <div className="text-sm font-semibold text-slate-100">
+            <div className="text-[11px] text-slate-400">
               Mature claim and candidate surface audit
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex overflow-hidden rounded border border-white/10 bg-[#181818] text-[10px]">
+            <div className="flex flex-wrap text-[10px]">
               {(["all", "manual", "confirmations", "bbox", "patterns", "content", "scanner"] as MaturationQueue[]).map(
                 (queue) => (
                   <button
                     key={queue}
                     type="button"
-                    className={`px-2 py-1 capitalize ${
+                    className={`border-l border-white/8 px-2 py-1 capitalize ${
                       activeQueue === queue
-                        ? "bg-cyan-500/20 text-cyan-100"
+                        ? "bg-slate-700/40 text-slate-200"
                         : "text-slate-400 hover:bg-white/5"
                     }`}
                     data-vaa1-data-maturation-queue-filter={queue}
                     onClick={() => {
                       setActiveQueue(queue);
+                      setPromotedGovernanceRowId(null);
                       const first = metrics.governanceMatrixRows.find(
                         (row) => queue === "all" || row.queue === queue,
                       );
@@ -1528,10 +2023,10 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-[11px]">
+          <table className="min-w-full text-left text-[10px]">
             <thead className="border-b border-white/10 text-[10px] uppercase tracking-[0.12em] text-slate-500">
               <tr>
-                <th className="py-2 pr-3">Claim</th>
+                <th className="py-2 pl-3 pr-4">Claim</th>
                 <th className="py-2 pr-3">Authority</th>
                 <th className="py-2 pr-3">Maturity</th>
                 <th className="py-2 pr-3">Source</th>
@@ -1545,7 +2040,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
             <tbody className="divide-y divide-white/5">
               {visibleGovernanceRows.length === 0 ? (
                 <tr>
-                  <td className="py-3 text-slate-500" colSpan={9}>
+                  <td className="py-3 pl-3 text-slate-500" colSpan={9}>
                     No rows are visible in this queue yet.
                   </td>
                 </tr>
@@ -1553,14 +2048,26 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
                 visibleGovernanceRows.map((row) => (
                   <tr
                     key={row.id}
-                    className="cursor-pointer hover:bg-cyan-400/5"
+                    className={`cursor-pointer hover:bg-white/[0.035] ${
+                      selectedIssue.id === row.id ? "bg-slate-500/10" : "bg-[#222222]"
+                    }`}
                     data-vaa1-data-maturation-governance-row={row.id}
                     data-vaa1-data-maturation-governance-row-queue={row.queue}
+                    data-vaa1-data-maturation-governance-row-selected={selectedIssue.id === row.id}
+                    data-vaa1-data-maturation-governance-row-promoted={promotedGovernanceRowId === row.id}
                     onClick={() => selectGovernanceRow(row)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedIssue(issueFromGovernanceRow(row));
+                      setContextMenu({ x: event.clientX, y: event.clientY, row });
+                    }}
                   >
-                    <td className="max-w-[220px] py-2 pr-3">
+                    <td className="max-w-[220px] py-2 pl-3 pr-4">
                       <div className="truncate text-slate-100">{row.label}</div>
-                      <div className="truncate font-mono text-[10px] text-slate-500">{row.id}</div>
+                      <div className="truncate font-mono text-[10px] text-slate-500">
+                        {row.queue === "bbox" ? `Label candidate: ${row.family} · this detection only` : row.id}
+                      </div>
                     </td>
                     <td className="py-2 pr-3 text-cyan-100">{row.authority}</td>
                     <td className="py-2 pr-3 text-slate-300">{row.maturity}</td>
@@ -1656,19 +2163,249 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         </div>
       </section>
 
+      {annotationSheet ? (
+        <section
+          className="sticky bottom-0 z-30 border-t border-white/8 bg-[#171717] px-3 py-2"
+          data-vaa1-data-maturation-annotation-sheet="true"
+          data-vaa1-data-maturation-annotation-source={annotationSheet.row.sourceRef || annotationSheet.row.id}
+        >
+          <div className="flex items-start justify-between gap-3 border-b border-white/8 pb-2">
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                Maturation annotation sheet
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-slate-200">
+                {annotationSheet.row.label}
+              </div>
+              <div className="mt-0.5 text-[9px] text-slate-500">
+                {formatTimeRange(annotationSheet.row.timeRange)} · {formatBBox(annotationSheet.row.bbox)}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="px-2 py-1 text-[10px] text-slate-400 hover:text-slate-100"
+              onClick={() => setAnnotationSheet(null)}
+            >
+              Close
+            </button>
+          </div>
+          <div className="border-b border-white/8 py-1 text-[9px] uppercase tracking-[0.14em] text-slate-500">
+            BBox annotation classification
+          </div>
+          <div className="grid border-b border-white/8 md:grid-cols-2" data-vaa1-maturation-source-time-correction="true">
+            <label className="flex min-h-9 items-center gap-3 px-1 text-[10px] md:border-r md:border-white/8">
+              <span className="w-28 shrink-0 uppercase tracking-[0.11em] text-slate-400">On-screen start</span>
+              <input value={sourceTimeDraft.start} onChange={(event) => setSourceTimeDraft((current) => ({ ...current, start: event.target.value }))} className="min-w-0 flex-1 bg-[#222222] py-2 font-mono text-[10px] text-slate-200 outline-none" placeholder="0:00.000" />
+            </label>
+            <label className="flex min-h-9 items-center gap-3 px-1 text-[10px]">
+              <span className="w-28 shrink-0 uppercase tracking-[0.11em] text-slate-400">On-screen end</span>
+              <input value={sourceTimeDraft.end} onChange={(event) => setSourceTimeDraft((current) => ({ ...current, end: event.target.value }))} className="min-w-0 flex-1 bg-[#222222] py-2 font-mono text-[10px] text-slate-200 outline-none" placeholder="0:00.000" />
+            </label>
+          </div>
+          <div>
+            {bboxClassificationDrafts.map((entry) => {
+              const labels = NATIVE_ANNOTATION_LABELS[`${entry.category}::${entry.subcategory}`] || [];
+              return (
+                <div key={entry.id} className="grid border-b border-white/8 md:grid-cols-[1fr_1fr_1fr_auto]">
+                  <label className="flex min-h-9 items-center gap-2 px-1 text-[10px] md:border-r md:border-white/8">
+                    <span className="w-20 shrink-0 uppercase tracking-[0.11em] text-slate-400">Category</span>
+                    <select value={entry.category} onChange={(event) => {
+                      const category = event.target.value as ManualVisualAnnotation["category"];
+                      const replacement = newBBoxClassificationEntry(category);
+                      setBBoxClassificationDrafts((current) => current.map((item) => item.id === entry.id
+                        ? { ...replacement, id: item.id }
+                        : item));
+                    }} className="min-w-0 flex-1 bg-[#222222] py-2 text-[10px] text-slate-200 outline-none">
+                      {NATIVE_ANNOTATION_CATEGORIES.map((option) => (
+                        <option key={option} value={option}>{option === "Identification" ? "Narrative Agent" : option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex min-h-9 items-center gap-2 px-1 text-[10px] md:border-r md:border-white/8">
+                    <span className="w-20 shrink-0 uppercase tracking-[0.11em] text-slate-400">Subcategory</span>
+                    <select value={entry.subcategory} onChange={(event) => {
+                      const subcategory = event.target.value;
+                      setBBoxClassificationDrafts((current) => current.map((item) => item.id === entry.id
+                        ? { ...item, subcategory, label: NATIVE_ANNOTATION_LABELS[`${item.category}::${subcategory}`]?.[0] || "" }
+                        : item));
+                    }} className="min-w-0 flex-1 bg-[#222222] py-2 text-[10px] text-slate-200 outline-none">
+                      {(NATIVE_ANNOTATION_SUBCATEGORIES[entry.category] || []).map((option) => (
+                        <option key={option} value={option}>
+                          {entry.category === "Identification" && option === "Identity" ? "Agent label" : entry.category === "Identification" && option === "Character" ? "Agent presence" : option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {entry.category === "Identification" ? (
+                    <div className="relative flex min-h-9 items-center gap-2 border-t border-white/8 px-1 text-[10px] md:col-span-3">
+                      <span className="w-28 shrink-0 uppercase tracking-[0.11em] text-slate-400">Narrative Agent</span>
+                      <button type="button" onClick={() => setAgentPickerOpenId((current) => current === entry.id ? null : entry.id)} className="min-w-[150px] border-r border-white/8 bg-[#222222] px-2 py-2 text-left text-[10px] text-slate-300 hover:bg-white/[0.035]">
+                        {entry.narrativeAgentName || "Choose governed agent"}
+                      </button>
+                      {agentPickerOpenId === entry.id ? (
+                        <div className="absolute left-28 top-full z-50 max-h-64 min-w-[280px] overflow-y-auto border border-white/10 bg-[#222222] shadow-2xl" data-vaa1-golden-narrative-agent-menu="true">
+                          {governedNarrativeAgents.map((agent) => (
+                            <button key={agent} type="button" onClick={() => {
+                              setBBoxClassificationDrafts((current) => current.map((item) => item.id === entry.id ? { ...item, narrativeAgentName: agent } : item));
+                              setAgentPickerOpenId(null);
+                            }} className="block w-full border-b border-white/8 px-3 py-2 text-left text-[10px] text-slate-300 hover:bg-white/[0.05] hover:text-slate-100">{agent}</button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <input
+                        type="text"
+                        value={entry.narrativeAgentName || ""}
+                        onChange={(event) => setBBoxClassificationDrafts((current) => current.map((item) => item.id === entry.id ? { ...item, narrativeAgentName: event.target.value } : item))}
+                        placeholder="Enter governed agent name"
+                        className="min-w-0 flex-1 bg-[#222222] py-2 text-[10px] text-slate-200 outline-none placeholder:text-slate-600"
+                      />
+                    </div>
+                  ) : null}
+                  <label className="flex min-h-9 items-center gap-2 px-1 text-[10px] md:border-r md:border-white/8">
+                    <span className="w-20 shrink-0 uppercase tracking-[0.11em] text-slate-400">Label</span>
+                    <select value={entry.label} onChange={(event) => setBBoxClassificationDrafts((current) => current.map((item) => item.id === entry.id ? { ...item, label: event.target.value } : item))} className="min-w-0 flex-1 bg-[#222222] py-2 text-[10px] text-slate-200 outline-none">
+                      {entry.label && !labels.includes(entry.label) ? <option value={entry.label}>{entry.label}</option> : null}
+                      {labels.map((option) => <option key={option}>{option}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" disabled={bboxClassificationDrafts.length === 1} onClick={() => setBBoxClassificationDrafts((current) => current.filter((item) => item.id !== entry.id))} className="px-3 py-2 text-[9px] uppercase tracking-[0.11em] text-slate-500 hover:text-slate-200 disabled:opacity-30">Remove</button>
+                </div>
+              );
+            })}
+            <button type="button" onClick={() => setBBoxClassificationDrafts((current) => [...current, newBBoxClassificationEntry()])} className="px-2 py-2 text-[9px] uppercase tracking-[0.12em] text-slate-400 hover:text-slate-100">Add classification</button>
+          </div>
+          <div className="border-b border-white/8 py-1 text-[9px] uppercase tracking-[0.14em] text-slate-500">
+            Narrative Agent schema
+          </div>
+          <div className="grid md:grid-cols-2">
+            {MATURATION_TAXONOMY_DIMENSIONS.map(({ key, label, options }) => (
+              <label
+                key={key}
+                className="flex min-h-9 items-center gap-3 border-b border-white/8 px-1 text-[10px] md:odd:border-r"
+              >
+                <span className="w-36 shrink-0 uppercase tracking-[0.11em] text-slate-400">{label}</span>
+                <select
+                  value={taxonomyDraft[key] || ""}
+                  onChange={(event) => setTaxonomyDraft((current) => ({
+                    ...current,
+                    [key]: event.target.value,
+                  }))}
+                  className="min-w-0 flex-1 bg-[#222222] py-2 text-[10px] text-slate-200 outline-none"
+                >
+                  <option value="">Unassigned</option>
+                  {taxonomyDraft[key] && !options.includes(taxonomyDraft[key] as never) ? (
+                    <option value={taxonomyDraft[key]}>{taxonomyDraft[key]}</option>
+                  ) : null}
+                  {options.map((option) => <option key={option}>{option}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+            <div className="text-[9px] text-slate-500">
+              {annotationSheet.annotation
+                ? "Values mature this source occurrence; they do not propagate beyond it without separate governance."
+                : "Create or govern the source annotation before saving taxonomy values."}
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="border border-white/10 bg-[#202020] px-2 py-1 text-[10px] text-slate-300 hover:bg-white/5"
+                onClick={() => editSourceBBox(annotationSheet.row)}
+              >
+                Edit source BBox
+              </button>
+              <button
+                type="button"
+                disabled={!annotationSheet.annotation}
+                className="border border-slate-500/30 bg-slate-500/10 px-2 py-1 text-[10px] text-slate-200 hover:bg-slate-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => void saveMaturationAnnotationSheet()}
+              >
+                Save taxonomy
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {contextMenu ? (
+        <div
+          className="fixed z-[1000] min-w-52 border border-white/10 bg-[#171717] py-1 text-[10px] text-slate-300 shadow-xl shadow-black/40"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          data-vaa1-data-maturation-context-menu="true"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="border-b border-white/8 px-3 py-2">
+            <div className="truncate text-slate-300">{contextMenu.row.label}</div>
+            <div className="mt-0.5 text-slate-500">
+              {contextMenu.row.queue === "bbox"
+                ? `Label candidate: ${contextMenu.row.family} · matures this detection only`
+                : contextMenu.row.reviewNeed}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="block w-full px-3 py-2 text-left hover:bg-white/5"
+            onClick={() => {
+              selectGovernanceRow(contextMenu.row);
+              setContextMenu(null);
+            }}
+          >
+            Inspect detection
+          </button>
+          <button
+            type="button"
+            className="block w-full px-3 py-2 text-left hover:bg-white/5 disabled:text-slate-600"
+            disabled={contextMenu.row.timestamp === null || contextMenu.row.timestamp === undefined}
+            onClick={() => {
+              if (contextMenu.row.timestamp !== null && contextMenu.row.timestamp !== undefined && videoId) {
+                openVideoAtTime(videoId, contextMenu.row.timestamp);
+              }
+              setContextMenu(null);
+            }}
+          >
+            Jump to source
+          </button>
+          {contextMenu.row.queue === "bbox" ? (
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left hover:bg-white/5"
+              onClick={() => {
+                openAnnotationSheet(contextMenu.row);
+                setContextMenu(null);
+              }}
+            >
+              Open annotation sheet
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="block w-full px-3 py-2 text-left hover:bg-white/5"
+            onClick={() => {
+              openAlignedPanel("TracebackDrawer", contextMenu.row.timestamp);
+              setContextMenu(null);
+            }}
+          >
+            Open traceback
+          </button>
+        </div>
+      ) : null}
+
       <GovernanceIssueDrawer
         issue={selectedIssue}
         onOpenAlignedPanel={openAlignedPanel}
         onDecision={persistIssueDecision}
       />
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+      <div className="divide-y divide-white/8 border-t border-white/8 bg-[#222222]">
         <Lane
           title="Manual confirmed anchors"
           status="source of truth"
           dataAttr="manual-anchors"
           active={activeQueue === "manual"}
           onInspect={(issue) => activateQueue("manual", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "manual")}
+          onSelectRow={selectGovernanceRow}
         >
           User-confirmed detections should seed matching, source jumps, and
           Master Schema maturity without losing the original timestamp or BBox/ROI
@@ -1681,6 +2418,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           constellationLane
           active={activeQueue === "confirmations"}
           onInspect={(issue) => activateQueue("confirmations", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "confirmations")}
+          onSelectRow={selectGovernanceRow}
         >
           Co-occurring objects, OCR, POS, transcript, role, scene, and Quant
           signals should form candidates that can be promoted when their source
@@ -1693,12 +2432,14 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           nonUserCandidateLane
           active={activeQueue === "patterns"}
           onInspect={(issue) => activateQueue("patterns", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "patterns")}
+          onSelectRow={selectGovernanceRow}
         >
           Detector-only passages and patterns should be staged for annotation
           with confidence, traceability, and a clear cancel path. They are not
           mature-data confirmations yet.
         </Lane>
-        <Lane title="Mature data surfaces" status="delivery" dataAttr="mature-surfaces" active={activeQueue === "content"} onInspect={(issue) => activateQueue("content", issue)}>
+        <Lane title="Mature data surfaces" status="delivery" dataAttr="mature-surfaces" active={activeQueue === "content"} onInspect={(issue) => activateQueue("content", issue)} records={metrics.governanceMatrixRows.filter((row) => row.queue === "content")} onSelectRow={selectGovernanceRow}>
           Mature writes should appear in Master Schema, Meaning Network, Traceback,
           and source-timed panels as reusable analytic leverage for the annotator.
         </Lane>
@@ -1709,6 +2450,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           audiovisualSourceSamplingLane
           active={activeQueue === "sampling"}
           onInspect={(issue) => activateQueue("sampling", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "sampling")}
+          onSelectRow={selectGovernanceRow}
         >
           Visual/audio source samples and sample clouds should become regular
           multimodal anchors for matching, traceback, and promotion, not only
@@ -1722,6 +2465,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           liveProliferationBusLane
           active={activeQueue === "confirmations"}
           onInspect={(issue) => activateQueue("confirmations", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "confirmations")}
+          onSelectRow={selectGovernanceRow}
         >
           Mature data now sweeps hydrated artifacts into governed hypotheses:
           visible review pressure with traceback, never confirmed mature truth
@@ -1735,6 +2480,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           dataAttr="genre-specific-knowns"
           active={activeQueue === "content"}
           onInspect={(issue) => activateQueue("content", issue)}
+          records={metrics.governanceMatrixRows.filter((row) => row.queue === "content")}
+          onSelectRow={selectGovernanceRow}
         >
           News lower-third OCR now seeds confidence-rated mature observations and
           proposes audiovisual identity samples for later source-sample cloud
@@ -1743,36 +2490,36 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       </div>
 
       <section
-        className="mt-4 rounded border border-white/10 bg-[#101010] p-3"
+        className="border-t border-white/8 bg-[#222222]"
         data-vaa1-data-maturation-quality-agent-tray="true"
       >
-        <div className="mb-3">
+        <div className="border-b border-white/8 px-3 py-2">
           <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
             Quality Agent
           </div>
-          <div className="text-sm font-semibold text-slate-100">
+          <div className="text-[11px] text-slate-400">
             Audit-only review tray
           </div>
-          <p className="mt-1 text-xs leading-5 text-slate-400">
+          <p className="hidden">
             These tickets warn about missing anchors, stale projections, candidate
             ledger gaps, and source-sampling gaps. They do not overwrite mature data.
           </p>
         </div>
-        <div className="grid gap-2 lg:grid-cols-2">
+        <div className="divide-y divide-white/8">
           {qualityTickets.map((ticket) => (
             <div
               key={ticket.id}
-              className={`rounded border px-3 py-2 text-xs ${panelStatusClass(ticket.severity)}`}
+              className="flex min-h-9 items-center justify-between gap-2 bg-[#222222] px-3 py-2 text-[10px] hover:bg-white/[0.035]"
               data-vaa1-data-maturation-quality-ticket={ticket.id}
             >
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="font-semibold">{ticket.title}</div>
-                  <p className="mt-1 leading-5 opacity-85">{ticket.detail}</p>
+                <div className="min-w-0">
+                  <div className="uppercase tracking-[0.12em] text-slate-400">{ticket.title}</div>
+                  <p className="hidden">{ticket.detail}</p>
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 rounded border border-white/10 bg-black/15 px-2 py-1 text-[10px] hover:bg-black/25"
+                  className="shrink-0 px-2 py-1 text-[10px] text-slate-400 hover:bg-white/5 hover:text-slate-200"
                   onClick={() => setSelectedIssue(issueFromQualityTicket(ticket))}
                 >
                   Inspect
@@ -1783,7 +2530,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         </div>
       </section>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 border-t border-white/8 bg-[#171717] px-3 py-2">
         <button
           type="button"
           className="rounded border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/20"
@@ -1846,7 +2593,7 @@ function GovernanceIssueDrawer({
   );
   return (
     <section
-      className="sticky top-0 z-20 mb-4 max-h-[42vh] overflow-auto rounded border border-cyan-400/20 bg-[#0f1718] p-3 shadow-2xl shadow-black/35"
+      className="sticky top-0 z-20 max-h-[42vh] overflow-auto border-b border-white/8 bg-[#171717] px-3 py-2"
       data-vaa1-data-maturation-local-issue-drawer="true"
       data-vaa1-data-maturation-selected-issue={issue.id}
       data-vaa1-data-maturation-sticky-decision-drawer="true"
@@ -1856,19 +2603,19 @@ function GovernanceIssueDrawer({
           <div className="text-[10px] uppercase tracking-[0.14em] text-cyan-300/80">
             Selected Maturation case
           </div>
-          <h3 className="mt-1 truncate text-sm font-semibold text-slate-100">
+          <h3 className="mt-0.5 truncate text-[12px] font-medium text-slate-300">
             {issue.title}
           </h3>
-          <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-300">
+          <p className="mt-1 max-w-4xl text-[10px] leading-4 text-slate-500">
             {issue.detail}
           </p>
         </div>
-        <div className="rounded border border-white/10 bg-black/20 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-cyan-100">
+        <div className="px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400">
           {issue.status}
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-2 grid border-t border-white/8 md:grid-cols-2 xl:grid-cols-4">
         <IssueFact label="Issue" value={issue.summary} />
         <IssueFact label="Type" value={issue.kind} />
         <IssueFact label="Source" value={issue.sourcePanel || "panel-local"} />
@@ -1877,7 +2624,7 @@ function GovernanceIssueDrawer({
       </div>
 
       {issue.governanceFacts?.length ? (
-        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-2 grid border-t border-white/8 md:grid-cols-2 xl:grid-cols-3">
           {issue.governanceFacts.map((fact) => (
             <IssueFact key={`${fact.label}:${fact.value}`} label={fact.label} value={fact.value} />
           ))}
@@ -1885,7 +2632,7 @@ function GovernanceIssueDrawer({
       ) : null}
 
       <div
-        className="mt-3 grid gap-2 md:grid-cols-3"
+        className="mt-2 grid border-t border-white/8 md:grid-cols-3"
         data-vaa1-data-maturation-cluster-scanner-context="true"
       >
         <IssueFact label="Candidate" value={issue.candidateId || "none selected"} />
@@ -1894,7 +2641,7 @@ function GovernanceIssueDrawer({
       </div>
 
       <div
-        className="mt-3 rounded border border-white/10 bg-black/15 p-3"
+        className="mt-2 border-t border-white/8 py-2"
         data-vaa1-data-maturation-quick-decision-console="true"
       >
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1995,7 +2742,7 @@ function GovernanceIssueDrawer({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap gap-2 border-t border-white/8 pt-2">
         {alignedPanels.map((panel) => (
           <button
             key={panel}
@@ -2014,9 +2761,9 @@ function GovernanceIssueDrawer({
 
 function IssueFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-white/10 bg-black/15 px-2 py-2">
+    <div className="min-w-0 border-r border-white/8 px-2 py-2 last:border-r-0">
       <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{label}</div>
-      <div className="mt-1 truncate text-[11px] text-slate-200">{value}</div>
+      <div className="mt-0.5 truncate text-[10px] text-slate-300">{value}</div>
     </div>
   );
 }
@@ -2036,17 +2783,17 @@ function MetricCard({
 }) {
   const content = (
     <>
-      <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-slate-100">{value}</div>
-      <div className="mt-1 text-[11px] leading-4 text-slate-400">{detail}</div>
+      <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400">{label}</span>
+      <span className="ml-auto text-[10px] text-slate-400">{value}</span>
+      <span className="hidden">{detail}</span>
     </>
   );
   if (onInspect) {
     return (
       <button
         type="button"
-        className={`rounded border px-3 py-3 text-left hover:border-cyan-400/35 hover:bg-[#141b1c] ${
-          active ? "border-cyan-400/45 bg-[#102022]" : "border-white/10 bg-[#101010]"
+        className={`flex min-h-8 w-full items-center px-3 py-2 text-left hover:bg-white/[0.035] ${
+          active ? "bg-slate-700/30" : "bg-[#222222]"
         }`}
         data-vaa1-data-maturation-metric-card={label}
         data-vaa1-data-maturation-metric-active={active ? "true" : undefined}
@@ -2057,7 +2804,7 @@ function MetricCard({
     );
   }
   return (
-    <div className="rounded border border-white/10 bg-[#101010] px-3 py-3">
+    <div className="flex min-h-8 items-center bg-[#222222] px-3 py-2">
       {content}
     </div>
   );
@@ -2073,6 +2820,8 @@ function Lane({
   liveProliferationBusLane = false,
   active = false,
   onInspect,
+  records = [],
+  onSelectRow,
   children,
 }: {
   title: string;
@@ -2084,13 +2833,13 @@ function Lane({
   liveProliferationBusLane?: boolean;
   active?: boolean;
   onInspect?: (issue: GovernanceIssue) => void;
+  records?: GovernanceMatrixRow[];
+  onSelectRow?: (row: GovernanceMatrixRow) => void;
   children: React.ReactNode;
 }) {
   return (
-    <section
-      className={`rounded border p-3 ${
-        active ? "border-cyan-400/45 bg-[#102022]" : "border-white/10 bg-[#101010]"
-      }`}
+    <details
+      className={active ? "bg-slate-700/20" : "bg-[#222222]"}
       data-vaa1-data-maturation-lane={dataAttr}
       data-vaa1-data-maturation-lane-active={active ? "true" : undefined}
       data-vaa1-data-maturation-constellation-lane={constellationLane ? "true" : undefined}
@@ -2102,14 +2851,16 @@ function Lane({
         liveProliferationBusLane ? "true" : undefined
       }
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-slate-100">{title}</div>
+      <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 hover:bg-white/[0.035] marker:hidden">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
+          {title} <span className="ml-2 text-slate-500">{records.length}</span>
+        </div>
         <button
           type="button"
-          className={`rounded border px-2 py-1 text-[10px] uppercase tracking-[0.12em] hover:border-cyan-400/35 hover:text-cyan-100 ${
+          className={`px-2 py-1 text-[10px] uppercase tracking-[0.12em] hover:text-slate-200 ${
             active
-              ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-100"
-              : "border-white/10 bg-[#181818] text-slate-400"
+              ? "bg-slate-700/40 text-slate-200"
+              : "text-slate-500"
           }`}
           data-vaa1-data-maturation-lane-inspect={dataAttr}
           onClick={() =>
@@ -2124,8 +2875,31 @@ function Lane({
         >
           {status}
         </button>
+      </summary>
+      <div className="border-t border-white/8 bg-[#171717]">
+        <p className="px-3 py-2 text-[10px] leading-4 text-slate-500">{children}</p>
+        <div className="divide-y divide-white/8 border-t border-white/8">
+          {records.length ? (
+            records.slice(0, 12).map((row) => (
+              <button
+                key={`${dataAttr}:${row.id}`}
+                type="button"
+                className="grid min-h-9 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-3 py-2 text-left hover:bg-white/[0.035]"
+                data-vaa1-data-maturation-lane-record={row.id}
+                onClick={() => onSelectRow?.(row)}
+              >
+                <span className="min-w-0 truncate text-[10px] text-slate-300">{row.label}</span>
+                <span className="text-[10px] text-slate-500">{formatTimeRange(row.timeRange)}</span>
+                <span className="text-[10px] text-slate-500">{row.authority} · {row.maturity}</span>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-[10px] text-slate-600">
+              No operational records are currently available.
+            </div>
+          )}
+        </div>
       </div>
-      <p className="text-xs leading-5 text-slate-400">{children}</p>
-    </section>
+    </details>
   );
 }

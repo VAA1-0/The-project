@@ -39,6 +39,27 @@ from api_server import (
 
 
 class SourceMediaMetadataContractTest(unittest.TestCase):
+    def test_manual_organizations_survive_source_media_payload_rebuild(self):
+        status = {
+            "analysis_id": "analysis-organizations",
+            "source_media_annotations": {
+                "organizations": ["MI6", "CIA"],
+            },
+        }
+
+        first_payload = build_source_media_metadata_payload(status)
+        status["source_media_metadata"] = first_payload
+        rebuilt_payload = build_source_media_metadata_payload(status)
+
+        self.assertEqual(
+            rebuilt_payload["user_annotations"]["organizations"],
+            ["MI6", "CIA"],
+        )
+        self.assertEqual(
+            rebuilt_payload["annotation_maturity"]["organizations"]["authority"],
+            "manual_override",
+        )
+
     def test_web_metadata_html_parser_returns_governed_candidates_with_retrieval_time(self):
         retrieved_at = "2026-05-14T12:34:56+00:00"
         payload = parse_web_metadata_html(

@@ -36,6 +36,7 @@ import type {
   SourceSample,
 } from "./api-service";
 import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
+import { hasExpressionSourceEvidence } from "./expression-weighting";
 import {
   applyTranscriptClockOffset,
   normalizeTranscriptSegmentTiming,
@@ -107,6 +108,7 @@ export interface TranscriptSegment {
   text: string;
   rawText?: string;
   speaker: string;
+  speakerConfirmation?: string;
   start: number; // Raw start time in seconds
   end: number; // Raw end time in seconds
   sourceStart?: number;
@@ -211,6 +213,7 @@ export interface DetectedObject {
     cues: string[];
   };
   sourceType?: "automated" | "manual_visual";
+  sourceAnnotationId?: string;
   identityAffirmation?: string;
   roleAffirmation?: string;
   audioFoleyNote?: string;
@@ -333,6 +336,13 @@ export interface AudioProsodyCue {
     zero_crossing_rate?: number;
     spectral_variation?: number;
   };
+  confirmedSpeaker?: string;
+  confirmedAudioSourceClass?: string;
+  speakerAssignmentRefs?: string[];
+  speakerAssignmentAuthority?: "explicit_user_confirmation";
+  narrativeAgentProsody?: boolean;
+  assignmentConflict?: boolean;
+  multimodalMotorTargets?: string[];
 }
 
 export type MatureEvidenceAuthority =
@@ -359,7 +369,14 @@ export interface MasterSchemaResolvedEvidenceRecord {
     | "shot_boundary"
     | "music_analysis"
     | "lyric_match"
-    | "speaker_diarization";
+    | "speaker_diarization"
+    | "speaker_assignment"
+    | "speaker_audio_profile_candidate"
+    | "narrative_agent_prosody"
+    | "audio_source_prosody"
+    | "organization"
+    | "place"
+    | "scene_card";
   label: string;
   authority: MatureEvidenceAuthority;
   sourcePanel: string;
@@ -828,13 +845,50 @@ function applyAnnotationCorrectionsToTranscript(
     const normalizedEmpty =
       baseText.length > 0 ? baseText : segment.status === "unconfirmed" ? "Unconfirmed" : "";
     const shiftedSegment = applyTranscriptClockOffset(segment, transcriptClockOffset);
+    const sourceStart = Number(segment.start ?? 0);
+    const sourceEnd = Number(segment.end ?? segment.start ?? 0);
+    const spanRule = [...textRules].reverse().find((rule) => {
+      if (
+        rule.modality !== "text" ||
+        normalizeCorrectionValue(rule.raw_value) !== normalizeCorrectionValue(baseText) ||
+        (
+          rule.corrected_start_timestamp === undefined &&
+          rule.corrected_end_timestamp === undefined &&
+          !rule.speaker_confirmation
+        )
+      ) {
+        return false;
+      }
+      const targetStart = Number(rule.target_start_timestamp ?? sourceStart);
+      const targetEnd = Number(rule.target_end_timestamp ?? sourceEnd);
+      return Math.abs(targetStart - sourceStart) <= 0.01 && Math.abs(targetEnd - sourceEnd) <= 0.01;
+    });
+    const correctedStart = spanRule?.corrected_start_timestamp;
+    const correctedEnd = spanRule?.corrected_end_timestamp;
+    const hasCorrectedSpan = correctedStart !== undefined || correctedEnd !== undefined;
+    const nextStart = hasCorrectedSpan
+      ? Math.max(0, Number(correctedStart ?? shiftedSegment.start ?? sourceStart))
+      : shiftedSegment.start;
+    const nextEnd = hasCorrectedSpan
+      ? Math.max(nextStart, Number(correctedEnd ?? shiftedSegment.end ?? sourceEnd))
+      : shiftedSegment.end;
     return {
       ...segment,
       ...shiftedSegment,
+      start: nextStart,
+      end: nextEnd,
+      t: hasCorrectedSpan ? `${Number(nextStart).toFixed(1)}s` : shiftedSegment.t,
       rawText: segment.rawText || segment.text,
-      text: applyTextSubstitutions(normalizedEmpty, textRules),
+      text: spanRule
+        ? String(spanRule.corrected_value || normalizedEmpty).trim()
+        : applyTextSubstitutions(normalizedEmpty, textRules),
+      speaker: spanRule?.speaker_confirmation || segment.speaker,
+      speakerConfirmation: spanRule?.speaker_confirmation,
       status: segment.status || (normalizedEmpty ? "confirmed" : "unconfirmed"),
-      correctionSource: segment.correctionSource || "transcript",
+      correctionSource: spanRule ? "manual" : segment.correctionSource || "transcript",
+      timingStatus: spanRule ? "manual_correction" : segment.timingStatus,
+      timingAuthority: spanRule ? "manual_correction" : segment.timingAuthority,
+      sourceTimeValid: spanRule ? true : segment.sourceTimeValid,
     };
   });
 
@@ -847,7 +901,8 @@ function applyAnnotationCorrectionsToTranscript(
         t: `${Number(entry.start || 0).toFixed(1)}s`,
         text: applyTextSubstitutions(normalizedText, textRules),
         rawText: normalizedText,
-        speaker: "Analyst note",
+        speaker: entry.speaker_confirmation || "Analyst note",
+        speakerConfirmation: entry.speaker_confirmation,
         start: Number(entry.start || 0),
         end: Number(entry.end ?? entry.start ?? 0),
         segmentType: "manual_entry",
@@ -1169,6 +1224,58 @@ function applyTranscriptClockOffsetToAudioProsody(
   });
 }
 
+const PROSODY_MULTIMODAL_MOTOR_TARGETS = [
+  "master_schema",
+  "meaning_network",
+  "narrative_agent_graph",
+  "audio_sample_cloud",
+  "evidence_proliferation_matcher",
+  "stats_interpretation",
+  "scene_cards",
+  "time_bank",
+] as const;
+
+function projectConfirmedSpeakersOntoProsody(
+  cues: AudioProsodyCue[],
+  transcript: TranscriptSegment[],
+): AudioProsodyCue[] {
+  return cues.map((cue) => {
+    const cueStart = Number(cue.start || 0);
+    const cueEnd = Number(cue.end ?? cueStart);
+    const assignments = transcript.filter((segment) => {
+      if (!segment.speakerConfirmation) return false;
+      const segmentStart = Number(segment.start || 0);
+      const segmentEnd = Number(segment.end ?? segmentStart);
+      return Math.min(cueEnd, segmentEnd) >= Math.max(cueStart, segmentStart) - 0.03;
+    });
+    const labels = [
+      ...new Set(
+        assignments
+          .map((segment) => segment.speakerConfirmation)
+          .filter((label): label is string => Boolean(label)),
+      ),
+    ];
+    if (labels.length === 0) return cue;
+    const sourceClasses = labels.filter((label) =>
+      ["background noise", "crowd"].includes(label.toLowerCase()),
+    );
+    const speakerLabels = labels.filter((label) => !sourceClasses.includes(label));
+    const conflict = speakerLabels.length > 1;
+    return {
+      ...cue,
+      confirmedSpeaker: conflict ? undefined : speakerLabels[0],
+      confirmedAudioSourceClass: sourceClasses[0],
+      speakerAssignmentRefs: assignments
+        .map((segment) => segment.targetId)
+        .filter((ref): ref is string => Boolean(ref)),
+      speakerAssignmentAuthority: "explicit_user_confirmation",
+      narrativeAgentProsody: !conflict && speakerLabels.length === 1,
+      assignmentConflict: conflict,
+      multimodalMotorTargets: [...PROSODY_MULTIMODAL_MOTOR_TARGETS],
+    };
+  });
+}
+
 function applyAnnotationCorrectionsToObjects(
   objects: DetectedObject[],
   corrections?: AnnotationCorrections | null,
@@ -1297,6 +1404,7 @@ function buildManualVisualObjects(
         trackId: 100000 + index,
         displayLabel,
         sourceType: "manual_visual",
+        sourceAnnotationId: entry.id,
         identityAffirmation: entry.identity_affirmation,
         roleAffirmation: entry.role_affirmation,
         audioFoleyNote: entry.audio_foley_note,
@@ -2013,6 +2121,72 @@ function masterSchemaShotBoundaries(masterSchema: unknown): NonNullable<NonNulla
   };
 }
 
+function sourceMetadataMasterSchemaRecords(
+  metadata?: SourceMediaMetadata,
+  sceneCardSummary?: Record<string, unknown> | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  const annotations = metadata?.user_annotations;
+  const addConfirmed = (category: MasterSchemaResolvedEvidenceRecord["category"], field: string, values: unknown[]) => {
+    values.map((value) => looseString(value)).filter(Boolean).forEach((label, index) => records.push({
+      id: `source-metadata:${field}:${index}`,
+      category,
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "SourceMedia",
+      targetId: `source_media_metadata:${field}:${index}`,
+      maturityRoute: "source_media.user_confirmed_metadata",
+      mappingStatus: "user_confirmed",
+      metadata: { source_field: field, source_ref: `source_media_metadata:${field}` },
+    }));
+  };
+  addConfirmed("organization", "organizations", annotations?.organizations || []);
+  addConfirmed("place", "location", [
+    annotations?.location_place,
+    annotations?.location_city,
+    annotations?.location_country,
+    annotations?.location_room,
+  ]);
+
+  const organizationPattern = /^(?:[A-Z0-9]{2,12}|.*\b(?:agency|authority|company|corporation|department|institution|ministry|organization|service|syndicate)\b.*)$/i;
+  (annotations?.web_metadata_sources || []).forEach((source, sourceIndex) => {
+    (source.fields?.places || []).forEach((value, index) => {
+      const label = looseString(value);
+      if (!label) return;
+      const category = organizationPattern.test(label) && !/\b(?:prison|room|street|city|country|lake|grave|tomb)\b/i.test(label)
+        ? "organization"
+        : "place";
+      records.push({
+        id: `source-metadata:web:${sourceIndex}:${category}:${index}`,
+        category,
+        label,
+        authority: "interpreted_detection",
+        sourcePanel: "SourceMedia",
+        targetId: source.id || `web_metadata:${sourceIndex}`,
+        maturityRoute: "source_media.web_metadata_candidate",
+        mappingStatus: "candidate",
+        metadata: { source_url: source.url, review_state: "candidate", source_field: "web_metadata_sources.fields.places" },
+      });
+    });
+  });
+
+  const sceneCardCount = Number(sceneCardSummary?.scene_card_count || 0);
+  for (let index = 0; index < sceneCardCount; index += 1) {
+    records.push({
+      id: `scene-card:${index + 1}`,
+      category: "scene_card",
+      label: `Scene Card ${String(index + 1).padStart(3, "0")}`,
+      authority: "mature_triangulated",
+      sourcePanel: "SceneCards",
+      targetId: `scene-card:${index + 1}`,
+      maturityRoute: "mise_en_scene_scene_cards.scene_card_count",
+      mappingStatus: "governed",
+      metadata: { output_json_path: sceneCardSummary?.output_json_path },
+    });
+  }
+  return records;
+}
+
 function buildMasterSchemaResolvedEvidenceView({
   transcript,
   objects,
@@ -2025,6 +2199,10 @@ function buildMasterSchemaResolvedEvidenceView({
   evidenceProliferationMatches,
   masterSchema,
   analysisId,
+  sourceMediaMetadata,
+  sceneCardSummary,
+  audioDiarization,
+  audioProsody,
 }: {
   transcript: TranscriptSegment[];
   objects: DetectedObject[];
@@ -2037,8 +2215,14 @@ function buildMasterSchemaResolvedEvidenceView({
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[] | null;
   masterSchema?: unknown;
   analysisId?: string;
+  sourceMediaMetadata?: SourceMediaMetadata;
+  sceneCardSummary?: Record<string, unknown> | null;
+  audioDiarization?: AudioDiarizationScaffold | null;
+  audioProsody?: AudioProsodyCue[];
 }): MasterSchemaResolvedEvidenceView {
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
+
+  records.push(...sourceMetadataMasterSchemaRecords(sourceMediaMetadata, sceneCardSummary));
 
   records.push(
     ...masterSchemaScopedRecords(
@@ -2076,12 +2260,129 @@ function buildMasterSchemaResolvedEvidenceView({
       rawLabel: segment.rawText,
       targetId: segment.targetId,
     });
+    if (segment.speakerConfirmation) {
+      const duration = Math.max(0, Number(segment.end || 0) - Number(segment.start || 0));
+      const normalizedSpeaker = segment.speakerConfirmation.toLowerCase().replace(/_/g, " ");
+      const isUnknownSpeaker =
+        ["unknown", "unknown speaker", "speaker", "speaker 1"].includes(normalizedSpeaker) ||
+        normalizedSpeaker.startsWith("speaker ");
+      const isSourceClass = ["background noise", "crowd"].includes(
+        normalizedSpeaker,
+      );
+      if (isUnknownSpeaker) return;
+      records.push({
+        id: `speaker-assignment:${segment.targetId || index}:${Number(segment.start || 0).toFixed(3)}`,
+        category: "speaker_assignment",
+        label: segment.speakerConfirmation,
+        authority: "manual_annotation",
+        sourcePanel: "Transcript",
+        start: segment.start,
+        end: segment.end,
+        rawLabel: segment.speaker,
+        targetId: segment.targetId || `transcript:${index}`,
+        maturityRoute: isSourceClass
+          ? "canonical.audio.source_class"
+          : "canonical.speaker.assignment",
+        mappingStatus: "user_confirmed",
+        metadata: {
+          relation: isSourceClass ? "classified_as_audio_source" : "spoken_by",
+          transcript_text: segment.text,
+          duration_seconds: duration,
+          eligible_for_voice_profile: !isSourceClass && duration >= 0.5,
+          identity_auto_promotion_allowed: false,
+        },
+      });
+      if (!isSourceClass && !isUnknownSpeaker && duration >= 0.5) {
+        const overlappingTurns = (audioDiarization?.speaker_turns || []).filter((turn) => {
+          const turnStart = Number(turn.start ?? 0);
+          const turnEnd = Number(turn.end ?? turn.start ?? 0);
+          return (
+            Number.isFinite(turnStart) &&
+            Number.isFinite(turnEnd) &&
+            Math.min(Number(segment.end || 0), turnEnd) >=
+              Math.max(Number(segment.start || 0), turnStart) - 0.03
+          );
+        });
+        records.push({
+          id: `speaker-audio-profile:${segment.targetId || index}:${Number(segment.start || 0).toFixed(3)}`,
+          category: "speaker_audio_profile_candidate",
+          label: segment.speakerConfirmation,
+          authority: "manual_annotation",
+          sourcePanel: "MasterSchema",
+          start: segment.start,
+          end: segment.end,
+          targetId: segment.targetId || `transcript:${index}`,
+          maturityRoute: "audio_sample_cloud.confirmed_span_candidate",
+          mappingStatus: "candidate",
+          metadata: {
+            source_assignment_ref: `speaker-assignment:${segment.targetId || index}:${Number(segment.start || 0).toFixed(3)}`,
+            sample_kind: "confirmed_speaker_span",
+            requires_audio_quality_gate: true,
+            requires_diarization_overlap: true,
+            audio_quality_gate:
+              overlappingTurns.length > 0
+                ? "source_timed_overlap_available"
+                : "awaiting_diarization_overlap",
+            overlapping_diarization_turn_ids: overlappingTurns
+              .map((turn) => turn.turn_id)
+              .filter(Boolean),
+            overlapping_speaker_clusters: [
+              ...new Set(
+                overlappingTurns
+                  .map((turn) => turn.speaker_label)
+                  .filter(Boolean),
+              ),
+            ],
+            proliferation_mode: "reviewable_candidates_only",
+            identity_auto_promotion_allowed: false,
+          },
+        });
+      }
+    }
+  });
+
+  (audioProsody || []).forEach((cue, index) => {
+    const label = cue.confirmedSpeaker || cue.confirmedAudioSourceClass;
+    if (!label || cue.assignmentConflict) return;
+    const isSourceClass = Boolean(cue.confirmedAudioSourceClass && !cue.confirmedSpeaker);
+    records.push({
+      id: `speaker-prosody:${cue.cue_id || index}:${Number(cue.start || 0).toFixed(3)}`,
+      category: isSourceClass ? "audio_source_prosody" : "narrative_agent_prosody",
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "Audio",
+      start: cue.start,
+      end: cue.end,
+      targetId: cue.cue_id || `prosody:${index}`,
+      maturityRoute: isSourceClass
+        ? "canonical.audio.source_class+audio_prosody.cues"
+        : "canonical.speaker.assignment+audio_prosody.cues",
+      mappingStatus: "governed_source_time_join",
+      metadata: {
+        relation: isSourceClass ? "has_audio_source_prosody" : "has_prosody",
+        speaker_assignment_refs: cue.speakerAssignmentRefs || [],
+        pace: cue.pace,
+        pauses: cue.pauses,
+        turn_structure: cue.turn_structure,
+        interaction_cues: cue.interaction_cues,
+        rhythm_profile: cue.rhythm_profile,
+        tonality_profile: cue.tonality_profile,
+        emphasis: cue.emphasis,
+        pitch_energy_contour: cue.pitch_energy_contour,
+        sound_environment: cue.sound_environment,
+        multimodal_motor_targets: cue.multimodalMotorTargets || [],
+        identity_auto_promotion_allowed: false,
+      },
+    });
   });
 
   objects.forEach((item, index) => {
     const label = governedObjectDisplayLabel(item.displayLabel);
+    const sourceTargetId =
+      item.sourceAnnotationId ||
+      (item.trackId !== undefined ? String(item.trackId) : `object:${index}`);
     records.push({
-      id: item.trackId !== undefined ? `object:${item.trackId}` : `object:${index}`,
+      id: `object:${sourceTargetId}`,
       category: "object",
       label: label || item.class_name || "object",
       authority:
@@ -2096,7 +2397,7 @@ function buildMasterSchemaResolvedEvidenceView({
       start: item.startTimestamp ?? item.timestamp,
       end: item.endTimestamp ?? item.timestamp,
       rawLabel: item.raw_class_name,
-      targetId: item.trackId !== undefined ? String(item.trackId) : undefined,
+      targetId: sourceTargetId,
     });
   });
 
@@ -2133,16 +2434,45 @@ function buildMasterSchemaResolvedEvidenceView({
   });
 
   nativeAnnotations.forEach((item, index) => {
+    const annotationId = item.id || `manual:${index}`;
+    const start = item.start_seconds ?? item.timestamp_seconds;
+    const end = item.end_seconds ?? item.timestamp_seconds;
     records.push({
-      id: item.id || `manual:${index}`,
+      id: annotationId,
       category: "manual_annotation",
       label: item.custom_label || item.label || item.open_note || item.category || "manual annotation",
       authority: "manual_annotation",
       sourcePanel: "MasterSchema",
-      start: item.start_seconds ?? item.timestamp_seconds,
-      end: item.end_seconds ?? item.timestamp_seconds,
-      targetId: item.id,
+      start,
+      end,
+      targetId: annotationId,
     });
+    const confirmedIdentity = looseString(item.identity_affirmation);
+    if (confirmedIdentity && !isRawObjectDisplayLabel(confirmedIdentity)) {
+      const sourceObjectTarget = looseString(item.metadata_correlation?.target_id);
+      records.push({
+        id: `identity:${annotationId}:${Number(start ?? 0).toFixed(3)}`,
+        category: "identity",
+        label: confirmedIdentity,
+        authority: "manual_annotation",
+        sourcePanel: "MasterSchema",
+        start,
+        end,
+        rawLabel: looseString(item.metadata_correlation?.target_label) || item.label,
+        targetId: annotationId,
+        maturityRoute: "manual_visual.identity_affirmation",
+        mappingStatus: "user_confirmed",
+        metadata: {
+          relation: "identifies_visual_occurrence",
+          source_annotation_ref: annotationId,
+          source_object_ref: sourceObjectTarget
+            ? `object:${sourceObjectTarget}`
+            : `manual_annotation:${annotationId}`,
+          geometry_preserved_on_manual_annotation: true,
+          data_maturation_proliferation: "confirmed_identity_occurrence",
+        },
+      });
+    }
   });
 
   const identityCandidates =
@@ -2278,6 +2608,8 @@ function datasceneEntityTypeForMasterRecord(
     return "NARRATIVE_AGENT";
   }
   if (record.category === "object") return "OBJECT";
+  if (record.category === "organization") return "ORG";
+  if (record.category === "place") return "PLACE";
   if (record.category === "ocr" || record.category === "transcript") {
     return "SOURCE_MEDIA_ENTITY";
   }
@@ -3995,7 +4327,13 @@ export interface AnalysisData {
   faceResults?: AnalysisStatus["face_results"] | null;
   ocr: OCR[];
   expressionResults: ExpressionSample[];
+  expressionSamplingCoverage?: {
+    sampledFrames: number;
+    sourceDetections: number;
+    noFaceOrInvalidSamples: number;
+  };
   audioProsody: AudioProsodyCue[];
+  speakerProsodyProjection?: Record<string, unknown> | null;
   quantityDetection: DetectedObject[];
   annotations: any[];
   manualAnnotationsByCategory?: Partial<
@@ -4014,6 +4352,7 @@ export interface AnalysisData {
   narrativeLensReading?: Record<string, unknown> | null;
   characterPathReading?: Record<string, unknown> | null;
   datasceneMeaningNetwork?: Record<string, unknown> | null;
+  miseEnSceneSceneCards?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
   audioDiarization?: AudioDiarizationScaffold | null;
@@ -4791,6 +5130,7 @@ export interface AnalysisStatus {
     decisions: Array<Record<string, unknown>>;
   };
   projected_canonical_claims?: import("./api-service").ProjectedCanonicalClaimCollection;
+  speaker_prosody_projection?: Record<string, unknown> | null;
   transcript_timing_repair?: {
     status?: string;
     reason?: string;
@@ -5380,15 +5720,27 @@ export class VideoService {
         ocr.status === "fulfilled"
           ? applyAnnotationCorrectionsToOCR(ocr.value, corrections)
           : [];
-      const correctedExpressions =
+      const correctedExpressionSamples =
         expressionData.status === "fulfilled"
           ? applyAnnotationCorrectionsToExpressions(expressionData.value, corrections)
           : [];
+      const correctedExpressions = correctedExpressionSamples.filter(
+        hasExpressionSourceEvidence,
+      );
+      const expressionSamplingCoverage = {
+        sampledFrames: correctedExpressionSamples.length,
+        sourceDetections: correctedExpressions.length,
+        noFaceOrInvalidSamples:
+          correctedExpressionSamples.length - correctedExpressions.length,
+      };
       const correctedAudioProsody =
         audioProsodyData.status === "fulfilled"
-          ? applyTranscriptClockOffsetToAudioProsody(
-              audioProsodyData.value,
-              corrections,
+          ? projectConfirmedSpeakersOntoProsody(
+              applyTranscriptClockOffsetToAudioProsody(
+                audioProsodyData.value,
+                corrections,
+                correctedTranscript,
+              ),
               correctedTranscript,
             )
           : [];
@@ -5465,6 +5817,14 @@ export class VideoService {
           : undefined,
         corrections,
       );
+      const audioAnalysisStatus = asLooseRecord(
+        asLooseRecord((status as unknown as LooseRecord).results)?.audio_analysis,
+      );
+      const audioDiarizationStatus = asLooseRecord(
+        status.audio_diarization ||
+        audioAnalysisStatus?.audio_diarization ||
+        null,
+      ) as AudioDiarizationScaffold;
       const masterSchemaResolvedEvidence = buildMasterSchemaResolvedEvidenceView({
         transcript: correctedTranscript,
         objects: mergedProfiledObjects,
@@ -5477,19 +5837,15 @@ export class VideoService {
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         masterSchema: status.vaa1_annotation_master_schema,
         analysisId: id,
+        sourceMediaMetadata: status.source_media_metadata,
+        sceneCardSummary: status.mise_en_scene_scene_cards || null,
+        audioDiarization: audioDiarizationStatus,
+        audioProsody: correctedAudioProsody,
       });
       const masterSchemaAudioEvents = masterSchemaAudioEventIntervals(status.vaa1_annotation_master_schema);
       const masterSchemaShotIntervals = masterSchemaShotBoundaries(status.vaa1_annotation_master_schema);
       const masterSchemaFoundationalLayers = asLooseRecord(
         asLooseRecord(status.vaa1_annotation_master_schema)?.foundational_source_layers,
-      );
-      const audioAnalysisStatus = asLooseRecord(
-        asLooseRecord((status as unknown as LooseRecord).results)?.audio_analysis,
-      );
-      const audioDiarizationStatus = asLooseRecord(
-        status.audio_diarization ||
-        audioAnalysisStatus?.audio_diarization ||
-        null,
       );
       const audioSampleCloudsStatus = asLooseRecord(
         (status as unknown as LooseRecord).audio_sample_clouds ||
@@ -5534,7 +5890,9 @@ export class VideoService {
         faceResults: status.face_results,
         ocr: correctedOCR,
         expressionResults: correctedExpressions,
+        expressionSamplingCoverage,
         audioProsody: correctedAudioProsody,
+        speakerProsodyProjection: status.speaker_prosody_projection || null,
         quantityDetection: mergedProfiledObjects,
         annotations: nativeAnnotations,
         manualAnnotationsByCategory,
@@ -5551,6 +5909,7 @@ export class VideoService {
         narrativeLensReading: status.narrative_lens_reading || null,
         characterPathReading: status.character_path_reading || null,
         datasceneMeaningNetwork: status.datascene_meaning_network || null,
+        miseEnSceneSceneCards: status.mise_en_scene_scene_cards || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         liveMatureDataProliferationAudit:
           status.live_mature_data_proliferation_audit || null,
@@ -5739,6 +6098,13 @@ export class VideoService {
     timestampSeconds: number,
   ) {
     return apiService.getProjectedSubjectState(id, subjectRef, timestampSeconds);
+  }
+
+  static async resolveSourceClock(
+    id: string,
+    payload: Parameters<typeof apiService.resolveSourceClock>[1],
+  ) {
+    return apiService.resolveSourceClock(id, payload);
   }
 
   static async getProjectedSubjectStates(

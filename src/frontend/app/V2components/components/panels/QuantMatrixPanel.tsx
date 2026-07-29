@@ -546,10 +546,17 @@ export default function QuantMatrixPanel({
     fallbackNeedle?: string,
   ) => {
     const isExpanded = expandedCells.includes(key);
-    const resolvedSegments =
+    const resolvedSegments = [
+      ...(
       segmentRefs.length > 0
         ? segmentRefs
-        : deriveTranscriptOccurrences(analysisData, fallbackNeedle);
+        : deriveTranscriptOccurrences(analysisData, fallbackNeedle)
+      ),
+    ].sort(
+      (left, right) =>
+        segmentNavigationTime(analysisData, left) -
+        segmentNavigationTime(analysisData, right),
+    );
     const displaySegments = isExpanded ? resolvedSegments : resolvedSegments.slice(0, 3);
     const displaySnippets = isExpanded ? snippets : snippets.slice(0, 3);
 
@@ -580,7 +587,7 @@ export default function QuantMatrixPanel({
                     className="block w-full border-l border-slate-800/80 px-2 py-1 text-left text-[11px] text-slate-300 hover:border-slate-600 hover:bg-slate-900/25 hover:text-slate-100"
                   >
                     <div className="mb-1 flex items-center justify-between gap-3 text-[10px] text-slate-500">
-                      <span>{index + 1}.</span>
+                      <span>{fallbackNeedle || "term"} · {index + 1}</span>
                       <span>{segment.t || ""}</span>
                     </div>
                     <div className="leading-relaxed">

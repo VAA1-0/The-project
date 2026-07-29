@@ -34,6 +34,14 @@ import {
 } from "@/components/ui/tooltip";
 import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+
+const TRANSCRIPT_SOURCE_SPEAKERS = [
+  "Announcer",
+  "Voice-over narration",
+  "Background noise",
+  "Crowd",
+] as const;
 
 function formatSpeechSeconds(value?: number | null): string {
   const safe = Number(value);
@@ -197,10 +205,13 @@ type TranscriptEditorDraft = {
   source: "transcript" | "manual";
   targetId?: string;
   rawText?: string;
+  targetStart?: number;
+  targetEnd?: number;
   start: string;
   end: string;
   text: string;
   status: "confirmed" | "unconfirmed";
+  speakerConfirmation: string;
   note: string;
 };
 
@@ -222,6 +233,15 @@ export default function SpeechToTextPanel({
   const [metadata, setMetadata] = useState<any>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const speakerConfirmationOptions = React.useMemo(
+    () => [
+      ...governedNarrativeAgentLabels(analysisData),
+      ...TRANSCRIPT_SOURCE_SPEAKERS,
+    ].filter((label, index, labels) =>
+      labels.findIndex((candidate) => candidate.toLowerCase() === label.toLowerCase()) === index,
+    ),
+    [analysisData],
+  );
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedWord, setSelectedWord] = useState<string>("");
@@ -713,6 +733,8 @@ export default function SpeechToTextPanel({
       source: row?.correctionSource === "manual" ? "manual" : "transcript",
       targetId: row?.targetId,
       rawText: String(row?.rawText || row?.text || "").trim(),
+      targetStart: Number(row?.sourceStart ?? row?.start ?? 0),
+      targetEnd: Number(row?.sourceEnd ?? row?.end ?? row?.start ?? 0),
       start: String(Number(row?.start ?? 0)),
       end: String(Number(row?.end ?? row?.start ?? 0)),
       text:
@@ -720,6 +742,7 @@ export default function SpeechToTextPanel({
           ? ""
           : String(row?.rawText || row?.text || "").trim(),
       status: row?.status === "unconfirmed" ? "unconfirmed" : "confirmed",
+      speakerConfirmation: String(row?.speakerConfirmation || ""),
       note: "",
     });
   };
@@ -735,6 +758,7 @@ export default function SpeechToTextPanel({
       end: String(baseEnd),
       text: "",
       status: "unconfirmed",
+      speakerConfirmation: "",
       note: "",
     });
   };
@@ -803,6 +827,7 @@ export default function SpeechToTextPanel({
         end,
         text: normalizedStatus === "unconfirmed" ? "" : normalizedText,
         status: normalizedStatus,
+        speaker_confirmation: editorDraft.speakerConfirmation.trim() || undefined,
         note: editorDraft.note.trim(),
         updated_at: new Date().toISOString(),
         updated_by: "analyst",
@@ -812,8 +837,11 @@ export default function SpeechToTextPanel({
       nextCorrections = mergeCorrectionRule(
         nextCorrections,
         buildCorrectionRule("text", rawText, normalizedText, editorDraft.note.trim(), {
-          targetStartTimestamp: start,
-          targetEndTimestamp: end,
+          targetStartTimestamp: editorDraft.targetStart,
+          targetEndTimestamp: editorDraft.targetEnd,
+          correctedStartTimestamp: start,
+          correctedEndTimestamp: end,
+          speakerConfirmation: editorDraft.speakerConfirmation.trim() || undefined,
         }),
       );
     }
@@ -1031,7 +1059,7 @@ export default function SpeechToTextPanel({
                       className="min-h-[84px] w-full rounded border border-white/10 bg-[#171717] px-2 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
                     />
                   </label>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="mt-3 grid grid-cols-3 gap-3">
                     <label className="text-[11px] text-slate-400">
                       <div className="mb-1 uppercase tracking-[0.14em]">Status</div>
                       <select
@@ -1050,6 +1078,36 @@ export default function SpeechToTextPanel({
                       >
                         <option value="confirmed">Confirmed</option>
                         <option value="unconfirmed">Unconfirmed</option>
+                      </select>
+                    </label>
+                    <label className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">Speaker confirmation</div>
+                      <select
+                        value={editorDraft.speakerConfirmation}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current
+                              ? { ...current, speakerConfirmation: event.target.value }
+                              : current,
+                          )
+                        }
+                        data-vaa1-transcript-speaker-confirmation="true"
+                        className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                      >
+                        <option value="">Select speaker</option>
+                        {editorDraft.speakerConfirmation &&
+                        !speakerConfirmationOptions.some(
+                          (label) => label.toLowerCase() === editorDraft.speakerConfirmation.toLowerCase(),
+                        ) ? (
+                          <option value={editorDraft.speakerConfirmation}>
+                            {editorDraft.speakerConfirmation}
+                          </option>
+                        ) : null}
+                        {speakerConfirmationOptions.map((label) => (
+                          <option key={label} value={label}>
+                            {label}
+                          </option>
+                        ))}
                       </select>
                     </label>
                     <label className="text-[11px] text-slate-400">
@@ -1405,6 +1463,7 @@ export default function SpeechToTextPanel({
                             ? `duration ${formatSpeechSeconds(Number(row.end) - Number(row.start))}`
                             : "duration unresolved"}
                         </div>
+                        <div>{row.speaker || "Speaker unconfirmed"}</div>
                       </div>
                       {isSynthetic ? (
                         <div className="rounded border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-[10px] text-amber-100/80">

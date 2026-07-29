@@ -43,6 +43,9 @@ from src.backend.analysis.audio_sample_cloud import (
     build_audio_sample_clouds_for_narrative_agents,
     merge_audio_sample_cloud_payloads,
 )
+from src.backend.analysis.speaker_prosody_projection import (
+    project_confirmed_speaker_prosody,
+)
 from src.backend.analysis.language_modeller import MMSASRTranscriber, DEFAULT_MMS_MODEL_ID
 from src.backend.analysis.expression_detector import ExpressionDetectorDeepFace
 from src.backend.utils.logger import get_logger
@@ -2878,6 +2881,7 @@ def resolve_source_media_annotations(status: Dict[str, Any], stored_probe: Dict[
         "scope",
         "description",
         "persons",
+        "organizations",
         "character_roles",
         "character_definitions",
         "narrative_agent_profiles",
@@ -3046,6 +3050,7 @@ def build_source_media_metadata_payload(
             "scope": user_annotations.get("scope", ""),
             "description": user_annotations.get("description", ""),
             "persons": user_annotations.get("persons", []),
+            "organizations": user_annotations.get("organizations", []),
             "character_roles": user_annotations.get("character_roles", []),
             "character_definitions": user_annotations.get("character_definitions", []),
             "narrative_agent_profiles": user_annotations.get("narrative_agent_profiles", []),
@@ -9121,6 +9126,11 @@ async def refresh_evidence_proliferation_matcher_endpoint(
             "candidate_count": result.get("candidate_count"),
         },
     )
+    # Scanner refresh is also the analyst-facing recomputation boundary for the
+    # live maturation audit. Never retain hypotheses produced by a superseded
+    # governance policy (for example, disabled track-derived promotion).
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
 
     return make_json_safe(result)
@@ -9320,6 +9330,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
             "live_mature_data_proliferation_audit"
         ),
         "audio_event_intervals": (status.get("results", {}).get("audio_analysis", {}) or {}).get("audio_event_intervals"),
+        "speaker_prosody_projection": status.get("speaker_prosody_projection"),
     }
 
     source_video_path = status.get("source_video_path")
@@ -10511,6 +10522,8 @@ async def refresh_source_media_maturity(analysis_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
     write_source_media_metadata_files(status)
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
     metadata = status.get("source_media_metadata", {})
     append_analysis_event(
@@ -10675,6 +10688,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
         "scope",
         "description",
         "persons",
+        "organizations",
         "character_roles",
         "character_definitions",
         "narrative_agent_profiles",
@@ -10707,7 +10721,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
     ):
         if key in payload:
             value = payload.get(key)
-            if key in ("persons", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
+            if key in ("persons", "organizations", "character_roles", "character_definitions", "narrative_agent_profiles", "keywords", "references", "reference_speakers"):
                 annotations[key] = value if isinstance(value, list) else []
             elif key == "source_policy":
                 annotations[key] = value if isinstance(value, dict) else {}
@@ -10729,6 +10743,7 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
                     "scope",
                     "description",
                     "persons",
+                    "organizations",
                     "character_roles",
                     "character_definitions",
                     "narrative_agent_profiles",
@@ -10763,6 +10778,8 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
             ]
         },
     )
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
 
     return {
@@ -11925,6 +11942,17 @@ async def update_annotation_corrections(
             },
         )
 
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    audio_analysis = (
+        results.get("audio_analysis")
+        if isinstance(results.get("audio_analysis"), dict)
+        else {}
+    )
+    status["speaker_prosody_projection"] = project_confirmed_speaker_prosody(
+        analysis_id,
+        corrections=corrections,
+        audio_prosody=resolve_audio_prosody_for_meaning(status, audio_analysis),
+    )
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)
     append_analysis_event(
@@ -11945,6 +11973,9 @@ async def update_annotation_corrections(
             "meaning_network_custom_lanes": len(
                 corrections.get("meaning_network_custom_lanes", [])
             ),
+            "speaker_prosody_projections": (
+                status.get("speaker_prosody_projection") or {}
+            ).get("projection_count", 0),
         },
     )
     persist_analysis_record_for_status(status)

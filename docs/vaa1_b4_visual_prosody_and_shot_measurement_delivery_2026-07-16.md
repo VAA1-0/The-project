@@ -30,6 +30,7 @@ The shot artifact and Master Schema shot layer were intentionally persisted. The
 - Prosodic descriptors remain measured delivery cues, not narrative intention.
 - Shot boundaries are distinct from formal scenes and interpretive windows.
 - Camera composition remains unavailable for this analysis because no saved measured composition artifact exists. It is not inferred from scene cards or metadata.
+- Color regime currently has two distinct states. Visual cues can provide an immediate browser/canvas reading of the displayed frame, while the backend pipeline can calculate spatial BGR/HSV tone measurements with OpenCV. The selected saved analysis has no persisted `spatial_tone_scan`; therefore its live reading remains an analyst aid and must not be counted as governed Master Schema or StatsKit evidence. A later operationalization pass should persist sampled measurements, source timestamps, method/version information, and dependency links before downstream proliferation.
 
 ## Verification
 

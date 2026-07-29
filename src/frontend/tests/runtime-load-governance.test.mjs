@@ -39,9 +39,17 @@ test("every GoldenLayout leaf receives the calm universal panel language", () =>
   const wrapper = read("lib/golden-layout-lib/ReactComponentWrapper.tsx");
   const styles = read("styles/globals.css");
   assert.match(wrapper, /this\.el\.className = "vaa1-panel-leaf"/);
-  assert.match(styles, /\.vaa1-panel-leaf \.uppercase[\s\S]*?text-transform: none !important/);
+  assert.match(styles, /--vaa1-leaf-surface: #222222/);
+  assert.match(styles, /--vaa1-leaf-header: #141414/);
+  assert.match(styles, /--vaa1-leaf-expanded: #151515/);
+  assert.match(styles, /--vaa1-leaf-subtle: #171717/);
+  assert.match(styles, /--vaa1-leaf-border: rgba\(255, 255, 255, 0\.08\)/);
+  assert.match(styles, /\.vaa1-panel-leaf \.uppercase \{\s*letter-spacing: 0\.14em/);
   assert.match(styles, /\.vaa1-panel-leaf summary/);
   assert.match(styles, /\.vaa1-panel-leaf select/);
+  assert.match(styles, /\.vaa1-panel-leaf > \* \{\s*background-color: var\(--vaa1-leaf-surface\)/);
+  assert.match(styles, /details:not\(\[open\]\) > summary > div:first-child > :not\(:first-child\)/);
+  assert.match(styles, /\.vaa1-panel-leaf \[class\*="overflow-y-auto"\][\s\S]*?background-color: var\(--vaa1-leaf-surface\) !important/);
 });
 
 test("reference analytical disclosures begin collapsed", () => {

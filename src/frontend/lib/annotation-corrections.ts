@@ -73,6 +73,9 @@ export function buildCorrectionRule(
     targetTimestamp?: number;
     targetStartTimestamp?: number;
     targetEndTimestamp?: number;
+    correctedStartTimestamp?: number;
+    correctedEndTimestamp?: number;
+    speakerConfirmation?: string;
     targetTrackId?: number;
   },
 ): AnnotationCorrectionRule {
@@ -98,6 +101,9 @@ export function buildCorrectionRule(
     target_timestamp: options?.targetTimestamp,
     target_start_timestamp: options?.targetStartTimestamp,
     target_end_timestamp: options?.targetEndTimestamp,
+    corrected_start_timestamp: options?.correctedStartTimestamp,
+    corrected_end_timestamp: options?.correctedEndTimestamp,
+    speaker_confirmation: options?.speakerConfirmation,
     target_track_id: options?.targetTrackId,
     note,
     updated_at: new Date().toISOString(),

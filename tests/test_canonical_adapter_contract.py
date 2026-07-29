@@ -78,6 +78,57 @@ class CanonicalAdapterContractTests(unittest.TestCase):
         self.assertEqual(events[0]["authority"], "explicit_user_confirmation")
         self.assertEqual(ledger["decisions"][0]["authority"], "explicit_user_confirmation")
 
+    def test_transcript_speaker_confirmation_becomes_canonical_assignment(self):
+        current = {"text_substitutions": [{
+            "id": "text:line:start:10.00:end:11.74",
+            "modality": "text",
+            "raw_value": "We just didn't get to yours yet.",
+            "corrected_value": "We just didn't get to yours yet.",
+            "target_start_timestamp": 10.0,
+            "target_end_timestamp": 11.74,
+            "corrected_start_timestamp": 10.0,
+            "corrected_end_timestamp": 11.74,
+            "speaker_confirmation": "James Bond",
+        }]}
+        ledger, events = self.sync({}, current)
+        self.assertEqual(len(events), 1)
+        decision = events[0]
+        self.assertEqual(decision["property"], "speaker.assignment")
+        self.assertEqual(decision["value"], "James Bond")
+        self.assertEqual(decision["subject_ref"]["type"], "transcript_span")
+        self.assertEqual(decision["scope"], {"start_seconds": 10.0, "end_seconds": 11.74})
+        self.assertEqual(decision["authority"], "explicit_user_confirmation")
+        self.assertEqual(len(ledger["decisions"]), 1)
+
+    def test_crowd_confirmation_is_audio_source_class_not_person_identity(self):
+        current = {"text_substitutions": [{
+            "id": "text:crowd:start:12.00:end:14.00",
+            "raw_value": "[voices]",
+            "corrected_value": "[voices]",
+            "target_start_timestamp": 12.0,
+            "target_end_timestamp": 14.0,
+            "speaker_confirmation": "Crowd",
+        }]}
+        _, events = self.sync({}, current)
+        self.assertEqual(events[0]["property"], "audio.source_class")
+        self.assertEqual(
+            events[0]["provenance"]["assignment_kind"],
+            "audio_source_class",
+        )
+
+    def test_unknown_cluster_label_cannot_become_canonical_speaker(self):
+        current = {"text_substitutions": [{
+            "id": "text:unknown:start:1.00:end:2.00",
+            "raw_value": "Unclear",
+            "corrected_value": "Unclear",
+            "target_start_timestamp": 1.0,
+            "target_end_timestamp": 2.0,
+            "speaker_confirmation": "UNKNOWN",
+        }]}
+        ledger, events = self.sync({}, current)
+        self.assertEqual(events, [])
+        self.assertEqual(ledger["decisions"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

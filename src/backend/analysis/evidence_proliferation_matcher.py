@@ -947,6 +947,33 @@ def _walk_audio_evidence(analysis_id: str, status: Dict[str, Any]) -> Iterable[D
                 item=sample,
             )
 
+    speaker_prosody = _first_mapping(status.get("speaker_prosody_projection"))
+    for index, item in enumerate(_as_items(speaker_prosody.get("projections"))):
+        prosody = item.get("prosody") if isinstance(item.get("prosody"), dict) else {}
+        flattened = {
+            **item,
+            "start": (item.get("source_time") or {}).get("start_seconds"),
+            "end": (item.get("source_time") or {}).get("end_seconds"),
+            "speaker_label": item.get("speaker_label"),
+            "rhythm_profile_label": (prosody.get("rhythm_profile") or {}).get("label"),
+            "tonality_profile_label": (prosody.get("tonality_profile") or {}).get("label"),
+            "turn_transition_label": (prosody.get("turn_structure") or {}).get("transition"),
+            "sound_environment_label": (prosody.get("sound_environment") or {}).get("label"),
+            "label": f"{_safe_text(item.get('speaker_label'), 'Speaker')} prosody",
+        }
+        yield _candidate(
+            analysis_id=analysis_id,
+            evidence_id=_safe_text(
+                item.get("projection_id"),
+                f"speaker:prosody:{index}",
+            ),
+            label=flattened["label"],
+            category="Confirmed Narrative Agent prosody",
+            source_kind="governed_audio_projection",
+            source_panel="audio_panel",
+            item=flattened,
+        )
+
     audio_prosody = _first_mapping(
         status.get("audio_prosody"),
         nested_audio.get("audio_prosody"),

@@ -268,6 +268,14 @@ export default function ExpressionPanel() {
             <div className="mb-2 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
               Emotion timeline
             </div>
+            {analysisData?.expressionSamplingCoverage?.noFaceOrInvalidSamples > 0 ? (
+              <div className="mb-2 shrink-0 rounded border border-slate-800 bg-slate-950/20 px-3 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
+                {analysisData.expressionSamplingCoverage.sourceDetections} source-linked
+                expression detections ·{" "}
+                {analysisData.expressionSamplingCoverage.noFaceOrInvalidSamples} no-face
+                sampling gaps excluded
+              </div>
+            ) : null}
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-2">
               {isLoading ? (
                 <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">

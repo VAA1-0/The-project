@@ -12,7 +12,6 @@ import {
   RefreshCcw,
   Save,
   Tags,
-  Video,
 } from "lucide-react";
 import {
   apiService,
@@ -1228,15 +1227,6 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => navigateToTime(sceneStart)}
-                        className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:border-cyan-500/70 hover:bg-cyan-950/20"
-                        title="Open this scene in the video panel"
-                      >
-                        <Video className="size-3" />
-                        Video
-                      </button>
                       <button
                         type="button"
                         onClick={() => {

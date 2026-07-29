@@ -30,6 +30,8 @@ The bonus sprint closes the remaining gap between the operational canonical arch
 6. Traceable Meaning Network, Narrative Agent, and Boje 5B projections.
 7. Verified report claims and full save/reopen/correct/invalidate/recompute/export proof.
 
+Program-wide source-clock invariant (2026-07-18): all source-timed UI surfaces, navigation events, evidence records, and projections must identify `source_media.clock`; seconds are the canonical interchange unit and `m:ss.mmm` is the shared precise analyst display. A timestamp is not authoritative merely because it is numeric. Its interval must carry a recognized timing status and resolve through the operational source-clock authority hierarchy. Explicit user correction outranks verified anchors, measured timing, candidates, inherited timing, and degraded estimates. Timing changes may invalidate only overlapping dependents. Video and Maturation now share the same frontend formatter, canonical clock identity, and non-mutating authority-resolution boundary; remaining panel-local time formatters are migration debt under this invariant and may not define independent clock authority.
+
 This is a prerequisite sprint, not a replacement architecture or an exhaustive new inventory. The existing canonical decision, authority, projection, invalidation, and traceback regime remains binding throughout.
 
 Its scope is restricted to the work required to prove Datascene as a controlled evidence system:
@@ -82,6 +84,8 @@ Relevant contracts:
 ## 1. Data maturity proliferation regime
 
 - Implement the Master Schema-first mature-data proliferation spine.
+- Enforce confirm-once, project-everywhere authority: one valid user confirmation in any panel writes one canonical governed decision that every applicable panel, graph, timeline, scene, search surface, report, export, and traceback view must consume without asking the analyst to reconfirm it locally.
+- A downstream surface must not omit, downgrade, or replace a canonical user confirmation with detector output merely because its local cache or panel-specific model has not produced the same result. Only explicit user correction, rejection, merge, split, or governed invalidation may supersede it.
 - Keep the Master Schema as the canonical maturity anchor. BBox/ROI hubs, Meaning Network node/edge sheets, Narrative Agent leaves, scene cards, reports, and related panels should render synchronized projections from that anchor rather than competing local truth.
 - Treat explicit user corrections as the highest authority across the loop. A user-corrected time, label, coordinate, dimension, storyline, node meaning, edge meaning, or presence interval can only be superseded by another explicit user correction.
 - Every mature-data feedback event should carry source anchors, maturity state, authority level, correction provenance, affected panels, and traceback so panels can refresh coherently.
@@ -115,6 +119,36 @@ Acceptance:
 - Treat the Narrative Agent panel as the home for character/path meaning once narrative-structure support is working, not merely as a list of recognized names.
 - Open specific Narrative Agent storylines as focused panels or leaves from node/edge sheets; do not use double-click on a graph node/edge to send the analyst to the general Narrative Agent(s) overview.
 - Propagate analyst renames, confirmations, merges, splits, rejections, and drops across video, audio, transcript, scene cards, reports, search, and evidence graph.
+- Add a governed Narrative Agent coverage anomaly probe/radar. Compare observed character coverage across scenes, source time, speech, visual presence, relations, and evidence nodes with genre-, format-, duration-, and narrative-role-aware benchmark distributions.
+- Treat benchmark results as diagnostic questions, not semantic truth. For example: `If this is the main protagonist, why does confirmed evidence surface in only 3 of 6 scenes?`
+- Expose the benchmark cohort, sample size, expected range, deviation, denominator, evidence quality/maturity, and known source-layer gaps behind every alert.
+- Let alerts initiate bounded check-ups for missing detections, identity matching, scene exclusions, or role verification. Check-ups must remain source-linked, observable, cost/yield recorded, and candidate-only until analyst review.
+- Never infer protagonist status from frequency alone, manufacture missing presence nodes, or automatically promote anomalous candidates. Fall back to within-video proportional checks when no defensible benchmark cohort exists.
+
+### 2.1 Narrative Agent tracking calibration and governed agent-track assembly
+
+- Keep raw tracking output out of mature Narrative Agent continuity until the tracking mechanism is explicitly configured, calibrated, and acceptance-tested. Person detection and identity resolution are upstream concerns and are not part of this workstream.
+- Surface the existing Narrative Agent tracking implementation and all effective settings in a dedicated governance disclosure: tracker name/version, input evidence surfaces, temporal association thresholds, continuity window, maximum gap, minimum supporting observations, scene/shot-boundary rules, interpolation policy, relation continuity, action/event continuity, and any fallback behavior.
+- Distinguish repository defaults, analysis-time effective settings, analyst overrides, and unavailable or implicit defaults. Export the effective configuration with every Narrative Agent tracking run and preserve it in traceback.
+- Build a reproducible calibration workbench around already-governed Narrative Agent references and their source-timed evidence. Measure false joins, fragmentation, missed associations, duplicate agent tracks, scene-boundary leakage, unsupported continuity, relation/action discontinuity, and coverage against governed scene participation.
+- Provide conservative presets and bounded parameter trials. Every trial creates a new versioned Narrative Agent tracking run and comparison; it cannot rewrite earlier runs, source evidence, manual annotations, or mature records.
+- Keep each source-timed evidence occurrence independently governed. A Narrative Agent track organizes occurrences; it does not overwrite their time, coordinates, label, authority, maturity, or traceback.
+- After the user confirms a Narrative Agent reference such as `James Bond`, allow the system to propose `Assemble one James Bond Narrative Agent track` from already-linked occurrences, scene participation, actions, relations, speaking turns, cues, and narrative evidence.
+- Present proposed track membership on the source timeline and by scene. Show each member's source anchor, evidence family, maturity, inclusion basis, coverage gap, competing agent-track membership, and traceback.
+- Let the analyst include or exclude occurrences, split at any point, merge proposals, rename the agent track, correct its temporal extent, reject, defer, and undo. One user decision must project everywhere without destroying the member records.
+- Treat the assembled Narrative Agent track as a governed collection and continuity claim. It is not a new identity decision and must not attempt to decide who a detected person is.
+- Require explicit maturation criteria before the track supports narrative continuity: governed agent reference already exists, claimed members are source-linked, scene participation is coherent, action/relation continuity is defensible, conflicts are resolved, coverage gaps are visible, and the analyst accepts the assembled collection.
+- Later occurrences may be proposed for an existing Narrative Agent track but remain candidates until the configured admission criteria or an analyst decision accepts them.
+- Surface calm operational states such as `raw agent-track proposal`, `calibration required`, `membership review`, `continuity conflict`, `reviewed agent track`, and `mature governed agent track`.
+
+Acceptance:
+
+- The analyst can see exactly which Narrative Agent tracking mechanism and settings produced a run.
+- Parameter changes create comparable, versioned runs without altering governed evidence.
+- A confirmed James Bond Narrative Agent reference can launch a reviewable agent-track assembly proposal without performing person detection or identity resolution.
+- Every proposed occurrence remains individually source-linked, inspectable, and reversible.
+- Unsupported joins and scene-boundary leakage visibly block maturation.
+- Only a governed Narrative Agent track—not raw tracking output—may support Narrative Agent continuity claims.
 
 ## 3. Meaning / Plot and interpretive lenses
 
@@ -479,3 +513,10 @@ Acceptance:
 Release gate:
 
 - Do not package by assuming mature proliferation and licensed optionality are "later" tasks. If either is incomplete, the deferral must be explicit, visible, and risk-labeled.
+
+Running environment refresh note (2026-07-19):
+
+- Refresh every active backend and frontend environment from the current dependency manifests before the next governed test run.
+- The clean functional-branch validation found stale Python environments missing `nltk` and `scenedetect`; these prevented full backend collection/execution even though the available backend set reached 88 passing tests.
+- Frontend contract validation passed 74/74 and TypeScript validation passed after using the repository's installed frontend dependencies.
+- Re-run the complete backend suite after the environment refresh and treat dependency parity across local startup, test, and deployed runtimes as a release gate.
