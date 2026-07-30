@@ -15,7 +15,13 @@ from .execution_graph_planner import load_execution_graph, plan_affected_branche
 
 
 SCHEMA = "vaa1.governed_report_registry.v1"
-ELIGIBLE_SOURCE_KINDS = {"claim", "proposition", "decision", "framework_projection"}
+ELIGIBLE_SOURCE_KINDS = {
+    "claim",
+    "proposition",
+    "decision",
+    "framework_projection",
+    "measurement",
+}
 
 
 def _canonical(value: Any) -> bytes:

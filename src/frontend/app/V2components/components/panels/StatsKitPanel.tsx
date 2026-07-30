@@ -823,7 +823,7 @@ function expressionToneValues(analysisData: AnalysisData | null): number[] {
 }
 
 function motionIntensityValues(analysisData: AnalysisData | null): number[] {
-  return (analysisData?.metadata?.motionSceneBasis?.motionEvidence?.samples || [])
+  const legacy = (analysisData?.metadata?.motionSceneBasis?.motionEvidence?.samples || [])
     .map((sample) =>
       [
         sample.occupancy_shift,
@@ -832,6 +832,15 @@ function motionIntensityValues(analysisData: AnalysisData | null): number[] {
         sample.zone_tone_shift,
       ].map(num).reduce((sum, value) => sum + Math.abs(value), 0),
     )
+    .filter((value) => value > 0);
+  if (legacy.length) return legacy;
+  return (analysisData?.metadata?.adaptiveVisualScan?.samples || [])
+    .slice(1)
+    .map((sample) => {
+      const frameDelta = num(sample.motion?.frame_delta);
+      const changedFraction = num(sample.motion?.changed_fraction);
+      return Math.abs(frameDelta) + Math.abs(changedFraction * 100);
+    })
     .filter((value) => value > 0);
 }
 
@@ -843,6 +852,15 @@ function shotDurationValues(analysisData: AnalysisData | null): number[] {
   return (analysisData?.metadata?.motionSceneBasis?.sceneSegments?.segments || [])
     .map((segment) => intervalDuration(segment.start, segment.end))
     .filter((value) => value > 0);
+}
+
+function spatialToneValues(
+  analysisData: AnalysisData | null,
+  field: "brightness" | "contrast" | "saturation" | "luminance_entropy",
+): number[] {
+  return (analysisData?.metadata?.spatialToneScan?.samples || [])
+    .map((sample) => sample.zones?.whole_frame?.[field])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 }
 
 function sceneCardDurationValues(analysisData: AnalysisData | null): number[] {
@@ -873,6 +891,19 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
   const shotSizeProxyRows = analysisData?.metadata?.cinematicClues?.shotSize?.samples?.length || 0;
   const audioEventRows = analysisData?.metadata?.audioEventIntervals?.intervals?.length || 0;
   const audioProsodyRows = analysisData?.audioProsody?.length || 0;
+  const adaptiveVisualRows =
+    analysisData?.metadata?.adaptiveVisualScan?.samples?.length || 0;
+  const adaptiveMotionRows = (
+    analysisData?.metadata?.adaptiveVisualScan?.samples || []
+  ).filter((sample) => sample.motion).length;
+  const adaptiveTransitionRows = (
+    analysisData?.metadata?.adaptiveVisualScan?.samples || []
+  ).filter((sample) => sample.transition?.candidate).length;
+  const adaptiveLightingRows = (
+    analysisData?.metadata?.adaptiveVisualScan?.samples || []
+  ).filter((sample) => sample.lighting?.event).length;
+  const audioSampleRows = audioSampleCloudRows(analysisData).length;
+  const confirmedAudioAnchors = countManualCategory(analysisData, "Audio");
   const musicAnalysisRows = countMasterRecords(analysisData, (record) => record.category === "music_analysis");
   const musicSoundRows = (analysisData?.audioProsody || []).filter((cue) =>
     cue.sound_environment?.label,
@@ -892,6 +923,20 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
   ).length;
 
   return [
+    {
+      id: "adaptive-visual-measurements",
+      layer: "Adaptive visual measurements: frame / lighting / motion / transition / spatial",
+      status: sourceLayerStatus(adaptiveVisualRows),
+      availableRows: adaptiveVisualRows,
+      currentSource: adaptiveVisualRows
+        ? `adaptive_visual_scan: ${adaptiveMotionRows} motion / ${adaptiveTransitionRows} transition candidates / ${adaptiveLightingRows} lighting events`
+        : "No adaptive visual measurement array visible",
+      unlocks:
+        "motion distributions, transition rates, lighting-event density, frame-class and spatial occupancy statistics",
+      nextAction: adaptiveVisualRows
+        ? "Use the canonical adaptive scan for StatsKit visual actuals while preserving candidate authority."
+        : "Run or hydrate adaptive visual measurement before computing visual actuals.",
+    },
     {
       id: "true-shot-boundary-intervals",
       layer: "True shot-boundary intervals",
@@ -913,12 +958,37 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
       status: sourceLayerStatus(audioEventRows, audioProsodyRows > 0),
       availableRows: audioEventRows,
       currentSource: audioEventRows
-        ? "Master Schema audio_event_interval rows"
+        ? "Canonical audio_event_intervals rows with Master Schema projection"
         : audioProsodyRows ? `${audioProsodyRows} prosody cues available as partial audio proxy` : "No audio event interval layer visible",
       unlocks: "speech/silence/noise/music ratios, audio timelines, event-rate curves, source-linked significance",
       nextAction: audioEventRows
         ? "Use these governed intervals for StatsKit, SignificanceKit, and RelevanceKit audio actuals."
         : "Persist VAD/silence/noise/music intervals as governed audio events, not only summary readiness.",
+    },
+    {
+      id: "speaker-diarization-turns",
+      layer: "Speaker-linked diarization turns",
+      status: sourceLayerStatus(diarizationTurns),
+      availableRows: diarizationTurns,
+      currentSource: diarizationTurns
+        ? "Canonical audio_diarization.speaker_turns with Master Schema projection"
+        : "No measured diarization turn array visible",
+      unlocks:
+        "speaker-cluster counts, turn duration, speaking-time share, overlap, and unresolved identity rates",
+      nextAction: diarizationTurns
+        ? "Compute speaker statistics while keeping cluster identity provisional until confirmed."
+        : "Hydrate measured speaker turns before speaker statistics are claimed.",
+    },
+    {
+      id: "audio-sampling-and-confirmation",
+      layer: "Audio samples and Narrative Agent audio confirmations",
+      status: sourceLayerStatus(audioSampleRows + confirmedAudioAnchors),
+      availableRows: audioSampleRows + confirmedAudioAnchors,
+      currentSource: `${audioSampleRows} audio sample rows / ${confirmedAudioAnchors} analyst Audio annotations`,
+      unlocks:
+        "sample coverage, confirmation rates, voice-pattern support, and maturation throughput",
+      nextAction:
+        "Separate measured sample counts from analyst-confirmed identity anchors in every statistic.",
     },
     {
       id: "music-sound-classifier",
@@ -936,7 +1006,9 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
       availableRows: colorRows,
       currentSource: colorRows ? "spatialToneScan zone tone/brightness/saturation" : "No color/brightness/contrast layer visible",
       unlocks: "brightness distributions, color entropy, darkness x fear, visual tone relevance",
-      nextAction: "Extract color, brightness, contrast, and entropy over sampled frames or windows with source timestamps.",
+      nextAction: colorRows
+        ? "Use governed frame-window measurements for visual distributions and source-linked interpretation."
+        : "Extract color, brightness, contrast, and entropy over sampled frames or windows with source timestamps.",
     },
     {
       id: "speaker-linked-diarization",
@@ -1061,6 +1133,10 @@ function buildSubstanceRows(
   const shotDurations = shotDurationValues(analysisData);
   const sceneCardDurations = sceneCardDurationValues(analysisData);
   const movementStdDev = stdDev(motionIntensityValues(analysisData));
+  const brightnessValues = spatialToneValues(analysisData, "brightness");
+  const contrastValues = spatialToneValues(analysisData, "contrast");
+  const saturationValues = spatialToneValues(analysisData, "saturation");
+  const entropyValues = spatialToneValues(analysisData, "luminance_entropy");
   const auditById = new Map(masterAuditRows.map((row) => [row.id, row]));
   const descriptiveEntries: Array<[string, number, string, MasterSchemaStatsAuditRow | undefined]> = [
     ["Actions", actions, "Master Schema action/POS/manual audit", auditById.get("actions")],
@@ -1313,6 +1389,38 @@ function buildSubstanceRows(
     statRow("linguistic", "Linguistic", "lexical_diversity", "type-token ratio", "not computed", "ratio", "transcript token table", "needs source layer", "Requires transcript tokens, not just metadata."),
     statRow("visual", "Visual", "density", "object density", perMinute(objects), "events/min", "object/tracked_objects counts + duration", objects && duration ? "candidate" : computedOrMissing(objects), "Rate computed from available object count and runtime."),
     statRow("visual", "Visual", "density", "face / expression density", perMinute(expressions + persons), "events/min", "person/expression counts + duration", (expressions || persons) && duration ? "candidate" : computedOrMissing(expressions + persons), "Rate computed from visible person/expression counts."),
+    statRow(
+      "visual",
+      "Visual",
+      "mean",
+      "mean brightness / contrast / saturation / color entropy",
+      brightnessValues.length
+        ? `brightness ${roundStat(mean(brightnessValues))} / contrast ${roundStat(mean(contrastValues))} / saturation ${roundStat(mean(saturationValues))} / entropy ${roundStat(mean(entropyValues))}`
+        : "not computed",
+      "frame-window measure",
+      "spatialToneScan.samples[].zones.whole_frame",
+      brightnessValues.length ? "computed" : "needs source layer",
+      brightnessValues.length
+        ? "Computed from persisted, source-timed whole-frame visual measurements."
+        : "Requires persisted source-timed spatial-tone measurements.",
+      "spatial_tone_scan.json",
+    ),
+    statRow(
+      "distribution",
+      "Level V",
+      "distribution",
+      "brightness / contrast distribution",
+      brightnessValues.length
+        ? `${brightnessValues.length} windows / brightness median ${roundStat(median(brightnessValues))} / contrast median ${roundStat(median(contrastValues))}`
+        : "not computed",
+      "distribution",
+      "spatialToneScan.samples[].zones.whole_frame",
+      brightnessValues.length ? "computed" : "needs source layer",
+      brightnessValues.length
+        ? "Distribution is available from governed source-frame windows."
+        : "Requires measured brightness and contrast windows.",
+      "spatial_tone_scan.json",
+    ),
     statRow("audio", "Audio", "ratio", "audio readiness", audioPresent ? 100 : 0, "%", "source_media_metadata.has_audio", hasMetadata ? "computed" : "needs source layer", "This is only readiness; actual audio statistics require audio intervals."),
     statRow(
       "audio",

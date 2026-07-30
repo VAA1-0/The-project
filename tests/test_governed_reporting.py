@@ -70,6 +70,30 @@ class GovernedReportingTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.create_claim(payload, {"proposition-1": self.source()})
 
+    def test_verified_measurement_can_be_cited_without_promoting_semantic_authority(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = GovernedReportService("a1", Path(root) / "reports.json")
+            measurement = {
+                "kind": "measurement",
+                "maturity": "verified",
+                "validity": "current",
+                "evidence_refs": ["artifact:spatial_tone_scan#sample-1"],
+                "authority": "measured_automatic_detection",
+            }
+            payload = {
+                "claim_text": "The measured frame window has low brightness.",
+                "source_object_refs": ["measurement-1"],
+                "citations": [{
+                    "source_object_ref": "measurement-1",
+                    "evidence_refs": ["artifact:spatial_tone_scan#sample-1"],
+                    "source_locations": [{"start_seconds": 3.0, "end_seconds": 4.0}],
+                }],
+            }
+            result = service.create_claim(payload, {"measurement-1": measurement})
+            self.assertEqual(result["record"]["status"], "verified")
+            self.assertEqual(result["record"]["authority"], "derived_report_projection")
+            self.assertFalse(result["record"]["canonical"])
+
 
 if __name__ == "__main__":
     unittest.main()

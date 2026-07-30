@@ -24,6 +24,30 @@ bus = load_bus_module()
 
 
 class LiveMatureDataProliferationBusTests(unittest.TestCase):
+    def test_confirmed_audio_annotation_becomes_narrative_agent_audio_memory(self):
+        status = {
+            "analysis_id": "audio-memory",
+            "annotation_corrections": {
+                "manual_visual_annotations": [
+                    {
+                        "id": "audio-bond-1",
+                        "category": "Audio",
+                        "identity_affirmation": "James Bond",
+                        "start_seconds": 10.0,
+                        "end_seconds": 12.0,
+                        "open_note": "Transcript: Bond. James Bond.",
+                    }
+                ]
+            },
+        }
+        memories = bus.collect_narrative_agent_identity_memories(status)
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["canonical_label"], "James Bond")
+        self.assertEqual(
+            memories[0]["audio_sample_slots"][0]["sample_state"],
+            "manual_audio_anchor_available",
+        )
+        self.assertEqual(memories[0]["visual_sample_slots"], [])
     def setUp(self):
         # Legacy bus tests exercise the optional future track path explicitly.
         # Production remains conservative with this switch disabled.

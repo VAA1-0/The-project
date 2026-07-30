@@ -586,6 +586,36 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
     });
   });
 
+  manualVisualAnnotations
+    .filter((item) => textFrom(item.category) === "Audio")
+    .forEach((item, index) => {
+      const id = textFrom(item.id, `audio-anchor-${index}`);
+      const metadata = asRecord(item.metadata_correlation);
+      const timeRange = rangeFromRecord(item);
+      rows.push({
+        id: `audio-sample:${id}`,
+        label: manualAnnotationLabel(item),
+        family: textFrom(item.subcategory, "Narrative Agent audio anchor"),
+        authority: textFrom(
+          metadata.authority_state,
+          "manual_audio_workbench_review",
+        ),
+        maturity: textFrom(metadata.maturity_state, "mature_manual_anchor"),
+        source: "AudioPanel",
+        propagation:
+          metadata.propagation_required === false
+            ? "local"
+            : "audio sample and graph projection required",
+        traceback: id,
+        panel: "Audio",
+        reviewNeed: "audit sampling, identity memory, and graph propagation",
+        timestamp: timeRange.start,
+        timeRange,
+        sourceRef: id,
+        queue: "sampling",
+      });
+    });
+
   manualVisualAnnotations.forEach((item, index) => {
     const bbox = firstBBoxFromRecord(item);
     const timeRange = rangeFromRecord(item);
@@ -2445,7 +2475,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         </Lane>
         <Lane
           title="Audiovisual source sampling"
-          status="not operationalized"
+          status={metrics.audiovisualSampleCount > 0 ? "operational" : "needs samples"}
           dataAttr="audiovisual-source-sampling"
           audiovisualSourceSamplingLane
           active={activeQueue === "sampling"}

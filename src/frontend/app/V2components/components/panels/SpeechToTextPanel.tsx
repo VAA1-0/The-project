@@ -1428,6 +1428,23 @@ export default function SpeechToTextPanel({
                 transcript.map((row: any) => {
                   const isSynthetic = Boolean(row.synthetic);
                   const hasSourceTiming = rowHasTimingAuthority(row);
+                  const linkedSpeakerTurn = (
+                    analysisData?.audioDiarization?.speaker_turns || []
+                  )
+                    .map((turn: any) => ({
+                      turn,
+                      overlap: Math.max(
+                        0,
+                        Math.min(Number(row.end || 0), Number(turn.end || 0)) -
+                          Math.max(Number(row.start || 0), Number(turn.start || 0)),
+                      ),
+                    }))
+                    .sort(
+                      (
+                        left: { turn: any; overlap: number },
+                        right: { turn: any; overlap: number },
+                      ) => right.overlap - left.overlap,
+                    )[0];
                   const segmentLabel =
                     row.segmentType === "manual_entry"
                       ? "Manual marker"
@@ -1464,6 +1481,16 @@ export default function SpeechToTextPanel({
                             : "duration unresolved"}
                         </div>
                         <div>{row.speaker || "Speaker unconfirmed"}</div>
+                        {linkedSpeakerTurn?.overlap > 0 ? (
+                          <div
+                            className="text-fuchsia-200/80"
+                            title="Measured acoustic diarization cluster; identity remains provisional until confirmed."
+                          >
+                            Diarization:{" "}
+                            {linkedSpeakerTurn.turn.speaker_label ||
+                              "unresolved cluster"}
+                          </div>
+                        ) : null}
                       </div>
                       {isSynthetic ? (
                         <div className="rounded border border-amber-500/20 bg-amber-950/10 px-2 py-1 text-[10px] text-amber-100/80">

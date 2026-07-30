@@ -19,6 +19,109 @@ meaning_network = load_module()
 
 
 class DatasceneMeaningNetworkContractTest(unittest.TestCase):
+    def test_unresolved_scene_membership_does_not_hide_delivered_evidence(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-unscoped-evidence",
+            {
+                "audio_event_intervals": {
+                    "intervals": [
+                        {"event_id": "music-1", "event_type": "music", "start": 1.0, "end": 3.0}
+                    ]
+                },
+                "audio_diarization": {
+                    "speaker_turns": [
+                        {
+                            "turn_id": "turn-1",
+                            "speaker_label": "SPEAKER_00",
+                            "start": 2.0,
+                            "end": 4.0,
+                            "text": "Hello",
+                        }
+                    ]
+                },
+            },
+            transcript={
+                "segments": [
+                    {"id": "line-1", "start": 2.0, "end": 4.0, "text": "Hello"}
+                ]
+            },
+            visual_analysis={
+                "scene_segments": [{"scene_id": "s1", "start": None, "end": None}],
+                "tracked_objects": [
+                    {"track_id": "person-1", "label": "person", "start": 2.0, "end": 4.0}
+                ],
+            },
+        )
+        nodes = artifact["meaning_network"]["nodes"]
+        self.assertTrue(any(node["node_id"] == "audio-event:music-1" for node in nodes))
+        self.assertTrue(any(node["node_id"] == "speaker-turn:turn-1" for node in nodes))
+        self.assertTrue(any(node["node_id"] == "person:unscoped:person-1" for node in nodes))
+        self.assertTrue(any(node["node_id"] == "transcript:line-1" for node in nodes))
+        evidence_nodes = [
+            node
+            for node in nodes
+            if node["node_id"]
+            in {
+                "audio-event:music-1",
+                "speaker-turn:turn-1",
+                "person:unscoped:person-1",
+                "transcript:line-1",
+            }
+        ]
+        self.assertTrue(all(node["ui"]["source_navigation_enabled"] for node in evidence_nodes))
+        self.assertTrue(
+            all(node["attributes"]["scene_membership_status"] == "unresolved" for node in evidence_nodes)
+        )
+
+    def test_audio_events_turns_and_confirmed_agent_audio_enter_meaning_graph(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-audio-graph",
+            {
+                "audio_event_intervals": {
+                    "intervals": [
+                        {"event_id": "music-1", "event_type": "music", "start": 1.0, "end": 3.0}
+                    ]
+                },
+                "audio_diarization": {
+                    "speaker_turns": [
+                        {"turn_id": "turn-1", "speaker_label": "SPEAKER_00", "start": 2.0, "end": 4.0, "text": "Hello"}
+                    ]
+                },
+                "annotation_corrections": {
+                    "manual_visual_annotations": [
+                        {
+                            "id": "audio-agent-1",
+                            "category": "Audio",
+                            "identity_affirmation": "James Bond",
+                            "start_seconds": 2.0,
+                            "end_seconds": 4.0,
+                        }
+                    ]
+                },
+            },
+            transcript={"segments": []},
+            visual_analysis={
+                "scene_segments": [{"scene_id": "s1", "start": 0.0, "end": 5.0}],
+                "tracked_objects": [],
+            },
+        )
+        nodes = artifact["meaning_network"]["nodes"]
+        self.assertTrue(any(node["node_type"] == "audio_event" for node in nodes))
+        self.assertTrue(
+            any(
+                node["node_type"] == "speaker"
+                and node["evidence_refs"][0]["source_type"] == "speaker_diarization_turn"
+                for node in nodes
+            )
+        )
+        self.assertTrue(
+            any(
+                node["node_type"] == "narrative_agent"
+                and node["label"] == "James Bond"
+                and node["maturity"]["level"] == "analyst_confirmed"
+                for node in nodes
+            )
+        )
     def test_scene_bounded_person_transcript_candidates_are_navigable(self):
         artifact = meaning_network.build_datascene_meaning_network(
             "analysis-meaning-network",

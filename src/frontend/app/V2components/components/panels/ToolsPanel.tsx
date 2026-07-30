@@ -92,6 +92,24 @@ type ToolsWorkspace =
   | "ai_agent";
 
 type VisualWorkspaceView = "cinematic" | "inspectors";
+
+const VISUAL_CUE_INSPECTOR_OPTIONS = [
+  ["color", "Color regime"],
+  ["corner", "Corner scan"],
+  ["depth", "Depth scan"],
+  ["frame", "Frame class"],
+  ["human", "Human presence"],
+  ["lighting", "Lighting"],
+  ["margin", "Margin scan"],
+  ["motion", "Motion scan"],
+  ["shot", "Shot size"],
+  ["spatial", "Spatial scan"],
+  ["text", "Text/graphic"],
+  ["tone", "Tone scan"],
+  ["transition", "Transition scan"],
+  ["clutter", "Visual clutter"],
+] as const;
+const VISUAL_CUE_PAGE_SIZE = 25;
 type AnnotationPluginView = "menu" | "cvat";
 type SingleSourceMarks = { a?: number; b?: number };
 type ForensicRegionSelectedPayload = {
@@ -376,21 +394,26 @@ function ManualAnnotationLeafSection({
   }
 
   return (
-    <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.14em] text-cyan-100/80">
-            {title}
-          </div>
-          <div className="mt-1 text-[10px] text-slate-400">
-            {categoryTone}
-          </div>
-        </div>
-        <div className="rounded border border-cyan-500/20 px-2 py-0.5 text-[10px] text-cyan-100/70">
-          {items.length}
-        </div>
-      </div>
-      <div className="space-y-2">
+    <Collapsible className="rounded border border-white/8 bg-[#161616]">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+        >
+          <span>
+            <span className="block text-[11px] uppercase tracking-[0.14em] text-slate-300">
+              {title}
+            </span>
+            <span className="mt-1 block text-[10px] text-slate-500">
+              {categoryTone}
+            </span>
+          </span>
+          <span className="rounded border border-white/8 px-2 py-0.5 text-[10px] text-slate-400">
+            {items.length}
+          </span>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-2 border-t border-white/8 px-3 py-3">
         {items.map((item) => (
           <button
             key={item.id}
@@ -416,8 +439,8 @@ function ManualAnnotationLeafSection({
             ) : null}
           </button>
         ))}
-      </div>
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -548,6 +571,9 @@ export default function ToolsPanel() {
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [activeVisualView, setActiveVisualView] =
     useState<VisualWorkspaceView>("cinematic");
+  const [activeVisualCueInspector, setActiveVisualCueInspector] =
+    useState<string>("");
+  const [visualCuePage, setVisualCuePage] = useState(0);
   const [openCinematicSections, setOpenCinematicSections] = useState<
     Record<string, boolean>
   >({
@@ -832,11 +858,117 @@ export default function ToolsPanel() {
     analysisData?.manualAnnotationsByCategory?.Identification ?? [];
 
   const motionSceneBasis = analysisData?.metadata?.motionSceneBasis;
-  const motionEvidenceSummary = motionSceneBasis?.motionEvidence?.summary;
-  const motionEvidenceSamples = React.useMemo(
-    () => motionSceneBasis?.motionEvidence?.samples ?? [],
-    [motionSceneBasis?.motionEvidence?.samples],
+  const measuredShotBoundaries = React.useMemo(
+    () => motionSceneBasis?.shotBoundaries?.intervals ?? [],
+    [motionSceneBasis?.shotBoundaries?.intervals],
   );
+  const spatialToneSamples = React.useMemo(
+    () => analysisData?.metadata?.spatialToneScan?.samples ?? [],
+    [analysisData?.metadata?.spatialToneScan?.samples],
+  );
+  const adaptiveVisualSamples = React.useMemo(
+    () => analysisData?.metadata?.adaptiveVisualScan?.samples ?? [],
+    [analysisData?.metadata?.adaptiveVisualScan?.samples],
+  );
+  const activeVisualCueLabel =
+    VISUAL_CUE_INSPECTOR_OPTIONS.find(
+      ([key]) => key === activeVisualCueInspector,
+    )?.[1] ?? "";
+  const colorRegimeSamples = React.useMemo(
+    () =>
+      spatialToneSamples
+        .map((sample) => ({
+          timestamp: Number(sample.timestamp ?? 0),
+          zone: sample.zones?.whole_frame,
+        }))
+        .filter((sample) => sample.zone),
+    [spatialToneSamples],
+  );
+  const colorRegimeSummary = React.useMemo(() => {
+    const zones = spatialToneSamples
+      .map((sample) => sample.zones?.whole_frame)
+      .filter((zone): zone is NonNullable<typeof zone> => Boolean(zone));
+    if (!zones.length) return null;
+    const dominantTones = zones.reduce<Record<string, number>>((counts, zone) => {
+      const label = zone.dominant_tone || "unclassified";
+      counts[label] = (counts[label] ?? 0) + 1;
+      return counts;
+    }, {});
+    const mean = (field: "brightness" | "contrast" | "saturation") => {
+      const values = zones
+        .map((zone) =>
+          field === "brightness"
+            ? Number(zone.brightness ?? zone.brightness_value)
+            : Number(zone[field]),
+        )
+        .filter(Number.isFinite);
+      return values.length
+        ? values.reduce((sum, value) => sum + value, 0) / values.length
+        : null;
+    };
+    return {
+      dominantTone:
+        Object.entries(dominantTones).sort((left, right) => right[1] - left[1])[0]?.[0] ??
+        "unclassified",
+      brightness: mean("brightness"),
+      contrast: mean("contrast"),
+      saturation: mean("saturation"),
+      sampleCount: zones.length,
+    };
+  }, [spatialToneSamples]);
+  const adaptiveMotionEvidenceSamples = React.useMemo(
+    () =>
+      adaptiveVisualSamples.slice(1).map((sample) => ({
+        timestamp: Number(sample.timestamp ?? 0),
+        motion_label: sample.motion?.label || "measured visual change",
+        activity_label: sample.motion?.label || "measured visual change",
+        occupancy_shift: sample.motion?.changed_fraction,
+        foreground_delta: sample.motion?.frame_delta,
+        background_delta: undefined,
+        frame_class: sample.frame_class,
+        cadence: sample.cadence,
+      })),
+    [adaptiveVisualSamples],
+  );
+  const motionEvidenceSamples = React.useMemo(
+    () =>
+      motionSceneBasis?.motionEvidence?.samples?.length
+        ? motionSceneBasis.motionEvidence.samples
+        : adaptiveMotionEvidenceSamples,
+    [adaptiveMotionEvidenceSamples, motionSceneBasis?.motionEvidence?.samples],
+  );
+  const motionEvidenceSummary = React.useMemo(() => {
+    if (motionSceneBasis?.motionEvidence?.summary) {
+      return motionSceneBasis.motionEvidence.summary;
+    }
+    if (!adaptiveMotionEvidenceSamples.length) return undefined;
+    const distribution = adaptiveMotionEvidenceSamples.reduce<Record<string, number>>(
+      (counts, sample) => {
+        const label = sample.motion_label;
+        counts[label] = (counts[label] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+    const dominant_motion =
+      Object.entries(distribution).sort((left, right) => right[1] - left[1])[0]?.[0] ??
+      null;
+    const occupancyValues = adaptiveMotionEvidenceSamples
+      .map((sample) => Number(sample.occupancy_shift))
+      .filter(Number.isFinite);
+    return {
+      sample_count: adaptiveMotionEvidenceSamples.length,
+      dominant_motion,
+      distribution,
+      high_motion_samples: adaptiveMotionEvidenceSamples.filter(
+        (sample) => Number(sample.foreground_delta ?? 0) >= 32,
+      ).length,
+      mean_occupancy_shift: occupancyValues.length
+        ? occupancyValues.reduce((sum, value) => sum + value, 0) /
+          occupancyValues.length
+        : undefined,
+    };
+  }, [adaptiveMotionEvidenceSamples, motionSceneBasis?.motionEvidence?.summary]);
   const sceneSegmentSummary = motionSceneBasis?.sceneSegments?.summary;
   const matureSceneSegments = React.useMemo(
     () => matureSceneSegmentsFromAnalysis(analysisData),
@@ -847,6 +979,18 @@ export default function ToolsPanel() {
     () => matureSceneSegments,
     [matureSceneSegments],
   );
+  const effectiveSceneCount =
+    Number(sceneSegmentSummary?.scene_count) || sceneSegments.length;
+  const effectiveMeanSceneDuration = React.useMemo(() => {
+    const recorded = Number(sceneSegmentSummary?.mean_scene_duration);
+    if (Number.isFinite(recorded) && recorded > 0) return recorded;
+    const durations = sceneSegments
+      .map((segment) => Math.max(0, Number(segment.end) - Number(segment.start)))
+      .filter((duration) => duration > 0);
+    return durations.length
+      ? durations.reduce((sum, duration) => sum + duration, 0) / durations.length
+      : null;
+  }, [sceneSegmentSummary?.mean_scene_duration, sceneSegments]);
   const notableMotionMoments = React.useMemo(() => {
     if (!motionEvidenceSamples.length) return [];
     const sorted = [...motionEvidenceSamples].sort(
@@ -854,7 +998,7 @@ export default function ToolsPanel() {
         (right.occupancy_shift ?? 0) - (left.occupancy_shift ?? 0) ||
         (right.foreground_delta ?? 0) - (left.foreground_delta ?? 0),
     );
-    const unique: typeof motionEvidenceSamples = [];
+    const unique: Array<(typeof motionEvidenceSamples)[number]> = [];
     for (const sample of sorted) {
       if (
         unique.some(
@@ -879,18 +1023,18 @@ export default function ToolsPanel() {
   const sceneDensityLabel = React.useMemo(
     () =>
       classifySceneDensity(
-        Number(sceneSegmentSummary?.scene_count ?? 0),
-        Number(sceneSegmentSummary?.mean_scene_duration ?? 0),
+        effectiveSceneCount,
+        effectiveMeanSceneDuration ?? 0,
       ),
-    [sceneSegmentSummary?.mean_scene_duration, sceneSegmentSummary?.scene_count],
+    [effectiveMeanSceneDuration, effectiveSceneCount],
   );
   const sceneBasisDescription = React.useMemo(
     () =>
       describeSceneBasis(
-        Number(sceneSegmentSummary?.scene_count ?? 0),
-        Number(sceneSegmentSummary?.mean_scene_duration ?? 0),
+        effectiveSceneCount,
+        effectiveMeanSceneDuration ?? 0,
       ),
-    [sceneSegmentSummary?.mean_scene_duration, sceneSegmentSummary?.scene_count],
+    [effectiveMeanSceneDuration, effectiveSceneCount],
   );
   const motionBasisDescription = React.useMemo(
     () => describeMotionBasis(motionEvidenceSummary),
@@ -1607,6 +1751,74 @@ export default function ToolsPanel() {
         };
       });
 
+    if (measuredShotBoundaries.length) {
+      sections.push({
+        key: "shot-boundaries",
+        label: "Measured shot boundaries",
+        entries: measuredShotBoundaries.map((interval, index) => ({
+          key: "shot-boundaries",
+          start: Number(interval.start ?? 0),
+          end: Number(interval.end ?? interval.start ?? 0),
+          label: `Shot ${index + 1} · ${Math.max(
+            0,
+            Number(interval.end ?? 0) - Number(interval.start ?? 0),
+          ).toFixed(3)} s`,
+          origin: "derived" as const,
+        })),
+      });
+    }
+
+    if (spatialToneSamples.length) {
+      sections.push({
+        key: "spatial-tone",
+        label: "Measured visual tone",
+        entries: spatialToneSamples.map((sample) => {
+          const wholeFrame = sample.zones?.whole_frame;
+          return {
+            key: "spatial-tone",
+            start: Number(sample.timestamp ?? 0),
+            end: Number(sample.timestamp ?? 0) + 1,
+            label: [
+              wholeFrame?.dominant_tone,
+              wholeFrame?.brightness_band,
+              typeof wholeFrame?.contrast === "number"
+                ? `contrast ${wholeFrame.contrast.toFixed(1)}`
+                : wholeFrame?.contrast_band,
+              typeof wholeFrame?.luminance_entropy === "number"
+                ? `entropy ${wholeFrame.luminance_entropy.toFixed(2)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Measured visual tone",
+            origin: "derived" as const,
+          };
+        }),
+      });
+    }
+
+    if (adaptiveVisualSamples.length > 1) {
+      const adaptiveMotionEntries = compressCinematicSamples(
+        "adaptive-motion",
+        adaptiveVisualSamples.slice(1).map((sample) => ({
+          timestamp: Number(sample.timestamp ?? 0),
+          label: [
+            sample.motion?.label || "measured visual change",
+            typeof sample.motion?.changed_fraction === "number"
+              ? `changed ${(sample.motion.changed_fraction * 100).toFixed(1)}%`
+              : null,
+            sample.cadence,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        })),
+      );
+      sections.push({
+        key: "adaptive-motion",
+        label: "Measured motion",
+        entries: adaptiveMotionEntries,
+      });
+    }
+
     const shotIntervals =
       clues?.shotSize?.summary?.interval_summaries?.map((interval) => ({
         key: "shot-size",
@@ -1740,17 +1952,262 @@ export default function ToolsPanel() {
     analysisData?.annotationCorrections?.label_overrides,
     analysisData?.metadata?.cinematicClues,
     analysisData?.rawDetectedObjects,
+    measuredShotBoundaries,
+    adaptiveVisualSamples,
+    spatialToneSamples,
   ]);
+  const activeVisualCueEntries = React.useMemo<CinematicTimelineEntry[]>(() => {
+    if (adaptiveVisualSamples.length) {
+      if (activeVisualCueInspector === "frame") {
+        return adaptiveVisualSamples.map((sample) => ({
+          key: "frame",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0),
+          label: `${sample.frame_class || "unclassified frame"} · ${sample.cadence || "cadence unavailable"}`,
+          origin: "derived",
+        }));
+      }
+      if (activeVisualCueInspector === "lighting") {
+        return adaptiveVisualSamples.map((sample) => ({
+          key: "lighting",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0),
+          label: [
+            sample.lighting?.event,
+            typeof sample.lighting?.brightness === "number"
+              ? `brightness ${sample.lighting.brightness.toFixed(1)}`
+              : null,
+            typeof sample.lighting?.brightness_delta === "number"
+              ? `delta ${sample.lighting.brightness_delta.toFixed(1)}`
+              : null,
+            sample.cadence,
+          ].filter(Boolean).join(" · "),
+          origin: "derived",
+        }));
+      }
+      if (activeVisualCueInspector === "motion") {
+        return adaptiveVisualSamples.slice(1).map((sample) => ({
+          key: "motion",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0),
+          label: [
+            sample.motion?.label,
+            typeof sample.motion?.frame_delta === "number"
+              ? `delta ${sample.motion.frame_delta.toFixed(1)}`
+              : null,
+            typeof sample.motion?.changed_fraction === "number"
+              ? `changed ${(sample.motion.changed_fraction * 100).toFixed(1)}%`
+              : null,
+            sample.cadence,
+          ].filter(Boolean).join(" · "),
+          origin: "derived",
+        }));
+      }
+      if (activeVisualCueInspector === "transition") {
+        return adaptiveVisualSamples.map((sample) => ({
+          key: "transition",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0),
+          label: [
+            sample.transition?.label,
+            sample.transition?.candidate ? "candidate" : "non-candidate",
+            sample.cadence,
+          ].filter(Boolean).join(" · "),
+          origin: "derived",
+        }));
+      }
+      if (activeVisualCueInspector === "spatial") {
+        return adaptiveVisualSamples.map((sample) => {
+          const zones = Object.entries(sample.spatial_occupancy ?? {});
+          const strongest = zones.sort(
+            (left, right) =>
+              Number(right[1].activity_occupancy ?? 0) -
+              Number(left[1].activity_occupancy ?? 0),
+          )[0];
+          return {
+            key: "spatial",
+            start: Number(sample.timestamp ?? 0),
+            end: Number(sample.timestamp ?? 0),
+            label: strongest
+              ? `${strongest[0].replaceAll("_", " ")} · activity ${(
+                  Number(strongest[1].activity_occupancy ?? 0) * 100
+                ).toFixed(1)}% · edges ${(
+                  Number(strongest[1].edge_occupancy ?? 0) * 100
+                ).toFixed(1)}% · ${sample.cadence || "cadence unavailable"}`
+              : "No measured spatial occupancy",
+            origin: "derived",
+          };
+        });
+      }
+    }
+    const sectionKeys: Record<string, string[]> = {
+      shot: ["shot-size"],
+      spatial: ["composition"],
+      human: ["subject-arrangement"],
+      motion: ["movement"],
+      transition: ["transition"],
+    };
+    const existing = (sectionKeys[activeVisualCueInspector] ?? [])
+      .flatMap(
+        (key) =>
+          cinematicTimelineSections.find((section) => section.key === key)?.entries ?? [],
+      );
+    if (existing.length) return existing;
 
-  // Listen for video ID changes via event bus
+    if (activeVisualCueInspector === "frame") {
+      return spatialToneSamples.map((sample) => ({
+        key: "frame",
+        start: Number(sample.timestamp ?? 0),
+        end: Number(sample.timestamp ?? 0) + 1,
+        label: sample.frame_class || "unclassified frame",
+        origin: "derived",
+      }));
+    }
+    if (activeVisualCueInspector === "tone") {
+      return spatialToneSamples.map((sample) => {
+        const zone = sample.zones?.whole_frame;
+        return {
+          key: "tone",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0) + 1,
+          label:
+            [
+              zone?.dominant_tone,
+              zone?.brightness_band,
+              zone?.saturation_band,
+              typeof zone?.luminance_entropy === "number"
+                ? `entropy ${zone.luminance_entropy.toFixed(2)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Measured tone sample",
+          origin: "derived",
+        };
+      });
+    }
+    if (activeVisualCueInspector === "lighting") {
+      return spatialToneSamples.map((sample) => {
+        const zone = sample.zones?.whole_frame;
+        return {
+          key: "lighting",
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0) + 1,
+          label:
+            [
+              zone?.brightness_band,
+              typeof zone?.brightness === "number"
+                ? `brightness ${zone.brightness.toFixed(1)}`
+                : typeof zone?.brightness_value === "number"
+                  ? `brightness ${zone.brightness_value.toFixed(1)}`
+                  : null,
+              typeof zone?.contrast === "number"
+                ? `contrast ${zone.contrast.toFixed(1)}`
+                : zone?.contrast_band,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Measured lighting sample",
+          origin: "derived",
+        };
+      });
+    }
+    if (activeVisualCueInspector === "text") {
+      return (analysisData?.ocr ?? []).map((sample) => ({
+        key: "text",
+        start: Number(sample.timestamp ?? 0),
+        end: Number(sample.timestamp ?? 0) + 1,
+        label: sample.text || sample.rawText || "Detected text",
+        origin: "derived",
+      }));
+    }
+
+    const objectBasisKeys = new Set([
+      "human",
+      "margin",
+      "corner",
+      "depth",
+      "clutter",
+    ]);
+    if (objectBasisKeys.has(activeVisualCueInspector)) {
+      const objects = (analysisData?.rawDetectedObjects ?? []).filter((sample) =>
+        activeVisualCueInspector === "human"
+          ? (sample.class_name || sample.raw_class_name || "").toLowerCase() === "person"
+          : true,
+      );
+      return objects.map((sample) => {
+        const label = sample.class_name || sample.raw_class_name || "detected object";
+        const bbox = sample.bbox;
+        const geometry = bbox
+          ? ` · box ${Number(bbox.x1 ?? 0).toFixed(0)},${Number(bbox.y1 ?? 0).toFixed(0)}–${Number(bbox.x2 ?? 0).toFixed(0)},${Number(bbox.y2 ?? 0).toFixed(0)}`
+          : "";
+        return {
+          key: activeVisualCueInspector,
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0) + 1,
+          label: `${label}${geometry}`,
+          origin: "derived",
+        };
+      });
+    }
+    return [];
+  }, [
+    activeVisualCueInspector,
+    adaptiveVisualSamples,
+    analysisData?.ocr,
+    analysisData?.rawDetectedObjects,
+    cinematicTimelineSections,
+    spatialToneSamples,
+  ]);
+  const activeVisualCueRowCount =
+    activeVisualCueInspector === "color"
+      ? colorRegimeSamples.length
+      : activeVisualCueEntries.length;
+  const activeVisualCuePageCount = Math.max(
+    1,
+    Math.ceil(activeVisualCueRowCount / VISUAL_CUE_PAGE_SIZE),
+  );
+  const pagedColorRegimeSamples = React.useMemo(
+    () =>
+      colorRegimeSamples.slice(
+        visualCuePage * VISUAL_CUE_PAGE_SIZE,
+        (visualCuePage + 1) * VISUAL_CUE_PAGE_SIZE,
+      ),
+    [colorRegimeSamples, visualCuePage],
+  );
+  const pagedVisualCueEntries = React.useMemo(
+    () =>
+      activeVisualCueEntries.slice(
+        visualCuePage * VISUAL_CUE_PAGE_SIZE,
+        (visualCuePage + 1) * VISUAL_CUE_PAGE_SIZE,
+      ),
+    [activeVisualCueEntries, visualCuePage],
+  );
+
+  useEffect(() => {
+    if (visualCuePage >= activeVisualCuePageCount) {
+      setVisualCuePage(Math.max(0, activeVisualCuePageCount - 1));
+    }
+  }, [activeVisualCuePageCount, visualCuePage]);
+
+  // Keep Tools attached to the same analysis as the stable Video source viewer.
+  // The request/response path also repairs context after a panel or event-bus
+  // hot reload, when no fresh videoIdChanged event would otherwise arrive.
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("activeAnalysisContext", handler);
+
+    const remembered = eventBus.getLast<string>("videoIdChanged");
+    if (remembered) {
+      setVideoId(remembered);
+    } else {
+      eventBus.emit("activeAnalysisContextRequest", null);
+    }
 
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("activeAnalysisContext", handler);
     };
   }, []);
 
@@ -2750,10 +3207,17 @@ export default function ToolsPanel() {
                         />
                       </div>
                       {(motionSceneBasis || sceneSegments.length > 0) && (
-                        <div className="mb-3 rounded-md border border-white/8 bg-[#151515] px-3 py-3">
-                          <div className="mb-3 font-medium text-slate-200">
-                            Motion and scene basis
-                          </div>
+                        <Collapsible className="mb-3 rounded-md border border-white/8 bg-[#151515]">
+                          <CollapsibleTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex w-full items-center justify-between px-3 py-3 text-left text-[11px] text-slate-300"
+                            >
+                              <span>Motion and scene basis</span>
+                              <span className="text-slate-500">Open</span>
+                            </button>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="border-t border-white/8 px-3 py-3">
                           <div className="mb-3 overflow-hidden rounded border border-white/8 bg-[#121212]">
                             <div className="grid gap-px bg-white/8 md:grid-cols-2">
                               <div className="bg-[#151515] px-3 py-2 text-[10px] text-slate-400">
@@ -2775,10 +3239,12 @@ export default function ToolsPanel() {
                                 Motion evidence
                               </div>
                               <div className="space-y-3 px-3 py-3">
-                                <div className="text-sm text-slate-200">
-                                  {motionEvidenceSummary?.dominant_motion || "No dominant motion yet"}
-                                </div>
-                                <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
+                                {motionEvidenceSamples.length ? (
+                                  <>
+                                  <div className="text-sm text-slate-200">
+                                    {motionEvidenceSummary?.dominant_motion || "Measured motion samples"}
+                                  </div>
+                                  <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
                                   <div className="divide-y divide-white/8 text-[10px] text-slate-400">
                                     <div className="flex items-center justify-between gap-3 px-3 py-2">
                                       <span>Samples</span>
@@ -2799,10 +3265,19 @@ export default function ToolsPanel() {
                                       </div>
                                     ) : null}
                                   </div>
-                                </div>
-                                <div className="border-l-2 border-slate-700 pl-3 text-[10px] leading-relaxed text-slate-400">
-                                  {motionBasisDescription}
-                                </div>
+                                  </div>
+                                  </>
+                                ) : (
+                                  <div className="border-l-2 border-slate-700 pl-3 text-[10px] leading-relaxed text-slate-400">
+                                    No source-linked motion measurement is available for this analysis.
+                                    Run motion extraction before interpreting motion intensity or occupancy change.
+                                  </div>
+                                )}
+                                {motionEvidenceSamples.length ? (
+                                  <div className="border-l-2 border-slate-700 pl-3 text-[10px] leading-relaxed text-slate-400">
+                                    {motionBasisDescription}
+                                  </div>
+                                ) : null}
                                 {notableMotionMoments.length > 0 && (
                                   <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
                                     <div className="border-b border-white/8 px-3 py-2 text-[10px] uppercase tracking-wide text-slate-500">
@@ -2837,7 +3312,7 @@ export default function ToolsPanel() {
                               </div>
                               <div className="space-y-3 px-3 py-3">
                                 <div className="text-sm text-slate-200">
-                                  {sceneSegments.length || sceneSegmentSummary?.scene_count || 0} scene intervals
+                                  {effectiveSceneCount} scene intervals
                                 </div>
                                 <div className="overflow-hidden rounded border border-white/8 bg-[#121212]">
                                   <div className="divide-y divide-white/8 text-[10px] text-slate-400">
@@ -2847,7 +3322,11 @@ export default function ToolsPanel() {
                                     </div>
                                     <div className="flex items-center justify-between gap-3 px-3 py-2">
                                       <span>Mean scene duration</span>
-                                      <span className="text-slate-200">{formatSeconds(sceneSegmentSummary?.mean_scene_duration)}</span>
+                                      <span className="text-slate-200">
+                                        {effectiveMeanSceneDuration === null
+                                          ? "Not available"
+                                          : formatSeconds(effectiveMeanSceneDuration)}
+                                      </span>
                                     </div>
                                     {(motionSceneBasis?.sceneSegments?.source || sceneSegments.length > 0) ? (
                                       <div className="flex items-center justify-between gap-3 px-3 py-2">
@@ -2893,7 +3372,8 @@ export default function ToolsPanel() {
                               </div>
                             </div>
                           </div>
-                        </div>
+                          </CollapsibleContent>
+                        </Collapsible>
                       )}
                       {cinematicTimelineSections.length > 0 ? (
                         <div className="rounded-md border border-white/8 bg-[#141414] px-2 py-2">
@@ -3061,6 +3541,248 @@ export default function ToolsPanel() {
                   )}
                   {activeVisualView === "inspectors" && (
                     <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2 rounded border border-white/8 bg-[#171717] px-3 py-2">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                          Open cue inspector
+                        </span>
+                        <Select
+                          value={activeVisualCueInspector}
+                          onValueChange={(key) => {
+                            setActiveVisualCueInspector(key);
+                            setVisualCuePage(0);
+                          }}
+                          disabled={!videoId}
+                        >
+                          <SelectTrigger className="h-8 w-[220px] border-white/10 bg-[#111111] text-[11px] text-slate-300">
+                            <SelectValue placeholder="Select visual cue" />
+                          </SelectTrigger>
+                          <SelectContent className="border-white/12 bg-[#202020] text-slate-200">
+                            {VISUAL_CUE_INSPECTOR_OPTIONS.map(([key, label]) => (
+                              <SelectItem key={key} value={key}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <span className="text-[10px] text-slate-500">
+                          Results open below. The Video panel remains the stable source viewer.
+                        </span>
+                      </div>
+                      {activeVisualCueInspector ? (
+                        <div
+                          className="rounded border border-white/8 bg-[#151515]"
+                          data-vaa1-visual-cue-inspector={activeVisualCueInspector}
+                        >
+                          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2">
+                            <div>
+                              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-300">
+                                {activeVisualCueLabel}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                Source-linked cue evidence for the current analysis.
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="text-[10px] text-slate-500 hover:text-slate-300"
+                              onClick={() => setActiveVisualCueInspector("")}
+                            >
+                              Close
+                            </button>
+                          </div>
+                          {activeVisualCueInspector === "color" ? (
+                            colorRegimeSummary ? (
+                              <div className="space-y-3 px-3 py-3">
+                                <div className="grid gap-px overflow-hidden rounded border border-white/8 bg-white/8 sm:grid-cols-4">
+                                  {[
+                                    ["Dominant tone", colorRegimeSummary.dominantTone],
+                                    [
+                                      "Mean brightness",
+                                      colorRegimeSummary.brightness?.toFixed(2) ?? "unavailable",
+                                    ],
+                                    [
+                                      "Mean contrast",
+                                      colorRegimeSummary.contrast?.toFixed(2) ?? "unavailable",
+                                    ],
+                                    [
+                                      "Mean saturation",
+                                      colorRegimeSummary.saturation?.toFixed(2) ?? "unavailable",
+                                    ],
+                                  ].map(([label, value]) => (
+                                    <div key={label} className="bg-[#121212] px-3 py-2">
+                                      <div className="text-[9px] uppercase tracking-wide text-slate-500">
+                                        {label}
+                                      </div>
+                                      <div className="mt-1 text-[11px] text-slate-200">
+                                        {value}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {colorRegimeSummary.sampleCount} measured whole-frame samples
+                                </div>
+                                <div className="overflow-x-auto rounded border border-white/8">
+                                  <table className="w-full border-collapse text-left text-[10px]">
+                                    <thead className="bg-[#181818] uppercase tracking-wide text-slate-500">
+                                      <tr>
+                                        <th className="px-3 py-2 font-normal">Source time</th>
+                                        <th className="px-3 py-2 font-normal">Tone</th>
+                                        <th className="px-3 py-2 font-normal">Brightness</th>
+                                        <th className="px-3 py-2 font-normal">Contrast</th>
+                                        <th className="px-3 py-2 font-normal">Saturation</th>
+                                        <th className="px-3 py-2 font-normal">Evidence</th>
+                                        <th className="px-3 py-2 font-normal">Action</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/8 bg-[#121212] text-slate-400">
+                                      {pagedColorRegimeSamples.map(({ timestamp, zone }, index) => (
+                                        <tr key={`${timestamp}-${index}`} className="hover:bg-white/[0.025]">
+                                          <td className="whitespace-nowrap px-3 py-2 text-slate-300">
+                                            {formatSeconds(timestamp)}
+                                          </td>
+                                          <td className="px-3 py-2">{zone?.dominant_tone || "unclassified"}</td>
+                                          <td className="px-3 py-2">
+                                            {Number(zone?.brightness ?? zone?.brightness_value ?? 0).toFixed(2)}
+                                          </td>
+                                          <td className="px-3 py-2">{Number(zone?.contrast ?? 0).toFixed(2)}</td>
+                                          <td className="px-3 py-2">{Number(zone?.saturation ?? 0).toFixed(2)}</td>
+                                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">
+                                            measured · whole frame
+                                          </td>
+                                          <td className="px-3 py-2">
+                                            <button
+                                              type="button"
+                                              className="text-cyan-300/80 hover:text-cyan-200"
+                                              onClick={() => {
+                                                if (!videoId) return;
+                                                eventBus.emit("videoTimeLineChanged", timestamp);
+                                              }}
+                                            >
+                                              Open source
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="px-3 py-4 text-[11px] text-slate-500">
+                                No source-linked color-regime measurements are available for this analysis.
+                              </div>
+                            )
+                          ) : (
+                            <div className="space-y-3 px-3 py-3">
+                              <div className="flex items-center justify-between gap-3 text-[10px] text-slate-500">
+                                <span>
+                                  {activeVisualCueEntries.length
+                                    ? `${activeVisualCueEntries.length} source-linked records`
+                                    : "No source-linked records available"}
+                                </span>
+                                <span>Measured or detector-derived evidence</span>
+                              </div>
+                              {activeVisualCueEntries.length ? (
+                                <div className="overflow-x-auto rounded border border-white/8">
+                                  <table className="w-full border-collapse text-left text-[10px]">
+                                    <thead className="bg-[#181818] uppercase tracking-wide text-slate-500">
+                                      <tr>
+                                        <th className="px-3 py-2 font-normal">Source interval</th>
+                                        <th className="px-3 py-2 font-normal">Reading</th>
+                                        <th className="px-3 py-2 font-normal">Authority</th>
+                                        <th className="px-3 py-2 font-normal">Actions</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/8 bg-[#121212] text-slate-400">
+                                      {pagedVisualCueEntries.map((entry, index) => (
+                                        <tr
+                                          key={`${entry.key}-${entry.start}-${entry.end}-${index}`}
+                                          className="hover:bg-white/[0.025]"
+                                        >
+                                          <td className="whitespace-nowrap px-3 py-2 text-slate-300">
+                                            {formatSeconds(entry.start)}
+                                            {entry.end > entry.start
+                                              ? `–${formatSeconds(entry.end)}`
+                                              : ""}
+                                          </td>
+                                          <td className="px-3 py-2 text-slate-300">
+                                            {getCorrectedCinematicEntry(entry)}
+                                          </td>
+                                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">
+                                            {entry.origin}
+                                          </td>
+                                          <td className="whitespace-nowrap px-3 py-2">
+                                            <button
+                                              type="button"
+                                              className="mr-3 text-cyan-300/80 hover:text-cyan-200"
+                                              onClick={() => {
+                                                if (!videoId) return;
+                                                eventBus.emit("videoTimeLineChanged", entry.start);
+                                              }}
+                                            >
+                                              Open source
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="text-slate-500 hover:text-slate-300"
+                                              onClick={() => saveCinematicCorrection(entry)}
+                                            >
+                                              Correct
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : (
+                                <div className="border-l-2 border-slate-700 pl-3 text-[11px] text-slate-500">
+                                  This analysis contains no governed measurement or detector
+                                  basis for {activeVisualCueLabel.toLowerCase()}.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {activeVisualCueRowCount > 0 ? (
+                            <div className="flex items-center justify-between gap-3 border-t border-white/8 px-3 py-2 text-[10px] text-slate-500">
+                              <span>
+                                Rows {visualCuePage * VISUAL_CUE_PAGE_SIZE + 1}–
+                                {Math.min(
+                                  (visualCuePage + 1) * VISUAL_CUE_PAGE_SIZE,
+                                  activeVisualCueRowCount,
+                                )}{" "}
+                                of {activeVisualCueRowCount}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded border border-white/8 px-2 py-1 disabled:opacity-30"
+                                  disabled={visualCuePage === 0}
+                                  onClick={() => setVisualCuePage((page) => Math.max(0, page - 1))}
+                                >
+                                  Previous
+                                </button>
+                                <span>
+                                  Page {visualCuePage + 1} of {activeVisualCuePageCount}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="rounded border border-white/8 px-2 py-1 disabled:opacity-30"
+                                  disabled={visualCuePage + 1 >= activeVisualCuePageCount}
+                                  onClick={() =>
+                                    setVisualCuePage((page) =>
+                                      Math.min(activeVisualCuePageCount - 1, page + 1),
+                                    )
+                                  }
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="grid gap-2 md:grid-cols-2">
                         <ManualAnnotationLeafSection
                           title="Manual action annotations"
@@ -3075,42 +3797,6 @@ export default function ToolsPanel() {
                           videoId={videoId}
                         />
                       </div>
-                      <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
-                    {[
-                      ["shot", "Shot size"],
-                      ["frame", "Frame class"],
-                      ["spatial", "Spatial scan"],
-                      ["text", "Text/graphic"],
-                      ["human", "Human presence"],
-                      ["margin", "Margin scan"],
-                      ["corner", "Corner scan"],
-                      ["depth", "Depth scan"],
-                      ["lighting", "Lighting"],
-                      ["color", "Color regime"],
-                      ["clutter", "Visual clutter"],
-                      ["motion", "Motion scan"],
-                      ["transition", "Transition scan"],
-                      ["tone", "Tone scan"],
-                    ].map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        className="rounded border border-white/8 bg-[#171717] px-2 py-1 transition-colors hover:text-slate-200"
-                        disabled={!videoId}
-                        onClick={() => {
-                          if (!videoId) return;
-                          eventBus.emit("videoIdChanged", videoId);
-                          openPanel("VideoPanel");
-                          window.setTimeout(() => {
-                            eventBus.emit("videoIdChanged", videoId);
-                            eventBus.emit("visualCueOpen", key);
-                          }, 40);
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
                     </div>
                   )}
                 </div>

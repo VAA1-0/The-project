@@ -49,6 +49,45 @@ def _as_items(value: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _audio_event_intervals(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+    for payload in (
+        status.get("audio_event_intervals"),
+        audio.get("audio_event_intervals"),
+        (audio.get("audio_prosody") or {}).get("audio_event_intervals")
+        if isinstance(audio.get("audio_prosody"), dict)
+        else None,
+    ):
+        if isinstance(payload, dict) and isinstance(payload.get("intervals"), list):
+            return [item for item in payload["intervals"] if isinstance(item, dict)]
+    return []
+
+
+def _speaker_turns(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+    for payload in (status.get("audio_diarization"), audio.get("audio_diarization")):
+        if isinstance(payload, dict) and isinstance(payload.get("speaker_turns"), list):
+            return [item for item in payload["speaker_turns"] if isinstance(item, dict)]
+    return []
+
+
+def _confirmed_audio_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    corrections = (
+        status.get("annotation_corrections")
+        if isinstance(status.get("annotation_corrections"), dict)
+        else {}
+    )
+    return [
+        item
+        for item in corrections.get("manual_visual_annotations") or []
+        if isinstance(item, dict)
+        and item.get("category") == "Audio"
+        and item.get("identity_affirmation")
+    ]
+
+
 def _interval(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
     start = _safe_float(
         _first_present(
@@ -611,12 +650,20 @@ def build_datascene_meaning_network(
     scenes = _scene_segments(network_status)
     persons = _tracked_persons(network_status)
     transcripts = _transcript_segments(network_status)
+    audio_events = _audio_event_intervals(network_status)
+    speaker_turns = _speaker_turns(network_status)
+    confirmed_audio = _confirmed_audio_annotations(network_status)
     manual_labels = _manual_agent_labels(network_status)
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
     confirmations: List[Dict[str, Any]] = []
     continuity_anchors: List[Dict[str, Any]] = []
     traceback_index: List[Dict[str, Any]] = []
+    projected_audio_event_ids: set[str] = set()
+    projected_speaker_turn_ids: set[str] = set()
+    projected_confirmed_audio_ids: set[str] = set()
+    projected_person_source_ids: set[str] = set()
+    projected_transcript_source_ids: set[str] = set()
 
     if not scenes:
         max_end = 0.0
@@ -649,10 +696,160 @@ def build_datascene_meaning_network(
         scene_transcripts = [
             transcript for transcript in transcripts if _within_scene(interval, _interval(transcript))
         ]
-        for person_index, person in enumerate(scene_persons[:20]):
+        scene_audio_events = [
+            event for event in audio_events if _within_scene(interval, _interval(event))
+        ]
+        scene_speaker_turns = [
+            turn for turn in speaker_turns if _within_scene(interval, _interval(turn))
+        ]
+        scene_confirmed_audio = [
+            item for item in confirmed_audio if _within_scene(interval, _interval(item))
+        ]
+
+        for audio_index, event in enumerate(scene_audio_events):
+            event_interval = _interval(event)
+            event_id = _safe_text(
+                event.get("event_id") or event.get("segment_id"),
+                f"{scene_id}:audio-event:{audio_index + 1}",
+            )
+            event_type = _safe_text(
+                event.get("event_type") or event.get("event_label"),
+                "audio event",
+            )
+            node_id = f"audio-event:{event_id}"
+            if node_id in projected_audio_event_ids:
+                continue
+            projected_audio_event_ids.add(node_id)
+            evidence = _evidence_ref(
+                event_id,
+                "audio_event_interval",
+                event_interval,
+                confidence=_safe_float(event.get("confidence"), 0.5),
+            )
+            nodes.append(
+                _node(
+                    node_id,
+                    "audio_event",
+                    event_type,
+                    description="Measured music, noise, silence, or speech interval.",
+                    attributes={"scene_id": scene_id, "audio_event_type": event_type},
+                    maturity=_maturity(
+                        "candidate",
+                        "audio_measurement",
+                        _safe_float(event.get("confidence"), 0.5),
+                    ),
+                    evidence_refs=[evidence],
+                    display_group="scene_audio_events",
+                )
+            )
+            edges.append(
+                _edge(
+                    f"edge:{node_id}:belongs:{scene_node_id}",
+                    node_id,
+                    scene_node_id,
+                    "belongs_to_scene",
+                    weight=0.65,
+                    evidence_refs=[evidence],
+                )
+            )
+
+        for turn_index, turn in enumerate(scene_speaker_turns):
+            turn_interval = _interval(turn)
+            turn_id = _safe_text(
+                turn.get("turn_id"), f"{scene_id}:speaker-turn:{turn_index + 1}"
+            )
+            speaker = _safe_text(turn.get("speaker_label"), "Unresolved speaker")
+            node_id = f"speaker-turn:{turn_id}"
+            if node_id in projected_speaker_turn_ids:
+                continue
+            projected_speaker_turn_ids.add(node_id)
+            evidence = _evidence_ref(
+                turn_id,
+                "speaker_diarization_turn",
+                turn_interval,
+                confidence=_safe_float(
+                    turn.get("diarization_confidence") or turn.get("confidence"),
+                    0.5,
+                ),
+            )
+            nodes.append(
+                _node(
+                    node_id,
+                    "speaker",
+                    speaker,
+                    description=_safe_text(turn.get("text"))[:180],
+                    attributes={
+                        "scene_id": scene_id,
+                        "identity_status": "cluster_identity_unconfirmed",
+                    },
+                    maturity=_maturity("candidate", "audio_diarization", 0.5),
+                    evidence_refs=[evidence],
+                    display_group="scene_speakers",
+                )
+            )
+            edges.append(
+                _edge(
+                    f"edge:{node_id}:belongs:{scene_node_id}",
+                    node_id,
+                    scene_node_id,
+                    "speaks_in_scene",
+                    weight=0.65,
+                    evidence_refs=[evidence],
+                )
+            )
+
+        for anchor_index, item in enumerate(scene_confirmed_audio):
+            anchor_interval = _interval(item)
+            anchor_id = _safe_text(
+                item.get("id"), f"{scene_id}:confirmed-audio:{anchor_index + 1}"
+            )
+            label = _safe_text(
+                item.get("identity_affirmation")
+                or item.get("custom_label")
+                or item.get("label"),
+                "Confirmed Narrative Agent audio",
+            )
+            node_id = f"narrative-agent-audio:{anchor_id}"
+            if node_id in projected_confirmed_audio_ids:
+                continue
+            projected_confirmed_audio_ids.add(node_id)
+            evidence = _evidence_ref(
+                anchor_id,
+                "manual_audio_confirmation",
+                anchor_interval,
+                confidence=1.0,
+            )
+            nodes.append(
+                _node(
+                    node_id,
+                    "narrative_agent",
+                    label,
+                    description=_safe_text(item.get("open_note"))[:180],
+                    attributes={
+                        "scene_id": scene_id,
+                        "audio_identity_anchor": True,
+                    },
+                    maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                    evidence_refs=[evidence],
+                    display_group="narrative_agents",
+                )
+            )
+            edges.append(
+                _edge(
+                    f"edge:{node_id}:belongs:{scene_node_id}",
+                    node_id,
+                    scene_node_id,
+                    "speaks_in_scene",
+                    weight=1.0,
+                    maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                    evidence_refs=[evidence],
+                )
+            )
+        for person_index, person in enumerate(scene_persons):
             person_interval = _interval(person)
             track_id = _safe_text(person.get("track_id") or person.get("id"), str(person_index + 1))
             person_node_id = f"person:{scene_id}:{track_id}"
+            projected_person_source_ids.add(track_id)
             label = _safe_text(
                 person.get("agent_label")
                 or person.get("identity")
@@ -688,10 +885,11 @@ def build_datascene_meaning_network(
                 )
             )
 
-        for transcript_index, transcript in enumerate(scene_transcripts[:30]):
+        for transcript_index, transcript in enumerate(scene_transcripts):
             transcript_interval = _interval(transcript)
             transcript_id = _safe_text(transcript.get("id"), f"{scene_id}:transcript:{transcript_index + 1}")
             transcript_node_id = f"transcript:{transcript_id}"
+            projected_transcript_source_ids.add(transcript_id)
             speaker = _safe_text(transcript.get("speaker") or transcript.get("speaker_label"), "Unknown speaker")
             text = _safe_text(transcript.get("text") or transcript.get("transcript_text"), "Transcript segment")
             nodes.append(
@@ -765,6 +963,195 @@ def build_datascene_meaning_network(
                         ],
                     }
                 )
+
+    # Evidence must remain visible even when scene segmentation is absent,
+    # provisional, or lacks governed time bounds. Scene membership is an
+    # optional relationship; it is not an admission gate for the network.
+    for audio_index, event in enumerate(audio_events):
+        event_id = _safe_text(
+            event.get("event_id") or event.get("segment_id"),
+            f"unscoped:audio-event:{audio_index + 1}",
+        )
+        node_id = f"audio-event:{event_id}"
+        if node_id in projected_audio_event_ids:
+            continue
+        projected_audio_event_ids.add(node_id)
+        event_interval = _interval(event)
+        event_type = _safe_text(
+            event.get("event_type") or event.get("event_label"),
+            "audio event",
+        )
+        evidence = _evidence_ref(
+            event_id,
+            "audio_event_interval",
+            event_interval,
+            confidence=_safe_float(event.get("confidence"), 0.5),
+        )
+        nodes.append(
+            _node(
+                node_id,
+                "audio_event",
+                event_type,
+                description="Measured music, noise, silence, or speech interval.",
+                attributes={
+                    "scene_id": None,
+                    "scene_membership_status": "unresolved",
+                    "audio_event_type": event_type,
+                },
+                maturity=_maturity(
+                    "candidate",
+                    "audio_measurement",
+                    _safe_float(event.get("confidence"), 0.5),
+                ),
+                evidence_refs=[evidence],
+                display_group="unscoped_audio_evidence",
+            )
+        )
+
+    for turn_index, turn in enumerate(speaker_turns):
+        turn_id = _safe_text(turn.get("turn_id"), f"unscoped:speaker-turn:{turn_index + 1}")
+        node_id = f"speaker-turn:{turn_id}"
+        if node_id in projected_speaker_turn_ids:
+            continue
+        projected_speaker_turn_ids.add(node_id)
+        turn_interval = _interval(turn)
+        evidence = _evidence_ref(
+            turn_id,
+            "speaker_diarization_turn",
+            turn_interval,
+            confidence=_safe_float(
+                turn.get("diarization_confidence") or turn.get("confidence"),
+                0.5,
+            ),
+        )
+        nodes.append(
+            _node(
+                node_id,
+                "speaker",
+                _safe_text(turn.get("speaker_label"), "Unresolved speaker"),
+                description=_safe_text(turn.get("text"))[:180],
+                attributes={
+                    "scene_id": None,
+                    "scene_membership_status": "unresolved",
+                    "identity_status": "cluster_identity_unconfirmed",
+                },
+                maturity=_maturity("candidate", "audio_diarization", 0.5),
+                evidence_refs=[evidence],
+                display_group="unscoped_speaker_evidence",
+            )
+        )
+
+    for anchor_index, item in enumerate(confirmed_audio):
+        anchor_id = _safe_text(item.get("id"), f"unscoped:confirmed-audio:{anchor_index + 1}")
+        node_id = f"narrative-agent-audio:{anchor_id}"
+        if node_id in projected_confirmed_audio_ids:
+            continue
+        projected_confirmed_audio_ids.add(node_id)
+        evidence = _evidence_ref(
+            anchor_id,
+            "manual_audio_confirmation",
+            _interval(item),
+            confidence=1.0,
+        )
+        nodes.append(
+            _node(
+                node_id,
+                "narrative_agent",
+                _safe_text(
+                    item.get("identity_affirmation")
+                    or item.get("custom_label")
+                    or item.get("label"),
+                    "Confirmed Narrative Agent audio",
+                ),
+                description=_safe_text(item.get("open_note"))[:180],
+                attributes={
+                    "scene_id": None,
+                    "scene_membership_status": "unresolved",
+                    "audio_identity_anchor": True,
+                },
+                maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                evidence_refs=[evidence],
+                display_group="narrative_agents",
+            )
+        )
+
+    for person_index, person in enumerate(persons):
+        track_id = _safe_text(person.get("track_id") or person.get("id"), str(person_index + 1))
+        if track_id in projected_person_source_ids:
+            continue
+        label = _safe_text(
+            person.get("agent_label")
+            or person.get("identity")
+            or person.get("label")
+            or person.get("class_name"),
+            f"Person candidate {track_id}",
+        )
+        raw_like = label.lower() in {"person", "person track", "unknown"}
+        interval = _interval(person)
+        node_id = f"person:unscoped:{track_id}"
+        nodes.append(
+            _node(
+                node_id,
+                "character" if not raw_like else "evidence_fragment",
+                label,
+                description="Source-linked visual detection awaiting governed scene membership.",
+                attributes={
+                    "scene_id": None,
+                    "scene_membership_status": "unresolved",
+                    "track_id": track_id,
+                    "raw_detection_overload_sensitive": raw_like,
+                },
+                maturity=_maturity(
+                    "candidate",
+                    "detector",
+                    _safe_float(person.get("confidence"), 0.45),
+                ),
+                evidence_refs=[
+                    _evidence_ref(
+                        node_id,
+                        "object_detection",
+                        interval,
+                        confidence=_safe_float(person.get("confidence"), 0.45),
+                    )
+                ],
+                display_group="unscoped_visual_evidence",
+            )
+        )
+
+    for transcript_index, transcript_item in enumerate(transcripts):
+        transcript_id = _safe_text(
+            transcript_item.get("id"),
+            f"unscoped:transcript:{transcript_index + 1}",
+        )
+        if transcript_id in projected_transcript_source_ids:
+            continue
+        interval = _interval(transcript_item)
+        node_id = f"transcript:{transcript_id}"
+        text = _safe_text(
+            transcript_item.get("text") or transcript_item.get("transcript_text"),
+            "Transcript segment",
+        )
+        nodes.append(
+            _node(
+                node_id,
+                "speaker",
+                _safe_text(
+                    transcript_item.get("speaker") or transcript_item.get("speaker_label"),
+                    "Unknown speaker",
+                ),
+                description=text[:180],
+                attributes={
+                    "scene_id": None,
+                    "scene_membership_status": "unresolved",
+                    "text_excerpt": text[:240],
+                },
+                maturity=_maturity("machine_inferred", "model", 0.6),
+                evidence_refs=[
+                    _evidence_ref(node_id, "transcript", interval, confidence=0.6)
+                ],
+                display_group="unscoped_transcript_evidence",
+            )
+        )
 
     unresolved_persons = [
         person for person in persons

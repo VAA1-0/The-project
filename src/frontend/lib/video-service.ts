@@ -2082,6 +2082,21 @@ function masterSchemaAudioEventIntervals(masterSchema: unknown): NonNullable<Ana
   };
 }
 
+function canonicalAudioEventIntervals(status: AnalysisStatus): NonNullable<AnalysisData["metadata"]>["audioEventIntervals"] | undefined {
+  const direct = asLooseRecord((status as unknown as LooseRecord).audio_event_intervals);
+  const audioAnalysis = asLooseRecord(
+    asLooseRecord((status as unknown as LooseRecord).results)?.audio_analysis,
+  );
+  const nested = asLooseRecord(audioAnalysis?.audio_event_intervals);
+  const prosody = asLooseRecord(audioAnalysis?.audio_prosody);
+  const prosodyIntervals = asLooseRecord(prosody?.audio_event_intervals);
+  const payload = [direct, nested, prosodyIntervals].find(
+    (candidate) => Array.isArray(candidate?.intervals) && candidate.intervals.length,
+  );
+  if (!payload) return undefined;
+  return payload as NonNullable<AnalysisData["metadata"]>["audioEventIntervals"];
+}
+
 function masterSchemaShotBoundaries(masterSchema: unknown): NonNullable<NonNullable<AnalysisData["metadata"]>["motionSceneBasis"]>["shotBoundaries"] | undefined {
   const segments = masterSchemaTemporalSegments(masterSchema).filter(
     (segment) => segment.event_family === "shot_boundary_interval",
@@ -4478,12 +4493,63 @@ export interface AnalysisData {
             text_count?: number;
             object_count?: number;
             dominant_tone?: string;
+            brightness?: number;
             brightness_band?: string;
+            brightness_value?: number;
+            contrast?: number;
+            contrast_band?: string;
+            saturation?: number;
             saturation_band?: string;
+            luminance_entropy?: number;
           }
         >;
         foreground_activity?: number;
         background_activity?: number;
+      }>;
+    };
+    adaptiveVisualScan?: {
+      parameters?: {
+        source_fps?: number;
+        baseline_fps?: number;
+        dense_fps?: number;
+        candidate_window_seconds?: number;
+      };
+      summary?: {
+        sample_count?: number;
+        baseline_sample_count?: number;
+        dense_sample_count?: number;
+        candidate_window_count?: number;
+        motion_sample_count?: number;
+        transition_candidate_count?: number;
+        lighting_event_count?: number;
+      };
+      samples?: Array<{
+        sample_id?: string;
+        timestamp: number;
+        frame_index?: number;
+        cadence?: "baseline" | "dense_candidate_window";
+        frame_class?: string;
+        frame_class_basis?: {
+          edge_density?: number;
+          luminance_entropy?: number;
+        };
+        lighting?: {
+          brightness?: number;
+          brightness_delta?: number;
+          event?: string;
+        };
+        motion?: {
+          frame_delta?: number;
+          changed_fraction?: number;
+          label?: string;
+        };
+        spatial_occupancy?: Record<
+          string,
+          { activity_occupancy?: number; edge_occupancy?: number }
+        >;
+        transition?: { label?: string; candidate?: boolean };
+        authority?: string;
+        review_state?: string;
       }>;
     };
     motionSceneBasis?: {
@@ -5252,6 +5318,9 @@ export interface AnalysisStatus {
         background_activity?: number;
       }>;
     };
+    adaptive_visual_scan?: NonNullable<
+      AnalysisData["metadata"]
+    >["adaptiveVisualScan"];
     motion_evidence?: {
       method?: string;
       samples?: Array<{
@@ -5843,6 +5912,8 @@ export class VideoService {
         audioProsody: correctedAudioProsody,
       });
       const masterSchemaAudioEvents = masterSchemaAudioEventIntervals(status.vaa1_annotation_master_schema);
+      const governedAudioEvents =
+        canonicalAudioEventIntervals(status) || masterSchemaAudioEvents;
       const masterSchemaShotIntervals = masterSchemaShotBoundaries(status.vaa1_annotation_master_schema);
       const masterSchemaFoundationalLayers = asLooseRecord(
         asLooseRecord(status.vaa1_annotation_master_schema)?.foundational_source_layers,
@@ -5923,6 +5994,9 @@ export class VideoService {
           character_path_reading: status.character_path_reading || null,
           datascene_meaning_network: status.datascene_meaning_network || null,
           mise_en_scene_scene_cards: status.mise_en_scene_scene_cards || null,
+          audio_event_intervals:
+            (status as unknown as LooseRecord).audio_event_intervals || null,
+          audio_diarization: status.audio_diarization || null,
         },
         status: "completed",
         downloadLinks: status.download_links,
@@ -5948,6 +6022,13 @@ export class VideoService {
             ? {
                 summary: status.summary.spatial_tone_scan.summary,
                 samples: status.summary.spatial_tone_scan.samples,
+              }
+            : undefined,
+          adaptiveVisualScan: status.summary?.adaptive_visual_scan
+            ? {
+                parameters: status.summary.adaptive_visual_scan.parameters,
+                summary: status.summary.adaptive_visual_scan.summary,
+                samples: status.summary.adaptive_visual_scan.samples,
               }
             : undefined,
           motionSceneBasis:
@@ -5981,7 +6062,7 @@ export class VideoService {
                 }
               : undefined,
           foundationalSourceLayers: masterSchemaFoundationalLayers || undefined,
-          audioEventIntervals: masterSchemaAudioEvents,
+          audioEventIntervals: governedAudioEvents,
           audioSegments: status.summary?.audio_segments,
           audioProsodyCues: status.summary?.audio_prosody_cues,
           audioLanguage:

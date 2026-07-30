@@ -580,6 +580,17 @@ type AudioTimelineMarker = {
   colorClass: string;
 };
 
+type FocusedAudioEvidence = {
+  videoId?: string;
+  evidenceId?: string;
+  start: number;
+  end: number;
+  label: string;
+  detail?: string;
+  source?: string;
+  reviewState?: string;
+};
+
 type VideoFrameMetadata = {
   mediaTime: number;
 };
@@ -2025,6 +2036,8 @@ export default function VideoPanel() {
   const [primaryPlaying, setPrimaryPlaying] = useState(false);
   const [primaryPlaybackRate, setPrimaryPlaybackRate] = useState(1);
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
+  const [focusedAudioEvidence, setFocusedAudioEvidence] =
+    useState<FocusedAudioEvidence | null>(null);
   const [pendingGovernedBBoxFocus, setPendingGovernedBBoxFocus] =
     useState<GovernedBBoxFocus | null>(null);
   const [activeOverlayEditorKey, setActiveOverlayEditorKey] = useState<string | null>(null);
@@ -2502,6 +2515,26 @@ export default function VideoPanel() {
     });
   }, []);
 
+  useEffect(() => {
+    const handler = (payload?: FocusedAudioEvidence) => {
+      if (!payload || typeof payload.start !== "number") return;
+      if (payload.videoId && payload.videoId !== videoId) {
+        setVideoId(payload.videoId);
+      }
+      setFocusedAudioEvidence({
+        ...payload,
+        end:
+          typeof payload.end === "number" && Number.isFinite(payload.end)
+            ? Math.max(payload.start, payload.end)
+            : payload.start,
+      });
+      pausePrimaryPlayback();
+      jumpToTime(payload.start);
+    };
+    eventBus.on("audioEvidenceFocus", handler);
+    return () => eventBus.off("audioEvidenceFocus", handler);
+  }, [jumpToTime, pausePrimaryPlayback, videoId]);
+
   const clearOverlayEditingWorkspace = React.useCallback((overlayKeys: string[]) => {
     const keys = new Set(overlayKeys.filter(Boolean));
     if (keys.size === 0) {
@@ -2593,15 +2626,25 @@ export default function VideoPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
+    const contextRequestHandler = () => {
+      if (videoId) {
+        eventBus.emit("activeAnalysisContext", videoId);
+      }
+    };
     const correctionHandler = (id: string) => {
       if (id === videoId) {
         setCorrectionRefreshNonce((value) => value + 1);
       }
     };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("activeAnalysisContextRequest", contextRequestHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
+    if (videoId) {
+      eventBus.emit("activeAnalysisContext", videoId);
+    }
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("activeAnalysisContextRequest", contextRequestHandler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
   }, [videoId]);
@@ -7276,8 +7319,42 @@ export default function VideoPanel() {
       }
     }
 
+    for (const event of analysisData?.metadata?.audioEventIntervals?.intervals || []) {
+      const eventType = String(event.event_type || "audio event").toLowerCase();
+      markers.push({
+        key: `audio-event-${event.event_id || `${eventType}-${event.start}`}`,
+        time: Number(event.start || 0),
+        label: eventType,
+        detail: `${eventType} interval${typeof event.end === "number" ? ` to ${formatTime(event.end)}` : ""}`,
+        colorClass:
+          eventType === "music"
+            ? "bg-violet-300/90"
+            : eventType === "silence"
+              ? "bg-slate-300/90"
+              : eventType === "noise"
+                ? "bg-orange-300/90"
+                : "bg-cyan-300/85",
+      });
+    }
+
+    for (const turn of analysisData?.audioDiarization?.speaker_turns || []) {
+      if (typeof turn.start !== "number") continue;
+      markers.push({
+        key: `speaker-turn-${turn.turn_id || `${turn.speaker_label}-${turn.start}`}`,
+        time: turn.start,
+        label: "Speaker turn",
+        detail: `${turn.speaker_label || "unresolved speaker"}${turn.text ? ` · ${turn.text}` : ""}`,
+        colorClass: "bg-fuchsia-300/90",
+      });
+    }
+
     return dedupeAudioTimelineMarkers(markers, duration);
-  }, [audioProsody, duration]);
+  }, [
+    analysisData?.audioDiarization?.speaker_turns,
+    analysisData?.metadata?.audioEventIntervals?.intervals,
+    audioProsody,
+    duration,
+  ]);
 
   const compareDelta =
     singleSourceMarks.a !== undefined && singleSourceMarks.b !== undefined
@@ -7609,8 +7686,12 @@ export default function VideoPanel() {
       if (zone.brightness_band === "dark") spread.dark += 1;
       else if (zone.brightness_band === "bright") spread.bright += 1;
       else spread.mid += 1;
-      if (typeof zone.brightness_value === "number") {
-        brightnessValues.push(zone.brightness_value);
+      const measuredBrightness =
+        typeof zone.brightness === "number"
+          ? zone.brightness
+          : zone.brightness_value;
+      if (typeof measuredBrightness === "number") {
+        brightnessValues.push(measuredBrightness);
       }
     }
 
@@ -10811,6 +10892,21 @@ export default function VideoPanel() {
                                 {tone.brightness_band || "mid"} •{" "}
                                 {tone.saturation_band || "moderate"}
                               </div>
+                              {(typeof tone.brightness === "number" ||
+                                typeof tone.contrast === "number" ||
+                                typeof tone.luminance_entropy === "number") && (
+                                <div className="text-[9px] text-slate-500">
+                                  {typeof tone.brightness === "number"
+                                    ? `brightness ${tone.brightness.toFixed(1)}`
+                                    : null}
+                                  {typeof tone.contrast === "number"
+                                    ? ` • contrast ${tone.contrast.toFixed(1)}`
+                                    : null}
+                                  {typeof tone.luminance_entropy === "number"
+                                    ? ` • entropy ${tone.luminance_entropy.toFixed(2)}`
+                                    : null}
+                                </div>
+                              )}
                             </div>
                           ),
                         )}
@@ -10992,9 +11088,25 @@ export default function VideoPanel() {
                   <div className="mt-2">
                     <div className="mb-1 flex items-center justify-between gap-3 text-[10px] text-[var(--ui-passive-text)]">
                       <span>Audio lane</span>
-                      <span>Role, turn, overlap, emphasis, environment</span>
+                      <span>Events, speakers, role, overlap, emphasis, environment</span>
                     </div>
                     <div className="relative h-3 rounded-full border border-slate-800 bg-slate-950/80">
+                      {focusedAudioEvidence && duration > 0 ? (
+                        <span
+                          className="absolute inset-y-0 rounded bg-fuchsia-400/25 ring-1 ring-inset ring-fuchsia-300/60"
+                          style={{
+                            left: `${(focusedAudioEvidence.start / duration) * 100}%`,
+                            width: `${Math.max(
+                              0.25,
+                              ((focusedAudioEvidence.end -
+                                focusedAudioEvidence.start) /
+                                duration) *
+                                100,
+                            )}%`,
+                          }}
+                          title={`Selected: ${focusedAudioEvidence.label}`}
+                        />
+                      ) : null}
                       {audioTimelineMarkers.map((marker) => (
                         <button
                           key={marker.key}
@@ -11028,9 +11140,61 @@ export default function VideoPanel() {
                         <span className="h-2 w-2 rounded-full bg-emerald-300/80" />
                         Environment
                       </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-violet-300/90" />
+                        Music
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-orange-300/90" />
+                        Noise
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-slate-300/90" />
+                        Silence
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-fuchsia-300/90" />
+                        Speaker turn
+                      </span>
                     </div>
                   </div>
                 )}
+
+                {focusedAudioEvidence ? (
+                  <div
+                    className="mt-2 rounded border border-fuchsia-400/30 bg-fuchsia-950/20 px-3 py-2 text-[11px] text-slate-300"
+                    data-vaa1-focused-audio-evidence="true"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-fuchsia-100">
+                          Audio evidence · {focusedAudioEvidence.label}
+                        </div>
+                        <div className="mt-1 font-mono text-fuchsia-200/80">
+                          {formatTime(focusedAudioEvidence.start)}–
+                          {formatTime(focusedAudioEvidence.end)}
+                        </div>
+                        {focusedAudioEvidence.detail ? (
+                          <div className="mt-1 text-slate-300">
+                            {focusedAudioEvidence.detail}
+                          </div>
+                        ) : null}
+                        <div className="mt-1 text-slate-500">
+                          {focusedAudioEvidence.source || "governed audio evidence"} ·{" "}
+                          {focusedAudioEvidence.reviewState ||
+                            "candidate_review_required"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded border border-fuchsia-400/20 px-2 py-1 text-fuchsia-100 hover:bg-fuchsia-900/30"
+                        onClick={() => setFocusedAudioEvidence(null)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--ui-passive-text)]">

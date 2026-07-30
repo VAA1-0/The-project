@@ -12,6 +12,8 @@ import type {
   ManualVisualAnnotation,
   ProliferationDecision,
 } from "@/lib/api-service";
+
+const GOVERNED_AUDIO_PAGE_SIZE = 25;
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 
 type AudioPanelProps = {
@@ -685,9 +687,12 @@ function audioEventsFromMatureTranscript(
   if (!matureRows.length) return rawEvents;
 
   const rawSpeechEvents = rawEvents.filter((event) => categoryFor(event) === "speech");
+  const governedNonSpeechEvents = rawEvents.filter(
+    (event) => categoryFor(event) !== "speech",
+  );
   let searchStart = 0;
 
-  return matureRows.map((row, index) => {
+  const alignedSpeechEvents = matureRows.map((row, index) => {
     const rowText = normalizeSpeechText(row.text);
     const matchedIndex = rawSpeechEvents.findIndex((event, eventIndex) => (
       eventIndex >= searchStart && normalizeSpeechText(event.text) === rowText
@@ -722,6 +727,9 @@ function audioEventsFromMatureTranscript(
       ),
     };
   });
+  return [...governedNonSpeechEvents, ...alignedSpeechEvents].sort(
+    (left, right) => eventStart(left) - eventStart(right),
+  );
 }
 
 function enrichAudioEventsWithMeasurements(
@@ -1062,13 +1070,41 @@ function recognitionRows(status: any, audioEvents: AudioEvent[], prosodyCues: Pr
   ];
 }
 
-function jumpTo(time: unknown, context?: { analysisId?: string; label?: string; source?: string }) {
+function jumpTo(
+  time: unknown,
+  context?: {
+    analysisId?: string;
+    evidenceId?: string;
+    label?: string;
+    source?: string;
+    end?: number;
+    detail?: string;
+    reviewState?: string;
+  },
+) {
   if (typeof time === "number" && Number.isFinite(time)) {
     const safeTime = Math.max(0, time);
     if (context?.analysisId) {
+      eventBus.emit("openPanelRequest", {
+        panelType: "VideoPanel",
+        panelProps: { videoId: context.analysisId },
+      });
       eventBus.emit("videoIdChanged", context.analysisId);
     }
     eventBus.emit("videoTimeLineChanged", safeTime);
+    eventBus.emit("audioEvidenceFocus", {
+      videoId: context?.analysisId,
+      evidenceId: context?.evidenceId,
+      start: safeTime,
+      end:
+        typeof context?.end === "number" && Number.isFinite(context.end)
+          ? Math.max(safeTime, context.end)
+          : safeTime,
+      label: context?.label || "Audio evidence",
+      detail: context?.detail,
+      source: context?.source,
+      reviewState: context?.reviewState || "candidate_review_required",
+    });
     eventBus.emit("videoEvidenceSelected", {
       videoId: context?.analysisId,
       panelType: "AudioPanel",
@@ -1076,8 +1112,12 @@ function jumpTo(time: unknown, context?: { analysisId?: string; label?: string; 
       timestamp: safeTime,
       label: context?.label || "Audio evidence",
       sourceItem: {
+        evidenceId: context?.evidenceId,
         source: context?.source,
         start: safeTime,
+        end: context?.end,
+        detail: context?.detail,
+        reviewState: context?.reviewState,
       },
     });
   }
@@ -1252,6 +1292,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
+  const [governedEventPage, setGovernedEventPage] = useState(0);
+  const [speakerTurnPage, setSpeakerTurnPage] = useState(0);
 
   useEffect(() => {
     if (propAnalysisId) setAnalysisId(propAnalysisId);
@@ -1340,6 +1382,45 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     audioEvents.forEach((event) => categories[categoryFor(event)].push(event));
     return categories;
   }, [audioEvents]);
+  const governedSoundIntervals = useMemo(
+    () =>
+      [
+        ...categorizedEvents.music,
+        ...categorizedEvents.noise,
+        ...categorizedEvents.silence,
+        ...categorizedEvents.other,
+      ].sort((left, right) => Number(left.start || 0) - Number(right.start || 0)),
+    [categorizedEvents],
+  );
+  const diarization = useMemo(() => diarizationFromStatus(status), [status]);
+  const governedSpeakerTurns = useMemo(
+    () =>
+      asArray<any>(diarization.speaker_turns).sort(
+        (left, right) => Number(left.start || 0) - Number(right.start || 0),
+      ),
+    [diarization],
+  );
+  const governedEventPageCount = Math.max(
+    1,
+    Math.ceil(governedSoundIntervals.length / GOVERNED_AUDIO_PAGE_SIZE),
+  );
+  const speakerTurnPageCount = Math.max(
+    1,
+    Math.ceil(governedSpeakerTurns.length / GOVERNED_AUDIO_PAGE_SIZE),
+  );
+  const pagedGovernedSoundIntervals = governedSoundIntervals.slice(
+    governedEventPage * GOVERNED_AUDIO_PAGE_SIZE,
+    (governedEventPage + 1) * GOVERNED_AUDIO_PAGE_SIZE,
+  );
+  const pagedSpeakerTurns = governedSpeakerTurns.slice(
+    speakerTurnPage * GOVERNED_AUDIO_PAGE_SIZE,
+    (speakerTurnPage + 1) * GOVERNED_AUDIO_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setGovernedEventPage(0);
+    setSpeakerTurnPage(0);
+  }, [analysisId]);
 
   if (!analysisId) return <div className="h-full bg-[#080808] p-4 text-sm text-slate-500">Select an analysis to inspect audio evidence.</div>;
   if (isLoading) return <div className="h-full bg-[#080808] p-4 text-sm text-slate-400">Loading audio workbench...</div>;
@@ -1625,6 +1706,203 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <details className="mb-3 border border-slate-800" data-vaa1-audio-section="governed-sound-intervals">
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">
+            Governed music, noise, and silence intervals
+          </summary>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-400">
+              <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Interval</th>
+                  <th className="px-3 py-2">Class</th>
+                  <th className="px-3 py-2">Confidence</th>
+                  <th className="px-3 py-2">Energy</th>
+                  <th className="px-3 py-2">Evidence</th>
+                  <th className="px-3 py-2">Authority</th>
+                  <th className="px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedGovernedSoundIntervals.length ? pagedGovernedSoundIntervals.map((event, index) => (
+                  <tr
+                    key={event.interval_id || event.segment_id || `sound:${governedEventPage}:${index}`}
+                    className="cursor-pointer border-b border-slate-900 hover:bg-slate-900"
+                    onClick={() => jumpTo(event.start, {
+                      analysisId,
+                      evidenceId: event.interval_id || event.segment_id || event.event_id,
+                      label: `${categoryFor(event)} · ${eventLabel(event)}`,
+                      source: event.source_layer || "audio_event_intervals",
+                      end: event.end,
+                      detail: event.classifier_labels?.join(", "),
+                      reviewState: "candidate_review_required",
+                    })}
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-cyan-300">
+                      {formatTime(event.start)}–{formatTime(event.end)}
+                    </td>
+                    <td className="px-3 py-2 font-semibold text-slate-100">
+                      {categoryFor(event)} · {eventLabel(event)}
+                    </td>
+                    <td className="px-3 py-2 font-mono">{formatValue(event.confidence)}</td>
+                    <td className="px-3 py-2 font-mono">
+                      {formatValue(event.measurements?.energy_dbfs)} dBFS
+                    </td>
+                    <td className="max-w-[360px] px-3 py-2 text-slate-500">
+                      {event.classifier_labels?.join(", ") || event.source_layer || "measured waveform interval"}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-slate-500">
+                      measured candidate
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <button
+                        type="button"
+                        className="mr-3 text-cyan-300 hover:text-cyan-100"
+                        onClick={() => jumpTo(event.start, {
+                          analysisId,
+                          evidenceId: event.interval_id || event.segment_id || event.event_id,
+                          label: `${categoryFor(event)} · ${eventLabel(event)}`,
+                          source: event.source_layer || "audio_event_intervals",
+                          end: event.end,
+                          detail: event.classifier_labels?.join(", "),
+                          reviewState: "candidate_review_required",
+                        })}
+                      >
+                        Open source
+                      </button>
+                      {renderDecisionControls({
+                        id: event.interval_id || event.segment_id || `sound:${governedEventPage}:${index}`,
+                        label: eventLabel(event),
+                        start: event.start,
+                        end: event.end,
+                        source: event.source_layer,
+                        rowType: `sound-${categoryFor(event)}`,
+                      })}
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No governed music, noise, or silence intervals are available.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {governedSoundIntervals.length ? (
+            <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2 text-xs text-slate-500">
+              <span>
+                Rows {governedEventPage * GOVERNED_AUDIO_PAGE_SIZE + 1}–
+                {Math.min((governedEventPage + 1) * GOVERNED_AUDIO_PAGE_SIZE, governedSoundIntervals.length)} of {governedSoundIntervals.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={governedEventPage === 0} onClick={() => setGovernedEventPage((page) => Math.max(0, page - 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Previous</button>
+                <span>Page {governedEventPage + 1} of {governedEventPageCount}</span>
+                <button type="button" disabled={governedEventPage + 1 >= governedEventPageCount} onClick={() => setGovernedEventPage((page) => Math.min(governedEventPageCount - 1, page + 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Next</button>
+              </div>
+            </div>
+          ) : null}
+        </details>
+
+        <details className="mb-3 border border-slate-800" data-vaa1-audio-section="speaker-linked-diarization">
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">
+            Speaker-linked diarization turns
+          </summary>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-400">
+              <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Turn</th>
+                  <th className="px-3 py-2">Speaker cluster</th>
+                  <th className="px-3 py-2">Confidence</th>
+                  <th className="px-3 py-2">Transcript</th>
+                  <th className="px-3 py-2">Timing authority</th>
+                  <th className="px-3 py-2">Review state</th>
+                  <th className="px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedSpeakerTurns.length ? pagedSpeakerTurns.map((turn, index) => (
+                  <tr
+                    key={turn.turn_id || `turn:${speakerTurnPage}:${index}`}
+                    className="cursor-pointer border-b border-slate-900 hover:bg-slate-900"
+                    onClick={() => jumpTo(turn.start, {
+                      analysisId,
+                      evidenceId: turn.turn_id,
+                      label: turn.speaker_label || "Speaker turn",
+                      source: "audio_diarization.speaker_turns",
+                      end: turn.end,
+                      detail: turn.text,
+                      reviewState: turn.is_stale
+                        ? "stale_rebuild_required"
+                        : turn.reference_match
+                          ? "reference_linked_candidate"
+                          : "cluster_identity_unconfirmed",
+                    })}
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-cyan-300">
+                      {formatTime(turn.start)}–{formatTime(turn.end)}
+                    </td>
+                    <td className="px-3 py-2 font-semibold text-slate-100">{turn.speaker_label || "unassigned cluster"}</td>
+                    <td className="px-3 py-2 font-mono">{formatValue(turn.diarization_confidence)}</td>
+                    <td className="max-w-[420px] px-3 py-2" title={turn.text || ""}>{turn.text || ""}</td>
+                    <td className="px-3 py-2 text-slate-500">{turn.timing_authority || turn.timing_source || "unavailable"}</td>
+                    <td className="px-3 py-2 text-slate-500">
+                      {turn.is_stale ? `quarantined · ${turn.stale_reason || "stale"}` : turn.reference_match ? "reference-linked candidate" : "cluster only · identity unconfirmed"}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <button
+                        type="button"
+                        className="mr-3 text-cyan-300 hover:text-cyan-100"
+                        onClick={() => jumpTo(turn.start, {
+                          analysisId,
+                          evidenceId: turn.turn_id,
+                          label: turn.speaker_label || "Speaker turn",
+                          source: "audio_diarization.speaker_turns",
+                          end: turn.end,
+                          detail: turn.text,
+                          reviewState: turn.is_stale
+                            ? "stale_rebuild_required"
+                            : turn.reference_match
+                              ? "reference_linked_candidate"
+                              : "cluster_identity_unconfirmed",
+                        })}
+                      >
+                        Open source
+                      </button>
+                      {renderDecisionControls({
+                        id: turn.turn_id || `turn:${speakerTurnPage}:${index}`,
+                        label: turn.speaker_label || "Speaker cluster",
+                        text: turn.text,
+                        start: turn.start,
+                        end: turn.end,
+                        source: "audio_diarization.speaker_turns",
+                        rowType: "speech-diarization",
+                        speakerLabel: turn.speaker_label,
+                        isStale: Boolean(turn.is_stale),
+                        staleReason: turn.stale_reason,
+                        validForConfirmation: turn.valid_for_confirmation,
+                      })}
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No measured speaker turns are available.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {governedSpeakerTurns.length ? (
+            <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2 text-xs text-slate-500">
+              <span>
+                Rows {speakerTurnPage * GOVERNED_AUDIO_PAGE_SIZE + 1}–
+                {Math.min((speakerTurnPage + 1) * GOVERNED_AUDIO_PAGE_SIZE, governedSpeakerTurns.length)} of {governedSpeakerTurns.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={speakerTurnPage === 0} onClick={() => setSpeakerTurnPage((page) => Math.max(0, page - 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Previous</button>
+                <span>Page {speakerTurnPage + 1} of {speakerTurnPageCount}</span>
+                <button type="button" disabled={speakerTurnPage + 1 >= speakerTurnPageCount} onClick={() => setSpeakerTurnPage((page) => Math.min(speakerTurnPageCount - 1, page + 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Next</button>
+              </div>
+            </div>
+          ) : null}
+        </details>
+
         <details className="mb-3 border border-slate-800" data-vaa1-audio-section="speech-diarization">
           <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Speech, VAD, and speaker diarization</summary>
           <div className="max-h-[58vh] overflow-auto">

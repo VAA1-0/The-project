@@ -83,6 +83,133 @@ test("no-face expression samples remain audit gaps and never become zero-score l
   );
 });
 
+test("measured visual detections surface in Visual cues, Cinematic cues, and StatsKit", () => {
+  assert.match(
+    videoPanel,
+    /zone\.brightness[\s\S]*zone\.brightness_value[\s\S]*brightnessValues\.push/,
+    "Visual cues must consume the persisted numeric brightness field",
+  );
+  assert.match(
+    videoPanel,
+    /brightness \$\{tone\.brightness\.toFixed\(1\)\}[\s\S]*contrast \$\{tone\.contrast\.toFixed\(1\)\}[\s\S]*entropy \$\{tone\.luminance_entropy\.toFixed\(2\)\}/,
+    "Visual cues must visibly surface measured brightness, contrast, and entropy",
+  );
+  assert.match(
+    toolsPanel,
+    /Measured shot boundaries[\s\S]*Measured visual tone[\s\S]*openSharedVideoAtTime/,
+    "Cinematic cues must expose source-navigable measured shot and visual-tone rows",
+  );
+  assert.match(
+    statsKitPanel,
+    /mean brightness \/ contrast \/ saturation \/ color entropy[\s\S]*brightness \/ contrast distribution/,
+    "StatsKit must compute real visual measurement rows rather than readiness alone",
+  );
+  assert.match(
+    statsKitPanel,
+    /Use governed frame-window measurements for visual distributions/,
+    "StatsKit must stop requesting extraction when governed spatial-tone rows exist",
+  );
+});
+
+test("Visual cues uses a top alphabetical selector without replacing the Video panel", () => {
+  assert.match(
+    toolsPanel,
+    /const VISUAL_CUE_INSPECTOR_OPTIONS = \[[\s\S]*Color regime[\s\S]*Corner scan[\s\S]*Depth scan[\s\S]*Frame class[\s\S]*Human presence[\s\S]*Lighting[\s\S]*Margin scan[\s\S]*Motion scan[\s\S]*Shot size[\s\S]*Spatial scan[\s\S]*Text\/graphic[\s\S]*Tone scan[\s\S]*Transition scan[\s\S]*Visual clutter/,
+    "cue inspector choices must be alphabetical",
+  );
+  assert.match(
+    toolsPanel,
+    /Open cue inspector[\s\S]*Select visual cue[\s\S]*VISUAL_CUE_INSPECTOR_OPTIONS\.map/,
+    "the cue selector must be at the top of the inspector workspace",
+  );
+  const inspectorBlock = toolsPanel.match(
+    /\{activeVisualView === "inspectors"[\s\S]*?\{activeWorkspace === "forensic"/,
+  )?.[0] || "";
+  assert.doesNotMatch(
+    inspectorBlock,
+    /openPanel\("VideoPanel"\)/,
+    "opening a cue must target the existing Video panel rather than replacing or duplicating it",
+  );
+  assert.doesNotMatch(
+    inspectorBlock,
+    /eventBus\.emit\("videoIdChanged"/,
+    "opening a cue must not reset the already-selected Video media",
+  );
+  assert.doesNotMatch(
+    inspectorBlock,
+    /eventBus\.emit\("visualCueOpen"/,
+    "Tools must own cue results instead of switching the Video panel into inspector mode",
+  );
+  assert.match(
+    inspectorBlock,
+    /activeVisualCueEntries[\s\S]*videoTimeLineChanged/,
+    "non-color cue families must render source-linked Tools records with explicit video seeking",
+  );
+  assert.match(
+    toolsPanel,
+    /activeVisualCueInspector === "frame"[\s\S]*activeVisualCueInspector === "tone"[\s\S]*activeVisualCueInspector === "lighting"[\s\S]*activeVisualCueInspector === "text"/,
+    "measured frame, tone, lighting, and OCR cue projections must be populated in Tools",
+  );
+  assert.match(
+    toolsPanel,
+    /adaptiveVisualSamples[\s\S]*activeVisualCueInspector === "frame"[\s\S]*activeVisualCueInspector === "lighting"[\s\S]*activeVisualCueInspector === "motion"[\s\S]*activeVisualCueInspector === "transition"[\s\S]*activeVisualCueInspector === "spatial"/,
+    "adaptive temporal measurements must feed every cadence-sensitive cue inspector",
+  );
+  assert.match(
+    toolsPanel,
+    /adaptiveMotionEvidenceSamples[\s\S]*motionSceneBasis\?\.motionEvidence\?\.samples\?\.length[\s\S]*adaptiveMotionEvidenceSamples/,
+    "Cinematic motion must fall back to the same adaptive measurement rows as Motion scan",
+  );
+  assert.match(
+    toolsPanel,
+    /key: "adaptive-motion"[\s\S]*label: "Measured motion"/,
+    "Cinematic clue timelines must expose the adaptive motion measurements",
+  );
+  assert.match(
+    statsKitPanel,
+    /adaptiveVisualScan\?\.samples[\s\S]*frame_delta[\s\S]*changed_fraction/,
+    "StatsKit motion statistics must consume adaptive motion when legacy motion is absent",
+  );
+  assert.match(
+    inspectorBlock,
+    /Source time[\s\S]*Evidence[\s\S]*Open source[\s\S]*Source interval[\s\S]*Authority[\s\S]*Correct/,
+    "cue evidence must use governable source-linked rows rather than preview widgets",
+  );
+  assert.match(
+    inspectorBlock,
+    /Rows \{visualCuePage \* VISUAL_CUE_PAGE_SIZE \+ 1\}[\s\S]*Previous[\s\S]*Page \{visualCuePage \+ 1\} of \{activeVisualCuePageCount\}[\s\S]*Next/,
+    "the complete cue array must be pageable in source order",
+  );
+  assert.doesNotMatch(
+    toolsPanel,
+    /colorRegimeSamples\.map[\s\S]*?\.slice\(0, 12\)|activeVisualCueEntries\.slice\(0, 40\)|objects\.slice\(0, 120\)/,
+    "visual cue arrays must not be silently truncated to a preview subset",
+  );
+  assert.match(
+    toolsPanel,
+    /function ManualAnnotationLeafSection[\s\S]*<Collapsible[\s\S]*<CollapsibleTrigger[\s\S]*<CollapsibleContent/,
+    "manual annotation support lists must begin as collapsed disclosures",
+  );
+  assert.match(
+    toolsPanel,
+    /Motion and scene basis[\s\S]*Open[\s\S]*<CollapsibleContent/,
+    "Motion and scene basis must begin collapsed",
+  );
+});
+
+test("Tools repairs selected-analysis context from the stable Video panel", () => {
+  assert.match(
+    toolsPanel,
+    /eventBus\.on\("activeAnalysisContext", handler\)[\s\S]*eventBus\.getLast<string>\("videoIdChanged"\)[\s\S]*eventBus\.emit\("activeAnalysisContextRequest", null\)/,
+    "Tools must recover the active analysis when it mounts after the selection event",
+  );
+  assert.match(
+    videoPanel,
+    /activeAnalysisContextRequest[\s\S]*eventBus\.emit\("activeAnalysisContext", videoId\)/,
+    "Video must answer context requests without reloading or replacing its media",
+  );
+});
+
 test("manual visual identities proliferate as source-timed Character Timeline marks", () => {
   assert.match(
     videoService,
@@ -1964,6 +2091,16 @@ test("Narrative Agent panel owns Character Paths home", () => {
     /data-vaa1-panel="audio-workbench"[\s\S]*data-vaa1-audio-section="speech-diarization"[\s\S]*data-vaa1-audio-section="prosody"[\s\S]*data-vaa1-audio-section="music-sound"[\s\S]*data-vaa1-audio-section="lyrics"[\s\S]*data-vaa1-audio-section="foley-sampling"[\s\S]*data-vaa1-audio-section="recognition-governance"/,
     "Audio panel must be a multi-section workbench for speech, prosody, music, lyrics, foley sampling, and recognition governance",
   );
+  assert.match(
+    audioPanel,
+    /data-vaa1-audio-section="governed-sound-intervals"[\s\S]*Source time|Governed music, noise, and silence intervals[\s\S]*Open source[\s\S]*Rows \{governedEventPage \* GOVERNED_AUDIO_PAGE_SIZE \+ 1\}[\s\S]*Previous[\s\S]*Next/,
+    "music, noise, and silence evidence must use complete pageable governed rows with source navigation",
+  );
+  assert.match(
+    audioPanel,
+    /data-vaa1-audio-section="speaker-linked-diarization"[\s\S]*Speaker cluster[\s\S]*Timing authority[\s\S]*cluster only · identity unconfirmed[\s\S]*Open source[\s\S]*Rows \{speakerTurnPage \* GOVERNED_AUDIO_PAGE_SIZE \+ 1\}/,
+    "speaker turns must expose cluster authority, timing maturity, source navigation, and complete pagination",
+  );
 
   assert.match(
     audioPanel,
@@ -3034,6 +3171,54 @@ test("audio sample clouds stay exposed as governed analysis artifacts", () => {
     apiService,
     /authority_order\?: string\[\];/,
     "audio sample clouds must carry their sample authority order",
+  );
+});
+
+test("governed audio intervals and diarization proliferate to operational panels", () => {
+  assert.match(
+    audioPanel,
+    /governedNonSpeechEvents[\s\S]*alignedSpeechEvents[\s\S]*sort/,
+    "transcript alignment must preserve governed music, noise, and silence intervals",
+  );
+  assert.match(
+    videoService,
+    /canonicalAudioEventIntervals\(status\) \|\| masterSchemaAudioEvents/,
+    "the analysis model must prefer the canonical persisted audio interval artifact",
+  );
+  assert.match(
+    videoPanel,
+    /audioEventIntervals\?\.intervals[\s\S]*audioDiarization\?\.speaker_turns[\s\S]*Speaker turn/,
+    "Video must project audio events and speaker turns onto its audio lane",
+  );
+  assert.match(
+    speechPanel,
+    /linkedSpeakerTurn[\s\S]*Diarization:/,
+    "Transcript rows must expose their overlapping measured speaker cluster",
+  );
+  assert.match(
+    audioPanel,
+    /openPanelRequest[\s\S]*audioEvidenceFocus[\s\S]*evidenceId[\s\S]*reviewState/,
+    "audio detections must open the stable Video panel with their governed source interval",
+  );
+  assert.match(
+    videoPanel,
+    /eventBus\.on\("audioEvidenceFocus"[\s\S]*data-vaa1-focused-audio-evidence="true"[\s\S]*focusedAudioEvidence\.source[\s\S]*focusedAudioEvidence\.reviewState/,
+    "Video must visibly retain the selected audio evidence and its review authority",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /category\) === "Audio"[\s\S]*audio sample and graph projection required[\s\S]*queue: "sampling"/,
+    "Data Maturation must expose confirmed Audio annotations in its sampling lane",
+  );
+  assert.match(
+    statsKitPanel,
+    /adaptive-visual-measurements[\s\S]*speaker-diarization-turns[\s\S]*audio-sampling-and-confirmation/,
+    "StatsKit must audit canonical visual, diarization, and matured audio sampling rows",
+  );
+  assert.match(
+    apiServer,
+    /event_interval_count[\s\S]*speaker_turn_count[\s\S]*confirmed_narrative_agent_audio_anchor_count/,
+    "multimodal interpretation must receive actual audio intervals, turns, and confirmed anchors",
   );
 });
 

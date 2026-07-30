@@ -863,7 +863,7 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
         if not label:
             continue
         category = safe_text(item.get("category"))
-        if category not in {"Identification", "Role"} and not item.get("identity_affirmation"):
+        if category not in {"Identification", "Role", "Audio"} and not item.get("identity_affirmation"):
             continue
         canonical_label = canonical_identity_label(label)
         key = canonical_identity_key(canonical_label)
@@ -879,6 +879,7 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
                 "aliases": set(),
                 "manual_anchor_refs": [],
                 "visual_sample_slots": [],
+                "audio_sample_slots": [],
             },
         )
         group["aliases"].add(label)
@@ -886,25 +887,42 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
         if fallback_label:
             group["aliases"].add(fallback_label)
         group["manual_anchor_refs"].append(source_ref)
-        group["visual_sample_slots"].append(
-            {
-                "sample_id": f"visual_identity:{source_ref}",
-                "sample_type": "visual_identity_appearance_anchor",
-                "source_ref": source_ref,
-                "time": item_range,
-                "bbox": bbox_from_manual_annotation(item),
-                "sample_state": "manual_anchor_available",
-                "match_basis": ["manual_agent_assertion", "appearance_similarity"],
-                "appearance_variation_role": "one_of_multiple_possible_costume_or_scene_looks",
-            }
-        )
+        if category == "Audio":
+            group["audio_sample_slots"].append(
+                {
+                    "sample_id": f"audio_identity:{source_ref}",
+                    "sample_type": "confirmed_narrative_agent_audio_anchor",
+                    "source_ref": source_ref,
+                    "time": item_range,
+                    "sample_state": "manual_audio_anchor_available",
+                    "match_basis": [
+                        "manual_agent_assertion",
+                        "voice_similarity",
+                        "speaker_diarization",
+                    ],
+                    "transcript_text": safe_text(item.get("open_note")),
+                }
+            )
+        else:
+            group["visual_sample_slots"].append(
+                {
+                    "sample_id": f"visual_identity:{source_ref}",
+                    "sample_type": "visual_identity_appearance_anchor",
+                    "source_ref": source_ref,
+                    "time": item_range,
+                    "bbox": bbox_from_manual_annotation(item),
+                    "sample_state": "manual_anchor_available",
+                    "match_basis": ["manual_agent_assertion", "appearance_similarity"],
+                    "appearance_variation_role": "one_of_multiple_possible_costume_or_scene_looks",
+                }
+            )
 
     memories: List[Dict[str, Any]] = []
     analysis_id = safe_text(status.get("analysis_id"), "unknown-analysis")
     for key, group in groups.items():
         label = safe_text(group.get("canonical_label"), key)
         visual_slots = group["visual_sample_slots"]
-        audio_slots = [
+        audio_slots = list(group.get("audio_sample_slots") or []) + [
             sample
             for sample in source_sample_slots_for_identity(status, label)
             if sample.get("has_audio_sample")
@@ -930,6 +948,7 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
             safe_text(slot.get("sample_state")) in {
                 "attached_source_sample",
                 "transcript_audio_window_available",
+                "manual_audio_anchor_available",
             }
             for slot in audio_slots
             if isinstance(slot, dict)
@@ -971,6 +990,7 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
                             in {
                                 "attached_source_sample",
                                 "transcript_audio_window_available",
+                                "manual_audio_anchor_available",
                             }
                         ]
                     ),

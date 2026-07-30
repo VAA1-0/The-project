@@ -650,6 +650,49 @@ def _walk_master_schema(
                     source_panel="master_schema",
                     item=item,
                 )
+    for index, item in enumerate(master_schema.get("temporal_segments") or []):
+        if not isinstance(item, dict):
+            continue
+        event_family = _safe_text(item.get("event_family"), "temporal_segment")
+        yield _candidate(
+            analysis_id=analysis_id,
+            evidence_id=_safe_text(
+                item.get("segment_id"),
+                f"master_schema:temporal_segment:{index}",
+            ),
+            label=_label_from_fields(
+                item,
+                ("event_label", "label", "segment_type", "event_family"),
+                event_family,
+            ),
+            category=event_family.replace("_", " ").title(),
+            source_kind="governed_temporal_segment",
+            source_panel="master_schema",
+            item=_item_with_interval(
+                item,
+                start=item.get("start"),
+                end=item.get("end"),
+            ),
+        )
+
+    foundational = master_schema.get("foundational_source_layers")
+    layers = foundational.get("layers") if isinstance(foundational, dict) else {}
+    for layer_id, item in (layers.items() if isinstance(layers, dict) else []):
+        if not isinstance(item, dict) or item.get("status") != "available":
+            continue
+        yield _candidate(
+            analysis_id=analysis_id,
+            evidence_id=f"master_schema:foundational:{layer_id}",
+            label=str(layer_id).replace("_", " "),
+            category="Foundational source layer",
+            source_kind="governed_source_layer",
+            source_panel="master_schema",
+            item={
+                "id": f"master_schema:foundational:{layer_id}",
+                "label": str(layer_id).replace("_", " "),
+                **item,
+            },
+        )
 
 
 def _walk_transcript(analysis_id: str, status: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
@@ -1162,8 +1205,10 @@ def _walk_visual_and_cinematic_context(
         ("cinematic_clue", "cinematic_clues", visual.get("cinematic_clues") if isinstance(visual, dict) else None),
         ("cinematic_clue", "cinematic_clues", summary.get("cinematic_clues")),
         ("visual_cue", "visual_cues", summary.get("spatial_tone_scan")),
+        ("visual_cue", "visual_cues", summary.get("adaptive_visual_scan")),
         ("visual_cue", "visual_cues", summary.get("motion_evidence")),
         ("cinematic_clue", "cinematic_clues", summary.get("scene_segments")),
+        ("cinematic_clue", "cinematic_clues", summary.get("shot_boundaries")),
     ]
 
     for source_kind, source_panel, group in context_groups:

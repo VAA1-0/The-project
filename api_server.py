@@ -151,6 +151,8 @@ from src.backend.analysis.evidence_quality import assess_evidence_quality, evalu
 from src.backend.analysis.execution_graph_planner import load_execution_graph, plan_affected_branches
 from src.backend.analysis.reproducible_measurement import ReproducibleMeasurementService
 from src.backend.analysis.shot_boundary_measurement import measure_shot_boundaries
+from src.backend.analysis.spatial_tone_measurement import measure_spatial_tone
+from src.backend.analysis.adaptive_visual_measurement import measure_adaptive_visual
 from src.backend.analysis.interpretation_registry import InterpretationRegistry
 from src.backend.analysis.framework_projection import (
     build_framework_projections,
@@ -4058,6 +4060,70 @@ def build_visual_cues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, Any]
                 "end_ms": bucket * 5000 + 5000,
             }
         )
+
+    spatial_tone = visual.get("spatial_tone_scan")
+    tone_samples = spatial_tone.get("samples") if isinstance(spatial_tone, dict) else []
+    for index, sample in enumerate(tone_samples or []):
+        if not isinstance(sample, dict):
+            continue
+        zones = sample.get("zones") if isinstance(sample.get("zones"), dict) else {}
+        whole_frame = zones.get("whole_frame") if isinstance(zones.get("whole_frame"), dict) else {}
+        timestamp = safe_float(sample.get("timestamp"), 0.0) or 0.0
+        cues.append({
+            "evidence_id": sample.get("sample_id") or f"spatial_tone:{index}",
+            "cue_type": "measured_visual_tone",
+            "significance_stage": "measured_source_frame",
+            "score": 1.0,
+            "start_ms": int(round(timestamp * 1000)),
+            "end_ms": int(round((timestamp + 1.0) * 1000)),
+            "dominant_tone": whole_frame.get("dominant_tone"),
+            "brightness": whole_frame.get("brightness"),
+            "contrast": whole_frame.get("contrast"),
+            "saturation": whole_frame.get("saturation"),
+            "luminance_entropy": whole_frame.get("luminance_entropy"),
+            "authority": sample.get("authority") or "measured_automatic_detection",
+            "review_state": sample.get("review_state") or "available",
+        })
+    adaptive_visual = visual.get("adaptive_visual_scan")
+    adaptive_samples = (
+        adaptive_visual.get("samples") if isinstance(adaptive_visual, dict) else []
+    )
+    for index, sample in enumerate(adaptive_samples or []):
+        if not isinstance(sample, dict):
+            continue
+        timestamp = safe_float(sample.get("timestamp"), 0.0) or 0.0
+        motion = sample.get("motion") if isinstance(sample.get("motion"), dict) else {}
+        transition = (
+            sample.get("transition")
+            if isinstance(sample.get("transition"), dict)
+            else {}
+        )
+        lighting = (
+            sample.get("lighting")
+            if isinstance(sample.get("lighting"), dict)
+            else {}
+        )
+        cues.append(
+            {
+                "evidence_id": sample.get("sample_id")
+                or f"adaptive_visual:{index}",
+                "cue_type": "measured_adaptive_visual_motion",
+                "significance_stage": "measured_source_frame",
+                "score": 1.0,
+                "start_ms": int(round(timestamp * 1000)),
+                "end_ms": int(round(timestamp * 1000)),
+                "motion_label": motion.get("label"),
+                "frame_delta": motion.get("frame_delta"),
+                "changed_fraction": motion.get("changed_fraction"),
+                "transition_label": transition.get("label"),
+                "transition_candidate": transition.get("candidate"),
+                "lighting_event": lighting.get("event"),
+                "cadence": sample.get("cadence"),
+                "authority": sample.get("authority")
+                or "measured_automatic_detection",
+                "review_state": sample.get("review_state") or "available",
+            }
+        )
     return cues
 
 
@@ -4065,7 +4131,7 @@ def build_cinematic_clues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, 
     raw = visual.get("cinematic_clues") or {}
     clues: List[Dict[str, Any]] = []
     if not isinstance(raw, dict):
-        return clues
+        raw = {}
 
     for group_name, group_value in raw.items():
         samples = group_value.get("samples") if isinstance(group_value, dict) else group_value
@@ -4110,6 +4176,27 @@ def build_cinematic_clues_for_meaning(visual: Dict[str, Any]) -> List[Dict[str, 
                     "end_ms": max(end_ms, start_ms),
                 }
             )
+    shot_boundaries = visual.get("shot_boundaries")
+    intervals = shot_boundaries.get("intervals") if isinstance(shot_boundaries, dict) else []
+    for index, interval in enumerate(intervals or []):
+        if not isinstance(interval, dict):
+            continue
+        start = safe_float(interval.get("start"), 0.0) or 0.0
+        end = safe_float(interval.get("end"), start) or start
+        clues.append({
+            "evidence_id": interval.get("shot_id") or f"shot_boundary:{index}",
+            "clue_type": "shot_boundary_interval",
+            "score": safe_float(interval.get("confidence"), 1.0) or 1.0,
+            "start_ms": int(round(start * 1000)),
+            "end_ms": int(round(max(start, end) * 1000)),
+            "duration_seconds": max(0.0, end - start),
+            "authority": (
+                "interpreted_automatic_detection"
+                if bool(shot_boundaries.get("true_boundary_intervals"))
+                else "raw_detection"
+            ),
+            "review_state": interval.get("review_state") or "available",
+        })
     return clues
 
 
@@ -4658,6 +4745,17 @@ def build_master_schema_foundational_source_layers(
         segment for segment in temporal_segments
         if segment.get("event_family") == "speaker_diarization_turn"
     ]
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    spatial_tone = summary.get("spatial_tone_scan") if isinstance(summary.get("spatial_tone_scan"), dict) else {}
+    if not spatial_tone:
+        visual_analysis = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+        spatial_tone = visual_analysis.get("spatial_tone_scan") if isinstance(visual_analysis, dict) else {}
+    spatial_samples = spatial_tone.get("samples") if isinstance(spatial_tone.get("samples"), list) else []
+    adaptive_visual = summary.get("adaptive_visual_scan") if isinstance(summary.get("adaptive_visual_scan"), dict) else {}
+    if not adaptive_visual:
+        visual_analysis = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+        adaptive_visual = visual_analysis.get("adaptive_visual_scan") if isinstance(visual_analysis, dict) else {}
+    adaptive_samples = adaptive_visual.get("samples") if isinstance(adaptive_visual.get("samples"), list) else []
     return {
         "schema": "vaa1.master_schema_foundational_source_layers.v1",
         "updated_at": utc_now_iso(),
@@ -4678,6 +4776,26 @@ def build_master_schema_foundational_source_layers(
                 "row_count": len(shot_segments),
                 "true_boundary_rows": len([segment for segment in shot_segments if segment.get("true_boundary_interval")]),
                 "maturity_route": "master_schema.true_shot_boundary_interval_maturity",
+            },
+            "spatial_tone_measurements": {
+                "status": "available" if spatial_samples else "missing",
+                "schema": spatial_tone.get("schema") or "vaa1.spatial_tone_measurement.v1",
+                "master_schema_surface": "foundational_source_layers.spatial_tone_measurements",
+                "row_count": len(spatial_samples),
+                "source_clock": spatial_tone.get("source_clock") or "source_media.clock",
+                "method": spatial_tone.get("method"),
+                "maturity_route": "master_schema.spatial_tone_measurement_maturity",
+            },
+            "adaptive_temporal_visual_measurements": {
+                "status": "available" if adaptive_samples else "missing",
+                "schema": adaptive_visual.get("schema") or "vaa1.adaptive_visual_measurement.v1",
+                "master_schema_surface": "foundational_source_layers.adaptive_temporal_visual_measurements",
+                "row_count": len(adaptive_samples),
+                "source_clock": adaptive_visual.get("source_clock") or "source_media.clock",
+                "method": adaptive_visual.get("method"),
+                "parameters": adaptive_visual.get("parameters") or {},
+                "candidate_window_count": ((adaptive_visual.get("summary") or {}).get("candidate_window_count")),
+                "maturity_route": "master_schema.adaptive_temporal_visual_measurement_maturity",
             },
             "speaker_diarization_turns": {
                 "status": "available" if speaker_turn_segments else "missing",
@@ -4965,6 +5083,23 @@ def write_second_order_meaning_artifacts_for_status(
     if not transcript:
         return None
     audio_prosody = resolve_audio_prosody_for_meaning(status, audio)
+    audio_event_intervals = artifact_payload_from_status_any(
+        status, "audio_event_intervals", "audio_event_intervals_json"
+    ) or {}
+    audio_diarization = artifact_payload_from_status_any(
+        status, "audio_diarization", "audio_diarization_json"
+    ) or {}
+    confirmed_audio_annotations = [
+        item
+        for item in (
+            (status.get("annotation_corrections") or {}).get(
+                "manual_visual_annotations", []
+            )
+        )
+        if isinstance(item, dict)
+        and item.get("category") == "Audio"
+        and item.get("identity_affirmation")
+    ]
 
     visual = results.get("visual_analysis") or {}
     visual = dict(visual) if isinstance(visual, dict) else {}
@@ -5019,6 +5154,33 @@ def write_second_order_meaning_artifacts_for_status(
         audio_features={
             "artifact_id": "audio_prosody",
             "cue_count": len(audio_prosody.get("cues") or audio_prosody.get("events") or []),
+            "event_interval_count": len(
+                audio_event_intervals.get("intervals") or []
+            ),
+            "event_intervals": (
+                audio_event_intervals.get("intervals") or []
+            )[:250],
+            "event_ratios": (
+                audio_event_intervals.get("summary") or {}
+            ).get("ratios", {}),
+            "speaker_turn_count": len(
+                audio_diarization.get("speaker_turns") or []
+            ),
+            "speaker_turns": (
+                audio_diarization.get("speaker_turns") or []
+            )[:250],
+            "diarization_status": audio_diarization.get("status"),
+            "confirmed_narrative_agent_audio_anchor_count": len(
+                confirmed_audio_annotations
+            ),
+            "confirmed_narrative_agent_audio_anchors": confirmed_audio_annotations[
+                :100
+            ],
+            "authority_policy": (
+                "Measured intervals and diarization remain candidates; "
+                "analyst-confirmed Audio annotations may seed mature "
+                "Narrative Agent audio memory."
+            ),
         },
         ocr_features={
             "artifact_id": "ocr_results",
@@ -6306,6 +6468,16 @@ def build_master_schema_maturity_audit(
             ) else "missing",
             "master_schema_surface": "temporal_segments[event_family=shot_boundary_interval]",
             "maturity_route": "master_schema.true_shot_boundary_interval_maturity",
+        },
+        {
+            "producer": "spatial_tone_measurements",
+            "status": "active" if (
+                ((master_schema_payload.get("foundational_source_layers") or {}).get("layers") or {})
+                .get("spatial_tone_measurements", {})
+                .get("status") == "available"
+            ) else "missing",
+            "master_schema_surface": "foundational_source_layers.spatial_tone_measurements",
+            "maturity_route": "master_schema.spatial_tone_measurement_maturity",
         },
         {
             "producer": "music_lyrics_analysis",
@@ -9076,6 +9248,10 @@ async def refresh_evidence_proliferation_matcher_endpoint(
     request_payload = payload if isinstance(payload, dict) else {}
     request_limit = int(request_payload.get("request_limit") or 12)
     candidate_limit = int(request_payload.get("candidate_limit") or 25)
+    # Maturation refresh is the shared recomputation boundary for graph and
+    # multimodal interpretation projections as well as matcher candidates.
+    write_second_order_meaning_artifacts_for_status(status)
+    status.pop("live_mature_data_proliferation_audit", None)
     result = run_open_topology_scanner_refresh(
         analysis_id,
         status,
@@ -9259,6 +9435,7 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
             "expression_samples": len(visual.get("expression_results") or []),
             "expression_status": visual.get("expression_status", "not_run"),
             "motion_evidence": visual.get("motion_evidence", {}),
+            "adaptive_visual_scan": visual.get("adaptive_visual_scan", {}),
             "scene_segments": visual.get("scene_segments", {}),
             "audio_segments": len((audio.get("transcript") or {}).get("segments") or []),
             "audio_language": (audio.get("transcript") or {}).get("language", "unknown"),
@@ -9471,6 +9648,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["ocr_detections"] = len(va.get("ocr_results", []))
             response_data["summary"]["cinematic_clues"] = va.get("cinematic_clues", {})
             response_data["summary"]["spatial_tone_scan"] = va.get("spatial_tone_scan", {})
+            response_data["summary"]["adaptive_visual_scan"] = va.get(
+                "adaptive_visual_scan", {}
+            )
             response_data["summary"]["motion_evidence"] = va.get("motion_evidence", {})
             response_data["summary"]["scene_segments"] = va.get("scene_segments", {})
             response_data["summary"]["shot_boundaries"] = va.get("shot_boundaries", {})
@@ -9487,7 +9667,13 @@ async def get_analysis_status(analysis_id: str) -> dict:
 
         if "audio_analysis" in results:
             aa = results["audio_analysis"]
-            response_data["audio_diarization"] = aa.get("audio_diarization")
+            output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+            persisted_diarization = read_json_artifact_if_available(
+                output_files.get("audio_diarization")
+            )
+            response_data["audio_diarization"] = (
+                aa.get("audio_diarization") or persisted_diarization
+            )
             response_data["audio_sample_clouds"] = aa.get("audio_sample_clouds")
             # Whisper transcript summary
             response_data["summary"]["audio_segments"] = len(
@@ -9501,6 +9687,11 @@ async def get_analysis_status(analysis_id: str) -> dict:
                 if isinstance(aa.get("audio_prosody"), dict)
                 else {}
             )
+            if not audio_events:
+                audio_events = read_json_artifact_if_available(
+                    output_files.get("audio_event_intervals")
+                ) or {}
+            response_data["audio_event_intervals"] = audio_events
             response_data["summary"]["audio_event_intervals"] = len(
                 audio_events.get("intervals", []) if isinstance(audio_events, dict) else []
             )
@@ -11008,6 +11199,72 @@ async def measure_analysis_shot_boundaries(
     return {"analysis_id": analysis_id, "persisted": persist, "shot_boundaries": measured}
 
 
+@app.post("/api/analysis/{analysis_id}/spatial-tone/measure", response_model=dict)
+async def measure_analysis_spatial_tone(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Measure and persist source-linked color, brightness, contrast, and entropy."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    persist = bool(payload.get("persist", True))
+    output_path = RESULTS_DIR / analysis_id / "spatial_tone_scan.json" if persist else None
+    try:
+        measured = measure_spatial_tone(
+            source,
+            analysis_id=analysis_id,
+            sample_interval_seconds=float(payload.get("sample_interval_seconds", 1.0)),
+            output_path=output_path,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        status.setdefault("output_files", {})["spatial_tone_scan"] = str(output_path)
+        status.setdefault("results", {}).setdefault("visual_analysis", {})["spatial_tone_scan"] = measured
+        status.setdefault("summary", {})["spatial_tone_scan"] = measured
+        refresh_master_schema_metadata_surfaces(status)
+        persist_analysis_record_for_status(status)
+    return {"analysis_id": analysis_id, "persisted": persist, "spatial_tone_scan": measured}
+
+
+@app.post("/api/analysis/{analysis_id}/adaptive-visual/measure", response_model=dict)
+async def measure_analysis_adaptive_visual(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Measure adaptive temporal visual evidence with disclosed sampling cadence."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    persist = bool(payload.get("persist", True))
+    output_path = RESULTS_DIR / analysis_id / "adaptive_visual_scan.json" if persist else None
+    try:
+        measured = measure_adaptive_visual(
+            source,
+            analysis_id=analysis_id,
+            baseline_fps=float(payload.get("baseline_fps", 4.0)),
+            dense_fps=float(payload.get("dense_fps", 12.0)),
+            candidate_window_seconds=float(payload.get("candidate_window_seconds", 0.5)),
+            output_path=output_path,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        status.setdefault("output_files", {})["adaptive_visual_scan"] = str(output_path)
+        status.setdefault("results", {}).setdefault("visual_analysis", {})[
+            "adaptive_visual_scan"
+        ] = measured
+        status.setdefault("summary", {})["adaptive_visual_scan"] = measured
+        refresh_master_schema_metadata_surfaces(status)
+        persist_analysis_record_for_status(status)
+    return {
+        "analysis_id": analysis_id,
+        "persisted": persist,
+        "adaptive_visual_scan": measured,
+    }
+
+
 def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegistry:
     return InterpretationRegistry(
         analysis_id,
@@ -11041,6 +11298,201 @@ def governed_report_sources_for_analysis(analysis_id: str, status: Dict[str, Any
         decision_id = str(item.get("decision_id") or "")
         if decision_id and item.get("decision_action") != "invalidate":
             records[decision_id] = {"kind": "decision", **item, "effective_validity": item.get("validity", "current")}
+
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    visual = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
+    shot_payload = summary.get("shot_boundaries") if isinstance(summary.get("shot_boundaries"), dict) else {}
+    if not shot_payload:
+        shot_payload = visual.get("shot_boundaries") if isinstance(visual.get("shot_boundaries"), dict) else {}
+    for index, interval in enumerate(shot_payload.get("intervals") or []):
+        if not isinstance(interval, dict):
+            continue
+        shot_id = str(interval.get("shot_id") or f"shot:{index + 1:04d}")
+        record_id = f"measurement:{analysis_id}:shot:{shot_id}"
+        records[record_id] = {
+            "kind": "measurement",
+            "record_id": record_id,
+            "analysis_id": analysis_id,
+            "measurement_family": "shot_boundary_interval",
+            "label": f"Measured shot {index + 1}",
+            "interval": {
+                "start_seconds": interval.get("start"),
+                "end_seconds": interval.get("end"),
+            },
+            "method": shot_payload.get("method"),
+            "authority": "measured_automatic_detection",
+            "maturity": "verified",
+            "validity": "current",
+            "effective_validity": "current",
+            "evidence_refs": [f"artifact:shot_boundaries#{shot_id}"],
+        }
+
+    tone_payload = summary.get("spatial_tone_scan") if isinstance(summary.get("spatial_tone_scan"), dict) else {}
+    if not tone_payload:
+        tone_payload = visual.get("spatial_tone_scan") if isinstance(visual.get("spatial_tone_scan"), dict) else {}
+    for index, sample in enumerate(tone_payload.get("samples") or []):
+        if not isinstance(sample, dict):
+            continue
+        sample_id = str(sample.get("sample_id") or f"spatial-tone:{index + 1:06d}")
+        record_id = f"measurement:{analysis_id}:spatial-tone:{sample_id}"
+        records[record_id] = {
+            "kind": "measurement",
+            "record_id": record_id,
+            "analysis_id": analysis_id,
+            "measurement_family": "spatial_tone",
+            "label": f"Measured visual tone at {sample.get('timestamp', 0)} seconds",
+            "interval": sample.get("interval") or {
+                "start_seconds": sample.get("timestamp"),
+                "end_seconds": sample.get("timestamp"),
+            },
+            "measurements": (sample.get("zones") or {}).get("whole_frame", {}),
+            "method": tone_payload.get("method"),
+            "authority": sample.get("authority") or "measured_automatic_detection",
+            "maturity": "verified",
+            "validity": "current",
+            "effective_validity": "current",
+            "evidence_refs": [f"artifact:spatial_tone_scan#{sample_id}"],
+        }
+
+    adaptive_payload = (
+        summary.get("adaptive_visual_scan")
+        if isinstance(summary.get("adaptive_visual_scan"), dict)
+        else {}
+    )
+    if not adaptive_payload:
+        adaptive_payload = (
+            visual.get("adaptive_visual_scan")
+            if isinstance(visual.get("adaptive_visual_scan"), dict)
+            else {}
+        )
+    for index, sample in enumerate(adaptive_payload.get("samples") or []):
+        if not isinstance(sample, dict):
+            continue
+        sample_id = str(sample.get("sample_id") or f"adaptive-visual:{index + 1:06d}")
+        record_id = f"measurement:{analysis_id}:adaptive-visual:{sample_id}"
+        timestamp = sample.get("timestamp")
+        records[record_id] = {
+            "kind": "measurement",
+            "record_id": record_id,
+            "analysis_id": analysis_id,
+            "measurement_family": "adaptive_visual_motion",
+            "label": f"Measured visual change at {timestamp or 0} seconds",
+            "interval": sample.get("interval") or {
+                "start_seconds": timestamp,
+                "end_seconds": timestamp,
+            },
+            "measurements": {
+                "motion_label": sample.get("motion_label"),
+                "frame_delta": sample.get("frame_delta"),
+                "changed_fraction": sample.get("changed_fraction"),
+                "frame_class": sample.get("frame_class"),
+                "spatial_occupancy": sample.get("spatial_occupancy"),
+                "transition_label": sample.get("transition_label"),
+                "transition_candidate": sample.get("transition_candidate"),
+                "lighting_event": sample.get("lighting_event"),
+                "cadence": sample.get("cadence"),
+            },
+            "method": adaptive_payload.get("method"),
+            "authority": sample.get("authority") or "measured_automatic_detection",
+            "maturity": "verified",
+            "validity": "current",
+            "effective_validity": "current",
+            "evidence_refs": [f"artifact:adaptive_visual_scan#{sample_id}"],
+        }
+
+    audio_event_payload = artifact_payload_from_status_any(
+        status, "audio_event_intervals", "audio_event_intervals_json"
+    )
+    for index, interval in enumerate(
+        audio_event_payload.get("intervals") or []
+        if isinstance(audio_event_payload, dict)
+        else []
+    ):
+        if not isinstance(interval, dict):
+            continue
+        event_id = str(
+            interval.get("event_id")
+            or interval.get("segment_id")
+            or f"audio-event:{index + 1:04d}"
+        )
+        record_id = f"measurement:{analysis_id}:audio-event:{event_id}"
+        start, end = master_schema_interval_seconds(interval)
+        records[record_id] = {
+            "kind": "measurement",
+            "record_id": record_id,
+            "analysis_id": analysis_id,
+            "measurement_family": "audio_event_interval",
+            "label": str(
+                interval.get("event_type")
+                or interval.get("event_label")
+                or "audio event"
+            ),
+            "interval": {
+                "start_seconds": start,
+                "end_seconds": end,
+            },
+            "measurements": interval.get("measurements") or {
+                key: interval.get(key)
+                for key in (
+                    "energy_rms",
+                    "energy_dbfs",
+                    "zero_crossing_rate",
+                    "pitch_hz",
+                    "music_score",
+                )
+                if interval.get(key) is not None
+            },
+            "method": audio_event_payload.get("method"),
+            "authority": "interpreted_automatic_detection",
+            "maturity": "candidate",
+            "validity": "current",
+            "effective_validity": "current",
+            "evidence_refs": [f"artifact:audio_event_intervals#{event_id}"],
+        }
+
+    diarization_payload = artifact_payload_from_status_any(
+        status, "audio_diarization", "audio_diarization_json"
+    )
+    for index, turn in enumerate(
+        diarization_payload.get("speaker_turns") or []
+        if isinstance(diarization_payload, dict)
+        else []
+    ):
+        if not isinstance(turn, dict):
+            continue
+        turn_id = str(turn.get("turn_id") or f"speaker-turn:{index + 1:04d}")
+        record_id = f"measurement:{analysis_id}:speaker-turn:{turn_id}"
+        start, end = master_schema_interval_seconds(turn)
+        is_stale = bool(turn.get("is_stale") or diarization_payload.get("is_stale"))
+        records[record_id] = {
+            "kind": "measurement",
+            "record_id": record_id,
+            "analysis_id": analysis_id,
+            "measurement_family": "speaker_diarization_turn",
+            "label": str(turn.get("speaker_label") or "unresolved speaker"),
+            "interval": {
+                "start_seconds": start,
+                "end_seconds": end,
+            },
+            "text": turn.get("text"),
+            "measurements": {
+                key: turn.get(key)
+                for key in (
+                    "diarization_confidence",
+                    "cluster_id",
+                    "overlap_seconds",
+                    "energy_dbfs",
+                    "pitch_hz",
+                )
+                if turn.get(key) is not None
+            },
+            "method": diarization_payload.get("provider"),
+            "authority": "measured_automatic_detection",
+            "maturity": "quarantined" if is_stale else "candidate",
+            "validity": "stale" if is_stale else "current",
+            "effective_validity": "stale" if is_stale else "current",
+            "evidence_refs": [f"artifact:audio_diarization#{turn_id}"],
+        }
     return records
 
 
@@ -11955,6 +12407,9 @@ async def update_annotation_corrections(
     )
     write_annotation_corrections_file(status)
     write_mise_en_scene_artifacts_for_status(status)
+    write_second_order_meaning_artifacts_for_status(status)
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
     append_analysis_event(
         status,
         "annotation_corrections_updated",
