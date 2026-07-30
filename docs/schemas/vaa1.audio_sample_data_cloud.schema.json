@@ -18,7 +18,7 @@
     },
     "entity_type": {
       "type": "string",
-      "enum": ["speaker", "character_voice", "role_voice", "sound_role", "unknown_speaker"]
+      "enum": ["speaker", "character_voice", "narrative_agent_voice_pattern", "role_voice", "sound_role", "unknown_speaker"]
     },
     "entity_label": {
       "type": "string"
@@ -60,8 +60,21 @@
         ],
         "properties": {
           "sample_id": { "type": "string" },
+          "sample_fingerprint": { "type": "string" },
+          "reuse_key": { "type": "string" },
+          "stable_subject_ref": {
+            "type": "object",
+            "properties": {
+              "subject_type": { "type": "string" },
+              "subject_id": { "type": "string" },
+              "label": { "type": "string" },
+              "identity_confirmed": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          },
           "time_start": { "type": "number" },
           "time_end": { "type": "number" },
+          "duration_seconds": { "type": "number", "minimum": 0 },
           "transcript_text": { "type": "string" },
           "speaker_label": {
             "type": "string"
@@ -77,6 +90,7 @@
               "identity_support",
               "role_support",
               "forensic_support"
+              ,"narrative_agent_audio_pattern_candidate"
             ]
           },
           "source_type": {
@@ -155,6 +169,16 @@
           },
           "open_note": {
             "type": "string"
+          },
+          "source_navigation": {
+            "type": "object",
+            "properties": {
+              "target_panel": { "type": "string" },
+              "target_time": { "type": "number" },
+              "highlight_start": { "type": "number" },
+              "highlight_end": { "type": "number" }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

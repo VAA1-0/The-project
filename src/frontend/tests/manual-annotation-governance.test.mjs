@@ -3174,6 +3174,29 @@ test("audio sample clouds stay exposed as governed analysis artifacts", () => {
   );
 });
 
+test("audio sample maturation economics governs reuse and dense-pass decisions", () => {
+  assert.match(
+    dataMaturationPanel,
+    /data-vaa1-audio-maturation-economics="true"/,
+    "Data Maturation must surface measured audio sample economics",
+  );
+  assert.match(
+    dataMaturationPanel,
+    /audioReusableSamples[\s\S]*audioUniqueSamples[\s\S]*audioDuplicateSamples[\s\S]*audioDenseRecommendation/,
+    "Data Maturation must distinguish reusable, unique, duplicate, and dense-pass state",
+  );
+  assert.match(
+    statsKitPanel,
+    /dense_analysis_policy[\s\S]*reusableAudioSamples[\s\S]*uniqueAudioSamples[\s\S]*duplicateAudioSamples/,
+    "StatsKit must consume the canonical audio sample economics projection",
+  );
+  assert.match(
+    apiService,
+    /maturation_economics\?:[\s\S]*dense_analysis_policy\?:[\s\S]*targeted_dense_pass_recommended/,
+    "frontend analysis contracts must expose the governed dense-analysis policy",
+  );
+});
+
 test("governed audio intervals and diarization proliferate to operational panels", () => {
   assert.match(
     audioPanel,

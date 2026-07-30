@@ -74,6 +74,15 @@ class AudioSampleCloudContractTest(unittest.TestCase):
             "embedding:james-bond:0001",
         )
         self.assertIn("turn_0002", payload["samples"][1]["supporting_evidence_ids"])
+        self.assertTrue(payload["samples"][0]["sample_fingerprint"])
+        self.assertEqual(
+            payload["samples"][0]["stable_subject_ref"]["subject_type"],
+            "speaker_cluster",
+        )
+        self.assertEqual(
+            payload["samples"][0]["source_navigation"]["target_panel"],
+            "VideoPanel",
+        )
 
     def test_audio_sample_cloud_schema_declares_trackable_sample_fields(self):
         schema_path = (
@@ -90,6 +99,53 @@ class AudioSampleCloudContractTest(unittest.TestCase):
         self.assertIn("source_turn_id", sample_properties)
         self.assertIn("sample_role", sample_properties)
         self.assertIn("authority_order", summary_properties)
+        self.assertIn("sample_fingerprint", sample_properties)
+        self.assertIn("stable_subject_ref", sample_properties)
+        self.assertIn("source_navigation", sample_properties)
+
+    def test_audio_maturation_economics_governs_dense_pass_and_reuse(self):
+        payload = audio_sample_cloud.build_audio_sample_clouds_from_diarization(
+            "analysis-economics",
+            audio_diarization={
+                "speaker_turns": [
+                    {
+                        "turn_id": "turn_0001",
+                        "speaker_label": "SPEAKER_01",
+                        "start": 1.0,
+                        "end": 3.0,
+                        "audio_fingerprint": "audio-fp",
+                        "valid_for_confirmation": False,
+                    },
+                    {
+                        "turn_id": "turn_0002",
+                        "speaker_label": "SPEAKER_01",
+                        "start": 8.0,
+                        "end": 10.0,
+                        "audio_fingerprint": "audio-fp",
+                        "valid_for_confirmation": False,
+                    },
+                ]
+            },
+        )
+        matured = audio_sample_cloud.attach_audio_maturation_economics(
+            payload,
+            source_duration_seconds=20.0,
+        )
+        economics = matured["maturation_economics"]
+        self.assertEqual(economics["yield_observations"]["sample_count"], 2)
+        self.assertEqual(economics["yield_observations"]["unique_sample_count"], 2)
+        self.assertEqual(economics["yield_observations"]["reusable_sample_count"], 2)
+        self.assertEqual(
+            economics["dense_analysis_policy"]["recommendation"],
+            "targeted_dense_pass",
+        )
+        self.assertFalse(
+            economics["dense_analysis_policy"]["full_dense_pass_recommended"]
+        )
+        self.assertEqual(
+            len(economics["dense_analysis_policy"]["target_windows"]),
+            2,
+        )
 
     def test_diarization_turns_group_into_one_cloud_per_speaker(self):
         payload = audio_sample_cloud.build_audio_sample_clouds_from_diarization(

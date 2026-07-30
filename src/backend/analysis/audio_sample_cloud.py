@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.backend.utils.logger import get_logger
@@ -219,6 +221,7 @@ def build_audio_sample_clouds_for_narrative_agents(
     identity triangulation has actual audio evidence to evaluate.
     """
 
+    started_at = perf_counter()
     transcript_turns = _transcript_segments(transcript)
     prosody_cues = _prosody_cues_by_window(audio_prosody)
     clouds: List[Dict[str, Any]] = []
@@ -250,7 +253,7 @@ def build_audio_sample_clouds_for_narrative_agents(
             )
         )
 
-    return {
+    payload = {
         "analysis_id": analysis_id,
         "status": "sample_clouds_ready",
         "cloud_count": len(clouds),
@@ -258,6 +261,8 @@ def build_audio_sample_clouds_for_narrative_agents(
         "authority_order": AUDIO_SAMPLE_AUTHORITY_ORDER,
         "clouds": clouds,
     }
+    payload["build_compute_seconds"] = round(perf_counter() - started_at, 6)
+    return payload
 
 
 def merge_audio_sample_cloud_payloads(
@@ -297,6 +302,10 @@ def merge_audio_sample_cloud_payloads(
         "stale_reason": "; ".join(sorted(set(stale_reasons))) if stale_reasons else None,
         "diarization_fingerprints": diarization_fingerprints,
         "diarization_fingerprint": diarization_fingerprints[0] if len(diarization_fingerprints) == 1 else None,
+        "build_compute_seconds": round(
+            sum(_safe_float((payload or {}).get("build_compute_seconds")) for payload in payloads),
+            6,
+        ),
         "clouds": clouds,
     }
 
@@ -306,6 +315,27 @@ def _build_sample_id(analysis_id: str, entity_label: str, index: int) -> str:
         char.lower() if char.isalnum() else "_" for char in entity_label.strip()
     ).strip("_")
     return f"{analysis_id}:audio_sample:{normalized_entity or 'unknown'}:{index:04d}"
+
+
+def _sample_fingerprint(
+    analysis_id: str,
+    entity_label: str,
+    turn_id: str,
+    start: float,
+    end: float,
+    audio_fingerprint: Any,
+) -> str:
+    payload = "|".join(
+        [
+            analysis_id,
+            _normalize_key(entity_label),
+            str(turn_id),
+            f"{start:.3f}",
+            f"{end:.3f}",
+            str(audio_fingerprint or "audio-fingerprint-unavailable"),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _normalize_supporting_ids(raw_ids: Any, fallback_id: Optional[str]) -> List[str]:
@@ -364,13 +394,39 @@ def build_character_audio_sample_cloud(
         is_stale = bool(turn.get("is_stale"))
         valid_for_confirmation = bool(turn.get("valid_for_confirmation")) and not is_stale
 
+        start = _safe_float(turn.get("start") or turn.get("time_start"))
+        end = _safe_float(turn.get("end") or turn.get("time_end"))
+        subject_kind = (
+            "narrative_agent_candidate"
+            if entity_type == "narrative_agent_voice_pattern"
+            else "speaker_cluster"
+            if _clean_label(turn.get("speaker_label"), "").startswith("SPEAKER_")
+            else "narrative_agent_candidate"
+        )
+        fingerprint = _sample_fingerprint(
+            analysis_id,
+            entity_label,
+            turn_id,
+            start,
+            end,
+            turn.get("audio_fingerprint"),
+        )
         samples.append(
             {
                 "sample_id": sample_id,
-                "time_start": _safe_float(turn.get("start") or turn.get("time_start")),
-                "time_end": _safe_float(turn.get("end") or turn.get("time_end")),
-                "start": _safe_float(turn.get("start") or turn.get("time_start")),
-                "end": _safe_float(turn.get("end") or turn.get("time_end")),
+                "sample_fingerprint": fingerprint,
+                "reuse_key": f"audio-sample:{fingerprint}",
+                "stable_subject_ref": {
+                    "subject_type": subject_kind,
+                    "subject_id": _normalize_key(entity_label).replace(" ", "_") or "unknown",
+                    "label": entity_label,
+                    "identity_confirmed": entity_status == "confirmed",
+                },
+                "time_start": start,
+                "time_end": end,
+                "start": start,
+                "end": end,
+                "duration_seconds": round(max(0.0, end - start), 3),
                 "source_start": turn.get("source_start"),
                 "source_end": turn.get("source_end"),
                 "canonical_time_basis": turn.get("canonical_time_basis") or "source_media_seconds",
@@ -416,6 +472,12 @@ def build_character_audio_sample_cloud(
                 "speech_role_hints": list(turn.get("speech_role_hints") or []),
                 "language_context": dict(turn.get("language_context") or {}),
                 "open_note": str(turn.get("open_note") or ""),
+                "source_navigation": {
+                    "target_panel": "VideoPanel",
+                    "target_time": start,
+                    "highlight_start": start,
+                    "highlight_end": end,
+                },
             }
         )
 
@@ -475,6 +537,18 @@ def build_character_audio_sample_cloud(
             "average_confidence": round(average_confidence, 4),
             "dominant_voice_signature_refs": embedding_refs,
             "representative_embedding_computed": bool(cloud_embedding),
+            "reusable_sample_count": sum(
+                1
+                for sample in samples
+                if not sample.get("is_stale")
+                and sample.get("duration_seconds", 0) >= 0.25
+                and sample.get("sample_fingerprint")
+            ),
+            "source_linked_sample_count": sum(
+                1
+                for sample in samples
+                if sample.get("source_navigation", {}).get("target_time") is not None
+            ),
             "authority_order": AUDIO_SAMPLE_AUTHORITY_ORDER,
         },
         "provenance": {
@@ -496,6 +570,7 @@ def build_audio_sample_clouds_from_diarization(
 ) -> Dict[str, Any]:
     """Group diarization turns into one governed audio sample cloud per speaker label."""
 
+    started_at = perf_counter()
     turns = (audio_diarization or {}).get("speaker_turns") or []
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for turn in turns:
@@ -518,7 +593,7 @@ def build_audio_sample_clouds_from_diarization(
         for speaker_label, speaker_turns in sorted(grouped.items())
     ]
 
-    return {
+    payload = {
         "analysis_id": analysis_id,
         "status": "sample_clouds_ready",
         "cloud_count": len(clouds),
@@ -526,3 +601,171 @@ def build_audio_sample_clouds_from_diarization(
         "authority_order": AUDIO_SAMPLE_AUTHORITY_ORDER,
         "clouds": clouds,
     }
+    payload["build_compute_seconds"] = round(perf_counter() - started_at, 6)
+    return payload
+
+
+def attach_audio_maturation_economics(
+    payload: Dict[str, Any],
+    *,
+    source_duration_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Attach a measured cost/yield/reuse record to an audio sample-cloud payload.
+
+    This record governs whether another sampling pass is justified. It never
+    promotes speaker identity or interpretation.
+    """
+
+    result = dict(payload)
+    clouds = [cloud for cloud in result.get("clouds") or [] if isinstance(cloud, dict)]
+    samples = [
+        sample
+        for cloud in clouds
+        for sample in cloud.get("samples") or []
+        if isinstance(sample, dict)
+    ]
+    fingerprints = [
+        str(sample.get("sample_fingerprint"))
+        for sample in samples
+        if sample.get("sample_fingerprint")
+    ]
+    unique_fingerprints = set(fingerprints)
+    duplicate_count = max(0, len(fingerprints) - len(unique_fingerprints))
+    reusable_count = sum(
+        1
+        for sample in samples
+        if sample.get("sample_fingerprint")
+        and not sample.get("is_stale")
+        and _safe_float(sample.get("duration_seconds")) >= 0.25
+    )
+    confirmed_count = sum(
+        1
+        for sample in samples
+        if sample.get("review_state") == "confirmed"
+        or sample.get("epistemic_status") == "confirmed"
+        or sample.get("stable_subject_ref", {}).get("identity_confirmed")
+    )
+    valid_confirmation_count = sum(
+        1
+        for sample in samples
+        if sample.get("valid_for_confirmation") and not sample.get("is_stale")
+    )
+    source_linked_count = sum(
+        1
+        for sample in samples
+        if sample.get("source_navigation", {}).get("target_time") is not None
+    )
+    sampled_seconds = sum(
+        max(0.0, _safe_float(sample.get("duration_seconds"))) for sample in samples
+    )
+    duration = max(0.0, _safe_float(source_duration_seconds))
+    coverage_ratio = min(1.0, sampled_seconds / duration) if duration else None
+    build_compute_seconds = sum(
+        _safe_float(source.get("build_compute_seconds"))
+        for source in result.get("source_payloads") or []
+        if isinstance(source, dict)
+    ) or _safe_float(result.get("build_compute_seconds"))
+    serialized_bytes = len(
+        json.dumps(result, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    )
+
+    if not samples:
+        recommendation = "baseline_sampling_required"
+        reason = "No reusable speaker-linked audio samples are available."
+        continue_iteration = True
+    elif valid_confirmation_count == 0:
+        recommendation = "targeted_dense_pass"
+        reason = (
+            "Samples exist, but timing authority does not yet permit identity confirmation. "
+            "Run dense analysis only around unresolved or analyst-selected speaker windows."
+        )
+        continue_iteration = True
+    elif duplicate_count > max(2, len(samples) // 5):
+        recommendation = "stop_and_reuse"
+        reason = "Duplicate sample yield is high; reuse the governed sample cloud before resampling."
+        continue_iteration = False
+    else:
+        recommendation = "baseline_sufficient"
+        reason = "Reusable source-linked samples exist; full-FPS audio resampling is not justified."
+        continue_iteration = False
+
+    unresolved_samples = [
+        sample
+        for sample in samples
+        if not sample.get("valid_for_confirmation") or sample.get("is_stale")
+    ]
+    unresolved_samples.sort(
+        key=lambda sample: (
+            0
+            if sample.get("stable_subject_ref", {}).get("subject_type")
+            == "narrative_agent_candidate"
+            else 1,
+            _safe_float(sample.get("confidence"), 1.0),
+            -_safe_float(sample.get("duration_seconds")),
+            _safe_float(sample.get("start")),
+        )
+    )
+    target_limit = min(12, max(4, len(clouds) + 2))
+    targeted_samples: List[Dict[str, Any]] = []
+    targeted_intervals: set[tuple[float, float]] = set()
+    for sample in unresolved_samples:
+        interval_key = (
+            round(_safe_float(sample.get("start")), 3),
+            round(_safe_float(sample.get("end")), 3),
+        )
+        if interval_key in targeted_intervals:
+            continue
+        targeted_intervals.add(interval_key)
+        targeted_samples.append(sample)
+        if len(targeted_samples) >= target_limit:
+            break
+
+    result["maturation_economics"] = {
+        "schema": "vaa1.audio_sample_maturation_economics.v1",
+        "policy_version": "1.1.1",
+        "measurement_scope": "speaker_linked_audio_sample_clouds",
+        "cost_observations": {
+            "build_compute_seconds": round(build_compute_seconds, 6),
+            "artifact_storage_bytes": serialized_bytes,
+            "artifact_storage_mb": round(serialized_bytes / (1024 * 1024), 6),
+            "remote_api_calls": 0,
+            "gpu_seconds": 0.0,
+            "analyst_minutes": None,
+            "analyst_cost_status": "not_observed",
+        },
+        "yield_observations": {
+            "cloud_count": len(clouds),
+            "sample_count": len(samples),
+            "unique_sample_count": len(unique_fingerprints),
+            "reusable_sample_count": reusable_count,
+            "confirmed_sample_count": confirmed_count,
+            "valid_for_confirmation_count": valid_confirmation_count,
+            "source_linked_sample_count": source_linked_count,
+            "duplicate_sample_count": duplicate_count,
+            "sampled_seconds": round(sampled_seconds, 3),
+            "source_coverage_ratio": round(coverage_ratio, 6) if coverage_ratio is not None else None,
+            "reuse_ratio": round(reusable_count / len(samples), 6) if samples else 0.0,
+            "waste_ratio": round(duplicate_count / len(samples), 6) if samples else 0.0,
+        },
+        "dense_analysis_policy": {
+            "recommendation": recommendation,
+            "full_dense_pass_recommended": False,
+            "targeted_dense_pass_recommended": recommendation == "targeted_dense_pass",
+            "target_windows": [
+                {
+                    "sample_id": sample.get("sample_id"),
+                    "start": sample.get("start"),
+                    "end": sample.get("end"),
+                    "reason": "timing_or_identity_confirmation_gap",
+                }
+                for sample in targeted_samples
+            ],
+            "reason": reason,
+        },
+        "economic_verdict": {
+            "maturation_economically_sound": reusable_count > 0,
+            "iteration_should_continue": continue_iteration,
+            "developer_attention_required": not samples or valid_confirmation_count == 0,
+        },
+    }
+    return result

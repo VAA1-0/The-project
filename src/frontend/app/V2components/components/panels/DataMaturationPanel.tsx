@@ -1287,7 +1287,12 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       liveBusSummary.proposed_audiovisual_sample_count,
     );
     const sourceSamples = asArray(source.sourceSamples);
-    const audioSampleClouds = asArray(asRecord(source.audioSampleClouds).clouds);
+    const audioSampleArtifact = asRecord(source.audioSampleClouds);
+    const audioSampleClouds = asArray(audioSampleArtifact.clouds);
+    const audioEconomics = asRecord(audioSampleArtifact.maturation_economics);
+    const audioYield = asRecord(audioEconomics.yield_observations);
+    const audioCost = asRecord(audioEconomics.cost_observations);
+    const densePolicy = asRecord(audioEconomics.dense_analysis_policy);
     const audiovisualSampleCount = sourceSamples.length + audioSampleClouds.length;
     const entityRegistry = asRecord(source.entityRegistry);
     const entityRecords = asArray<Record<string, unknown>>(entityRegistry.entities);
@@ -1357,6 +1362,19 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       matureSurfaces,
       sourceSamples: sourceSamples.length,
       audioSampleClouds: audioSampleClouds.length,
+      audioReusableSamples: numberFrom(audioYield.reusable_sample_count),
+      audioUniqueSamples: numberFrom(audioYield.unique_sample_count),
+      audioDuplicateSamples: numberFrom(audioYield.duplicate_sample_count),
+      audioSourceCoverageRatio: numberFrom(audioYield.source_coverage_ratio),
+      audioBuildComputeSeconds: numberFrom(audioCost.build_compute_seconds),
+      audioArtifactStorageMb: numberFrom(audioCost.artifact_storage_mb),
+      audioDenseRecommendation: String(
+        densePolicy.recommendation || "economics_not_measured",
+      ),
+      audioDenseReason: String(
+        densePolicy.reason || "Run or hydrate audio sample maturation economics.",
+      ),
+      audioDenseTargetWindows: asArray(densePolicy.target_windows).length,
       audiovisualSampleCount,
       entityRecords: entityRecords.length,
       matureEntityRecords,
@@ -2441,6 +2459,52 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           Master Schema maturity without losing the original timestamp or BBox/ROI
           authority.
         </Lane>
+        <section
+          className="border-t border-white/8 bg-[#1d1d1d] px-3 py-3"
+          data-vaa1-audio-maturation-economics="true"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                Audio maturation economics
+              </div>
+              <div className="mt-1 text-xs text-slate-200">
+                {metrics.audioDenseRecommendation.replaceAll("_", " ")}
+              </div>
+              <p className="mt-1 max-w-3xl text-[10px] leading-4 text-slate-500">
+                {metrics.audioDenseReason}
+              </p>
+            </div>
+            <div className="text-right text-[10px] text-slate-500">
+              {metrics.audioDenseTargetWindows} targeted window(s)
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden border border-white/8 bg-white/8 text-[10px] md:grid-cols-4">
+            <div className="bg-[#202020] px-2 py-2">
+              <div className="text-slate-500">Reusable / unique</div>
+              <div className="mt-1 text-slate-200">
+                {metrics.audioReusableSamples} / {metrics.audioUniqueSamples}
+              </div>
+            </div>
+            <div className="bg-[#202020] px-2 py-2">
+              <div className="text-slate-500">Duplicate / waste</div>
+              <div className="mt-1 text-slate-200">{metrics.audioDuplicateSamples}</div>
+            </div>
+            <div className="bg-[#202020] px-2 py-2">
+              <div className="text-slate-500">Source coverage</div>
+              <div className="mt-1 text-slate-200">
+                {(metrics.audioSourceCoverageRatio * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div className="bg-[#202020] px-2 py-2">
+              <div className="text-slate-500">Build / retained artifact</div>
+              <div className="mt-1 text-slate-200">
+                {metrics.audioBuildComputeSeconds.toFixed(4)}s /{" "}
+                {metrics.audioArtifactStorageMb.toFixed(3)} MB
+              </div>
+            </div>
+          </div>
+        </section>
         <Lane
           title="Constellational co-occurrence"
           status="dynamic queue"

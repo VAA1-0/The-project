@@ -39,6 +39,7 @@ from src.backend.analysis.audio_diarization import (
     write_audio_diarization,
 )
 from src.backend.analysis.audio_sample_cloud import (
+    attach_audio_maturation_economics,
     build_audio_sample_clouds_from_diarization,
     build_audio_sample_clouds_for_narrative_agents,
     merge_audio_sample_cloud_payloads,
@@ -3742,6 +3743,13 @@ def write_iterative_audio_identity_artifacts_for_status(
         or existing_sample_count == 0
         or "audio_diarization" in created
         or existing_clouds_stale
+        or not (existing_audio_sample_clouds or {}).get("maturation_economics")
+        or (
+            ((existing_audio_sample_clouds or {}).get("maturation_economics") or {}).get(
+                "policy_version"
+            )
+            != "1.1.1"
+        )
         or sample_clock_mismatch
         or (current_diarization_fingerprint and not existing_cloud_fingerprint)
         or (
@@ -3781,6 +3789,12 @@ def write_iterative_audio_identity_artifacts_for_status(
             analysis_id,
             diarization_clouds,
             narrative_agent_clouds,
+        )
+        audio_sample_clouds = attach_audio_maturation_economics(
+            audio_sample_clouds,
+            source_duration_seconds=(audio_diarization or {}).get("measurement", {}).get(
+                "duration_seconds"
+            ),
         )
         audio_sample_clouds["audio_diarization_status"] = (
             (audio_diarization or {}).get("status")
@@ -7295,6 +7309,12 @@ def rebuild_audio_diarization_after_timing_change(
             diarization_clouds,
             narrative_agent_clouds,
         )
+        audio_sample_clouds = attach_audio_maturation_economics(
+            audio_sample_clouds,
+            source_duration_seconds=(audio_diarization.get("measurement") or {}).get(
+                "duration_seconds"
+            ),
+        )
         audio_sample_clouds["audio_diarization_status"] = audio_diarization.get("status")
         audio_sample_clouds["audio_measurement_provider"] = audio_diarization.get("provider")
         audio_sample_clouds["transcript_timing_authority"] = (
@@ -8691,6 +8711,12 @@ def run_complete_analysis(
                         analysis_id,
                         diarization_clouds,
                         narrative_agent_clouds,
+                    )
+                    audio_sample_clouds = attach_audio_maturation_economics(
+                        audio_sample_clouds,
+                        source_duration_seconds=(audio_diarization.get("measurement") or {}).get(
+                            "duration_seconds"
+                        ),
                     )
                     audio_sample_clouds["audio_diarization_status"] = (
                         (audio_diarization or {}).get("status")

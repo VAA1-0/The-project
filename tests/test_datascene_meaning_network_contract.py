@@ -19,6 +19,66 @@ meaning_network = load_module()
 
 
 class DatasceneMeaningNetworkContractTest(unittest.TestCase):
+    def test_master_schema_candidate_scene_timing_provides_provisional_membership(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-scene-timing",
+            {
+                "vaa1_annotation_master_schema": {
+                    "temporal_segments": [
+                        {
+                            "segment_id": "scene-1",
+                            "scene_id": "s1",
+                            "segment_type": "scene",
+                            "event_family": "scene_understanding",
+                            "start": 0.0,
+                            "end": 10.0,
+                            "review_state": "candidate_review_required",
+                        },
+                        {
+                            "segment_id": "scene-2",
+                            "scene_id": "s2",
+                            "segment_type": "scene",
+                            "event_family": "scene_understanding",
+                            "start": 10.0,
+                            "end": 20.0,
+                            "review_state": "candidate_review_required",
+                        },
+                    ]
+                },
+                "audio_event_intervals": {
+                    "intervals": [
+                        {"event_id": "in-scene-1", "event_type": "music", "start": 2.0, "end": 4.0},
+                        {"event_id": "at-cut", "event_type": "noise", "start": 10.0, "end": 11.0},
+                        {"event_id": "outside", "event_type": "music", "start": 21.0, "end": 22.0},
+                    ]
+                },
+            },
+            scene_cards={"scene_cards": [{"scene_id": "s1"}, {"scene_id": "s2"}]},
+        )
+        nodes = artifact["meaning_network"]["nodes"]
+        inside = next(node for node in nodes if node["node_id"] == "audio-event:in-scene-1")
+        at_cut = next(node for node in nodes if node["node_id"] == "audio-event:at-cut")
+        outside = next(node for node in nodes if node["node_id"] == "audio-event:outside")
+        self.assertEqual(inside["attributes"]["scene_id"], "s1")
+        self.assertEqual(at_cut["attributes"]["scene_id"], "s2")
+        self.assertEqual(
+            inside["attributes"]["scene_membership_status"],
+            "provisional_resolved",
+        )
+        self.assertEqual(outside["attributes"]["scene_membership_status"], "unresolved")
+        self.assertEqual(
+            artifact["summary"]["scene_timing"]["authority"],
+            "master_schema_candidate_scene_interval",
+        )
+        self.assertEqual(
+            artifact["summary"]["scene_membership"]["provisional_resolved_node_count"],
+            2,
+        )
+        self.assertEqual(
+            artifact["summary"]["scene_membership"]["unresolved_node_count"],
+            1,
+        )
+
     def test_unresolved_scene_membership_does_not_hide_delivered_evidence(self):
         artifact = meaning_network.build_datascene_meaning_network(
             "analysis-unscoped-evidence",

@@ -903,6 +903,21 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
     analysisData?.metadata?.adaptiveVisualScan?.samples || []
   ).filter((sample) => sample.lighting?.event).length;
   const audioSampleRows = audioSampleCloudRows(analysisData).length;
+  const audioSampleArtifact = isRecord(analysisData?.audioSampleClouds)
+    ? analysisData.audioSampleClouds
+    : {};
+  const audioEconomics = isRecord(audioSampleArtifact.maturation_economics)
+    ? audioSampleArtifact.maturation_economics
+    : {};
+  const audioYield = isRecord(audioEconomics.yield_observations)
+    ? audioEconomics.yield_observations
+    : {};
+  const audioDensePolicy = isRecord(audioEconomics.dense_analysis_policy)
+    ? audioEconomics.dense_analysis_policy
+    : {};
+  const reusableAudioSamples = num(audioYield.reusable_sample_count);
+  const uniqueAudioSamples = num(audioYield.unique_sample_count);
+  const duplicateAudioSamples = num(audioYield.duplicate_sample_count);
   const confirmedAudioAnchors = countManualCategory(analysisData, "Audio");
   const musicAnalysisRows = countMasterRecords(analysisData, (record) => record.category === "music_analysis");
   const musicSoundRows = (analysisData?.audioProsody || []).filter((cue) =>
@@ -984,11 +999,15 @@ function buildStatsKitSourceLayerDeliverables(analysisData: AnalysisData | null)
       layer: "Audio samples and Narrative Agent audio confirmations",
       status: sourceLayerStatus(audioSampleRows + confirmedAudioAnchors),
       availableRows: audioSampleRows + confirmedAudioAnchors,
-      currentSource: `${audioSampleRows} audio sample rows / ${confirmedAudioAnchors} analyst Audio annotations`,
+      currentSource:
+        `${audioSampleRows} audio sample rows / ${reusableAudioSamples} reusable / ` +
+        `${uniqueAudioSamples} unique / ${duplicateAudioSamples} duplicate / ` +
+        `${confirmedAudioAnchors} analyst Audio annotations`,
       unlocks:
         "sample coverage, confirmation rates, voice-pattern support, and maturation throughput",
-      nextAction:
-        "Separate measured sample counts from analyst-confirmed identity anchors in every statistic.",
+      nextAction: audioDensePolicy.reason
+        ? `${String(audioDensePolicy.recommendation || "governed sampling")}: ${String(audioDensePolicy.reason)}`
+        : "Separate measured sample counts from analyst-confirmed identity anchors in every statistic.",
     },
     {
       id: "music-sound-classifier",

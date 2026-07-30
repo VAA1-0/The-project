@@ -122,7 +122,46 @@ def _within_scene(scene: Dict[str, Optional[float]], item: Dict[str, Optional[fl
     if scene_end is None:
         scene_end = scene_start
     item_end = item.get("end") if item.get("end") is not None else item_start
-    return max(scene_start, item_start) <= min(scene_end, item_end)
+    if scene_end <= scene_start:
+        return item_start == scene_start
+    # Scene intervals are half-open. Evidence at an exact cut belongs to the
+    # following scene rather than being silently claimed by both.
+    return item_end >= scene_start and item_start < scene_end
+
+
+def _scene_overlap_seconds(
+    scene: Dict[str, Optional[float]],
+    item: Dict[str, Optional[float]],
+) -> float:
+    scene_start = scene.get("start")
+    scene_end = scene.get("end")
+    item_start = item.get("start")
+    item_end = item.get("end")
+    if scene_start is None or scene_end is None or item_start is None:
+        return -1.0
+    if item_end is None:
+        item_end = item_start
+    if item_end == item_start:
+        return 0.0 if scene_start <= item_start < scene_end else -1.0
+    if item_end <= scene_start or item_start >= scene_end:
+        return -1.0
+    return max(0.0, min(scene_end, item_end) - max(scene_start, item_start))
+
+
+def _best_scene_index(
+    scenes: List[Dict[str, Any]],
+    item: Dict[str, Optional[float]],
+) -> Optional[int]:
+    ranked = [
+        (index, _scene_overlap_seconds(_interval(scene), item))
+        for index, scene in enumerate(scenes)
+    ]
+    ranked = [entry for entry in ranked if entry[1] >= 0]
+    if not ranked:
+        return None
+    # Stable scene order resolves exact ties; positive overlap outranks a cut
+    # point touching only the next half-open scene.
+    return max(ranked, key=lambda entry: (entry[1], -entry[0]))[0]
 
 
 def _evidence_ref(
@@ -564,15 +603,58 @@ def _project_matcher_topology_to_meaning_network(
 def _scene_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+    master_schema = (
+        status.get("vaa1_annotation_master_schema")
+        if isinstance(status.get("vaa1_annotation_master_schema"), dict)
+        else {}
+    )
     sources = [
-        visual.get("scene_segments"),
-        (status.get("summary") or {}).get("scene_segments") if isinstance(status.get("summary"), dict) else None,
-        status.get("mise_en_scene_scene_cards"),
+        ("visual_scene_segments", visual.get("scene_segments"), "measured_or_detector_scene_interval"),
+        (
+            "summary_scene_segments",
+            (status.get("summary") or {}).get("scene_segments")
+            if isinstance(status.get("summary"), dict)
+            else None,
+            "persisted_scene_interval",
+        ),
+        (
+            "mise_en_scene_scene_cards",
+            status.get("mise_en_scene_scene_cards"),
+            "governed_scene_card_interval",
+        ),
+        (
+            "master_schema_temporal_segments",
+            [
+                segment
+                for segment in master_schema.get("temporal_segments") or []
+                if isinstance(segment, dict)
+                and (
+                    str(segment.get("segment_type") or "").lower() == "scene"
+                    or "scene" in str(segment.get("event_family") or "").lower()
+                )
+            ],
+            "master_schema_candidate_scene_interval",
+        ),
     ]
-    for source in sources:
-        items = _as_items(source)
+    for source_name, source, timing_authority in sources:
+        items = [
+            item
+            for item in _as_items(source)
+            if _interval(item).get("start") is not None
+            and _interval(item).get("end") is not None
+            and _interval(item).get("end") > _interval(item).get("start")
+        ]
         if items:
-            return items
+            return [
+                {
+                    **item,
+                    "scene_timing_source": source_name,
+                    "scene_timing_authority": timing_authority,
+                    "scene_timing_review_state": item.get("review_state")
+                    or ("candidate_review_required" if "candidate" in timing_authority else "available"),
+                }
+                for item in sorted(items, key=lambda value: _interval(value).get("start") or 0.0)
+            ]
     return []
 
 
@@ -664,15 +746,38 @@ def build_datascene_meaning_network(
     projected_confirmed_audio_ids: set[str] = set()
     projected_person_source_ids: set[str] = set()
     projected_transcript_source_ids: set[str] = set()
+    audio_event_source_ids = {
+        id(item): _safe_text(
+            item.get("event_id") or item.get("segment_id"),
+            f"audio-event:{index + 1:04d}",
+        )
+        for index, item in enumerate(audio_events)
+    }
+    speaker_turn_source_ids = {
+        id(item): _safe_text(item.get("turn_id"), f"speaker-turn:{index + 1:04d}")
+        for index, item in enumerate(speaker_turns)
+    }
+    confirmed_audio_source_ids = {
+        id(item): _safe_text(item.get("id"), f"confirmed-audio:{index + 1:04d}")
+        for index, item in enumerate(confirmed_audio)
+    }
+    transcript_source_ids = {
+        id(item): _safe_text(item.get("id"), f"transcript:{index + 1:04d}")
+        for index, item in enumerate(transcripts)
+    }
 
     if not scenes:
-        max_end = 0.0
-        for item in [*persons, *transcripts]:
-            interval = _interval(item)
-            end = interval.get("end") if interval.get("end") is not None else interval.get("start")
-            if end is not None:
-                max_end = max(max_end, float(end))
-        scenes = [{"scene_id": "scene:full", "start": 0.0, "end": max_end, "label": "Full media window"}]
+        scenes = [
+            {
+                "scene_id": "scene:unresolved",
+                "start": None,
+                "end": None,
+                "label": "Unresolved scene timing",
+                "scene_timing_source": None,
+                "scene_timing_authority": "unavailable",
+                "scene_timing_review_state": "unresolved",
+            }
+        ]
 
     for scene_index, scene in enumerate(scenes):
         interval = _interval(scene)
@@ -683,35 +788,61 @@ def build_datascene_meaning_network(
                 scene_node_id,
                 "scene",
                 _safe_text(scene.get("label") or scene.get("title"), f"Scene {scene_index + 1}"),
-                attributes={"time_range": interval, "scene_index": scene_index},
-                maturity=_maturity("machine_inferred", "schema_rule", 0.65),
-                evidence_refs=[_evidence_ref(scene_node_id, "scene", interval, confidence=0.65)],
+                attributes={
+                    "time_range": interval,
+                    "scene_index": scene_index,
+                    "scene_timing_source": scene.get("scene_timing_source"),
+                    "scene_timing_authority": scene.get("scene_timing_authority"),
+                    "scene_timing_review_state": scene.get("scene_timing_review_state"),
+                },
+                maturity=_maturity(
+                    "candidate"
+                    if scene.get("scene_timing_review_state") == "candidate_review_required"
+                    else "machine_inferred",
+                    "schema_rule",
+                    0.65,
+                ),
+                evidence_refs=[
+                    _evidence_ref(
+                        scene_node_id,
+                        _safe_text(scene.get("scene_timing_source"), "scene"),
+                        interval,
+                        confidence=0.65,
+                    )
+                ],
                 display_group="scene_timeline",
             )
         )
 
         scene_persons = [
-            person for person in persons if _within_scene(interval, _interval(person))
+            person
+            for person in persons
+            if _best_scene_index(scenes, _interval(person)) == scene_index
         ]
         scene_transcripts = [
-            transcript for transcript in transcripts if _within_scene(interval, _interval(transcript))
+            transcript
+            for transcript in transcripts
+            if _best_scene_index(scenes, _interval(transcript)) == scene_index
         ]
         scene_audio_events = [
-            event for event in audio_events if _within_scene(interval, _interval(event))
+            event
+            for event in audio_events
+            if _best_scene_index(scenes, _interval(event)) == scene_index
         ]
         scene_speaker_turns = [
-            turn for turn in speaker_turns if _within_scene(interval, _interval(turn))
+            turn
+            for turn in speaker_turns
+            if _best_scene_index(scenes, _interval(turn)) == scene_index
         ]
         scene_confirmed_audio = [
-            item for item in confirmed_audio if _within_scene(interval, _interval(item))
+            item
+            for item in confirmed_audio
+            if _best_scene_index(scenes, _interval(item)) == scene_index
         ]
 
         for audio_index, event in enumerate(scene_audio_events):
             event_interval = _interval(event)
-            event_id = _safe_text(
-                event.get("event_id") or event.get("segment_id"),
-                f"{scene_id}:audio-event:{audio_index + 1}",
-            )
+            event_id = audio_event_source_ids[id(event)]
             event_type = _safe_text(
                 event.get("event_type") or event.get("event_label"),
                 "audio event",
@@ -732,7 +863,13 @@ def build_datascene_meaning_network(
                     "audio_event",
                     event_type,
                     description="Measured music, noise, silence, or speech interval.",
-                    attributes={"scene_id": scene_id, "audio_event_type": event_type},
+                    attributes={
+                        "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
+                        "audio_event_type": event_type,
+                    },
                     maturity=_maturity(
                         "candidate",
                         "audio_measurement",
@@ -755,9 +892,7 @@ def build_datascene_meaning_network(
 
         for turn_index, turn in enumerate(scene_speaker_turns):
             turn_interval = _interval(turn)
-            turn_id = _safe_text(
-                turn.get("turn_id"), f"{scene_id}:speaker-turn:{turn_index + 1}"
-            )
+            turn_id = speaker_turn_source_ids[id(turn)]
             speaker = _safe_text(turn.get("speaker_label"), "Unresolved speaker")
             node_id = f"speaker-turn:{turn_id}"
             if node_id in projected_speaker_turn_ids:
@@ -780,6 +915,9 @@ def build_datascene_meaning_network(
                     description=_safe_text(turn.get("text"))[:180],
                     attributes={
                         "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
                         "identity_status": "cluster_identity_unconfirmed",
                     },
                     maturity=_maturity("candidate", "audio_diarization", 0.5),
@@ -800,9 +938,7 @@ def build_datascene_meaning_network(
 
         for anchor_index, item in enumerate(scene_confirmed_audio):
             anchor_interval = _interval(item)
-            anchor_id = _safe_text(
-                item.get("id"), f"{scene_id}:confirmed-audio:{anchor_index + 1}"
-            )
+            anchor_id = confirmed_audio_source_ids[id(item)]
             label = _safe_text(
                 item.get("identity_affirmation")
                 or item.get("custom_label")
@@ -827,6 +963,9 @@ def build_datascene_meaning_network(
                     description=_safe_text(item.get("open_note"))[:180],
                     attributes={
                         "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
                         "audio_identity_anchor": True,
                     },
                     maturity=_maturity("analyst_confirmed", "analyst", 1.0),
@@ -866,6 +1005,9 @@ def build_datascene_meaning_network(
                     description="Scene-bounded person evidence. Raw person labels require transcript/manual confirmation before Narrative Agent use.",
                     attributes={
                         "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
                         "track_id": track_id,
                         "raw_detection_overload_sensitive": raw_like,
                     },
@@ -887,7 +1029,7 @@ def build_datascene_meaning_network(
 
         for transcript_index, transcript in enumerate(scene_transcripts):
             transcript_interval = _interval(transcript)
-            transcript_id = _safe_text(transcript.get("id"), f"{scene_id}:transcript:{transcript_index + 1}")
+            transcript_id = transcript_source_ids[id(transcript)]
             transcript_node_id = f"transcript:{transcript_id}"
             projected_transcript_source_ids.add(transcript_id)
             speaker = _safe_text(transcript.get("speaker") or transcript.get("speaker_label"), "Unknown speaker")
@@ -898,7 +1040,13 @@ def build_datascene_meaning_network(
                     "speaker",
                     speaker,
                     description=text[:180],
-                    attributes={"scene_id": scene_id, "text_excerpt": text[:240]},
+                    attributes={
+                        "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
+                        "text_excerpt": text[:240],
+                    },
                     maturity=_maturity("machine_inferred", "model", 0.6),
                     evidence_refs=[_evidence_ref(transcript_node_id, "transcript", transcript_interval, confidence=0.6)],
                     display_group="scene_speakers",
@@ -923,7 +1071,7 @@ def build_datascene_meaning_network(
                 transcript for transcript in scene_transcripts if _overlaps(person_interval, _interval(transcript))
             ]
             for transcript_index, transcript in enumerate(overlaps[:5]):
-                transcript_id = _safe_text(transcript.get("id"), f"{scene_id}:transcript:{transcript_index + 1}")
+                transcript_id = transcript_source_ids[id(transcript)]
                 transcript_node_id = f"transcript:{transcript_id}"
                 edge_id = f"edge:{person_node_id}:co_occurs:{transcript_node_id}"
                 edges.append(
@@ -968,10 +1116,7 @@ def build_datascene_meaning_network(
     # provisional, or lacks governed time bounds. Scene membership is an
     # optional relationship; it is not an admission gate for the network.
     for audio_index, event in enumerate(audio_events):
-        event_id = _safe_text(
-            event.get("event_id") or event.get("segment_id"),
-            f"unscoped:audio-event:{audio_index + 1}",
-        )
+        event_id = audio_event_source_ids[id(event)]
         node_id = f"audio-event:{event_id}"
         if node_id in projected_audio_event_ids:
             continue
@@ -1009,7 +1154,7 @@ def build_datascene_meaning_network(
         )
 
     for turn_index, turn in enumerate(speaker_turns):
-        turn_id = _safe_text(turn.get("turn_id"), f"unscoped:speaker-turn:{turn_index + 1}")
+        turn_id = speaker_turn_source_ids[id(turn)]
         node_id = f"speaker-turn:{turn_id}"
         if node_id in projected_speaker_turn_ids:
             continue
@@ -1042,7 +1187,7 @@ def build_datascene_meaning_network(
         )
 
     for anchor_index, item in enumerate(confirmed_audio):
-        anchor_id = _safe_text(item.get("id"), f"unscoped:confirmed-audio:{anchor_index + 1}")
+        anchor_id = confirmed_audio_source_ids[id(item)]
         node_id = f"narrative-agent-audio:{anchor_id}"
         if node_id in projected_confirmed_audio_ids:
             continue
@@ -1119,10 +1264,7 @@ def build_datascene_meaning_network(
         )
 
     for transcript_index, transcript_item in enumerate(transcripts):
-        transcript_id = _safe_text(
-            transcript_item.get("id"),
-            f"unscoped:transcript:{transcript_index + 1}",
-        )
+        transcript_id = transcript_source_ids[id(transcript_item)]
         if transcript_id in projected_transcript_source_ids:
             continue
         interval = _interval(transcript_item)
@@ -1339,11 +1481,35 @@ def build_datascene_meaning_network(
             "edge_count": len(edges),
             "continuity_anchor_count": len(continuity_anchors),
             "raw_detection_overload": bool(diagnostics),
+            "scene_timing": {
+                "source": scenes[0].get("scene_timing_source") if scenes else None,
+                "authority": scenes[0].get("scene_timing_authority") if scenes else None,
+                "review_state": scenes[0].get("scene_timing_review_state") if scenes else None,
+                "coverage_start": _interval(scenes[0]).get("start") if scenes else None,
+                "coverage_end": _interval(scenes[-1]).get("end") if scenes else None,
+            },
+            "scene_membership": {
+                "provisional_resolved_node_count": sum(
+                    1
+                    for node in nodes
+                    if node.get("attributes", {}).get("scene_membership_status")
+                    == "provisional_resolved"
+                ),
+                "unresolved_node_count": sum(
+                    1
+                    for node in nodes
+                    if node.get("attributes", {}).get("scene_membership_status")
+                    == "unresolved"
+                ),
+                "method": "maximum_temporal_overlap_half_open_scene_intervals",
+            },
         },
         "workflow_notes": [
             "Meaning Network is used here as the scene timeline and co-presence layer for mature proliferation.",
             "Raw person detections are not Narrative Agents until supported by transcript, manual labels, metadata, or profile comparison.",
             "Scene-bounded person/transcript candidates are visible review anchors for analyst confirmation.",
+            "Candidate scene timing can provide provisional membership but cannot promote scene truth without review.",
+            "Evidence outside governed scene coverage remains unresolved rather than stretching the final scene.",
         ],
     }
 

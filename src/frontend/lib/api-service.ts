@@ -607,6 +607,42 @@ export interface AudioSampleClouds {
   cloud_count?: number;
   sample_count?: number;
   authority_order?: string[];
+  maturation_economics?: {
+    schema?: string;
+    cost_observations?: {
+      build_compute_seconds?: number;
+      artifact_storage_bytes?: number;
+      artifact_storage_mb?: number;
+      analyst_minutes?: number | null;
+      analyst_cost_status?: string;
+    };
+    yield_observations?: {
+      cloud_count?: number;
+      sample_count?: number;
+      unique_sample_count?: number;
+      reusable_sample_count?: number;
+      confirmed_sample_count?: number;
+      valid_for_confirmation_count?: number;
+      source_linked_sample_count?: number;
+      duplicate_sample_count?: number;
+      sampled_seconds?: number;
+      source_coverage_ratio?: number | null;
+      reuse_ratio?: number;
+      waste_ratio?: number;
+    };
+    dense_analysis_policy?: {
+      recommendation?: string;
+      full_dense_pass_recommended?: boolean;
+      targeted_dense_pass_recommended?: boolean;
+      target_windows?: Array<Record<string, unknown>>;
+      reason?: string;
+    };
+    economic_verdict?: {
+      maturation_economically_sound?: boolean;
+      iteration_should_continue?: boolean;
+      developer_attention_required?: boolean;
+    };
+  };
   clouds?: Array<{
     cloud_id?: string;
     entity_type?: string;
@@ -614,8 +650,12 @@ export interface AudioSampleClouds {
     entity_status?: string;
     samples?: Array<{
       sample_id?: string;
+      sample_fingerprint?: string;
+      reuse_key?: string;
+      stable_subject_ref?: Record<string, unknown>;
       time_start?: number;
       time_end?: number;
+      duration_seconds?: number;
       transcript_text?: string;
       speaker_label?: string;
       source_turn_id?: string;
@@ -626,6 +666,7 @@ export interface AudioSampleClouds {
       review_state?: string;
       audio_features?: Record<string, any>;
       supporting_evidence_ids?: string[];
+      source_navigation?: Record<string, unknown>;
     }>;
     cloud_summary?: Record<string, any>;
   }>;
