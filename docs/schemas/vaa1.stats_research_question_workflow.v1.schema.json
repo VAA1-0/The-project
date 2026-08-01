@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.stats_research_question_workflow.v1.schema.json",
+  "title": "Datascene Stats research-question workflow",
+  "type": "object",
+  "required": ["schema", "analysis_id", "plans", "runs"],
+  "properties": {
+    "schema": { "const": "vaa1.stats_research_question_workflow.v1" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "plans": { "type": "array", "items": { "$ref": "#/$defs/plan" } },
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+  },
+  "$defs": {
+    "plan": {
+      "type": "object",
+      "required": ["plan_id", "research_question", "motor", "analytical_unit", "method", "variables", "required_source_layers", "status"],
+      "properties": {
+        "plan_id": { "type": "string" },
+        "research_question": { "type": "string", "minLength": 1 },
+        "motor": { "enum": ["expression_prosody", "expression_transcript", "sfl_prosody", "props_sfl", "transcript_prosody"] },
+        "analytical_unit": { "const": "governed_scene" },
+        "method": { "const": "spearman_rank_correlation" },
+        "variables": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+        "required_source_layers": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+        "status": { "const": "validated" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["run_id", "plan_ref", "status", "results"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "plan_ref": { "type": "string" },
+        "status": { "const": "computed" },
+        "results": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/result" } }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["result_id", "method", "coefficient", "sample_size", "evidence", "proposition", "visualization", "report_sentence", "status"],
+      "properties": {
+        "result_id": { "type": "string" },
+        "method": { "const": "spearman_rank_correlation" },
+        "coefficient": { "type": "number", "minimum": -1, "maximum": 1 },
+        "sample_size": { "type": "integer", "minimum": 3 },
+        "evidence": { "type": "array", "minItems": 3 },
+        "proposition": { "type": "object" },
+        "visualization": { "type": "object" },
+        "report_sentence": { "type": "object" },
+        "status": { "const": "computed" }
+      }
+    }
+  }
+}

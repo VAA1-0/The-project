@@ -394,6 +394,36 @@ export type NativeStatisticalInterpretationRun = {
   }>;
 };
 
+export type StatsResearchQuestionRun = {
+  plan?: {
+    plan_id?: string;
+    research_question?: string;
+    motor?: string;
+    analytical_unit?: string;
+    method?: string;
+    variables?: string[];
+    required_source_layers?: string[];
+    status?: string;
+  };
+  run?: {
+    run_id?: string;
+    status?: string;
+    results?: Array<{
+      result_id?: string;
+      left_variable?: string;
+      right_variable?: string;
+      coefficient?: number;
+      sample_size?: number;
+      proposition?: { text?: string; status?: string };
+      visualization?: Record<string, unknown>;
+      report_sentence?: { text?: string; status?: string; source_scene_refs?: string[] };
+      evidence?: Array<Record<string, unknown>>;
+      status?: string;
+    }>;
+  };
+  native_interpretation?: NativeStatisticalInterpretationRun;
+};
+
 export interface ForensicRenderRegion {
   x: number;
   y: number;
@@ -1662,6 +1692,26 @@ class ApiService {
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(detail || `Statistical interpretation failed (${response.status})`);
+    }
+    this.invalidateReadCaches(analysisId);
+    return response.json();
+  }
+
+  async runStatsResearchQuestion(
+    analysisId: string,
+    payload: { research_question: string; motor: string; scope: string; persist?: boolean },
+  ): Promise<StatsResearchQuestionRun> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/stats-research-question/run`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, persist: payload.persist ?? true }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Research-question run failed (${response.status})`);
     }
     this.invalidateReadCaches(analysisId);
     return response.json();

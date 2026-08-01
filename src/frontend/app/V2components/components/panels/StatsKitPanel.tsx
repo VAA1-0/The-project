@@ -3,6 +3,7 @@ import {
   apiService,
   type NativeStatisticalInterpretationRun,
   type SourceMediaMetadata,
+  type StatsResearchQuestionRun,
 } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { EMPIRICAL_TAXONOMY_ATTRIBUTES } from "@/lib/empirical-taxonomy";
@@ -14,6 +15,7 @@ import {
 } from "@/lib/video-service";
 import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
+import { openVideoAtTime } from "@/lib/video-navigation";
 
 type StatsKitPanelProps = {
   analysisId?: string;
@@ -126,6 +128,8 @@ type SignificanceWorkbenchRow = {
   status: SignificanceClaim["status"];
   reasoning: string;
   nextAction: string;
+  sourceStart?: number;
+  sourceEnd?: number;
 };
 
 type ScannerRow = {
@@ -194,7 +198,7 @@ type MissingDataRow = {
   nextAction: string;
 };
 
-type VisualizationTarget = "stats" | "significance" | "relevance" | "comparison";
+type VisualizationTarget = "stats" | "research_question" | "maturity" | "significance" | "relevance" | "comparison";
 
 type VisualizationDatum = {
   id: string;
@@ -335,6 +339,8 @@ type StatsFamily =
 
 type VisualizationMode =
   | "bar_chart"
+  | "scatterplot"
+  | "maturity_radar"
   | "percent_bars"
   | "duration_bars"
   | "histogram"
@@ -346,6 +352,8 @@ type VisualizationMode =
 
 const VISUALIZATION_MODE_OPTIONS: Array<{ id: VisualizationMode; label: string }> = [
   { id: "bar_chart", label: "Bar chart" },
+  { id: "scatterplot", label: "Scatterplot" },
+  { id: "maturity_radar", label: "Maturity radar" },
   { id: "percent_bars", label: "Percent bars" },
   { id: "duration_bars", label: "Duration / rate bars" },
   { id: "histogram", label: "Histogram" },
@@ -1767,6 +1775,60 @@ function buildSignificance(metrics: EvidenceMetric[], radar: RadarDimension[]): 
   ];
 }
 
+function buildMeasuredSignificance(
+  run: NativeStatisticalInterpretationRun | null | undefined,
+): SignificanceClaim[] {
+  return (run?.relationships || [])
+    .filter((relationship) =>
+      Number.isFinite(Number(relationship.coefficient)) &&
+      Number(relationship.scene_count || 0) >= 3 &&
+      Boolean(relationship.substantive_reading || relationship.interpretation),
+    )
+    .map((relationship, index) => {
+      const coefficient = Number(relationship.coefficient || 0);
+      const magnitude = Math.min(1, Math.abs(coefficient));
+      const interval = relationship.source_intervals?.[0];
+      const orientations = relationship.analytical_frames?.orientation || [];
+      const expressions = relationship.analytical_frames?.evidence_expression || [];
+      return {
+        claim_id: relationship.relationship_id || `measured-significance:${index}`,
+        scope: "meso" as const,
+        object_type: "scene" as const,
+        object_ids: relationship.scene_refs || [],
+        title: `${String(relationship.left_metric || "attribute").replaceAll("_", " ")} ↔ ${String(relationship.right_metric || "attribute").replaceAll("_", " ")}`,
+        claim: relationship.substantive_reading || relationship.interpretation || "",
+        claim_type: "statistical" as const,
+        perspective: {
+          position: "analyst" as const,
+          orientation: orientations.includes("external") ? "external" as const : "intrinsic" as const,
+          expression: expressions.includes("explicit") ? "explicit" as const : expressions.includes("implicit") ? "implicit" as const : "inferred" as const,
+          audience_profile: "researcher" as const,
+          research_question: "How do the two measured attributes vary together across governed scenes?",
+        },
+        significance_vector: {
+          statistical: {
+            score: magnitude,
+            basis: `Spearman rho ${coefficient.toFixed(3)} across ${relationship.scene_count || 0} paired scenes`,
+            summary: relationship.substantive_reading || relationship.interpretation || "",
+          },
+        },
+        evidence_support: {
+          primaryEvidenceCount: Number(relationship.scene_count || 0),
+          secondaryEvidenceCount: relationship.source_intervals?.length || 0,
+          counterEvidenceCount: 0,
+          missingEvidence: [],
+          evidenceStrength: magnitude >= 0.6 ? "strong" as const : magnitude >= 0.3 ? "moderate" as const : "weak" as const,
+        },
+        evidence: `${relationship.method || "spearman_rank_correlation"}; ${relationship.scene_count || 0} paired governed scenes`,
+        status: "candidate" as const,
+        missingEvidence: [],
+        reasoning: `Measured association: ρ ${coefficient.toFixed(3)}. This score represents association magnitude, not statistical significance or causality.`,
+        sourceStart: interval?.start_seconds,
+        sourceEnd: interval?.end_seconds,
+      } as SignificanceClaim & { sourceStart?: number; sourceEnd?: number };
+    });
+}
+
 function buildSignificanceWorkbenchRows(claims: SignificanceClaim[]): SignificanceWorkbenchRow[] {
   return claims.flatMap((claim) => {
     const dimensions = Object.entries(claim.significance_vector) as Array<[SignificanceDimensionKey, SignificanceDimensionValue]>;
@@ -1796,6 +1858,8 @@ function buildSignificanceWorkbenchRows(claims: SignificanceClaim[]): Significan
         : claim.evidence_support.missingEvidence.length
           ? `Surface ${claim.evidence_support.missingEvidence[0]} before accepting this claim.`
           : "Review source evidence and either accept, dispute, or request counter-evidence.",
+      sourceStart: (claim as SignificanceClaim & { sourceStart?: number }).sourceStart,
+      sourceEnd: (claim as SignificanceClaim & { sourceEnd?: number }).sourceEnd,
     }));
   });
 }
@@ -2941,6 +3005,165 @@ function scannerVisualizationData(rows: ScannerRow[]): VisualizationDatum[] {
     .filter((row): row is VisualizationDatum => Boolean(row));
 }
 
+function researchQuestionVisualizationData(workflow: StatsResearchQuestionRun | null, resultId: string): VisualizationDatum[] {
+  const result = workflow?.run?.results?.find((item) => item.result_id === resultId) || workflow?.run?.results?.[0];
+  if (!result) return [];
+  const left = String(result.left_variable || "left variable").replace(/_/g, " ");
+  const right = String(result.right_variable || "right variable").replace(/_/g, " ");
+  return (result.evidence || []).flatMap((row, index) => {
+    const scene = String(row.scene_ref || `Scene ${index + 1}`);
+    const leftValue = Number(row.left_value);
+    const rightValue = Number(row.right_value);
+    const interval = row.source_interval as { start_seconds?: number } | undefined;
+    const source = `${Number(interval?.start_seconds || 0).toFixed(1)}s`;
+    return [
+      Number.isFinite(leftValue) ? { id: `${result.result_id}:${index}:left`, label: scene, value: leftValue, detail: `${left} / ${source}`, group: left, status: "computed" } : null,
+      Number.isFinite(rightValue) ? { id: `${result.result_id}:${index}:right`, label: scene, value: rightValue, detail: `${right} / ${source}`, group: right, status: "computed" } : null,
+    ].filter((item): item is VisualizationDatum => item !== null);
+  });
+}
+
+type ResearchQuestionResult = NonNullable<NonNullable<StatsResearchQuestionRun["run"]>["results"]>[number];
+
+function ResearchQuestionRelationshipPlot({ result, analysisId }: { result: ResearchQuestionResult; analysisId: string }) {
+  const rows = (result.evidence || []).map((row, index) => {
+    const interval = row.source_interval as { start_seconds?: number } | undefined;
+    return {
+      id: `${result.result_id || "result"}:${index}`,
+      scene: String(row.scene_ref || `Scene ${index + 1}`),
+      left: Number(row.left_value),
+      right: Number(row.right_value),
+      start: Number(interval?.start_seconds || 0),
+    };
+  }).filter((row) => Number.isFinite(row.left) && Number.isFinite(row.right));
+  if (!rows.length) return <div className="text-[10px] text-amber-100">No paired scene values are available.</div>;
+  const leftValues = rows.map((row) => row.left);
+  const rightValues = rows.map((row) => row.right);
+  const leftMin = Math.min(...leftValues);
+  const leftMax = Math.max(...leftValues);
+  const rightMin = Math.min(...rightValues);
+  const rightMax = Math.max(...rightValues);
+  const leftLabel = String(result.left_variable || "Left variable").replace(/_/g, " ");
+  const rightLabel = String(result.right_variable || "Right variable").replace(/_/g, " ");
+  const metricUnit = (metric: string) => metric.includes("speech_rate") ? "words/second" : metric.includes("emphasis") || metric.includes("activation") ? "index (0–1)" : "measured value";
+  const leftUnit = metricUnit(String(result.left_variable || ""));
+  const rightUnit = metricUnit(String(result.right_variable || ""));
+  const x = (value: number) => leftMax === leftMin ? 390 : 86 + ((value - leftMin) / (leftMax - leftMin)) * 620;
+  const y = (value: number) => rightMax === rightMin ? 190 : 340 - ((value - rightMin) / (rightMax - rightMin)) * 280;
+  const ticks = Array.from({ length: 5 }, (_, index) => index / 4);
+  const ordered = [...rows].sort((a, b) => a.start - b.start);
+  const timeMax = Math.max(1, ...ordered.map((row) => row.start));
+  const timelineX = (value: number) => 86 + (value / timeMax) * 620;
+  const timelineY = (value: number, min: number, max: number, top: number) => max === min ? top + 42 : top + 78 - ((value - min) / (max - min)) * 68;
+  const leftPath = ordered.map((row, index) => `${index ? "L" : "M"}${timelineX(row.start)},${timelineY(row.left, leftMin, leftMax, 20)}`).join(" ");
+  const rightPath = ordered.map((row, index) => `${index ? "L" : "M"}${timelineX(row.start)},${timelineY(row.right, rightMin, rightMax, 120)}`).join(" ");
+  return (
+    <div className="grid gap-2" data-vaa1-research-question-scatterplot="true">
+      <div className="grid gap-1 rounded border border-slate-800 bg-[#090909] px-3 py-2 text-[10px] text-slate-300 sm:grid-cols-3">
+        <div><span className="text-slate-500">Horizontal measure:</span> {leftLabel} · {leftUnit}</div>
+        <div><span className="text-slate-500">Vertical measure:</span> {rightLabel} · {rightUnit}</div>
+        <div><span className="text-slate-500">Association:</span> Spearman ρ {Number(result.coefficient).toFixed(3)} · n={result.sample_size}</div>
+      </div>
+      <div className="rounded border border-slate-800 bg-[#090909] p-2">
+        <div className="px-2 pb-1 text-[11px] font-semibold text-slate-200">Scene-level relationship</div>
+        <svg viewBox="0 0 760 400" className="h-[360px] w-full" role="img" aria-label={`${leftLabel} by ${rightLabel} across scenes`}>
+          {ticks.map((tick) => {
+            const gridX = 86 + tick * 620;
+            const gridY = 340 - tick * 280;
+            const xValue = leftMin + tick * (leftMax - leftMin);
+            const yValue = rightMin + tick * (rightMax - rightMin);
+            return <g key={tick}><line x1={gridX} y1="60" x2={gridX} y2="340" stroke="#1e293b" /><line x1="86" y1={gridY} x2="706" y2={gridY} stroke="#1e293b" /><text x={gridX} y="362" textAnchor="middle" fill="#94a3b8" fontSize="13">{xValue.toFixed(2)}</text><text x="76" y={gridY + 4} textAnchor="end" fill="#94a3b8" fontSize="13">{yValue.toFixed(2)}</text></g>;
+          })}
+          <line x1="86" y1="340" x2="706" y2="340" stroke="#64748b" strokeWidth="2" />
+          <line x1="86" y1="60" x2="86" y2="340" stroke="#64748b" strokeWidth="2" />
+          {rows.map((row) => {
+            const pointX = x(row.left);
+            const pointY = y(row.right);
+            return <g key={row.id} className="cursor-pointer" onClick={() => openVideoAtTime(analysisId, row.start)}><circle cx={pointX} cy={pointY} r="7" fill="#22d3ee"><title>{`${row.scene}: ${leftLabel} ${row.left.toFixed(3)}, ${rightLabel} ${row.right.toFixed(3)}, ${row.start.toFixed(1)}s`}</title></circle><text x={pointX + 10} y={pointY - 9} fill="#cbd5e1" fontSize="13">{row.scene.replace("scene:", "S")}</text></g>;
+          })}
+          <text x="396" y="390" textAnchor="middle" fill="#cbd5e1" fontSize="15">{leftLabel} · {leftUnit}</text>
+          <text x="22" y="200" textAnchor="middle" fill="#cbd5e1" fontSize="15" transform="rotate(-90 22 200)">{rightLabel} · {rightUnit}</text>
+        </svg>
+      </div>
+      <div className="rounded border border-slate-800 bg-[#090909] p-2" data-vaa1-research-question-source-timeline="true">
+        <div className="px-2 text-[11px] font-semibold text-slate-200">Measurements across source time</div>
+        <div className="px-2 text-[9px] text-slate-500">Separate vertical scales preserve the actual units shown at left. Points open the corresponding Video interval.</div>
+        <svg viewBox="0 0 760 235" className="h-[240px] w-full" role="img" aria-label={`${leftLabel} and ${rightLabel} across source time`}>
+          <text x="12" y="35" fill="#67e8f9" fontSize="13">{leftLabel} ({leftUnit})</text><text x="12" y="52" fill="#94a3b8" fontSize="12">{leftMin.toFixed(2)}–{leftMax.toFixed(2)}</text>
+          <text x="12" y="135" fill="#c4b5fd" fontSize="13">{rightLabel} ({rightUnit})</text><text x="12" y="152" fill="#94a3b8" fontSize="12">{rightMin.toFixed(2)}–{rightMax.toFixed(2)}</text>
+          <path d={leftPath} fill="none" stroke="#22d3ee" strokeWidth="3" /><path d={rightPath} fill="none" stroke="#a78bfa" strokeWidth="3" />
+          {ordered.map((row) => <g key={`timeline:${row.id}`} className="cursor-pointer" onClick={() => openVideoAtTime(analysisId, row.start)}><circle cx={timelineX(row.start)} cy={timelineY(row.left, leftMin, leftMax, 20)} r="5" fill="#22d3ee" /><circle cx={timelineX(row.start)} cy={timelineY(row.right, rightMin, rightMax, 120)} r="5" fill="#a78bfa" /><text x={timelineX(row.start)} y="225" textAnchor="middle" fill="#94a3b8" fontSize="12">{row.start.toFixed(0)}s</text></g>)}
+        </svg>
+      </div>
+      <div className="overflow-auto rounded border border-slate-800">
+        <table className="w-full border-collapse text-left text-[9px]">
+          <thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500"><tr><th className="px-2 py-1.5">Scene</th><th className="px-2 py-1.5">{leftLabel}</th><th className="px-2 py-1.5">{rightLabel}</th><th className="px-2 py-1.5">Source</th></tr></thead>
+          <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-slate-900"><td className="px-2 py-1.5 text-slate-300">{row.scene}</td><td className="px-2 py-1.5 font-mono text-cyan-100">{row.left.toFixed(3)}</td><td className="px-2 py-1.5 font-mono text-cyan-100">{row.right.toFixed(3)}</td><td className="px-2 py-1.5"><button type="button" onClick={() => openVideoAtTime(analysisId, row.start)} className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:text-cyan-100">{row.start.toFixed(1)}s</button></td></tr>)}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MaturityRadar({ layers, metrics, masterRows, relationshipCount, onInspect }: { layers: StatsKitSourceLayerDeliverable[]; metrics: EvidenceMetric[]; masterRows: MasterSchemaStatsAuditRow[]; relationshipCount: number; onInspect: (id: string) => void }) {
+  const [mode, setMode] = useState<"coverage" | "maturity">("maturity");
+  const availableScore = (status: StatsKitSourceLayerDeliverable["status"]) => status === "available" ? 1 : status === "partial_proxy" ? 0.5 : 0;
+  const level = (value: number | null) => value === null ? "Not assessed" : value >= .8 ? "Ready" : value >= .55 ? "Developing" : "Needs attention";
+  const color = (value: number | null) => value === null ? "#7b8491" : value >= .8 ? "#7f9f8a" : value >= .55 ? "#b59a62" : "#a87878";
+  const coverageAxes = layers.slice(0, 10).map((layer) => ({
+    id: layer.id, label: layer.layer, value: availableScore(layer.status), target: 1,
+    basis: `${layer.availableRows} governed rows · ${layer.status.replace(/_/g, " ")}`,
+    affected: layer.unlocks, action: layer.nextAction, inspectId: layer.id,
+  }));
+  const meanScore = (values: number[]) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  const timed = layers.filter((layer) => /interval|turn|frame|window|temporal/i.test(layer.layer));
+  const matureAnchors = Number(metrics.find((metric) => metric.id === "mature_anchors")?.value || 0);
+  const taxonomyValues = masterRows.map((row) => row.status === "master_schema" ? 1 : row.status === "governed_candidate" ? .7 : row.status === "raw_substrate" ? .35 : 0);
+  const maturityAxes = [
+    { id: "coverage", label: "Multimodal coverage", value: meanScore(layers.map((layer) => availableScore(layer.status))), target: .8, basis: `${layers.filter((layer) => layer.status === "available").length}/${layers.length} source layers available`, affected: "All Stats motors", action: "Operationalize missing or partial source layers before relying on affected motors.", inspectId: layers.find((layer) => layer.status !== "available")?.id || layers[0]?.id },
+    { id: "temporal", label: "Temporal alignment", value: meanScore(timed.map((layer) => availableScore(layer.status))), target: .8, basis: `${timed.filter((layer) => layer.status === "available").length}/${timed.length} timed layers available`, affected: "Scene coupling, timelines, source navigation", action: "Calibrate/configure missing interval or turn layers against source_media.clock.", inspectId: timed.find((layer) => layer.status !== "available")?.id || timed[0]?.id },
+    { id: "provenance", label: "Provenance completeness", value: layers.length ? layers.filter((layer) => layer.currentSource && !/^no /i.test(layer.currentSource)).length / layers.length : null, target: .8, basis: `${layers.filter((layer) => layer.currentSource && !/^no /i.test(layer.currentSource)).length}/${layers.length} layers name a current governed source`, affected: "Traceback, review, report claims", action: "Persist the producing artifact and EvidenceLink path for layers without a governed source.", inspectId: layers.find((layer) => !layer.currentSource || /^no /i.test(layer.currentSource))?.id || layers[0]?.id },
+    { id: "taxonomy", label: "Taxonomy completeness", value: meanScore(taxonomyValues), target: .8, basis: `${masterRows.filter((row) => row.status === "master_schema").length}/${masterRows.length} audited categories resolve at Master Schema level`, affected: "Search, comparison, report terminology", action: "Promote governed candidates and raw substrate through the existing confirmation regime.", inspectId: layers[0]?.id },
+    { id: "confirmation", label: "Human confirmation", value: Math.min(1, matureAnchors / 12), target: .8, basis: `${matureAnchors} mature anchors against the declared 12-anchor review target`, affected: "Interpretive authority, identity attribution, report eligibility", action: "Review the highest-impact expression, speaker, object, and scene assignments.", inspectId: layers.find((layer) => /speaker|audio|visual/i.test(layer.layer))?.id || layers[0]?.id },
+    { id: "agreement", label: "Cross-modal agreement", value: Math.min(1, relationshipCount / 5), target: .8, basis: `${relationshipCount}/5 delivered coupling families have estimable relationships`, affected: "Significance propositions and multimodal report sentences", action: "Run the remaining delivered motors and inspect contradictory scene pairs.", inspectId: layers[0]?.id },
+    { id: "contradiction", label: "Contradiction resolution", value: null, target: .8, basis: "No governed contradiction-resolution aggregate is recorded", affected: "Acceptance, report qualification, downstream interpretation", action: "Review counter-evidence and persist contradiction decisions before marking the analysis ready.", inspectId: layers[0]?.id },
+    { id: "connectivity", label: "Relational connectivity", value: Math.min(1, relationshipCount / 10), target: .7, basis: `${relationshipCount} computed cross-signal relationships`, affected: "Meaning Network, comparison, significance routing", action: "Compute additional eligible cross-signal relationships from the available array.", inspectId: layers[0]?.id },
+  ];
+  const axes = mode === "coverage" ? coverageAxes : maturityAxes;
+  if (axes.length < 3) return <div className="text-[10px] text-amber-100">At least three governed source layers are required for a maturity radar.</div>;
+  const center = 260;
+  const radius = 190;
+  const point = (index: number, value: number) => {
+    const angle = -Math.PI / 2 + (index / axes.length) * Math.PI * 2;
+    return [center + Math.cos(angle) * radius * value, center + Math.sin(angle) * radius * value];
+  };
+  const polygon = (key: "value" | "target") => axes.map((axis, index) => point(index, axis[key] ?? 0).join(",")).join(" ");
+  const measuredAxes = axes.filter((axis) => axis.value !== null);
+  const limiting = [...measuredAxes].sort((a, b) => Number(a.value) - Number(b.value))[0];
+  const overallValue = limiting?.value ?? null;
+  const overallLevel = mode === "coverage" ? level(overallValue) : axes.some((axis) => axis.value === null) && Number(overallValue) >= .8 ? "Developing" : level(overallValue);
+  return <div className="grid gap-2" data-vaa1-exploratory-maturity-radar="true">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-800 bg-[#090909] px-3 py-2">
+      <div><div className="text-[9px] uppercase tracking-[0.12em] text-slate-500">{mode === "coverage" ? "Operational coverage" : "Analytical maturity"}</div><div className="mt-1 text-[13px] font-semibold" style={{ color: color(overallValue) }}>{overallLevel}{overallValue !== null ? ` · ${overallValue.toFixed(2)}` : ""}</div><div className="mt-1 text-[9px] text-slate-400">{limiting ? `Limiting dimension: ${limiting.label}. Next: ${limiting.action}` : "No measured dimensions available."}</div></div>
+      <div className="flex gap-1"><button type="button" onClick={() => setMode("coverage")} className={`rounded border px-2 py-1 text-[9px] ${mode === "coverage" ? "border-slate-500 text-slate-100" : "border-slate-800 text-slate-500"}`}>Multimodal coverage</button><button type="button" onClick={() => setMode("maturity")} className={`rounded border px-2 py-1 text-[9px] ${mode === "maturity" ? "border-slate-500 text-slate-100" : "border-slate-800 text-slate-500"}`}>Analytical maturity</button></div>
+    </div>
+    <div className="rounded border border-slate-800 bg-[#090909] px-3 py-2">
+      <div className="text-[11px] font-semibold text-slate-200">Exploratory maturity radar</div>
+      <div className="mt-1 text-[9px] text-slate-500">{mode === "coverage" ? "Analytical-category mode · representation of the multimodal analysis array." : "Maturity-dimension mode · readiness for governed interpretation and reporting."} Select an axis to inspect its basis and next action.</div>
+      <svg viewBox="0 0 520 520" className="mx-auto h-[520px] w-full max-w-[760px]" role="img" aria-label="StatsKit source-layer maturity radar">
+        {[.25, .5, .75, 1].map((level) => <polygon key={level} points={axes.map((_, index) => point(index, level).join(",")).join(" ")} fill="none" stroke="#1e293b" strokeWidth="1" />)}
+        {axes.map((axis, index) => { const [endX, endY] = point(index, 1); const [labelX, labelY] = point(index, 1.16); return <g key={axis.id} className="cursor-pointer" onClick={() => axis.inspectId && onInspect(axis.inspectId)}><line x1={center} y1={center} x2={endX} y2={endY} stroke="#334155" /><text x={labelX} y={labelY} textAnchor={labelX < center - 10 ? "end" : labelX > center + 10 ? "start" : "middle"} fill="#cbd5e1" fontSize="11">{axis.label.length > 29 ? `${axis.label.slice(0, 27)}…` : axis.label}</text><title>{`${axis.label}: ${level(axis.value)}${axis.value === null ? "" : ` ${axis.value.toFixed(2)}`}; ${axis.basis}; next: ${axis.action}`}</title></g>; })}
+        <polygon points={polygon("target")} fill="none" stroke="#64748b" strokeDasharray="6 5" strokeWidth="2" />
+        <polygon points={polygon("value")} fill="rgba(123,132,145,.10)" stroke="#7b8491" strokeWidth="3" />
+        {axes.map((axis, index) => { const [px, py] = point(index, axis.value ?? 0); const state = level(axis.value); return <g key={`point:${axis.id}`}>{state === "Developing" ? <rect x={px - 5} y={py - 5} width="10" height="10" fill={color(axis.value)} /> : state === "Needs attention" ? <polygon points={`${px},${py - 7} ${px + 7},${py} ${px},${py + 7} ${px - 7},${py}`} fill={color(axis.value)} /> : state === "Not assessed" ? <g stroke={color(axis.value)} strokeWidth="3"><line x1={px - 6} y1={py - 6} x2={px + 6} y2={py + 6} /><line x1={px + 6} y1={py - 6} x2={px - 6} y2={py + 6} /></g> : <circle cx={px} cy={py} r="6" fill={color(axis.value)} />}<title>{`${axis.label}: ${state}; ${axis.basis}`}</title></g>; })}
+      </svg>
+      <div className="flex flex-wrap gap-4 border-t border-slate-800 pt-2 text-[9px] text-slate-400"><span style={{ color: "#7f9f8a" }}>● Ready</span><span style={{ color: "#b59a62" }}>■ Developing</span><span style={{ color: "#a87878" }}>◆ Needs attention</span><span style={{ color: "#7b8491" }}>× Not assessed</span><span>– – target</span></div>
+    </div>
+    <div className="overflow-auto rounded border border-slate-800"><table className="w-full border-collapse text-left text-[9px]"><thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500"><tr><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Level</th><th className="px-2 py-1.5">Current</th><th className="px-2 py-1.5">Target</th><th className="px-2 py-1.5">Measured basis</th><th className="px-2 py-1.5">Affected analyses</th><th className="px-2 py-1.5">Next action</th></tr></thead><tbody>{axes.map((axis) => <tr key={axis.id} onClick={() => axis.inspectId && onInspect(axis.inspectId)} className="cursor-pointer border-t border-slate-900 hover:bg-white/[.02]"><td className="px-2 py-1.5 text-slate-200">{axis.label}</td><td className="px-2 py-1.5 font-semibold" style={{ color: color(axis.value) }}>{level(axis.value)}</td><td className="px-2 py-1.5 font-mono text-slate-300">{axis.value === null ? "—" : axis.value.toFixed(2)}</td><td className="px-2 py-1.5 font-mono text-slate-400">{axis.target.toFixed(2)}</td><td className="px-2 py-1.5 text-slate-400">{axis.basis}</td><td className="px-2 py-1.5 text-slate-400">{axis.affected}</td><td className="px-2 py-1.5 text-slate-300">{axis.action}</td></tr>)}</tbody></table></div>
+    <div className="text-[9px] text-slate-500">Levels: Ready ≥ 0.80; Developing 0.55–0.79; Needs attention &lt; 0.55; Not assessed = no governed aggregate. Overall level is constrained by the weakest measured dimension and cannot be Ready while a critical dimension is unassessed.</div>
+  </div>;
+}
+
 function quartiles(values: number[]): { min: number; q1: number; median: number; q3: number; max: number } | null {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!sorted.length) return null;
@@ -3174,6 +3397,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [runArtifact, setRunArtifact] = useState<Record<string, unknown> | null>(null);
   const [interpretationRunning, setInterpretationRunning] = useState(false);
   const [interpretationResult, setInterpretationResult] = useState<NativeStatisticalInterpretationRun | null>(null);
+  const [researchQuestion, setResearchQuestion] = useState("How do detected expressions vary with vocal emphasis and speech rate across scenes?");
+  const [researchMotor, setResearchMotor] = useState("expression_prosody");
+  const [researchWorkflow, setResearchWorkflow] = useState<StatsResearchQuestionRun | null>(null);
+  const [selectedResearchResultId, setSelectedResearchResultId] = useState("");
   const [statisticalOverviewVisible, setStatisticalOverviewVisible] = useState(true);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const workbenchRef = useRef<HTMLDetailsElement | null>(null);
@@ -3401,7 +3628,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   );
   const metrics = useMemo(() => buildMetrics(metadata, analysisData), [metadata, analysisData]);
   const radar = useMemo(() => buildRadar(metrics), [metrics]);
-  const claims = useMemo(() => buildSignificance(metrics, radar), [metrics, radar]);
+  const measuredSignificanceClaims = useMemo(
+    () => buildMeasuredSignificance(interpretationResult || analysisData?.nativeStatisticalInterpretation),
+    [analysisData?.nativeStatisticalInterpretation, interpretationResult],
+  );
+  const claims = useMemo(
+    () => measuredSignificanceClaims.length ? measuredSignificanceClaims : buildSignificance(metrics, radar),
+    [measuredSignificanceClaims, metrics, radar],
+  );
   const significanceWorkbenchRows = useMemo(() => buildSignificanceWorkbenchRows(claims), [claims]);
   const scannerRows = useMemo(() => buildRelevanceScannerRows(radar, claims), [radar, claims]);
   const overall = radar.length
@@ -3431,7 +3665,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       setRunArtifact(result);
       setRunStatus("complete");
       setRunSummary(`${runId} complete with ${resultCount} source-linked result(s).`);
-      setVisualization("bar_chart");
+      setVisualization("scatterplot");
     } catch (error) {
       const message = error instanceof Error ? error.message : "StatsKit run failed";
       if (message.includes("404")) {
@@ -3463,8 +3697,16 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     setInterpretationRunning(true);
     setRunSummary("Computing scene-level deviations and cross-signal associations...");
     try {
-      const result = await apiService.runNativeStatisticalInterpretation(activeAnalysisId);
-      setInterpretationResult(result);
+      const workflow = await apiService.runStatsResearchQuestion(activeAnalysisId, {
+        research_question: researchQuestion,
+        motor: researchMotor,
+        scope,
+      });
+      setResearchWorkflow(workflow);
+      setSelectedResearchResultId(workflow.run?.results?.[0]?.result_id || "");
+      setInterpretationResult(workflow.native_interpretation || null);
+      setVisualizationTarget("research_question");
+      setVisualization("bar_chart");
       setStatisticalOverviewVisible(true);
       const refreshed = await VideoService.refreshAnalysis(activeAnalysisId);
       setAnalysisData(refreshed);
@@ -3479,6 +3721,8 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
 
   const clearStatsKitInquiry = () => {
     setInterpretationResult(null);
+    setResearchWorkflow(null);
+    setSelectedResearchResultId("");
     setStatisticalOverviewVisible(false);
     setRunArtifact(null);
     setRunSummary("");
@@ -3562,6 +3806,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const visibleStatsRows = operationalStatsRows
     .filter((row) =>
       row.family === statFamily &&
+      (
+        statFamily === "taxonomy" ||
+        ["computed", "candidate", "raw", "reviewed", "accepted"].includes(row.status)
+      ) &&
       (statFamily !== "correlation" || row.id.startsWith("native-relationship:")) &&
       (
         statFamily !== "taxonomy" ||
@@ -3768,6 +4016,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       ? selectedScannerRowsForVisualization
       : scannerRows,
   );
+  const researchQuestionPlottedData = useMemo(
+    () => researchQuestionVisualizationData(researchWorkflow, selectedResearchResultId),
+    [researchWorkflow, selectedResearchResultId],
+  );
+  const selectedResearchResult = useMemo(
+    () => researchWorkflow?.run?.results?.find((item) => item.result_id === selectedResearchResultId) || researchWorkflow?.run?.results?.[0] || null,
+    [researchWorkflow, selectedResearchResultId],
+  );
   const studioVariables = useMemo(() => {
     const checked = operationalStatsRows.filter((row) => selectedStatIds.includes(row.id));
     if (checked.length) return checked.slice(0, 12);
@@ -3798,7 +4054,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     () => missingnessVisualizationData(studioMissingnessProfile),
     [studioMissingnessProfile],
   );
-  const plottedData = visualizationTarget === "significance"
+  const plottedData = visualizationTarget === "research_question"
+    ? researchQuestionPlottedData
+    : visualizationTarget === "significance"
     ? significancePlottedData
     : visualizationTarget === "relevance"
       ? relevancePlottedData
@@ -3816,7 +4074,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     sourceLayerDeliverables.find((row) => row.id === selectedReadinessLayerId) ||
     sourceLayerDeliverables[0] ||
     null;
-  const selectedCanVisualize = plottedData.length > 0;
+  const selectedCanVisualize = visualizationTarget === "maturity" ? sourceLayerDeliverables.length >= 3 : plottedData.length > 0;
   const studioPackage = useMemo(
     () => buildStatsComparisonStudioPackage({
       activeAnalysisId,
@@ -3930,6 +4188,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   };
 
   const toggleSignificanceVisualizationRow = (rowId: string) => {
+    setSelectedSignificanceRowId(rowId);
+    setVisualizationTarget("significance");
+    setVisualization("bar_chart");
     setSelectedSignificanceRowIds((current) =>
       current.includes(rowId)
         ? current.filter((id) => id !== rowId)
@@ -4036,29 +4297,40 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
 
       <details open className="order-2 mt-2 rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-box-collapsible="true">
         <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-200 marker:hidden">Analysis setup</summary>
-        <div className="grid gap-2 border-t border-slate-800 p-2 xl:grid-cols-[1fr_190px_150px_150px_120px_150px_90px_90px]">
+        <div className="grid gap-2 border-t border-slate-800 p-2 xl:grid-cols-4">
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
-          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Active analysis</span>
+          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Research question</span>
           <input
             className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100"
-            value={activeAnalysisId}
-            onChange={(event) => setActiveAnalysisId(event.target.value)}
-            placeholder="Select an analysis"
+            value={researchQuestion}
+            onChange={(event) => setResearchQuestion(event.target.value)}
+            placeholder="State the relationship to analyse"
           />
         </label>
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
+          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Active analysis</span>
+          <input className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100" value={activeAnalysisId} onChange={(event) => setActiveAnalysisId(event.target.value)} placeholder="Select an analysis" />
+        </label>
+        <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
           <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Stats family</span>
+          <select className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100" value={statFamily} onChange={(event) => { setStatFamily(event.target.value as StatsFamily); setWorkbenchOpen(true); }}>
+            {STAT_FAMILY_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+        <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
+          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Stats motor</span>
           <select
             className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100"
-            value={statFamily}
+            value={researchMotor}
             onChange={(event) => {
-              setStatFamily(event.target.value as StatsFamily);
-              setWorkbenchOpen(true);
+              setResearchMotor(event.target.value);
             }}
           >
-            {STAT_FAMILY_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
+            <option value="expression_prosody">Expressions and vocal delivery</option>
+            <option value="expression_transcript">Expressions and transcript</option>
+            <option value="sfl_prosody">SFL and vocal delivery</option>
+            <option value="props_sfl">Props and SFL processes</option>
+            <option value="transcript_prosody">Transcript and vocal emphasis</option>
           </select>
         </label>
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
@@ -4071,19 +4343,6 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             <option value="scene">Scene</option>
             <option value="video">Video</option>
             <option value="collection">Collection</option>
-          </select>
-        </label>
-        <label className="hidden rounded border border-slate-800 bg-[#101010] px-2 py-1.5 xl:block">
-          <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Audience</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100"
-            value={audience}
-            onChange={(event) => setAudience(event.target.value as "analyst" | "editor" | "researcher" | "journalist")}
-          >
-            <option value="analyst">Analyst</option>
-            <option value="editor">Editor</option>
-            <option value="researcher">Researcher</option>
-            <option value="journalist">Journalist</option>
           </select>
         </label>
         <button
@@ -4102,7 +4361,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           onClick={runStatisticalInterpretation}
           data-vaa1-run-statistical-interpretation="true"
         >
-          {interpretationRunning ? "Finding scenes..." : "Find statistical patterns"}
+          {interpretationRunning ? "Running analysis..." : "Run research question"}
         </button>
         <button type="button" onClick={() => void refreshStatsKitInquiry()} className="rounded border border-slate-700 px-2 py-2 text-[10px] text-slate-300 hover:bg-white/5">Refresh</button>
         <button type="button" onClick={clearStatsKitInquiry} className="rounded border border-slate-700 px-2 py-2 text-[10px] text-slate-300 hover:bg-white/5">Clear</button>
@@ -4117,6 +4376,40 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           defaultOpen={false}
         />
       </div> : null}
+
+      {researchWorkflow?.run?.results?.length ? (
+        <details className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-research-question-results="true">
+          <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200 marker:hidden">
+            Research question view
+            <span className="ml-2 font-mono text-[9px] text-slate-500">{researchWorkflow.run.results.length} computed</span>
+          </summary>
+          <div className="mt-2 grid gap-2">
+            {researchWorkflow.run.results.map((result) => (
+              <div key={result.result_id} className={`rounded border bg-[#090909] px-3 py-2 ${selectedResearchResultId === result.result_id ? "border-cyan-800" : "border-slate-800"}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold text-slate-100">{String(result.left_variable || "").replace(/_/g, " ")} ↔ {String(result.right_variable || "").replace(/_/g, " ")}</div>
+                  <div className="flex items-center gap-2"><div className="font-mono text-[9px] text-cyan-200">ρ {Number(result.coefficient).toFixed(3)} · n={result.sample_size}</div><button type="button" onClick={() => { setSelectedResearchResultId(result.result_id || ""); setVisualizationTarget("research_question"); setVisualization("scatterplot"); }} className="rounded border border-slate-700 px-2 py-0.5 text-[9px] text-slate-300 hover:text-cyan-100">Visualize</button></div>
+                </div>
+                <div className="mt-1 text-[10px] text-slate-300">{result.proposition?.text}</div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {(result.evidence || []).map((evidence, index) => {
+                    const interval = evidence.source_interval as { start_seconds?: number } | undefined;
+                    return (
+                      <button key={`${result.result_id}-${index}`} type="button" onClick={() => openVideoAtTime(activeAnalysisId, Number(interval?.start_seconds || 0))} className="rounded border border-slate-700 px-2 py-1 text-[9px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100">
+                        {String(evidence.scene_ref || `Scene ${index + 1}`)} · {Number(interval?.start_seconds || 0).toFixed(1)}s
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 rounded border border-slate-800 px-2 py-1.5">
+                  <div className="text-[8px] uppercase tracking-[0.12em] text-slate-500">Draft report sentence</div>
+                  <div className="mt-1 text-[10px] text-slate-200">{result.report_sentence?.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       <div className="order-4 mt-2">
         {activeAnalysisId && <SceneLanguageSFLView analysisId={activeAnalysisId} perspective="scene" />}
@@ -5140,9 +5433,15 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
               <select
                 className="rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] normal-case tracking-normal text-slate-100"
                 value={visualizationTarget}
-                onChange={(event) => setVisualizationTarget(event.target.value as VisualizationTarget)}
+                onChange={(event) => {
+                  const target = event.target.value as VisualizationTarget;
+                  setVisualizationTarget(target);
+                  setVisualization(target === "research_question" ? "scatterplot" : target === "maturity" ? "maturity_radar" : "bar_chart");
+                }}
               >
                 <option value="stats">Stats workbench</option>
+                <option value="research_question">Research question</option>
+                <option value="maturity">Maturity governance</option>
                 <option value="significance">Significance workbench</option>
                 <option value="relevance">Relevance scanner</option>
                 <option value="comparison">Comparison studio</option>
@@ -5155,21 +5454,40 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                 value={visualization}
                 onChange={(event) => setVisualization(event.target.value as VisualizationMode)}
               >
-                {VISUALIZATION_MODE_OPTIONS.map((option) => (
+                {VISUALIZATION_MODE_OPTIONS.filter((option) => visualizationTarget === "research_question" ? option.id === "scatterplot" : visualizationTarget === "maturity" ? option.id === "maturity_radar" : !["scatterplot", "maturity_radar"].includes(option.id)).map((option) => (
                   <option key={option.id} value={option.id}>{option.label}</option>
                 ))}
               </select>
             </label>
           </div>
           <div className="mt-2 rounded border border-slate-800 bg-[#090909] px-2 py-1.5 text-[9px] text-slate-400">
-            {plottedData.length} numeric row(s) available for {visualization.replace(/_/g, " ")}.
+            {visualizationTarget === "maturity"
+              ? `${sourceLayerDeliverables.length} governed source layers available for maturity and attention routing.`
+              : visualizationTarget === "research_question"
+              ? `${selectedResearchResult?.evidence?.length || 0} paired scene observations available for scatterplot and source timeline.`
+              : `${plottedData.length} numeric row(s) available for ${visualization.replace(/_/g, " ")}.`}
           </div>
           <div
             className="mt-3 rounded border border-slate-800 bg-[#090909] px-3 py-2"
             data-vaa1-statskit-selected-stat-inspector="true"
             data-vaa1-statskit-visualization-eligible={selectedCanVisualize ? "true" : "false"}
           >
-            {selectedStat ? (
+            {visualizationTarget === "maturity" ? (
+              <div className="text-[10px] text-slate-300">Current maturity, target threshold, and attention requirement are calculated from the visible governed source-layer delivery records.</div>
+            ) : visualizationTarget === "research_question" && selectedResearchResult ? (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-semibold text-slate-100">{selectedResearchResult.proposition?.text}</div>
+                    <div className="mt-1 font-mono text-[9px] text-slate-500">
+                      Spearman rho {Number(selectedResearchResult.coefficient).toFixed(3)} / n={selectedResearchResult.sample_size}
+                    </div>
+                  </div>
+                  <div className="text-[9px] uppercase tracking-[0.12em] text-cyan-200">computed</div>
+                </div>
+                <div className="mt-2 text-[9px] text-slate-400">Paired values from each contributing governed scene. Source intervals remain available in Research question view.</div>
+              </>
+            ) : selectedStat ? (
               <>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -5198,7 +5516,11 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             )}
           </div>
           <div className="mt-3" data-vaa1-operational-visualization-renderer="true" data-vaa1-visualization-target={visualizationTarget}>
-            <VisualizationRenderer mode={visualization} data={plottedData} target={visualizationTarget} />
+            {visualizationTarget === "maturity"
+              ? <MaturityRadar layers={sourceLayerDeliverables} metrics={metrics} masterRows={masterAuditRows} relationshipCount={(interpretationResult || analysisData?.nativeStatisticalInterpretation)?.relationships?.length || 0} onInspect={(id) => { setSelectedReadinessLayerId(id); setVisualizationTarget("maturity"); }} />
+              : visualizationTarget === "research_question" && selectedResearchResult
+              ? <ResearchQuestionRelationshipPlot result={selectedResearchResult} analysisId={activeAnalysisId} />
+              : <VisualizationRenderer mode={visualization} data={plottedData} target={visualizationTarget} />}
           </div>
         </details>
 
@@ -5607,6 +5929,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                 <th className="border-b border-slate-800 px-3 py-2">Support</th>
                 <th className="border-b border-slate-800 px-3 py-2">Claim</th>
                 <th className="border-b border-slate-800 px-3 py-2">Status</th>
+                <th className="border-b border-slate-800 px-3 py-2">Source</th>
               </tr>
             </thead>
             <tbody>
@@ -5649,6 +5972,20 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                   </td>
                   <td className={row.status === "candidate" ? "px-3 py-2 text-cyan-200" : "px-3 py-2 text-amber-200"}>
                     {row.status}
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.sourceStart !== undefined ? (
+                      <button
+                        type="button"
+                        className="text-slate-300 hover:text-white"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openVideoAtTime(activeAnalysisId, row.sourceStart || 0);
+                        }}
+                      >
+                        {Number(row.sourceStart).toFixed(1)}s
+                      </button>
+                    ) : <span className="text-slate-600">—</span>}
                   </td>
                 </tr>
               ))}

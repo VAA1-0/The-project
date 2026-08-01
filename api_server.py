@@ -164,6 +164,7 @@ from src.backend.analysis.governed_reporting import GovernedReportService
 from src.backend.analysis.native_statistical_interpretation import (
     NativeStatisticalInterpretationService,
 )
+from src.backend.analysis.stats_research_question import StatsResearchQuestionService
 from src.backend.analysis.source_policy_service import evaluate_source_use
 from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
 from src.backend.analysis.vocabulary_service import (
@@ -11370,6 +11371,10 @@ def native_statistical_interpretation_service_for_analysis(
     )
 
 
+def stats_research_question_service_for_analysis(analysis_id: str) -> StatsResearchQuestionService:
+    return StatsResearchQuestionService(analysis_id, RESULTS_DIR / analysis_id)
+
+
 def governed_report_sources_for_analysis(analysis_id: str, status: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Expose governed objects with their evidence chain intact for report verification."""
     registry = interpretation_registry_for_analysis(analysis_id).view()
@@ -11614,6 +11619,44 @@ async def get_native_statistical_interpretation(analysis_id: str) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=f"Stored statistical interpretation is unreadable: {exc}") from exc
+
+
+@app.get("/api/analysis/{analysis_id}/stats-research-question", response_model=dict)
+async def get_stats_research_question_workflow(analysis_id: str) -> dict:
+    """Return persisted research questions, executable plans, and governed runs."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        return stats_research_question_service_for_analysis(analysis_id).load()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/stats-research-question/run", response_model=dict)
+async def run_stats_research_question_workflow(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Execute the selected Stats motor from a validated research-question plan."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    persist = bool(payload.get("persist", True))
+    try:
+        workflow_service = stats_research_question_service_for_analysis(analysis_id)
+        plan = workflow_service.create_plan(payload, persist=persist)
+        native_result = native_statistical_interpretation_service_for_analysis(analysis_id).run_from_status(
+            status, persist=persist
+        )
+        delivered = workflow_service.record_run(plan, native_result, persist=persist)
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        workflow_path = RESULTS_DIR / analysis_id / "stats_research_question_workflow.json"
+        status.setdefault("output_files", {})["stats_research_question_workflow"] = str(workflow_path)
+        status["stats_research_question_workflow"] = workflow_service.load()
+        status["native_statistical_interpretation"] = native_result
+        persist_analysis_record_for_status(status)
+    return {**delivered, "native_interpretation": native_result}
 
 
 @app.post("/api/analysis/{analysis_id}/native-statistical-interpretation/run", response_model=dict)
