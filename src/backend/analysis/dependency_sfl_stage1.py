@@ -402,6 +402,7 @@ def _sfl_features(text: str, tokens: List[Dict[str, Any]], syntax: Dict[str, Any
     affect = sorted({AFFECT_HINTS[lemma] for lemma in lemmas if lemma in AFFECT_HINTS})
     intensity = "high" if any(lemma in {"very", "extremely", "absolutely", "really"} for lemma in lemmas) else "normal"
     theme_candidate = next((token["text"] for token in tokens if token.get("pos") != "PUNCT"), None)
+    speech_function = _speech_function(text, tokens, syntax)
 
     return {
         "ideational": {
@@ -414,7 +415,7 @@ def _sfl_features(text: str, tokens: List[Dict[str, Any]], syntax: Dict[str, Any
             "circumstances": syntax.get("adverbials") or [],
         },
         "interpersonal": {
-            "speech_function": _speech_function(text, tokens, syntax),
+            "speech_function": speech_function,
             "modality": modality,
             "stance": stance,
             "affect": affect,
@@ -428,6 +429,14 @@ def _sfl_features(text: str, tokens: List[Dict[str, Any]], syntax: Dict[str, Any
         "confidence": {
             "syntax": 0.72 if any(token.get("dep") for token in tokens) else 0.35,
             "sfl_lite": 0.55,
+        },
+        "statistical_features": {
+            "proposal_indicator": 1.0 if speech_function in {"directive_candidate", "proposal_candidate"} else 0.0,
+            "question_indicator": 1.0 if speech_function == "question" else 0.0,
+            "modality_indicator": 1.0 if modality else 0.0,
+            "material_process_indicator": 1.0 if process_type == "material" else 0.0,
+            "verbal_process_indicator": 1.0 if process_type == "verbal" else 0.0,
+            "schema": "vaa1.sfl_statistical_features.v1",
         },
     }
 

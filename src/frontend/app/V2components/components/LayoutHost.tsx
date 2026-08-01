@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { ContentItem, GoldenLayout, JsonValue, LayoutConfig } from "golden-layout";
 import { ReactComponentWrapper } from "@/lib/golden-layout-lib/ReactComponentWrapper";
 import "golden-layout/dist/css/goldenlayout-base.css";
@@ -404,7 +404,23 @@ export default function LayoutHost({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<GoldenLayout | null>(null);
+  const [fallbackContextMenu, setFallbackContextMenu] = useState<{
+    x: number;
+    y: number;
+    label: string;
+    content: string;
+  } | null>(null);
   useEffect(() => installIdlePrecompute(), []);
+  useEffect(() => {
+    if (!fallbackContextMenu) return;
+    const close = () => setFallbackContextMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [fallbackContextMenu]);
   const PANEL_TITLES: Record<string, string> = {
     Audio: "Audio",
     CvatPluginPanel: "CVAT plugin",
@@ -983,7 +999,80 @@ export default function LayoutHost({
   return (
     <LayoutHostContext.Provider value={{ openPanel }}>
       <MenuBar />
-      <div ref={hostRef} style={{ width: "100%", height: "100%" }} />
+      <div
+        ref={hostRef}
+        style={{ width: "100%", height: "100%" }}
+        onContextMenu={(event) => {
+          if (event.defaultPrevented) return;
+          event.preventDefault();
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const actionable = target?.closest(
+            "button, [role='button'], [role='row'], tr, [data-vaa1-evidence-id]",
+          ) as HTMLElement | null;
+          const selectedText = window.getSelection()?.toString().trim() || "";
+          const content = selectedText || String(actionable?.innerText || target?.innerText || "").trim();
+          const label = content
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 120);
+          setFallbackContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            label: label || "No governed record selected",
+            content,
+          });
+        }}
+        data-vaa1-default-context-regime="true"
+      />
+      {fallbackContextMenu ? (
+        <div
+          className="fixed z-[11000] min-w-[190px] max-w-[260px] rounded border border-teal-800/70 bg-[#101010] p-1 shadow-2xl shadow-black/70"
+          style={{
+            left: Math.min(fallbackContextMenu.x, Math.max(16, window.innerWidth - 280)),
+            top: Math.min(fallbackContextMenu.y, Math.max(16, window.innerHeight - 300)),
+          }}
+          role="menu"
+          aria-label="Datascene panel actions"
+          data-vaa1-context-regime-base="meaning-network"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="border-b border-slate-800 px-2 py-1.5">
+            <div className="truncate text-[10px] font-medium text-slate-100">{fallbackContextMenu.label}</div>
+            <div className="mt-0.5 text-[9px] uppercase tracking-[0.1em] text-slate-500">Panel surface</div>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            className="mt-1 block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40"
+            onClick={() => {
+              if (navigator.clipboard?.writeText) {
+                void navigator.clipboard.writeText(fallbackContextMenu.content).catch(() => undefined);
+              }
+              setFallbackContextMenu(null);
+            }}
+          >
+            Copy content
+          </button>
+          {[
+            "Open sheet",
+            "Matcher: find constellations",
+            "Quick confirm",
+            "Jump to source",
+            "Open traceback",
+          ].map((label, index) => (
+            <button
+              key={label}
+              type="button"
+              role="menuitem"
+              disabled
+              title="Select a governed evidence record to enable this action."
+              className={`block w-full cursor-not-allowed rounded px-2 py-1.5 text-left text-[10px] opacity-35 ${index === 2 ? "mt-1 border-t border-slate-800 text-emerald-200" : index === 4 ? "text-amber-200" : "text-slate-300"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {children}
     </LayoutHostContext.Provider>
   );

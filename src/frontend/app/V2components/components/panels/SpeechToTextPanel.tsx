@@ -35,6 +35,7 @@ import {
 import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+import SceneLanguageSFLView from "../SceneLanguageSFLView";
 
 const TRANSCRIPT_SOURCE_SPEAKERS = [
   "Announcer",
@@ -937,6 +938,7 @@ export default function SpeechToTextPanel({
             </Tooltip>
           </div>
         </div>
+        {videoId && <div className="mx-3 mb-2"><SceneLanguageSFLView analysisId={videoId} perspective="transcript" /></div>}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* SUMMARY */}
           <div className="border-b border-white/8 shrink-0">

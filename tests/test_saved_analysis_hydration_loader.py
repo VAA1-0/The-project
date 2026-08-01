@@ -76,6 +76,16 @@ class SavedAnalysisHydrationLoaderTests(unittest.TestCase):
             }
 
             self.write_json(analysis_dir / "tracked_objects.json", tracked_objects)
+            shot_boundaries = {
+                "schema": "vaa1.shot_boundaries.v1",
+                "intervals": [{"shot_id": "shot-1", "start": 0, "end": 1}],
+            }
+            spatial_tone = {
+                "schema": "vaa1.spatial_tone_scan.v1",
+                "samples": [{"timestamp": 0, "brightness": 42}],
+            }
+            self.write_json(analysis_dir / "shot_boundaries.json", shot_boundaries)
+            self.write_json(analysis_dir / "spatial_tone_scan.json", spatial_tone)
             self.write_json(analysis_dir / "annotation_corrections.json", corrections)
             self.write_json(
                 analysis_dir / "vaa1_annotation_master_schema.json",
@@ -95,6 +105,14 @@ class SavedAnalysisHydrationLoaderTests(unittest.TestCase):
                 hydrated["results"]["visual_analysis"]["tracked_objects"],
                 tracked_objects,
             )
+            self.assertEqual(
+                hydrated["results"]["visual_analysis"]["shot_boundaries"],
+                shot_boundaries,
+            )
+            self.assertEqual(
+                hydrated["results"]["visual_analysis"]["spatial_tone_scan"],
+                spatial_tone,
+            )
             self.assertEqual(hydrated["source_samples"], [sample])
             self.assertEqual(len(hydrated["evidence_proliferation_matches"]), 1)
             self.assertEqual(
@@ -107,6 +125,14 @@ class SavedAnalysisHydrationLoaderTests(unittest.TestCase):
             )
             self.assertIn(
                 "results.visual_analysis.tracked_objects",
+                hydrated["saved_analysis_hydration_audit"]["hydrated"],
+            )
+            self.assertIn(
+                "results.visual_analysis.shot_boundaries",
+                hydrated["saved_analysis_hydration_audit"]["hydrated"],
+            )
+            self.assertIn(
+                "results.visual_analysis.spatial_tone_scan",
                 hydrated["saved_analysis_hydration_audit"]["hydrated"],
             )
 

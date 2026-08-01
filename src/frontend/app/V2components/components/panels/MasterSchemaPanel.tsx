@@ -32,6 +32,7 @@ import {
 import { matureSceneSegmentsFromAnalysis } from "@/lib/scene-governance";
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import { useLayoutHost } from "../LayoutHost";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
@@ -3004,6 +3005,13 @@ function NarrativeAgentCharacterPathsHome({
         >
           Open plot map
         </button>
+      </div>
+
+      <div className="border-b border-white/8 px-3 py-2">
+        <NativeStatisticalInterpretationStrip
+          run={analysisData?.nativeStatisticalInterpretation}
+          panel="narrative_agent"
+        />
       </div>
 
       <PanelDropdownSection

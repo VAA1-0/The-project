@@ -39,6 +39,28 @@ const menuBar = read("app/V2components/components/MenuBar.tsx");
 const masterSchemaPanel = read("app/V2components/components/panels/MasterSchemaPanel.tsx");
 const dataMaturationPanel = read("app/V2components/components/panels/DataMaturationPanel.tsx");
 const statsKitPanel = read("app/V2components/components/panels/StatsKitPanel.tsx");
+const searchPanel = read("app/V2components/components/panels/SearchPanel.tsx");
+const nativeStatisticalStrip = read("app/V2components/components/NativeStatisticalInterpretationStrip.tsx");
+
+test("native statistical interpretations retain precise terms across governed panels", () => {
+  assert.match(statsKitPanel, /data-vaa1-run-statistical-interpretation="true"/);
+  assert.match(statsKitPanel, /Find statistical patterns/);
+  assert.match(statsKitPanel, /runNativeStatisticalInterpretation/);
+  assert.match(nativeStatisticalStrip, /data-vaa1-open-statistical-pattern-in-workbench/);
+  assert.match(nativeStatisticalStrip, /Cross-signal associations/);
+  assert.match(nativeStatisticalStrip, /Baseline median/);
+  assert.match(nativeStatisticalStrip, /Robust z/);
+  for (const [name, source] of [
+    ["StatsKit", statsKitPanel],
+    ["Search", searchPanel],
+    ["Scene Cards", sceneCardPanel],
+    ["Narrative Agent", masterSchemaPanel],
+    ["Meaning\/Plot", meaningPlotPanel],
+    ["Data Maturation", dataMaturationPanel],
+  ]) {
+    assert.match(source, /NativeStatisticalInterpretationStrip/, `${name} must consume the governed statistical projection`);
+  }
+});
 
 test("POS and Quant repeated terms retain source order and per-term occurrence numbers", () => {
   assert.match(
@@ -108,6 +130,21 @@ test("measured visual detections surface in Visual cues, Cinematic cues, and Sta
     statsKitPanel,
     /Use governed frame-window measurements for visual distributions/,
     "StatsKit must stop requesting extraction when governed spatial-tone rows exist",
+  );
+  assert.match(
+    statsKitPanel,
+    /Category[\s\S]*Subcategory[\s\S]*Find entry[\s\S]*Governed measured source layer/,
+    "StatsKit readiness must provide category, subcategory, search, and governed-layer navigation",
+  );
+  assert.match(
+    statsKitPanel,
+    /shot_boundaries\.json[\s\S]*spatial_tone_scan\.json/,
+    "StatsKit evidence inspection must expose timed shot and visual-tone source records",
+  );
+  assert.match(
+    statsKitPanel,
+    /basis\.includes\("visual shot"\)[\s\S]*!basis\.includes\("visual scene"\)[\s\S]*"shot_boundary"/,
+    "taxonomy visual-shot rows must resolve governed shot anchors without conflating scene rows",
   );
 });
 
@@ -195,6 +232,38 @@ test("Visual cues uses a top alphabetical selector without replacing the Video p
     /Motion and scene basis[\s\S]*Open[\s\S]*<CollapsibleContent/,
     "Motion and scene basis must begin collapsed",
   );
+});
+
+test("cinematic evidence uses Datascene context actions and inline correction", () => {
+  assert.match(
+    toolsPanel,
+    /onContextMenu=\{\(event\)[\s\S]*setCinematicContextMenu[\s\S]*Datascene evidence context menu/,
+    "measured cinematic rows must intercept right-click with Datascene evidence actions",
+  );
+  assert.match(
+    toolsPanel,
+    /data-vaa1-cinematic-inline-correction/,
+    "cinematic correction must remain attached to the selected evidence row",
+  );
+  assert.match(
+    toolsPanel,
+    /data-vaa1-context-regime-base="meaning-network"[\s\S]*Copy evidence[\s\S]*Open sheet[\s\S]*Matcher: find constellations[\s\S]*Quick confirm[\s\S]*Jump to source[\s\S]*Open traceback/,
+    "cinematic evidence must use the established Meaning Network right-click regime base",
+  );
+  assert.doesNotMatch(
+    toolsPanel,
+    /window\.prompt\("Set analyst override for cinematic clue:/,
+    "cinematic correction must not use a blocking browser prompt",
+  );
+});
+
+test("the Datascene panel shell owns the default right-click fallback", () => {
+  assert.match(
+    layoutHost,
+    /data-vaa1-default-context-regime[\s\S]*data-vaa1-context-regime-base="meaning-network"[\s\S]*Copy content[\s\S]*Open sheet[\s\S]*Matcher: find constellations[\s\S]*Quick confirm[\s\S]*Jump to source[\s\S]*Open traceback/,
+    "all GoldenLayout panels must inherit a Datascene fallback instead of the browser context menu",
+  );
+  assert.match(layoutHost, /Select a governed evidence record to enable this action/, "unsupported fallback actions must remain explicitly disabled");
 });
 
 test("Tools repairs selected-analysis context from the stable Video panel", () => {

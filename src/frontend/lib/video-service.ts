@@ -4367,9 +4367,11 @@ export interface AnalysisData {
   narrativeLensReading?: Record<string, unknown> | null;
   characterPathReading?: Record<string, unknown> | null;
   datasceneMeaningNetwork?: Record<string, unknown> | null;
+  multimodalMeaningStage1?: Record<string, unknown> | null;
   miseEnSceneSceneCards?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
+  nativeStatisticalInterpretation?: import("./api-service").NativeStatisticalInterpretationRun | null;
   audioDiarization?: AudioDiarizationScaffold | null;
   audioSampleClouds?: Record<string, unknown> | null;
   summary: string;
@@ -5196,6 +5198,7 @@ export interface AnalysisStatus {
     decisions: Array<Record<string, unknown>>;
   };
   projected_canonical_claims?: import("./api-service").ProjectedCanonicalClaimCollection;
+  native_statistical_interpretation?: import("./api-service").NativeStatisticalInterpretationRun | null;
   speaker_prosody_projection?: Record<string, unknown> | null;
   transcript_timing_repair?: {
     status?: string;
@@ -5486,6 +5489,7 @@ export interface AnalysisStatus {
   narrative_lens_reading?: Record<string, unknown> | null;
   character_path_reading?: Record<string, unknown> | null;
   datascene_meaning_network?: Record<string, unknown> | null;
+  multimodal_meaning_stage1?: Record<string, unknown> | null;
   mise_en_scene_scene_cards?: Record<string, unknown> | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   live_mature_data_proliferation_audit?: Record<string, unknown> | null;
@@ -5980,10 +5984,13 @@ export class VideoService {
         narrativeLensReading: status.narrative_lens_reading || null,
         characterPathReading: status.character_path_reading || null,
         datasceneMeaningNetwork: status.datascene_meaning_network || null,
+        multimodalMeaningStage1: status.multimodal_meaning_stage1 || null,
         miseEnSceneSceneCards: status.mise_en_scene_scene_cards || null,
         evidenceProliferationMatches: status.evidence_proliferation_matches || [],
         liveMatureDataProliferationAudit:
           status.live_mature_data_proliferation_audit || null,
+        nativeStatisticalInterpretation:
+          status.native_statistical_interpretation || null,
         audioDiarization: audioDiarizationStatus,
         audioSampleClouds: audioSampleCloudsStatus,
         summary: this.generateSummary(status),
@@ -5993,10 +6000,13 @@ export class VideoService {
           narrative_lens_reading: status.narrative_lens_reading || null,
           character_path_reading: status.character_path_reading || null,
           datascene_meaning_network: status.datascene_meaning_network || null,
+          multimodal_meaning_stage1: status.multimodal_meaning_stage1 || null,
           mise_en_scene_scene_cards: status.mise_en_scene_scene_cards || null,
           audio_event_intervals:
             (status as unknown as LooseRecord).audio_event_intervals || null,
           audio_diarization: status.audio_diarization || null,
+          native_statistical_interpretation:
+            status.native_statistical_interpretation || null,
         },
         status: "completed",
         downloadLinks: status.download_links,

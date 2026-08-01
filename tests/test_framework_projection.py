@@ -59,6 +59,14 @@ class FrameworkProjectionTests(unittest.TestCase):
         projections = build_framework_projections("a1", self.registry.view())
         self.assertFalse(projections["boje_5b"]["events"])
 
+    def test_legacy_boje_aliases_normalize_with_lineage(self):
+        self.proposition(self.claim(), framework_ref="boje_5b.beyond")
+        projections = build_framework_projections("a1", self.registry.view())
+        event = projections["boje_5b"]["events"][0]
+        self.assertEqual(event["orientation"], "before")
+        self.assertTrue(event["vocabulary_lineage"]["legacy_alias_normalized"])
+        self.assertEqual(event["vocabulary_lineage"]["source_framework_ref"], "boje_5b.beyond")
+
     def test_explicit_analyst_confirmation_enters_canonical_ledger(self):
         proposition = self.proposition(self.claim())
         ledger, decision, appended = confirm_proposition_to_ledger(

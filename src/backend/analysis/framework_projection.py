@@ -13,7 +13,8 @@ from typing import Any, Dict
 from .decision_ledger import append_decision
 
 
-BOJE_5B = {"bet", "beneath", "between", "beyond", "becoming"}
+BOJE_5B = {"before", "bets", "becoming", "beneath", "between"}
+BOJE_5B_LEGACY_ALIASES = {"bet": "bets", "beyond": "before"}
 
 
 def _id(prefix: str, *values: Any) -> str:
@@ -115,7 +116,8 @@ def build_framework_projections(analysis_id: str, registry_view: Dict[str, Any])
     boje_events = []
     for key, item in propositions.items():
         framework_ref = str(item.get("framework_ref") or "")
-        orientation = framework_ref.removeprefix("boje_5b.") if framework_ref.startswith("boje_5b.") else ""
+        source_orientation = framework_ref.removeprefix("boje_5b.") if framework_ref.startswith("boje_5b.") else ""
+        orientation = BOJE_5B_LEGACY_ALIASES.get(source_orientation, source_orientation)
         if orientation not in BOJE_5B:
             continue
         boje_events.append({
@@ -124,6 +126,11 @@ def build_framework_projections(analysis_id: str, registry_view: Dict[str, Any])
             "scope": item.get("scope", {}), "support_refs": item.get("support_refs", []),
             "counter_evidence_refs": item.get("counter_evidence_refs", []), "alternatives": item.get("alternatives", []),
             "framework_assignment": "explicit", "authority": "candidate_service", "canonical": False,
+            "vocabulary_lineage": {
+                "canonical_term_id": f"boje_5b.{orientation}",
+                "source_framework_ref": framework_ref,
+                "legacy_alias_normalized": source_orientation != orientation,
+            },
         })
 
     return {
@@ -132,7 +139,8 @@ def build_framework_projections(analysis_id: str, registry_view: Dict[str, Any])
         "meaning_network": {"schema": "vaa1.meaning_network_candidate_projection.v1", "nodes": nodes, "edges": edges},
         "narrative_agent": {"schema": "vaa1.narrative_agent_candidate_projection.v1", "readings": narrative_agents, "state_transitions": transitions},
         "boje_5b": {"schema": "vaa1.boje_5b_candidate_projection.v1", "events": boje_events,
-                    "rule": "A 5B orientation requires an explicit framework_ref; it is never guessed from keywords."},
+                    "rule": "A 5B orientation requires an explicit framework_ref; it is never guessed from keywords.",
+                    "canonical_vocabulary": ["before", "bets", "becoming", "beneath", "between"]},
         "excluded_records": excluded,
         "governance": {"candidate_authority_preserved": True, "canonical_write": False,
                        "observation_only_support_excluded": True, "counter_evidence_preserved": True},

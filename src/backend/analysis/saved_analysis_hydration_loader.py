@@ -43,6 +43,12 @@ CANONICAL_ARTIFACTS = {
     "tracked_objects_json": ("tracked_objects.json", "tracked_objects"),
 }
 
+VISUAL_RESULT_ARTIFACTS = {
+    "shot_boundaries": "shot_boundaries.json",
+    "spatial_tone_scan": "spatial_tone_scan.json",
+    "adaptive_visual_scan": "adaptive_visual_scan.json",
+}
+
 
 def read_json_file(path: Path) -> Any:
     try:
@@ -161,10 +167,13 @@ def hydrate_source_samples(
         audit["hydrated"].append("source_samples")
 
 
-def hydrate_visual_results(status: Dict[str, Any], *, audit: Dict[str, Any]) -> None:
+def hydrate_visual_results(
+    status: Dict[str, Any],
+    *,
+    analysis_dir: Path,
+    audit: Dict[str, Any],
+) -> None:
     tracked = status.get("tracked_objects")
-    if not isinstance(tracked, list):
-        return
     results = status.setdefault("results", {})
     if not isinstance(results, dict):
         status["results"] = {}
@@ -173,9 +182,22 @@ def hydrate_visual_results(status: Dict[str, Any], *, audit: Dict[str, Any]) -> 
     if not isinstance(visual, dict):
         results["visual_analysis"] = {}
         visual = results["visual_analysis"]
-    if not visual.get("tracked_objects"):
+    if isinstance(tracked, list) and not visual.get("tracked_objects"):
         visual["tracked_objects"] = tracked
         audit["hydrated"].append("results.visual_analysis.tracked_objects")
+    for result_key, filename in VISUAL_RESULT_ARTIFACTS.items():
+        payload, path = load_first_json(
+            artifact_candidates(analysis_dir, status, result_key, filename)
+        )
+        if not isinstance(payload, dict) or path is None:
+            continue
+        status.setdefault("output_files", {}).setdefault(result_key, str(path))
+        audit_key = f"results.visual_analysis.{result_key}"
+        if not visual.get(result_key):
+            visual[result_key] = payload
+            audit["hydrated"].append(audit_key)
+        else:
+            audit["already_present"].append(audit_key)
 
 
 def build_hydration_audit(status: Dict[str, Any], hydrated_before: list[str]) -> Dict[str, Any]:
@@ -216,6 +238,6 @@ def hydrate_saved_analysis_status(
 
     hydrate_source_samples(status, analysis_dir=analysis_dir, audit=audit)
     hydrate_evidence_proliferation_matches(status, analysis_dir=analysis_dir, audit=audit)
-    hydrate_visual_results(status, audit=audit)
+    hydrate_visual_results(status, analysis_dir=analysis_dir, audit=audit)
     status["saved_analysis_hydration_audit"] = audit
     return status

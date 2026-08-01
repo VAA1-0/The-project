@@ -485,6 +485,8 @@ class ExpressionDetectorDeepFace:
             return {
                 "valence": "unavailable",
                 "activation": "unavailable",
+                "valence_score": None,
+                "activation_score": None,
                 "confidence": "none",
             }
 
@@ -500,6 +502,8 @@ class ExpressionDetectorDeepFace:
             return {
                 "valence": "unavailable",
                 "activation": "unavailable",
+                "valence_score": None,
+                "activation_score": None,
                 "confidence": "none",
             }
 
@@ -545,6 +549,9 @@ class ExpressionDetectorDeepFace:
         return {
             "valence": label_delta(valence_delta, "positive_tilt", "negative_tilt"),
             "activation": label_delta(activation_delta, "higher_activation", "lower_activation"),
+            "valence_score": round(max(0.0, min(1.0, (valence_delta + 1.0) / 2.0)), 6),
+            "activation_score": round(max(0.0, min(1.0, (activation_delta + 1.0) / 2.0)), 6),
+            "score_method": "weighted_emotion_probability_contrast_v1",
             "confidence": confidence,
         }
 

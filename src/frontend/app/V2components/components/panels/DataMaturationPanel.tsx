@@ -23,6 +23,7 @@ import type {
   ProliferationDecision,
 } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 
 type ProliferationMode = "guarded" | "dynamic" | "research";
 type MaturationQueue =
@@ -1935,6 +1936,12 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           {loading ? <div className="mt-1 text-cyan-200">Refreshing...</div> : null}
           {saveMessage ? <div className="mt-1 text-amber-200">{saveMessage}</div> : null}
         </div>
+      </div>
+      <div className="border-b border-white/8 px-3 py-2">
+        <NativeStatisticalInterpretationStrip
+          run={analysisData?.nativeStatisticalInterpretation}
+          panel="data_maturation"
+        />
       </div>
 
       <section

@@ -19,7 +19,7 @@
             "type": "object",
             "required": ["event_id", "orientation", "record_ref", "candidate_reading", "support_refs", "counter_evidence_refs", "framework_assignment", "authority", "canonical"],
             "properties": {
-              "orientation": {"enum": ["bet", "beneath", "between", "beyond", "becoming"]},
+              "orientation": {"enum": ["before", "bets", "becoming", "beneath", "between"]},
               "framework_assignment": {"const": "explicit"},
               "authority": {"const": "candidate_service"},
               "canonical": {"const": false}

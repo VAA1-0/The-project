@@ -23,6 +23,7 @@ import {
 import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import { useLayoutHost } from "../LayoutHost";
 
 type SearchPanelProps = {
@@ -39,6 +40,9 @@ type SearchCorpusRow = {
 
 type SearchMode = "all" | "narrative" | "pattern" | "matureData" | "clusters" | "forensic";
 type MaturityFilter = "all" | "mature" | "review";
+type ScaleFrame = "all" | "micro" | "meso" | "macro";
+type OrientationFrame = "all" | "intrinsic" | "social";
+type ExpressionFrame = "all" | "explicit" | "implicit";
 
 const SOURCE_LABELS: Record<DatasceneEntitySourceType, string> = {
   transcript: "Transcript",
@@ -240,6 +244,9 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
   const [sourceFilter, setSourceFilter] = useState<DatasceneEntitySourceType | "all">("all");
   const [typeFilter, setTypeFilter] = useState<DatasceneEntityType | "all">("all");
   const [maturityFilter, setMaturityFilter] = useState<MaturityFilter>("all");
+  const [scaleFrame, setScaleFrame] = useState<ScaleFrame>("all");
+  const [orientationFrame, setOrientationFrame] = useState<OrientationFrame>("all");
+  const [expressionFrame, setExpressionFrame] = useState<ExpressionFrame>("all");
   const [matcherRefreshing, setMatcherRefreshing] = useState(false);
   const [matcherRefreshMessage, setMatcherRefreshMessage] = useState("");
   const [corpusRefreshNonce, setCorpusRefreshNonce] = useState(0);
@@ -412,6 +419,23 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
     0,
   );
   const searchableAnalyses = videos.filter(isSearchableAnalysis).length;
+  const selectedNativeStatisticalRun = selectedVideoId === "__all__"
+    ? null
+    : corpus.find((row) => row.analysisId === selectedVideoId)?.analysisData?.nativeStatisticalInterpretation;
+  const relationshipResults = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!["all", "pattern"].includes(mode)) return [];
+    return corpus.flatMap((row) => (row.analysisData?.nativeStatisticalInterpretation?.relationships || []).map((relationship) => ({ row, relationship })))
+      .filter(({ relationship }) => {
+        const frames = relationship.analytical_frames;
+        const text = `${relationship.coupling} ${relationship.left_metric} ${relationship.right_metric} ${relationship.interpretation}`.toLowerCase();
+        return (!needle || text.includes(needle)) &&
+          (scaleFrame === "all" || Boolean(frames?.scale?.[scaleFrame])) &&
+          (orientationFrame === "all" || (frames?.orientation || []).includes(orientationFrame)) &&
+          (expressionFrame === "all" || (frames?.evidence_expression || []).includes(expressionFrame));
+      })
+      .sort((left, right) => Math.abs(Number(right.relationship.coefficient || 0)) - Math.abs(Number(left.relationship.coefficient || 0)));
+  }, [corpus, expressionFrame, mode, orientationFrame, query, scaleFrame]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100">
@@ -474,6 +498,9 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
             {matcherRefreshMessage}
           </div>
         ) : null}
+        <div className="mt-2">
+          <NativeStatisticalInterpretationStrip run={selectedNativeStatisticalRun} panel="search" />
+        </div>
       </div>
 
       <div className="border-b border-neutral-800 px-4 py-3">
@@ -537,11 +564,50 @@ export default function SearchPanel({ videoId: initialVideoId = "" }: SearchPane
               <option value="mature">Mature only</option>
               <option value="review">Needs review</option>
             </select>
+            <select className="h-8 rounded border border-neutral-700 bg-neutral-900 px-2 text-xs" value={scaleFrame} onChange={(event) => setScaleFrame(event.target.value as ScaleFrame)} data-datascene-search-scale-frame="true">
+              <option value="all">All scales</option><option value="micro">Micro evidence</option><option value="meso">Meso computed</option><option value="macro">Macro candidates</option>
+            </select>
+            <select className="h-8 rounded border border-neutral-700 bg-neutral-900 px-2 text-xs" value={orientationFrame} onChange={(event) => setOrientationFrame(event.target.value as OrientationFrame)} data-datascene-search-orientation-frame="true">
+              <option value="all">All orientations</option><option value="intrinsic">Intrinsic</option><option value="social">Social</option>
+            </select>
+            <select className="h-8 rounded border border-neutral-700 bg-neutral-900 px-2 text-xs" value={expressionFrame} onChange={(event) => setExpressionFrame(event.target.value as ExpressionFrame)} data-datascene-search-expression-frame="true">
+              <option value="all">All expression frames</option><option value="explicit">Explicit evidence</option><option value="implicit">Implicit evidence</option>
+            </select>
           </div>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
+        {relationshipResults.length ? (
+          <div className="border-b border-violet-900/40 bg-violet-950/10" data-datascene-search-statistical-relationships="true">
+            <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-200">Statistical relationships · {relationshipResults.length}</div>
+            {relationshipResults.slice(0, 40).map(({ row, relationship }) => {
+              const frames = relationship.analytical_frames;
+              const interval = relationship.source_intervals?.[0];
+              return (
+                <details key={`${row.analysisId}:${relationship.relationship_id}`} className="border-t border-violet-900/30 px-4 py-2">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
+                    <span className="text-neutral-200">{relationship.left_metric?.replaceAll("_", " ")} ↔ {relationship.right_metric?.replaceAll("_", " ")}</span>
+                    <span className="font-mono text-violet-200">ρ {Number(relationship.coefficient || 0).toFixed(3)} · n={relationship.scene_count || 0}</span>
+                  </summary>
+                  <div className="mt-2 text-xs text-neutral-400">{relationship.interpretation}</div>
+                  <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
+                    <span className="rounded bg-neutral-900 px-2 py-1 text-cyan-200">meso · computed</span>
+                    <span className="rounded bg-neutral-900 px-2 py-1 text-neutral-400">micro · source-linked</span>
+                    <span className="rounded bg-neutral-900 px-2 py-1 text-amber-200">macro · comparison candidate</span>
+                    {(frames?.orientation || []).map((frame) => <span key={frame} className="rounded bg-neutral-900 px-2 py-1 text-emerald-200">{frame}</span>)}
+                    {(frames?.evidence_expression || []).map((frame) => <span key={frame} className="rounded bg-neutral-900 px-2 py-1 text-sky-200">{frame} evidence</span>)}
+                    <span className="rounded bg-neutral-900 px-2 py-1 text-violet-200">inferred relationship</span>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" className="rounded border border-neutral-700 px-2 py-1 text-[10px] hover:border-cyan-500" onClick={() => openVideoAtTime(row.analysisId, Number(interval?.start_seconds || 0))}>Open evidence</button>
+                    <button type="button" className="rounded border border-neutral-700 px-2 py-1 text-[10px] hover:border-violet-500" onClick={() => openPanel("MeaningNetwork", { videoId: row.analysisId })}>Open network</button>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        ) : null}
         {loading ? (
           <div className="p-4 text-sm text-neutral-400">Loading search index...</div>
         ) : results.length === 0 ? (

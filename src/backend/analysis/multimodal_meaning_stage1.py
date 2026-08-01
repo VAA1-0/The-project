@@ -770,7 +770,36 @@ def _build_visual_events(
             "evidence_kind": "visual_cue",
             "authority_level": 20,
         }
-        if cue_type in {"gaze", "look", "fixation"}:
+        if cue_type == "measured_visual_tone":
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "measured_visual_tone",
+                    index,
+                    span,
+                    {
+                        "dominant_tone": cue.get("dominant_tone"),
+                        "brightness": cue.get("brightness"),
+                        "contrast": cue.get("contrast"),
+                        "saturation": cue.get("saturation"),
+                        "luminance_entropy": cue.get("luminance_entropy"),
+                        "measurement_family": "spatial_tone_measurements",
+                    },
+                    evidence_refs=[evidence_ref],
+                    traceback_refs=[{
+                        "source_type": "spatial_tone_measurements",
+                        "source_id": evidence_ref["evidence_id"],
+                        "time_span": span,
+                        "panel_hint": "tools_panel",
+                    }],
+                    interpretive_tags=[],
+                    confidence_score=1.0,
+                    confidence_notes="Measured visual property; not semantic interpretation.",
+                )
+            )
+            events[-1]["epistemic_status"] = "measured_source_evidence"
+            index += 1
+        elif cue_type in {"gaze", "look", "fixation"}:
             events.append(
                 _base_event(
                     analysis_id,
@@ -925,6 +954,38 @@ def _build_visual_events(
             continue
         span = _time_span(clue.get("start_ms", clue.get("start", 0)), clue.get("end_ms", clue.get("end", 0)))
         clue_type = _safe_text(clue.get("clue_type") or clue.get("type"))
+        if clue_type == "shot_boundary_interval":
+            evidence_ref = {
+                "evidence_id": _safe_text(clue.get("evidence_id"), f"cinematic_clue:{index}"),
+                "evidence_kind": "shot_boundary_interval",
+                "authority_level": 20,
+            }
+            events.append(
+                _base_event(
+                    analysis_id,
+                    "shot_boundary_interval",
+                    index,
+                    span,
+                    {
+                        "shot_id": clue.get("shot_id"),
+                        "duration": clue.get("duration"),
+                        "measurement_family": "shot_boundary_interval",
+                    },
+                    evidence_refs=[evidence_ref],
+                    traceback_refs=[{
+                        "source_type": "shot_boundary_interval",
+                        "source_id": evidence_ref["evidence_id"],
+                        "time_span": span,
+                        "panel_hint": "tools_panel",
+                    }],
+                    interpretive_tags=[],
+                    confidence_score=1.0,
+                    confidence_notes="Measured temporal boundary; not semantic interpretation.",
+                )
+            )
+            events[-1]["epistemic_status"] = "measured_source_evidence"
+            index += 1
+            continue
         if clue_type not in {"close_up", "screen_dominance", "blocking", "approach", "withdrawal"}:
             continue
         participant = _safe_text(clue.get("participant_id"), "unknown")

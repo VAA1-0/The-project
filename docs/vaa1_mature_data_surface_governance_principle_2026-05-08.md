@@ -84,7 +84,103 @@ Scene Cards follow the same rule:
 - expressions and situations should use corrected expression labels when available
 - source extraction metadata summaries should describe the mature scene-card view without mutating original source metadata
 
+## Datascene Interaction And Correction Regime
+
+Datascene must use its own governed interaction regime throughout every analyst-facing
+panel. Browser-native context menus, `prompt`, `alert`, and `confirm` dialogs are not
+acceptable substitutes for a source-aware analytical action surface.
+
+The default interaction rules are:
+
+- right-click on an actionable row, graph object, timeline mark, BBox/ROI, transcript
+  span, scene element, or evidence record opens a Datascene context menu;
+- the menu keeps the selected analysis, panel, source interval, geometry, evidence ID,
+  maturity, authority, and traceback context visible;
+- ordinary review and correction remain in the originating panel unless the analyst
+  explicitly chooses a named drill-down action;
+- `Correct` opens an editor attached to the selected field or row, pre-populated with the
+  current governed value and its occurrence-scoped source range;
+- save, cancel, reject, defer, merge, split, confirm, and undo actions must name the
+  governed object they affect and must not operate through an ambiguous browser dialog;
+- a panel may open Video, Traceback, a detailed sheet, or another analytical workspace
+  only through an explicit user-selected action; it must not use navigation as filler for
+  a missing local interaction;
+- unavailable actions remain calmly described as unavailable or pending governance;
+  controls must not redirect to an unrelated panel merely to appear operational; and
+- saved updates enter the canonical decision/correction boundary before projections are
+  refreshed in the current field and other consuming panels.
+
+The established Meaning Network right-click menu is the visual and behavioral base for
+the default Datascene regime. Its shared action grammar is: copy the governed item or
+content, open its local sheet, find matcher constellations, perform an eligible quick
+confirmation, jump to source, and open traceback. Evidence families may add specialized
+actions, but they must retain this recognizable base, ordering, compact dark/teal visual
+form, and source-governance language. A second generic popup design is not permitted.
+
+The default right-click regime applies to all panels. Specialized panels may add relevant
+actions, but they may not fall back to the browser menu on governed evidence. A generic
+panel fallback uses the Meaning Network base, clearly disables record actions until a
+governed item is selected, and must not fabricate record-specific actions.
+
+Acceptance invariant:
+
+```text
+select evidence -> act in context -> save canonically -> refresh the same field
+-> project everywhere -> preserve raw evidence and traceback
+```
+
 ## Implementation Implication
+
+## Data Book And Scientific Report Export
+
+Export is a governed publication of the complete analysis, not a flat collection of
+whatever files happen to be registered in `output_files`.
+
+Each export produces two synchronized works from the same canonical evidence snapshot:
+
+1. A machine-readable **Data Book** with one manifest and feature-oriented chapters.
+   Every registered panel/feature receives a chapter with its status (`operational`,
+   `partial`, `deferred`, `unavailable`, or `not run`), schemas, records, source-time
+   anchors, authority, maturity, methods, parameters, dependencies, corrections,
+   invalidations, provenance, traceback references, and licensing/remote-use disclosures.
+   Empty and unavailable chapters remain present and explain why no records exist.
+2. A human-readable **Scientific Report** rendered from report-eligible governed claims
+   and Data Book citations. It distinguishes measurements, findings, candidate
+   interpretations, analyst-confirmed interpretations, conflicts, limitations, and
+   unavailable evidence. Prose must never manufacture a result merely to make the report
+   read smoothly, and every evidential sentence must resolve to a Data Book chapter,
+   record, and source location.
+
+The Data Book manifest records analysis identity, source chain of custody, schema and
+application versions, generation time, chapter inventory, record counts, checksums,
+completeness findings, and the exact scientific-report build that consumes it. Export
+fails its completeness gate when an operational panel has neither a populated chapter
+nor an explicit, governed empty-state explanation.
+
+Feature panels do not maintain independent export truth. Each panel registers its
+canonical data contract and chapter projection; the publication builder validates those
+registrations against the runtime feature inventory before writing either work.
+
+Publication has two explicit scopes:
+
+- **Per-video edition:** one source video / one analysis-associated Data Book and one
+  Scientific Report. This edition is independently complete, portable, reopenable, and
+  traceable. Every chapter, record, citation, checksum, correction, and source-time
+  location carries the video and analysis identity. Reanalysis versions remain distinct
+  editions rather than silently overwriting one another.
+- **Whole-project edition:** one Project Data Book and one Project Scientific Report for
+  the selected governed set of video analyses. The Project Data Book embeds or references
+  immutable per-video edition manifests, adds a project inventory, cross-video entity and
+  theme mappings, comparison tables, aggregate statistics, conflicts, coverage gaps, and
+  project-level provenance. The Project Report may synthesize across videos only when each
+  statement cites the contributing video edition, chapter, record, and source location.
+
+Project publication is not concatenation and must not flatten video identities, clocks,
+authorities, correction histories, or incompatible analysis versions. Project aggregates
+declare their population, inclusion/exclusion rules, missing-data policy, weighting,
+method, and contributing per-video checksums. A project edition may be complete even when
+some features are unavailable, but only when those gaps are explicit in both the Data Book
+and Scientific Report.
 
 VAA1 should move toward a single backend resolved-evidence view:
 

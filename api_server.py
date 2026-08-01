@@ -161,6 +161,9 @@ from src.backend.analysis.framework_projection import (
     write_framework_projections,
 )
 from src.backend.analysis.governed_reporting import GovernedReportService
+from src.backend.analysis.native_statistical_interpretation import (
+    NativeStatisticalInterpretationService,
+)
 from src.backend.analysis.source_policy_service import evaluate_source_use
 from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
 from src.backend.analysis.vocabulary_service import (
@@ -3090,6 +3093,9 @@ def build_source_media_metadata_payload(
         "annotation_maturity": status.get("source_media_annotation_maturity", {}),
         "video_internal_harvest": status.get("source_media_video_internal_harvest", {}),
         "maturity_iteration": maturity_iteration,
+        "statistical_pattern_index": probe.get("statistical_pattern_index")
+        if isinstance(probe.get("statistical_pattern_index"), dict)
+        else {},
     }
 
     if path_obj and path_obj.exists():
@@ -5133,6 +5139,27 @@ def write_second_order_meaning_artifacts_for_status(
         scene_payload = artifact_payload_from_status_any(status, "scene_segments", "motion_scene_basis", "mise_en_scene_scene_cards")
         if scene_payload is not None:
             visual["scene_segments"] = scene_payload
+    # Rebuilds must resolve their own measured visual inputs. Dashboard/status
+    # hydration is a presentation concern and cannot be a hidden precondition
+    # for producing second-order artifacts.
+    if not visual.get("shot_boundaries"):
+        shot_payload = artifact_payload_from_status_any(
+            status, "shot_boundaries", "shot_boundaries_json"
+        )
+        if shot_payload is not None:
+            visual["shot_boundaries"] = shot_payload
+    if not visual.get("spatial_tone_scan"):
+        tone_payload = artifact_payload_from_status_any(
+            status, "spatial_tone_scan", "spatial_tone_scan_json"
+        )
+        if tone_payload is not None:
+            visual["spatial_tone_scan"] = tone_payload
+    if not visual.get("adaptive_visual_scan"):
+        adaptive_payload = artifact_payload_from_status_any(
+            status, "adaptive_visual_scan", "adaptive_visual_scan_json"
+        )
+        if adaptive_payload is not None:
+            visual["adaptive_visual_scan"] = adaptive_payload
     analysis_dir = RESULTS_DIR / analysis_id
     analysis_dir.mkdir(parents=True, exist_ok=True)
     source_metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
@@ -5277,6 +5304,7 @@ def write_second_order_meaning_artifacts_for_status(
     output_files["narrative_lens_reading"] = str(narrative_lens_path)
     output_files["character_path_reading"] = str(character_path_path)
     output_files["datascene_meaning_network"] = str(datascene_meaning_network_path)
+    status["multimodal_meaning_stage1"] = meaning_artifact
     status["second_order_label_proliferation"] = {
         **plan,
         "output_json_path": str(proliferation_path),
@@ -9335,6 +9363,33 @@ async def refresh_evidence_proliferation_matcher_endpoint(
     ensure_live_mature_data_proliferation_audit_for_status(status)
     persist_analysis_record_for_status(status)
 
+    meaning_artifact = status.get("multimodal_meaning_stage1") or {}
+    meaning_events = (
+        meaning_artifact.get("feature_events", [])
+        if isinstance(meaning_artifact, dict)
+        else []
+    )
+    projection_counts = {
+        "shot_boundary_interval": len([
+            event for event in meaning_events
+            if isinstance(event, dict)
+            and event.get("feature_type") == "shot_boundary_interval"
+        ]),
+        "measured_visual_tone": len([
+            event for event in meaning_events
+            if isinstance(event, dict)
+            and event.get("feature_type") == "measured_visual_tone"
+        ]),
+    }
+    result["meaning_projection"] = {
+        "schema": "vaa1.measured_multimodal_projection_receipt.v1",
+        "counts": projection_counts,
+        "complete": all(count > 0 for count in projection_counts.values()),
+        "artifact": "multimodal_meaning_stage1",
+        "authority": "measured_source_evidence",
+        "semantic_promotion": False,
+    }
+
     return make_json_safe(result)
 
 
@@ -11221,6 +11276,7 @@ async def measure_analysis_shot_boundaries(
         status.setdefault("output_files", {})["shot_boundaries"] = str(output_path)
         status.setdefault("results", {}).setdefault("visual_analysis", {})["shot_boundaries"] = measured
         refresh_master_schema_metadata_surfaces(status)
+        write_second_order_meaning_artifacts_for_status(status)
         persist_analysis_record_for_status(status)
     return {"analysis_id": analysis_id, "persisted": persist, "shot_boundaries": measured}
 
@@ -11250,6 +11306,7 @@ async def measure_analysis_spatial_tone(
         status.setdefault("results", {}).setdefault("visual_analysis", {})["spatial_tone_scan"] = measured
         status.setdefault("summary", {})["spatial_tone_scan"] = measured
         refresh_master_schema_metadata_surfaces(status)
+        write_second_order_meaning_artifacts_for_status(status)
         persist_analysis_record_for_status(status)
     return {"analysis_id": analysis_id, "persisted": persist, "spatial_tone_scan": measured}
 
@@ -11283,6 +11340,7 @@ async def measure_analysis_adaptive_visual(
         ] = measured
         status.setdefault("summary", {})["adaptive_visual_scan"] = measured
         refresh_master_schema_metadata_surfaces(status)
+        write_second_order_meaning_artifacts_for_status(status)
         persist_analysis_record_for_status(status)
     return {
         "analysis_id": analysis_id,
@@ -11300,6 +11358,16 @@ def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegi
 
 def governed_report_service_for_analysis(analysis_id: str) -> GovernedReportService:
     return GovernedReportService(analysis_id, RESULTS_DIR / analysis_id / "governed_reports.json")
+
+
+def native_statistical_interpretation_service_for_analysis(
+    analysis_id: str,
+) -> NativeStatisticalInterpretationService:
+    return NativeStatisticalInterpretationService(
+        analysis_id,
+        RESULTS_DIR / analysis_id,
+        interpretation_registry_for_analysis(analysis_id),
+    )
 
 
 def governed_report_sources_for_analysis(analysis_id: str, status: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -11527,6 +11595,74 @@ async def get_interpretation_registry(analysis_id: str) -> dict:
     if get_analysis_entry(analysis_id) is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
     return interpretation_registry_for_analysis(analysis_id).view()
+
+
+@app.get("/api/analysis/{analysis_id}/native-statistical-interpretation", response_model=dict)
+async def get_native_statistical_interpretation(analysis_id: str) -> dict:
+    """Return the latest governed statistical-interpretation run, if one exists."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    path = RESULTS_DIR / analysis_id / "native_statistical_interpretation.json"
+    if not path.exists():
+        return {
+            "schema": "vaa1.native_statistical_interpretation.v1",
+            "analysis_id": analysis_id,
+            "status": "not_run",
+            "reason": "No governed native statistical interpretation run has been persisted.",
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Stored statistical interpretation is unreadable: {exc}") from exc
+
+
+@app.post("/api/analysis/{analysis_id}/native-statistical-interpretation/run", response_model=dict)
+async def run_native_statistical_interpretation(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Run a source-linked cross-signal salience vertical slice.
+
+    The result is a review candidate.  It does not assert statistical significance,
+    causality, or mature interpretation.
+    """
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    persist = bool(payload.get("persist", True))
+    try:
+        service = native_statistical_interpretation_service_for_analysis(analysis_id)
+        result = (
+            service.run(payload, persist=persist)
+            if payload.get("observations")
+            else service.run_from_status(status, persist=persist)
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        artifact_path = RESULTS_DIR / analysis_id / "native_statistical_interpretation.json"
+        status.setdefault("output_files", {})["native_statistical_interpretation"] = str(artifact_path)
+        status["native_statistical_interpretation"] = result
+        finding = result.get("finding") if isinstance(result.get("finding"), dict) else {}
+        observations = finding.get("observations") if isinstance(finding.get("observations"), list) else []
+        source_metadata = status.get("source_media_metadata") if isinstance(status.get("source_media_metadata"), dict) else {}
+        source_metadata["statistical_pattern_index"] = {
+            "schema": "vaa1.file_statistical_pattern_index.v1",
+            "value": finding.get("salience_index"),
+            "scale_min": 0.0,
+            "scale_max": 1.0,
+            "method": "mean_of_capped_absolute_robust_z_components",
+            "method_version": ((finding.get("method") or {}).get("version") if isinstance(finding.get("method"), dict) else None),
+            "attribute_count": len(observations),
+            "signal_family_count": finding.get("independent_signal_family_count", 0),
+            "signal_families": finding.get("signal_families", []),
+            "selected_source_interval": finding.get("source_interval", {}),
+            "eligible_scene_count": ((result.get("selection") or {}).get("eligible_scene_count") if isinstance(result.get("selection"), dict) else None),
+            "computed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        status["source_media_metadata"] = source_metadata
+        write_source_media_metadata_files(status)
+        persist_analysis_record_for_status(status)
+    return result
 
 
 @app.post("/api/analysis/{analysis_id}/interpretation-registry/{record_kind}", response_model=dict)

@@ -6,6 +6,7 @@ import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import { apiService } from "@/lib/api-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import SceneLanguageSFLView from "../SceneLanguageSFLView";
 
 import {
   Download,
@@ -759,6 +760,7 @@ export default function POSAnalyzePanel() {
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>
+      {videoId && <div className="mx-3 mb-2"><SceneLanguageSFLView analysisId={videoId} perspective="pos" /></div>}
       {posRefreshMessage ? (
         <div className="mx-3 mb-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
           {posRefreshMessage}

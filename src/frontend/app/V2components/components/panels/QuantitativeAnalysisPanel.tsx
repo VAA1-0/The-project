@@ -3,6 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { useLayoutHost } from "../LayoutHost";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
+import SceneLanguageSFLView from "../SceneLanguageSFLView";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
@@ -991,6 +992,7 @@ export default function QuantitativeAnalysisPanel() {
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>
+      {videoId && <div className="mx-3 mb-2"><SceneLanguageSFLView analysisId={videoId} perspective="quant" /></div>}
       <div className="flex-1 overflow-y-auto">
         {/* Header */}
         <div className={panelHeaderClass}>

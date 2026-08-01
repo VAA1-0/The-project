@@ -57,6 +57,7 @@ import { apiService } from "@/lib/api-service";
 import type {
   AnalysisEvent,
   AiAgentFeatureStarterManifest,
+  EvidenceProliferationMatch,
   ForensicRenderRegionKeyframe,
   ForensicRenderJob,
   ManualVisualAnnotation,
@@ -583,6 +584,23 @@ export default function ToolsPanel() {
     useState<string | null>(null);
   const [activeCinematicCorrectionValue, setActiveCinematicCorrectionValue] =
     useState("");
+  const [cinematicContextMenu, setCinematicContextMenu] = useState<{
+    x: number;
+    y: number;
+    entry: CinematicTimelineEntry;
+  } | null>(null);
+  const [cinematicActionMessage, setCinematicActionMessage] = useState("");
+  const [cinematicMatcherEntry, setCinematicMatcherEntry] =
+    useState<CinematicTimelineEntry | null>(null);
+  const [cinematicMatcherResult, setCinematicMatcherResult] =
+    useState<EvidenceProliferationMatch | null>(null);
+  const [cinematicMatcherBusy, setCinematicMatcherBusy] = useState(false);
+  const [cinematicMeaningRefreshBusy, setCinematicMeaningRefreshBusy] = useState(false);
+  const [cinematicMeaningReceipt, setCinematicMeaningReceipt] = useState<{
+    shot_boundary_interval: number;
+    measured_visual_tone: number;
+    complete: boolean;
+  } | null>(null);
   const [pendingShotSizeTimestamp, setPendingShotSizeTimestamp] = useState("");
   const [shotAdditionSelectKey, setShotAdditionSelectKey] = useState(0);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
@@ -866,6 +884,46 @@ export default function ToolsPanel() {
     () => analysisData?.metadata?.spatialToneScan?.samples ?? [],
     [analysisData?.metadata?.spatialToneScan?.samples],
   );
+  const multimodalMeaningEvents = React.useMemo(() => {
+    const artifact = analysisData?.multimodalMeaningStage1;
+    return Array.isArray(artifact?.feature_events)
+      ? (artifact.feature_events as Array<Record<string, unknown>>)
+      : [];
+  }, [analysisData?.multimodalMeaningStage1]);
+  const measuredToneMeaningEvents = React.useMemo(
+    () => multimodalMeaningEvents.filter((event) => event.feature_type === "measured_visual_tone"),
+    [multimodalMeaningEvents],
+  );
+  const shotBoundaryMeaningEvents = React.useMemo(
+    () => multimodalMeaningEvents.filter((event) => event.feature_type === "shot_boundary_interval"),
+    [multimodalMeaningEvents],
+  );
+  const cinematicSourceCorrelations = React.useMemo(() => {
+    if (!cinematicMatcherEntry) return null;
+    const overlaps = (start: number, end: number) =>
+      end >= cinematicMatcherEntry.start && start <= cinematicMatcherEntry.end;
+    const transcript = (analysisData?.transcriptTimeline || analysisData?.transcript || [])
+      .filter((segment) => overlaps(Number(segment.start || 0), Number(segment.end || segment.start || 0)))
+      .slice(0, 6);
+    const audio = (analysisData?.metadata?.audioEventIntervals?.intervals || [])
+      .filter((event) => overlaps(Number(event.start || 0), Number(event.end || event.start || 0)))
+      .slice(0, 6);
+    const tone = [...spatialToneSamples]
+      .sort((left, right) =>
+        Math.abs(Number(left.timestamp || 0) - cinematicMatcherEntry.start) -
+        Math.abs(Number(right.timestamp || 0) - cinematicMatcherEntry.start),
+      )[0];
+    return { transcript, audio, tone };
+  }, [analysisData?.metadata?.audioEventIntervals?.intervals, analysisData?.transcript, analysisData?.transcriptTimeline, cinematicMatcherEntry, spatialToneSamples]);
+  const boundedCinematicCandidates = React.useMemo(() => {
+    if (!cinematicMatcherEntry) return [];
+    return (cinematicMatcherResult?.candidates || []).filter((candidate) => {
+      const start = Number(candidate.time?.start);
+      const end = Number(candidate.time?.end ?? candidate.time?.start);
+      return Number.isFinite(start) && Number.isFinite(end) &&
+        end >= cinematicMatcherEntry.start && start <= cinematicMatcherEntry.end;
+    });
+  }, [cinematicMatcherEntry, cinematicMatcherResult?.candidates]);
   const adaptiveVisualSamples = React.useMemo(
     () => analysisData?.metadata?.adaptiveVisualScan?.samples ?? [],
     [analysisData?.metadata?.adaptiveVisualScan?.samples],
@@ -1599,10 +1657,16 @@ export default function ToolsPanel() {
     async (entry: CinematicTimelineEntry, explicitValue?: string) => {
       if (!videoId) return;
       const currentLabel = getCorrectedCinematicEntry(entry);
-      const correctedValue =
-        explicitValue?.trim() ||
-        window.prompt("Set analyst override for cinematic clue:", currentLabel)?.trim();
+      const correctedValue = explicitValue?.trim();
+      if (!correctedValue) {
+        setActiveCinematicCorrectionId(cinematicEntryId(entry));
+        setActiveCinematicCorrectionValue(currentLabel);
+        setCinematicContextMenu(null);
+        return;
+      }
       if (!correctedValue || correctedValue.trim() === currentLabel.trim()) {
+        setActiveCinematicCorrectionId(null);
+        setActiveCinematicCorrectionValue("");
         return;
       }
 
@@ -1637,6 +1701,133 @@ export default function ToolsPanel() {
     },
     [analysisData?.annotationCorrections, getCorrectedCinematicEntry, videoId],
   );
+
+  useEffect(() => {
+    if (!cinematicContextMenu) return;
+    const closeMenu = () => setCinematicContextMenu(null);
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("blur", closeMenu);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [cinematicContextMenu]);
+
+  const copyCinematicEvidence = React.useCallback((entry: CinematicTimelineEntry) => {
+    const content = {
+      schema: "vaa1.cinematic_evidence_clipboard.v1",
+      analysis_id: videoId,
+      evidence_type: entry.key,
+      label: getCorrectedCinematicEntry(entry),
+      source_interval: { start: entry.start, end: entry.end },
+      authority: entry.origin || "derived",
+      evidence_ref: `artifact:${entry.key}#${cinematicEntryId(entry)}`,
+    };
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(JSON.stringify(content, null, 2)).catch(() => undefined);
+    }
+    setCinematicActionMessage("Evidence content copied with source interval and authority.");
+  }, [getCorrectedCinematicEntry, videoId]);
+
+  const runCinematicMatcher = React.useCallback(async (entry: CinematicTimelineEntry) => {
+    if (!videoId) return;
+    setCinematicMatcherEntry(entry);
+    setCinematicMatcherBusy(true);
+    setCinematicMatcherResult(null);
+    setCinematicActionMessage("Matcher is finding source-linked constellations…");
+    setCinematicContextMenu(null);
+    try {
+      const requestId = `cinematic-match:${Date.now()}:${cinematicEntryId(entry)}`;
+      const result = await apiService.matchEvidenceProliferation(videoId, {
+        request_id: requestId,
+        created_at: new Date().toISOString(),
+        video_id: videoId,
+        evidence: {
+          overlay_key: cinematicEntryId(entry),
+          label: getCorrectedCinematicEntry(entry),
+          source_label: entry.label,
+          category: entry.key,
+          source_panel: "ToolsPanel",
+          interval: { start: entry.start, end: entry.end },
+          evidence_refs: [`artifact:${entry.key}#${cinematicEntryId(entry)}`],
+        },
+        scope: "same_video_open_topology",
+        target: entry.key === "shot-boundaries" ? "situation" : "visual_pattern",
+        governance: {
+          manual_correction_wins: true,
+          source_anchor_required_for_promotion: true,
+          candidate_only_until_decision: true,
+          open_topology_som: true,
+        },
+      });
+      setCinematicMatcherResult(result);
+      const intervalCandidateCount = (result.candidates || []).filter((candidate) => {
+        const start = Number(candidate.time?.start);
+        const end = Number(candidate.time?.end ?? candidate.time?.start);
+        return Number.isFinite(start) && Number.isFinite(end) &&
+          end >= entry.start && start <= entry.end;
+      }).length;
+      setCinematicActionMessage(
+        `Matcher found ${intervalCandidateCount} source-timed candidate(s) within this shot; ${result.candidates?.length || 0} global catalogue result(s) were inspected and excluded from the bounded view.`,
+      );
+    } catch (error) {
+      setCinematicActionMessage(error instanceof Error ? error.message : "Matcher request failed.");
+    } finally {
+      setCinematicMatcherBusy(false);
+    }
+  }, [getCorrectedCinematicEntry, videoId]);
+
+  const rebuildCinematicMeaning = React.useCallback(async () => {
+    if (!videoId) return;
+    setCinematicMeaningRefreshBusy(true);
+    setCinematicActionMessage("Rebuilding governed matcher and second-order meaning artifacts…");
+    try {
+      const result = await apiService.refreshEvidenceProliferationMatcher(videoId, {
+        request_limit: 12,
+        candidate_limit: 25,
+      });
+      const projection = result.meaning_projection as {
+        counts?: Record<string, unknown>;
+        complete?: boolean;
+      } | undefined;
+      const receipt = {
+        shot_boundary_interval: Number(projection?.counts?.shot_boundary_interval || 0),
+        measured_visual_tone: Number(projection?.counts?.measured_visual_tone || 0),
+        complete: projection?.complete === true,
+      };
+      setCinematicMeaningReceipt(receipt);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      setAnalysisData(refreshed);
+      const matchCount = Number(result.match_count || 0);
+      const candidateCount = Number(result.candidate_count || 0);
+      if (!receipt.complete) {
+        throw new Error(
+          `Rebuild incomplete: shot boundaries ${receipt.shot_boundary_interval}, measured visual tone ${receipt.measured_visual_tone}. No completion was recorded.`,
+        );
+      }
+      setCinematicActionMessage(`Meaning rebuild verified: ${receipt.shot_boundary_interval} shot and ${receipt.measured_visual_tone} tone events projected as non-semantic measured evidence. Matcher reviewed ${matchCount} run(s) / ${candidateCount} candidate(s).`);
+    } catch (error) {
+      setCinematicActionMessage(error instanceof Error ? error.message : "Meaning rebuild failed.");
+    } finally {
+      setCinematicMeaningRefreshBusy(false);
+    }
+  }, [videoId]);
+
+  const openCinematicTraceback = React.useCallback((entry: CinematicTimelineEntry) => {
+    if (!videoId) return;
+    const payload = {
+      videoId,
+      sourcePanel: "ToolsPanel",
+      claim_id: `${videoId}:${cinematicEntryId(entry)}`,
+      claim: getCorrectedCinematicEntry(entry),
+      source_time: { start: entry.start, end: entry.end },
+      evidence_refs: [`artifact:${entry.key}#${cinematicEntryId(entry)}`],
+      authority: entry.origin || "derived measurement",
+    };
+    openPanel("TracebackDrawer", { payload });
+    eventBus.emit("tracebackOpenRequested", payload);
+    setCinematicContextMenu(null);
+  }, [getCorrectedCinematicEntry, openPanel, videoId]);
 
   const saveCinematicShotAddition = React.useCallback(
     async (label: string) => {
@@ -3190,6 +3381,48 @@ export default function ToolsPanel() {
                       </button>
                     ))}
                   </div>
+                  {cinematicActionMessage ? (
+                    <div className="border-l-2 border-teal-800 pl-3 text-[10px] text-slate-400" data-vaa1-cinematic-action-message="true">
+                      {cinematicActionMessage}
+                    </div>
+                  ) : null}
+                  {cinematicMatcherEntry ? (
+                    <section className="space-y-3 rounded border border-teal-900/70 bg-[#111616] p-3" data-vaa1-cinematic-matcher-review="true">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-[0.12em] text-teal-300">Matcher review sheet</div>
+                          <div className="mt-1 text-[11px] text-slate-200">{getCorrectedCinematicEntry(cinematicMatcherEntry)}</div>
+                          <div className="font-mono text-[9px] text-slate-500">{formatSeconds(cinematicMatcherEntry.start)}–{formatSeconds(cinematicMatcherEntry.end)}</div>
+                        </div>
+                        <button type="button" className="text-[10px] text-slate-400 hover:text-white" onClick={() => setCinematicMatcherEntry(null)}>Close</button>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <div className="rounded border border-white/8 bg-[#151515] p-2">
+                          <div className="text-[9px] uppercase text-slate-500">Governed evidence inventory</div>
+                          <div className="mt-2 flex items-center justify-between text-[10px]"><span>shot_boundary_interval</span><span className="text-teal-200">{measuredShotBoundaries.length} rows · {measuredShotBoundaries.length ? "available" : "missing"}</span></div>
+                          <div className="mt-1 flex items-center justify-between text-[10px]"><span>spatial_tone_measurements</span><span className="text-teal-200">{spatialToneSamples.length} rows · {spatialToneSamples.length ? "available" : "missing"}</span></div>
+                        </div>
+                        <div className="rounded border border-white/8 bg-[#151515] p-2">
+                          <div className="text-[9px] uppercase text-slate-500">Meaning projection after rebuild</div>
+                          <div className="mt-2 flex items-center justify-between text-[10px]"><span>shot_boundary_interval</span><span className={(cinematicMeaningReceipt?.shot_boundary_interval ?? shotBoundaryMeaningEvents.length) ? "text-teal-200" : "text-amber-300"}>{cinematicMeaningReceipt?.shot_boundary_interval ?? shotBoundaryMeaningEvents.length} events</span></div>
+                          <div className="mt-1 flex items-center justify-between text-[10px]"><span>measured_visual_tone</span><span className={(cinematicMeaningReceipt?.measured_visual_tone ?? measuredToneMeaningEvents.length) ? "text-teal-200" : "text-amber-300"}>{cinematicMeaningReceipt?.measured_visual_tone ?? measuredToneMeaningEvents.length} events</span></div>
+                        </div>
+                      </div>
+                      <div className="rounded border border-white/8 bg-[#151515] p-2">
+                        <div className="text-[9px] uppercase text-slate-500">Source-time correlations for this shot</div>
+                        <div className="mt-2 grid gap-2 md:grid-cols-3 text-[10px]">
+                          <div><span className="text-slate-500">Transcript</span><div className="mt-1 text-slate-200">{cinematicSourceCorrelations?.transcript.length || 0} overlapping segment(s)</div>{cinematicSourceCorrelations?.transcript.map((segment, index) => <button type="button" key={`${segment.start}-${index}`} className="mt-1 block w-full truncate text-left text-cyan-200 hover:underline" onClick={() => openSharedVideoAtTime(videoId, segment.start)}>{segment.speaker ? `${segment.speaker}: ` : ""}{segment.text}</button>)}</div>
+                          <div><span className="text-slate-500">Audio</span><div className="mt-1 text-slate-200">{cinematicSourceCorrelations?.audio.length || 0} overlapping event(s)</div>{cinematicSourceCorrelations?.audio.map((event, index) => <button type="button" key={`${event.start}-${index}`} className="mt-1 block w-full truncate text-left text-cyan-200 hover:underline" onClick={() => openSharedVideoAtTime(videoId, Number(event.start || 0))}>{event.event_type || "audio event"}</button>)}</div>
+                          <div><span className="text-slate-500">Nearest visual tone</span><div className="mt-1 text-slate-200">{cinematicSourceCorrelations?.tone ? `${cinematicSourceCorrelations.tone.zones?.whole_frame?.dominant_tone || "measured tone"} at ${formatSeconds(cinematicSourceCorrelations.tone.timestamp)}` : "Not available"}</div></div>
+                        </div>
+                      </div>
+                      <div className="rounded border border-white/8 bg-[#151515] p-2 text-[10px] text-slate-400">
+                        <div className="text-teal-200">Automatic governed projection</div>
+                        <div className="mt-1">Shot, tone, transcript, and audio relationships are computed when their source evidence changes. This sheet audits the result; it does not require an analyst to run plumbing operations.</div>
+                        <div className="mt-2 border-t border-white/8 pt-2 text-[9px] text-amber-200">Interpretive confirmation and promotion remain manual. Measured relationships do not become semantic claims automatically.</div>
+                      </div>
+                    </section>
+                  ) : null}
                   {activeVisualView === "cinematic" && (
                     <div className="rounded border border-white/8 bg-[#171717] px-3 py-3 text-[11px] text-slate-400">
                       <div className="mb-3 grid gap-2 md:grid-cols-2">
@@ -3451,6 +3684,15 @@ export default function ToolsPanel() {
                                         type="button"
                                         className="flex min-w-0 flex-1 items-start justify-between rounded border border-white/8 bg-[#191919] px-2 py-1 text-left text-[11px] text-slate-300 transition-colors hover:text-slate-100"
                                         onClick={() => openVideoAtTime(entry.start)}
+                                        onContextMenu={(event) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setCinematicContextMenu({
+                                            x: event.clientX,
+                                            y: event.clientY,
+                                            entry,
+                                          });
+                                        }}
                                       >
                                         <span className="min-w-0 truncate pr-2">
                                           {index + 1}. {getCorrectedCinematicEntry(entry)}
@@ -3502,11 +3744,50 @@ export default function ToolsPanel() {
                                             Correct
                                           </button>
                                         )
+                                      ) : correctionOpen ? (
+                                        <div className="flex min-w-[300px] shrink-0 items-center gap-1 rounded border border-cyan-900/60 bg-[#111a1d] p-1" data-vaa1-cinematic-inline-correction="true">
+                                          <Input
+                                            autoFocus
+                                            value={activeCinematicCorrectionValue}
+                                            onChange={(event) => setActiveCinematicCorrectionValue(event.target.value)}
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter") {
+                                                void saveCinematicCorrection(entry, activeCinematicCorrectionValue);
+                                              }
+                                              if (event.key === "Escape") {
+                                                setActiveCinematicCorrectionId(null);
+                                                setActiveCinematicCorrectionValue("");
+                                              }
+                                            }}
+                                            className="h-7 min-w-0 flex-1 border-white/12 bg-[#191919] px-2 text-[10px] text-slate-200"
+                                            aria-label={`Correct ${entry.label}`}
+                                          />
+                                          <span className="shrink-0 font-mono text-[9px] text-slate-500">
+                                            {formatSeconds(entry.start)}–{formatSeconds(entry.end)}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="rounded border border-cyan-800/60 px-2 py-1 text-[9px] text-cyan-100"
+                                            onClick={() => void saveCinematicCorrection(entry, activeCinematicCorrectionValue)}
+                                          >
+                                            Save
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="rounded border border-white/10 px-2 py-1 text-[9px] text-slate-400"
+                                            onClick={() => {
+                                              setActiveCinematicCorrectionId(null);
+                                              setActiveCinematicCorrectionValue("");
+                                            }}
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
                                       ) : (
                                         <button
                                           type="button"
                                           className="shrink-0 rounded border border-white/8 bg-[#191919] px-2 py-1 text-[10px] text-slate-400 transition-colors hover:text-slate-100"
-                                          onClick={() => saveCinematicCorrection(entry)}
+                                          onClick={() => void saveCinematicCorrection(entry)}
                                         >
                                           Correct
                                         </button>
@@ -3699,6 +3980,15 @@ export default function ToolsPanel() {
                                         <tr
                                           key={`${entry.key}-${entry.start}-${entry.end}-${index}`}
                                           className="hover:bg-white/[0.025]"
+                                          onContextMenu={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            setCinematicContextMenu({
+                                              x: event.clientX,
+                                              y: event.clientY,
+                                              entry,
+                                            });
+                                          }}
                                         >
                                           <td className="whitespace-nowrap px-3 py-2 text-slate-300">
                                             {formatSeconds(entry.start)}
@@ -3713,23 +4003,46 @@ export default function ToolsPanel() {
                                             {entry.origin}
                                           </td>
                                           <td className="whitespace-nowrap px-3 py-2">
-                                            <button
-                                              type="button"
-                                              className="mr-3 text-cyan-300/80 hover:text-cyan-200"
-                                              onClick={() => {
-                                                if (!videoId) return;
-                                                eventBus.emit("videoTimeLineChanged", entry.start);
-                                              }}
-                                            >
-                                              Open source
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="text-slate-500 hover:text-slate-300"
-                                              onClick={() => saveCinematicCorrection(entry)}
-                                            >
-                                              Correct
-                                            </button>
+                                            {activeCinematicCorrectionId === cinematicEntryId(entry) ? (
+                                              <div className="flex min-w-[320px] items-center gap-1" data-vaa1-cinematic-inline-correction="true">
+                                                <Input
+                                                  autoFocus
+                                                  value={activeCinematicCorrectionValue}
+                                                  onChange={(event) => setActiveCinematicCorrectionValue(event.target.value)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === "Enter") void saveCinematicCorrection(entry, activeCinematicCorrectionValue);
+                                                    if (event.key === "Escape") {
+                                                      setActiveCinematicCorrectionId(null);
+                                                      setActiveCinematicCorrectionValue("");
+                                                    }
+                                                  }}
+                                                  className="h-7 min-w-0 flex-1 border-white/12 bg-[#191919] px-2 text-[10px] text-slate-200"
+                                                  aria-label={`Correct ${entry.label}`}
+                                                />
+                                                <button type="button" className="text-cyan-300/80 hover:text-cyan-200" onClick={() => void saveCinematicCorrection(entry, activeCinematicCorrectionValue)}>Save</button>
+                                                <button type="button" className="text-slate-500 hover:text-slate-300" onClick={() => { setActiveCinematicCorrectionId(null); setActiveCinematicCorrectionValue(""); }}>Cancel</button>
+                                              </div>
+                                            ) : (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  className="mr-3 text-cyan-300/80 hover:text-cyan-200"
+                                                  onClick={() => {
+                                                    if (!videoId) return;
+                                                    eventBus.emit("videoTimeLineChanged", entry.start);
+                                                  }}
+                                                >
+                                                  Open source
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="text-slate-500 hover:text-slate-300"
+                                                  onClick={() => void saveCinematicCorrection(entry)}
+                                                >
+                                                  Correct
+                                                </button>
+                                              </>
+                                            )}
                                           </td>
                                         </tr>
                                       ))}
@@ -5601,6 +5914,105 @@ export default function ToolsPanel() {
           </div>
         </div>
       </div>
+      {cinematicContextMenu ? (
+        <div
+          className="fixed z-[10000] min-w-[190px] rounded border border-teal-800/70 bg-[#101010] p-1 shadow-2xl shadow-black/70"
+          style={{
+            left: Math.min(cinematicContextMenu.x, Math.max(16, window.innerWidth - 220)),
+            top: Math.min(cinematicContextMenu.y, Math.max(16, window.innerHeight - 320)),
+          }}
+          role="menu"
+          aria-label="Datascene evidence context menu"
+          data-vaa1-cinematic-context-menu="true"
+          data-vaa1-context-regime-base="meaning-network"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="border-b border-slate-800 px-2 py-1.5">
+            <div className="truncate text-[10px] font-medium text-slate-100">
+              {getCorrectedCinematicEntry(cinematicContextMenu.entry)}
+            </div>
+            <div className="mt-0.5 text-[9px] uppercase tracking-[0.1em] text-slate-500">
+              Cinematic evidence · {formatSeconds(cinematicContextMenu.entry.start)}–{formatSeconds(cinematicContextMenu.entry.end)}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            className="mt-1 block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40"
+            onClick={() => {
+              copyCinematicEvidence(cinematicContextMenu.entry);
+              setCinematicContextMenu(null);
+            }}
+          >
+            Copy evidence
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-cyan-200 hover:bg-cyan-950/40"
+            onClick={() => {
+              const entry = cinematicContextMenu.entry;
+              setCinematicMatcherEntry(entry);
+              setCinematicContextMenu(null);
+            }}
+          >
+            Open sheet
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-teal-100 hover:bg-teal-950/40"
+            onClick={() => {
+              setCinematicMatcherEntry(cinematicContextMenu.entry);
+              setCinematicContextMenu(null);
+            }}
+          >
+            Matcher: find constellations
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-teal-950/40"
+            onClick={() => {
+              copyCinematicEvidence(cinematicContextMenu.entry);
+              setCinematicContextMenu(null);
+            }}
+          >
+            Copy content
+          </button>
+          <div className="my-1 border-t border-slate-800" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled
+            title="Shot confirmation is delivered in the governed shot-boundary correction step."
+            className="block w-full cursor-not-allowed rounded px-2 py-1.5 text-left text-[10px] text-emerald-200 opacity-40"
+          >
+            Quick confirm
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-cyan-200 hover:bg-cyan-950/40"
+            onClick={() => {
+              openVideoAtTime(cinematicContextMenu.entry.start);
+              setCinematicContextMenu(null);
+            }}
+          >
+            Jump to source
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full rounded px-2 py-1.5 text-left text-[10px] text-amber-200 hover:bg-amber-950/40"
+            onClick={() => openCinematicTraceback(cinematicContextMenu.entry)}
+          >
+            Open traceback
+          </button>
+        </div>
+      ) : null}
     </TooltipProvider>
   );
 }

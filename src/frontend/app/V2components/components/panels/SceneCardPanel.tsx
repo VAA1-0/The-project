@@ -32,6 +32,8 @@ import {
   matureSceneSegmentSourceLabel,
 } from "@/lib/scene-governance";
 import { useLayoutHost } from "../LayoutHost";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
+import SceneLanguageSFLView from "../SceneLanguageSFLView";
 
 type SceneCardBundle = {
   schema?: string;
@@ -1141,7 +1143,9 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
           </div>
         </div>
       </header>
-
+      <div className="px-4 pt-3">
+        <NativeStatisticalInterpretationStrip run={analysisData?.nativeStatisticalInterpretation} panel="scene_cards" />
+      </div>
       {!selectedVideoId ? (
         <div className="p-4 text-sm text-slate-400">Select an analysed video to view Scene Cards.</div>
       ) : loading ? (
@@ -1253,6 +1257,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                   {(selectedCard.nlp_scene_summary_sentence ||
                     selectedCard.nlp_scene_summary?.sentence ||
                     proseSections?.summary) && (
+                    <>
                     <div
                       className="mt-3 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2"
                       onContextMenu={(event) =>
@@ -1277,8 +1282,9 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                           selectedCard.nlp_scene_summary_sentence ||
                           selectedCard.nlp_scene_summary?.sentence}
                       </p>
+                    </div>
                       <details className="mt-2 rounded border border-slate-800 bg-slate-950/20">
-                        <summary className="cursor-pointer list-none px-2 py-1.5 text-[11px] text-slate-300 marker:hidden">
+                        <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-300 marker:hidden">
                           Scene attributes
                         </summary>
                         <div className="border-t border-slate-800 p-2">
@@ -1361,8 +1367,15 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       )}
                         </div>
                       </details>
-                    </div>
+                    </>
                   )}
+                  <div className="mt-2">
+                    <SceneLanguageSFLView
+                      analysisId={selectedVideoId}
+                      perspective="scene"
+                      initialSceneCards={[selectedCard]}
+                    />
+                  </div>
                   {showNoteEditor && (
                     <div className="mt-3 border border-slate-800 bg-[#111] p-3">
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">

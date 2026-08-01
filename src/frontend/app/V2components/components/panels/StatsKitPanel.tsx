@@ -1,5 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  apiService,
+  type NativeStatisticalInterpretationRun,
+  type SourceMediaMetadata,
+} from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { EMPIRICAL_TAXONOMY_ATTRIBUTES } from "@/lib/empirical-taxonomy";
 import {
@@ -8,6 +12,8 @@ import {
   type MasterSchemaResolvedEvidenceRecord,
   type VideoMetadata,
 } from "@/lib/video-service";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
+import SceneLanguageSFLView from "../SceneLanguageSFLView";
 
 type StatsKitPanelProps = {
   analysisId?: string;
@@ -2526,7 +2532,83 @@ function buildLocalComparisonStatsRows(
   const auditRows = buildMasterSchemaStatsAudit(analysisData, metadata);
   const metrics = buildMetrics(metadata, analysisData);
   const radar = buildRadar(metrics);
-  return buildSubstanceRows(metadata, analysisData, metrics, radar, null, auditRows);
+  return [
+    ...buildSubstanceRows(metadata, analysisData, metrics, radar, null, auditRows),
+    ...buildNativePatternStatsRows(metadata, analysisData),
+  ];
+}
+
+function buildNativePatternStatsRows(
+  metadata: SourceMediaMetadata | null,
+  analysisData: AnalysisData | null,
+  runOverride?: NativeStatisticalInterpretationRun | null,
+): StatsTableRow[] {
+  const run = runOverride || analysisData?.nativeStatisticalInterpretation;
+  const finding = run?.finding;
+  if (!finding) return [];
+  const interval = finding.source_interval;
+  const sourceAction = `datascene://analysis/${run?.analysis_id || metadata?.analysis_id || "unknown"}/video?t=${Number(interval?.start_seconds || 0)}`;
+  const familyForSignal = (signal = ""): StatsFamily =>
+    ["speech", "audio_event", "prosody"].includes(signal) ? "audio" :
+      ["transcript", "sfl"].includes(signal) ? "linguistic" :
+        ["visual_tone", "visual_motion", "expression", "props"].includes(signal) ? "visual" : "descriptive";
+  const observationRows: StatsTableRow[] = (finding.observations || []).map((observation) => ({
+    id: `native-pattern:${observation.metric_id}`,
+    level: "scene",
+    family: familyForSignal(observation.signal_family),
+    method: "robust z relative to other governed scenes",
+    statistic: observation.metric_label || observation.metric_id || "measured attribute",
+    value: Number(observation.observed_value || 0),
+    unit: observation.unit || "value",
+    scope: "micro source interval / meso within-video baseline",
+    evidence: (observation.evidence_refs || []).join(" + ") || "native statistical interpretation",
+    status: "computed",
+    note: `baseline median ${observation.baseline?.median ?? "unavailable"}; robust z ${observation.standardized_deviation?.value?.toFixed(3) ?? "unavailable"}`,
+    requiredLayer: observation.signal_family || "measured source layer",
+    resultId: observation.observation_id,
+    sourceAction,
+    visualizationTypes: ["bar_chart", "table", "timeline"],
+  }));
+  const relationshipRows: StatsTableRow[] = (run?.relationships || []).map((relationship) => ({
+    id: `native-relationship:${relationship.left_metric}:${relationship.right_metric}`,
+    level: "meso",
+    family: "correlation",
+    method: relationship.method || "spearman_rank_correlation",
+    statistic: `${relationship.left_metric?.replaceAll("_", " ")} ↔ ${relationship.right_metric?.replaceAll("_", " ")}`,
+    value: Number(relationship.coefficient || 0),
+    unit: "Spearman rho",
+    scope: "micro evidence / meso computed / macro comparison candidate",
+    evidence: `${relationship.scene_count || 0} governed scenes`,
+    status: "candidate",
+    note: relationship.substantive_reading || relationship.interpretation || "Measured scene relationship.",
+    requiredLayer: relationship.coupling || "cross-signal paired observations",
+    resultId: relationship.relationship_id,
+    sourceAction,
+    visualizationTypes: ["heatmap", "network_graph", "table"],
+  }));
+  const metadataRecord = metadata as unknown as Record<string, unknown> | null;
+  const storedIndex = metadataRecord && isRecord(metadataRecord.statistical_pattern_index)
+    ? metadataRecord.statistical_pattern_index
+    : null;
+  const indexValue = Number(storedIndex?.value ?? finding.salience_index);
+  const indexRows: StatsTableRow[] = Number.isFinite(indexValue) ? [{
+    id: "file-statistical-pattern-index",
+    level: "file",
+    family: "comparative",
+    method: "mean of capped absolute robust-z components",
+    statistic: "statistical pattern index",
+    value: indexValue,
+    unit: "0–1 index",
+    scope: "video file / corpus comparison",
+    evidence: `${finding.observations?.length || 0} measured attributes`,
+    status: "computed",
+    note: "File-level comparison feature for corpus sorting, filtering, quality and genre analysis.",
+    requiredLayer: "native statistical interpretation",
+    resultId: finding.finding_id,
+    sourceAction,
+    visualizationTypes: ["bar_chart", "histogram", "boxplot", "table"],
+  }] : [];
+  return [...indexRows, ...observationRows, ...relationshipRows];
 }
 
 function findComparableFeatureRow(
@@ -3090,10 +3172,22 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "complete" | "failed">("idle");
   const [runSummary, setRunSummary] = useState("");
   const [runArtifact, setRunArtifact] = useState<Record<string, unknown> | null>(null);
+  const [interpretationRunning, setInterpretationRunning] = useState(false);
+  const [interpretationResult, setInterpretationResult] = useState<NativeStatisticalInterpretationRun | null>(null);
+  const [statisticalOverviewVisible, setStatisticalOverviewVisible] = useState(true);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const workbenchRef = useRef<HTMLDetailsElement | null>(null);
+  const [comparisonStudioOpen, setComparisonStudioOpen] = useState(false);
+  const comparisonStudioRef = useRef<HTMLDetailsElement | null>(null);
   const [scope, setScope] = useState<"scene" | "video" | "collection">("video");
   const [audience, setAudience] = useState<"analyst" | "editor" | "researcher" | "journalist">("analyst");
   const [statFamily, setStatFamily] = useState<StatsFamily>("descriptive");
   const [taxonomyTheme, setTaxonomyTheme] = useState("all");
+  const [taxonomySubcategory, setTaxonomySubcategory] = useState("all");
+  const [taxonomySearch, setTaxonomySearch] = useState("");
+  const [selectedReadinessLayerId, setSelectedReadinessLayerId] = useState(
+    "true-shot-boundary-intervals",
+  );
   const [visualization, setVisualization] = useState<VisualizationMode>("bar_chart");
   const [visualizationTarget, setVisualizationTarget] = useState<VisualizationTarget>("stats");
   const [selectedStatId, setSelectedStatId] = useState("");
@@ -3118,6 +3212,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [studioStep, setStudioStep] = useState<StudioWorkflowStep>("corpus");
   const [studioUnitOfAnalysis, setStudioUnitOfAnalysis] = useState("video");
   const [studioVariantMode, setStudioVariantMode] = useState("all_selected");
+  const [statsReportDraft, setStatsReportDraft] = useState("");
 
   useEffect(() => {
     const handler = (payload?: unknown) => {
@@ -3154,7 +3249,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   useEffect(() => {
     setExpandedEvidenceRowId("");
     setInlineEvidencePage(0);
-  }, [activeAnalysisId, statFamily, taxonomyTheme]);
+  }, [activeAnalysisId, statFamily, taxonomyTheme, taxonomySubcategory]);
 
   useEffect(() => {
     if (!activeAnalysisId) return;
@@ -3204,6 +3299,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   }, [activeAnalysisId, sourceMetadataRefreshNonce]);
 
   useEffect(() => {
+    if (!comparisonStudioOpen) return;
     let cancelled = false;
     VideoService.listVideos(20)
       .then((videos) => {
@@ -3230,9 +3326,13 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [activeAnalysisId]);
+  }, [activeAnalysisId, comparisonStudioOpen]);
 
   useEffect(() => {
+    if (!comparisonStudioOpen) {
+      setComparisonStatus("idle");
+      return;
+    }
     const ids = [...new Set(selectedComparisonIds.filter(Boolean))].slice(0, 8);
     if (!ids.length) {
       setComparisonCorpus([]);
@@ -3289,6 +3389,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     };
   }, [
     activeAnalysisId,
+    comparisonStudioOpen,
     selectedComparisonIds.join("|"),
     metadata,
     analysisData,
@@ -3357,9 +3458,66 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     }
   };
 
+  const runStatisticalInterpretation = async () => {
+    if (!activeAnalysisId || interpretationRunning) return;
+    setInterpretationRunning(true);
+    setRunSummary("Computing scene-level deviations and cross-signal associations...");
+    try {
+      const result = await apiService.runNativeStatisticalInterpretation(activeAnalysisId);
+      setInterpretationResult(result);
+      setStatisticalOverviewVisible(true);
+      const refreshed = await VideoService.refreshAnalysis(activeAnalysisId);
+      setAnalysisData(refreshed);
+      setRunSummary("");
+      eventBus.emit("analysisCorrectionsChanged", activeAnalysisId);
+    } catch (error) {
+      setRunSummary(error instanceof Error ? error.message : "Statistical interpretation failed");
+    } finally {
+      setInterpretationRunning(false);
+    }
+  };
+
+  const clearStatsKitInquiry = () => {
+    setInterpretationResult(null);
+    setStatisticalOverviewVisible(false);
+    setRunArtifact(null);
+    setRunSummary("");
+    setRunStatus("idle");
+    setSelectedStatId("");
+    setSelectedStatIds([]);
+    setExpandedEvidenceRowId("");
+    setSelectedScannerRowId("");
+    setSelectedScannerRowIds([]);
+    setSelectedSignificanceRowId("");
+    setSelectedSignificanceRowIds([]);
+    setVisualizationTarget("stats");
+    setVisualization("bar_chart");
+    setWorkbenchOpen(false);
+  };
+
+  const refreshStatsKitInquiry = async () => {
+    clearStatsKitInquiry();
+    if (!activeAnalysisId) return;
+    setIsLoading(true);
+    setLoadError("");
+    try {
+      const refreshed = await VideoService.refreshAnalysis(activeAnalysisId);
+      setAnalysisData(refreshed);
+      const refreshedMetadata = await apiService.getSourceMediaMetadata(activeAnalysisId);
+      setMetadata(refreshedMetadata);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "StatsKit refresh failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const statsRows = useMemo(
-    () => buildSubstanceRows(metadata, analysisData, metrics, radar, runArtifact, masterAuditRows),
-    [metadata, analysisData, metrics, radar, runArtifact, masterAuditRows],
+    () => [
+      ...buildSubstanceRows(metadata, analysisData, metrics, radar, runArtifact, masterAuditRows),
+      ...buildNativePatternStatsRows(metadata, analysisData, interpretationResult),
+    ],
+    [metadata, analysisData, interpretationResult, metrics, radar, runArtifact, masterAuditRows],
   );
   const operationalStatsRows = useMemo(
     () => statsRows.map((row) => {
@@ -3391,9 +3549,39 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   );
   const selectedFamily = STAT_FAMILY_OPTIONS.find((option) => option.id === statFamily) || STAT_FAMILY_OPTIONS[0];
   const methodOrder = ["frequency", "percentage", "duration", "mean", "median", "variance", "standard_deviation"];
+  const taxonomySubcategories = [...new Set(
+    operationalStatsRows
+      .filter((row) =>
+        row.family === "taxonomy" &&
+        (taxonomyTheme === "all" || row.scope === taxonomyTheme),
+      )
+      .map((row) => row.method)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  const normalizedTaxonomySearch = taxonomySearch.trim().toLowerCase();
   const visibleStatsRows = operationalStatsRows
-    .filter((row) => row.family === statFamily && (statFamily !== "taxonomy" || taxonomyTheme === "all" || row.scope === taxonomyTheme))
+    .filter((row) =>
+      row.family === statFamily &&
+      (statFamily !== "correlation" || row.id.startsWith("native-relationship:")) &&
+      (
+        statFamily !== "taxonomy" ||
+        (
+          (taxonomyTheme === "all" || row.scope === taxonomyTheme) &&
+          (taxonomySubcategory === "all" || row.method === taxonomySubcategory) &&
+          (
+            !normalizedTaxonomySearch ||
+            `${row.method} ${row.statistic} ${row.evidence} ${row.status} ${row.note}`
+              .toLowerCase()
+              .includes(normalizedTaxonomySearch)
+          )
+        )
+      ),
+    )
     .sort((left, right) => {
+      if (statFamily === "correlation") {
+        const nativeDifference = Number(right.id.startsWith("native-relationship:")) - Number(left.id.startsWith("native-relationship:"));
+        if (nativeDifference) return nativeDifference;
+      }
       if (statFamily === "taxonomy") {
         return left.method.localeCompare(right.method, undefined, { sensitivity: "base" }) ||
           left.statistic.localeCompare(right.statistic, undefined, { sensitivity: "base" });
@@ -3404,11 +3592,46 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       return methodDifference || left.statistic.localeCompare(right.statistic, undefined, { sensitivity: "base" });
     });
   const visibleStatsRowIds = visibleStatsRows.map((row) => row.id).join("|");
+  const activeNativeRun = interpretationResult || analysisData?.nativeStatisticalInterpretation;
+  const relationshipExplorerRows = statFamily === "correlation"
+    ? (activeNativeRun?.relationships || []).map((relationship) => ({
+        relationship,
+        row: visibleStatsRows.find((candidate) => candidate.resultId === relationship.relationship_id) || null,
+      })).filter((item) => item.row)
+    : [];
   const selectedStat = visibleStatsRows.find((row) => row.id === selectedStatId) || visibleStatsRows[0] || null;
   const inlineEvidenceRecords = useMemo<InlineEvidenceRecord[]>(() => {
     if (!selectedStat) return [];
     const basis = `${selectedStat.statistic} ${selectedStat.method} ${selectedStat.requiredLayer} ${selectedStat.evidence}`.toLowerCase();
-    const category = basis.includes("camera shot") || basis.includes("shot_boundary")
+    const nativeRun = interpretationResult || analysisData?.nativeStatisticalInterpretation;
+    const nativeRelationship = (nativeRun?.relationships || []).find((relationship) => relationship.relationship_id === selectedStat.resultId);
+    if (nativeRelationship) {
+      return (nativeRelationship.source_intervals || []).map((interval, index) => ({
+        id: `${nativeRelationship.relationship_id}:scene:${index + 1}`,
+        label: `${nativeRelationship.left_metric?.replaceAll("_", " ")} ↔ ${nativeRelationship.right_metric?.replaceAll("_", " ")} · scene ${index + 1}`,
+        start: Number(interval.start_seconds || 0),
+        end: Number(interval.end_seconds || interval.start_seconds || 0),
+        authority: "computed paired observation",
+        source: nativeRelationship.method || "spearman_rank_correlation",
+      }));
+    }
+    if (selectedStat.family === "comparative") {
+      return comparisonCorpus.map((item) => {
+        const comparable = findComparableFeatureRow(item.statsRows, selectedStat);
+        return {
+          id: `comparison:${selectedStat.id}:${item.analysisId}`,
+          label: `${item.sourceName} · ${comparable?.value ?? "missing"} ${comparable?.unit || ""}`,
+          start: 0,
+          end: 0,
+          authority: comparable?.status || "missing",
+          source: "StatsKit comparison corpus",
+        };
+      });
+    }
+    const category =
+      basis.includes("camera shot") ||
+      basis.includes("shot_boundary") ||
+      (basis.includes("visual shot") && !basis.includes("visual scene"))
       ? "shot_boundary"
       : basis.includes("scene card")
         ? "scene_card"
@@ -3435,6 +3658,46 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         authority: record.authority,
         source: record.sourcePanel,
       }));
+    if (category === "shot_boundary") {
+      if (masterRows.length) return masterRows;
+      return (analysisData?.metadata?.motionSceneBasis?.shotBoundaries?.intervals || [])
+        .map((interval, index) => ({
+          id: String(interval.shot_id || `shot-boundary:${index + 1}`),
+          label: `Shot ${index + 1}`,
+          start: Number(interval.start ?? 0),
+          end: Number(interval.end ?? interval.start ?? 0),
+          authority: "measured governed interval",
+          source: "shot_boundaries.json",
+        }));
+    }
+    if (
+      basis.includes("spatial_tone") ||
+      basis.includes("brightness") ||
+      basis.includes("contrast") ||
+      basis.includes("saturation") ||
+      basis.includes("color entropy") ||
+      basis.includes("luminance entropy")
+    ) {
+      return (analysisData?.metadata?.spatialToneScan?.samples || []).map((sample, index) => {
+        const wholeFrame = sample.zones?.whole_frame;
+        return {
+          id: `spatial-tone:${index + 1}`,
+          label: [
+            wholeFrame?.dominant_tone || "Measured visual tone",
+            typeof wholeFrame?.brightness === "number"
+              ? `brightness ${wholeFrame.brightness.toFixed(1)}`
+              : wholeFrame?.brightness_band,
+            typeof wholeFrame?.contrast === "number"
+              ? `contrast ${wholeFrame.contrast.toFixed(1)}`
+              : wholeFrame?.contrast_band,
+          ].filter(Boolean).join(" · "),
+          start: Number(sample.timestamp ?? 0),
+          end: Number(sample.timestamp ?? 0) + 1,
+          authority: "measured governed window",
+          source: "spatial_tone_scan.json",
+        };
+      });
+    }
     if (category) return masterRows;
 
     if (selectedStat.method === "Plot lens readings") {
@@ -3468,7 +3731,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       });
     }
     return [];
-  }, [analysisData, metadata, selectedStat]);
+  }, [analysisData, comparisonCorpus, interpretationResult, metadata, selectedStat]);
   const inlineEvidencePageCount = Math.max(1, Math.ceil(inlineEvidenceRecords.length / INLINE_EVIDENCE_PAGE_SIZE));
   const safeInlineEvidencePage = Math.min(inlineEvidencePage, inlineEvidencePageCount - 1);
   const inlineEvidencePageStart = safeInlineEvidencePage * INLINE_EVIDENCE_PAGE_SIZE;
@@ -3549,6 +3812,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     () => buildStatsKitSourceLayerDeliverables(analysisData),
     [analysisData],
   );
+  const selectedReadinessLayer =
+    sourceLayerDeliverables.find((row) => row.id === selectedReadinessLayerId) ||
+    sourceLayerDeliverables[0] ||
+    null;
   const selectedCanVisualize = plottedData.length > 0;
   const studioPackage = useMemo(
     () => buildStatsComparisonStudioPackage({
@@ -3571,6 +3838,47 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const selectedResultCount = isRecord(schemaBundle.StatsKit) && Array.isArray(schemaBundle.StatsKit.source_results)
     ? schemaBundle.StatsKit.source_results.length
     : 0;
+  const writeStatsReportDraft = () => {
+    const relationships = analysisData?.nativeStatisticalInterpretation?.relationships || [];
+    const strongest = [...relationships].sort((left, right) => Math.abs(Number(right.coefficient || 0)) - Math.abs(Number(left.coefficient || 0))).slice(0, 5);
+    const indexRows = comparisonCorpus.map((item) => {
+      const row = item.statsRows.find((candidate) => candidate.id === "file-statistical-pattern-index");
+      return { name: item.sourceName, value: statNumericValue(row) };
+    }).filter((row) => row.value !== null);
+    const indexSentence = indexRows.length > 1
+      ? `Across ${indexRows.length} files, the statistical pattern index ranges from ${roundStat(Math.min(...indexRows.map((row) => row.value as number)))} to ${roundStat(Math.max(...indexRows.map((row) => row.value as number)))}.`
+      : indexRows.length === 1
+        ? `${indexRows[0].name} has a file-level statistical pattern index of ${roundStat(indexRows[0].value as number)}.`
+        : "No comparable file-level pattern indices are loaded.";
+    const relationshipText = strongest.length
+      ? strongest.map((relationship) => {
+          const frames = relationship.analytical_frames;
+          return `- ${relationship.left_metric?.replaceAll("_", " ")} and ${relationship.right_metric?.replaceAll("_", " ")} show a ${relationship.direction} ${relationship.strength_label} rank association (Spearman ρ=${Number(relationship.coefficient || 0).toFixed(3)}, n=${relationship.scene_count || 0} scenes). Frame: ${(frames?.orientation || []).join("/")}; ${(frames?.evidence_expression || []).join("/")} evidence; meso result grounded in micro intervals.`;
+        }).join("\n")
+      : "- No framed cross-signal relationships are available.";
+    setStatsReportDraft([
+      `Statistical pattern report — ${sourceName}`,
+      "",
+      "Corpus overview",
+      indexSentence,
+      "",
+      "Cross-signal results",
+      relationshipText,
+      "",
+      "Analytical reading",
+      "These results identify measured co-variation for analyst interpretation. Micro evidence can be opened at source; meso relationships are computed across governed scenes; macro claims require a multi-file comparison.",
+    ].join("\n"));
+  };
+  const downloadStatsReportDraft = () => {
+    if (!statsReportDraft) return;
+    const blob = new Blob([statsReportDraft], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `datascene_statistical_pattern_report_${activeAnalysisId || "corpus"}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
   const selectedScannerRow = scannerRows.find((row) => row.id === selectedScannerRowId) || scannerRows[0] || null;
   const selectedSignificanceRow =
     filteredSignificanceRows.find((row) => row.id === selectedSignificanceRowId) ||
@@ -3664,6 +3972,52 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
 
   const resetColumnWidths = () => setStatColumnWidths(DEFAULT_STAT_COLUMN_WIDTHS);
 
+  const storedPatternIndex = isRecord((metadata as unknown as Record<string, unknown> | null)?.statistical_pattern_index)
+    ? (metadata as unknown as Record<string, unknown>).statistical_pattern_index as Record<string, unknown>
+    : null;
+  const currentFinding = interpretationResult?.finding || analysisData?.nativeStatisticalInterpretation?.finding;
+  const filePatternIndex = storedPatternIndex || (currentFinding ? {
+    value: currentFinding.salience_index,
+    attribute_count: currentFinding.observations?.length || 0,
+    signal_family_count: currentFinding.independent_signal_family_count || 0,
+    signal_families: currentFinding.signal_families || [],
+    selected_source_interval: currentFinding.source_interval,
+    method: "mean_of_capped_absolute_robust_z_components",
+  } : null);
+
+  const openPatternAttributeInWorkbench = (metricId: string, metricLabel: string) => {
+    const normalized = (value: string) => value
+      .toLowerCase()
+      .replace(/[_/]+/g, " ")
+      .replace(/\b(mean|ratio|rate|index)\b/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+    const target = normalized(`${metricId} ${metricLabel}`);
+    const targetTokens = new Set(target.split(" ").filter((token) => token.length > 2));
+    const ranked = operationalStatsRows
+      .map((row) => {
+        const rowText = normalized(`${row.statistic} ${row.method} ${row.evidence} ${row.requiredLayer}`);
+        const overlap = [...targetTokens].filter((token) => rowText.includes(token)).length;
+        const exact = rowText.includes(normalized(metricLabel)) || rowText.includes(normalized(metricId));
+        return { row, score: overlap + (exact ? 10 : 0) };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.row;
+    if (!ranked) {
+      setRunSummary(`No Stats workbench attribute is registered for ${metricLabel || metricId}.`);
+      return;
+    }
+    setStatFamily(ranked.family);
+    setSelectedStatId(ranked.id);
+    setSelectedStatIds((current) => current.includes(ranked.id) ? current : [...current, ranked.id]);
+    setExpandedEvidenceRowId(ranked.id);
+    setInlineEvidencePage(0);
+    setVisualizationTarget("stats");
+    setWorkbenchOpen(true);
+    setRunSummary(`${metricLabel || metricId} opened in the Stats workbench.`);
+    window.requestAnimationFrame(() => workbenchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
   return (
     <section className="flex h-full flex-col overflow-auto bg-[#151515] p-3 text-[11px] text-slate-200" data-vaa1-statskit-panel="true">
       <div className="order-1 flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-900/50 bg-[#101010] px-3 py-2">
@@ -3680,7 +4034,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </div>
 
-      <div className="order-2 mt-2 grid gap-2 xl:grid-cols-[1fr_190px_150px_150px_130px]">
+      <details open className="order-2 mt-2 rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-box-collapsible="true">
+        <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-200 marker:hidden">Analysis setup</summary>
+        <div className="grid gap-2 border-t border-slate-800 p-2 xl:grid-cols-[1fr_190px_150px_150px_120px_150px_90px_90px]">
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">
           <span className="block text-[9px] uppercase tracking-[0.14em] text-slate-500">Active analysis</span>
           <input
@@ -3695,7 +4051,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           <select
             className="mt-1 w-full rounded border border-slate-700 bg-[#090909] px-2 py-1 text-[10px] text-slate-100"
             value={statFamily}
-            onChange={(event) => setStatFamily(event.target.value as StatsFamily)}
+            onChange={(event) => {
+              setStatFamily(event.target.value as StatsFamily);
+              setWorkbenchOpen(true);
+            }}
           >
             {STAT_FAMILY_OPTIONS.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
@@ -3736,23 +4095,51 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         >
           {runStatus === "running" ? "Running..." : "Run StatsKit"}
         </button>
+        <button
+          type="button"
+          className="rounded border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-[10px] font-semibold text-violet-100 hover:bg-violet-500/20 disabled:opacity-40"
+          disabled={!activeAnalysisId || interpretationRunning}
+          onClick={runStatisticalInterpretation}
+          data-vaa1-run-statistical-interpretation="true"
+        >
+          {interpretationRunning ? "Finding scenes..." : "Find statistical patterns"}
+        </button>
+        <button type="button" onClick={() => void refreshStatsKitInquiry()} className="rounded border border-slate-700 px-2 py-2 text-[10px] text-slate-300 hover:bg-white/5">Refresh</button>
+        <button type="button" onClick={clearStatsKitInquiry} className="rounded border border-slate-700 px-2 py-2 text-[10px] text-slate-300 hover:bg-white/5">Clear</button>
+        </div>
+      </details>
+
+      {statisticalOverviewVisible && (interpretationResult || analysisData?.nativeStatisticalInterpretation) ? <div className="order-3 mt-2">
+        <NativeStatisticalInterpretationStrip
+          run={interpretationResult || analysisData?.nativeStatisticalInterpretation}
+          panel="statskit"
+          onOpenStatistic={openPatternAttributeInWorkbench}
+          defaultOpen={false}
+        />
+      </div> : null}
+
+      <div className="order-4 mt-2">
+        {activeAnalysisId && <SceneLanguageSFLView analysisId={activeAnalysisId} perspective="scene" />}
       </div>
 
-      {(isLoading || loadError || runSummary) && (
+      {(isLoading || loadError) && (
         <div className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 text-[10px] text-slate-300">
           {isLoading ? "Loading source metadata..." : null}
           {loadError ? <span className="text-amber-200">{loadError}</span> : null}
-          {runSummary ? (
-            <span className={runStatus === "failed" ? "text-rose-200" : "text-cyan-100"}>{runSummary}</span>
-          ) : null}
         </div>
       )}
 
-      <details className="order-7 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-cross-video-comparison="true" data-vaa1-statskit-local-offline-policy="true">
+      <details
+        ref={comparisonStudioRef}
+        open={comparisonStudioOpen}
+        onToggle={(event) => setComparisonStudioOpen(event.currentTarget.open)}
+        className="order-7 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2"
+        data-vaa1-statskit-cross-video-comparison="true"
+        data-vaa1-statskit-local-offline-policy="true"
+      >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
           <div>
             <div className="text-[11px] font-semibold text-slate-200">StatsKit comparison studio</div>
-            <div className="mt-0.5 text-[9px] text-slate-500">Corpus to reproducible package; local Datascene data is the default runtime.</div>
           </div>
           <div className="font-mono text-[9px] text-cyan-100">
             {comparisonStatus} / {comparisonCorpus.length} video(s)
@@ -4006,6 +4393,25 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                 </tbody>
               </table>
             </div>
+          </div>
+          <div className="rounded border border-violet-900/50 bg-[#090909] px-3 py-2 lg:col-span-2" data-vaa1-stats-motor-report-writer="true">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-200">Stats motor report writer</div>
+                <div className="mt-1 text-[9px] text-slate-500">Builds editable prose from checked workbench variables, file indices, framed relationships, corpus comparisons, and source-linked methods.</div>
+              </div>
+              <div className="flex gap-1">
+                <button type="button" onClick={writeStatsReportDraft} className="rounded border border-violet-700/60 bg-violet-950/20 px-3 py-1.5 text-[9px] font-semibold text-violet-100 hover:bg-violet-900/30">Write draft</button>
+                <button type="button" disabled={!statsReportDraft} onClick={downloadStatsReportDraft} className="rounded border border-slate-700 px-3 py-1.5 text-[9px] text-slate-300 disabled:opacity-40">Download .txt</button>
+              </div>
+            </div>
+            <textarea
+              value={statsReportDraft}
+              onChange={(event) => setStatsReportDraft(event.target.value)}
+              placeholder="Select variables or relationships, then write a statistical report draft."
+              className="mt-2 min-h-56 w-full resize-y rounded border border-slate-700 bg-[#050505] p-3 font-mono text-[10px] leading-relaxed text-slate-200 placeholder:text-slate-600"
+              data-vaa1-stats-report-draft-editor="true"
+            />
           </div>
         </div>
         <div className={`${studioStep === "traceback" ? "block" : "hidden"} mt-2 rounded border border-slate-800 bg-[#090909] px-3 py-2`} data-vaa1-statskit-traceback-step-workspace="true">
@@ -4280,44 +4686,232 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       </details>
 
       <div className="order-4 mt-2 grid gap-2" data-vaa1-statskit-ordered-workbench-layout="true" data-vaa1-statskit-layout-priority="workbench-visualization-support">
-        <details className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-source-signals="true" data-vaa1-statskit-workbench-collapsible="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="A">
+        <details
+          ref={workbenchRef}
+          open={workbenchOpen}
+          onToggle={(event) => setWorkbenchOpen(event.currentTarget.open)}
+          className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010]"
+          data-vaa1-statskit-source-signals="true"
+          data-vaa1-statskit-workbench-collapsible="true"
+          data-vaa1-statskit-box-collapsible="true"
+          data-vaa1-statskit-layout-slot="A"
+        >
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Stats workbench table</div>
-              <div className="mt-0.5 text-[9px] text-slate-500">{selectedFamily.description}</div>
             </div>
             <div className="text-right text-[9px] uppercase tracking-[0.12em] text-slate-500">
               <div>{visibleStatsRows.length} rows</div>
               <div>{selectedStatIds.length || (selectedStat ? 1 : 0)} selected</div>
             </div>
           </summary>
+          {statFamily === "correlation" ? (
+            <div className="border-b border-violet-900/40 bg-violet-950/10 px-3 py-2" data-vaa1-statistical-relationship-explorer="true">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-200">Computed relationship explorer</div>
+                  <div className="mt-0.5 text-[9px] text-slate-500">Measured scene relationships with direct source navigation.</div>
+                </div>
+                <div className="font-mono text-[9px] text-violet-200">{relationshipExplorerRows.length} computed</div>
+              </div>
+              <div className="mt-2 grid gap-2">
+                {relationshipExplorerRows.map(({ relationship, row }) => (
+                  <div key={relationship.relationship_id} className="rounded border border-violet-900/50 bg-[#090909] px-3 py-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-slate-100">{relationship.left_metric?.replaceAll("_", " ")} ↔ {relationship.right_metric?.replaceAll("_", " ")}</div>
+                        <div className="mt-1 text-[10px] leading-relaxed text-slate-300">{row?.note}</div>
+                      </div>
+                      <div className="shrink-0 rounded border border-violet-800/60 px-2 py-1 font-mono text-violet-100">ρ {Number(relationship.coefficient || 0).toFixed(3)} · n={relationship.scene_count || 0}</div>
+                    </div>
+                    <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-2 py-1" data-vaa1-relationship-analytical-lenses="true">
+                      <summary className="cursor-pointer text-[9px] font-semibold text-slate-400">Analytical lenses and evidence classification</summary>
+                      <div className="mt-2 grid gap-1 text-[9px] text-slate-400">
+                        <div><span className="text-cyan-200">Computed scale:</span> meso—one association estimated across scenes; micro rows provide its paired evidence.</div>
+                        <div><span className="text-emerald-200">Available reading lenses:</span> {(relationship.analytical_frames?.orientation || []).join(" and ") || "not assigned"}. These are analyst perspectives, not outputs of the correlation equation.</div>
+                        <div><span className="text-sky-200">Evidence modes:</span> {(relationship.analytical_frames?.evidence_expression || []).join(" and ") || "not assigned"}. These classify the measured source layers; they are not separate coefficients.</div>
+                        <div><span className="text-violet-200">Relationship status:</span> inferred from paired measurements.</div>
+                      </div>
+                    </details>
+                    <div className="mt-2 overflow-auto rounded border border-slate-800" data-vaa1-statistical-relationship-paired-workbench="true">
+                      <table className="w-full border-collapse text-left text-[9px]">
+                        <thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500">
+                          <tr>
+                            <th className="border-b border-slate-800 px-2 py-1">Scene</th>
+                            <th className="border-b border-slate-800 px-2 py-1">{relationship.left_metric?.replaceAll("_", " ")}</th>
+                            <th className="border-b border-slate-800 px-2 py-1">{relationship.right_metric?.replaceAll("_", " ")}</th>
+                            <th className="border-b border-slate-800 px-2 py-1">Source</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(relationship.paired_observations || []).map((pair, index) => (
+                            <tr key={`${relationship.relationship_id}:pair:${pair.scene_ref || index}`} className="border-b border-slate-900">
+                              <td className="px-2 py-1 text-slate-300">{pair.scene_ref || `Scene ${index + 1}`}</td>
+                              <td className="px-2 py-1 font-mono text-cyan-100">{Number(pair.left_value || 0).toFixed(4)}</td>
+                              <td className="px-2 py-1 font-mono text-violet-100">{Number(pair.right_value || 0).toFixed(4)}</td>
+                              <td className="px-2 py-1">
+                                <button type="button" onClick={() => eventBus.emit("videoTimeLineChanged", Number(pair.start_seconds || 0))} className="rounded border border-slate-700 px-2 py-0.5 font-mono text-cyan-100 hover:border-cyan-600">{Number(pair.start_seconds || 0).toFixed(1)}s</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1">
+                      <span className="mr-1 text-[9px] text-slate-500">Contributing scenes:</span>
+                      {(relationship.source_intervals || []).map((interval, index) => (
+                        <button
+                          key={`${relationship.relationship_id}:source:${index}`}
+                          type="button"
+                          onClick={() => eventBus.emit("videoTimeLineChanged", Number(interval.start_seconds || 0))}
+                          className="rounded border border-slate-700 bg-[#101010] px-2 py-1 font-mono text-[9px] text-cyan-100 hover:border-cyan-600"
+                          title={`Open ${Number(interval.start_seconds || 0).toFixed(3)}–${Number(interval.end_seconds || 0).toFixed(3)} seconds`}
+                        >
+                          Scene {index + 1} · {Number(interval.start_seconds || 0).toFixed(1)}s
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!row) return;
+                          setSelectedStatId(row.id);
+                          setSelectedStatIds((current) => current.includes(row.id) ? current : [...current, row.id]);
+                          setExpandedEvidenceRowId(row.id);
+                          setInlineEvidencePage(0);
+                        }}
+                        className="rounded border border-violet-700/60 bg-violet-950/30 px-2 py-1 text-[9px] font-semibold text-violet-100"
+                      >
+                        Select for analysis
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {(activeNativeRun?.relationship_diagnostics || []).filter((diagnostic) => diagnostic.status === "constant_pattern").map((diagnostic) => (
+                  <div key={`${diagnostic.left_metric}:${diagnostic.right_metric}`} className="rounded border border-amber-900/40 bg-amber-950/10 px-3 py-2" data-vaa1-statistical-relationship-unavailable="true">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-semibold text-slate-300">{diagnostic.left_metric?.replaceAll("_", " ")} ↔ {diagnostic.right_metric?.replaceAll("_", " ")}</div>
+                      <div className="text-[8px] uppercase tracking-[0.12em] text-amber-200">{diagnostic.status === "constant_pattern" ? "constant pattern" : "insufficient data"}</div>
+                    </div>
+                    <div className="mt-1 text-[9px] text-amber-100/80">
+                      {diagnostic.status === "constant_pattern"
+                        ? `${diagnostic.left_unique_value_count === 1 ? `${diagnostic.left_metric?.replaceAll("_", " ")} stays at ${diagnostic.left_constant_value} in every scene. ` : ""}${diagnostic.right_unique_value_count === 1 ? `${diagnostic.right_metric?.replaceAll("_", " ")} stays at ${diagnostic.right_constant_value} in every scene. ` : ""}The stable pattern is computed; a rank coefficient is undefined because correlation requires variation.`
+                        : diagnostic.reason} · {diagnostic.paired_scene_count || 0} paired scene(s)
+                    </div>
+                  </div>
+                ))}
+                {!relationshipExplorerRows.length ? <div className="text-[9px] text-amber-200">No computed cross-signal relationships are loaded for this analysis.</div> : null}
+              </div>
+            </div>
+          ) : null}
           <div className="border-b border-slate-800 px-3 py-2" data-vaa1-statskit-column-controls="true">
             {statFamily === "taxonomy" ? (
-              <label className="mb-2 grid max-w-sm gap-1 text-[9px] text-slate-400" data-vaa1-statskit-taxonomy-theme-filter="true">
-                <span>Theme</span>
-                <select
-                  value={taxonomyTheme}
-                  onChange={(event) => setTaxonomyTheme(event.target.value)}
-                  className="rounded border border-slate-700 bg-[#090909] px-2 py-1.5 text-[10px] text-slate-200"
-                >
-                  {[
-                    "all",
-                    "analytics",
-                    "audio",
-                    "external and delivery",
-                    "governance",
-                    "language",
-                    "method and architecture",
-                    "narrative",
-                    "research",
-                    "scene",
-                    "source",
-                    "visual",
-                  ].map((theme) => (
-                    <option key={theme} value={theme}>{theme === "all" ? "All themes" : theme.charAt(0).toUpperCase() + theme.slice(1)}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="mb-3 grid gap-2 rounded border border-slate-800 bg-[#0b0b0b] p-2">
+                <div className="grid gap-2 md:grid-cols-3">
+                  <label className="grid gap-1 text-[9px] text-slate-400" data-vaa1-statskit-taxonomy-theme-filter="true">
+                    <span>Category</span>
+                    <select
+                      value={taxonomyTheme}
+                      onChange={(event) => {
+                        setTaxonomyTheme(event.target.value);
+                        setTaxonomySubcategory("all");
+                      }}
+                      className="rounded border border-slate-700 bg-[#090909] px-2 py-1.5 text-[10px] text-slate-200"
+                    >
+                      {[
+                        "all",
+                        "analytics",
+                        "audio",
+                        "external and delivery",
+                        "governance",
+                        "language",
+                        "method and architecture",
+                        "narrative",
+                        "research",
+                        "scene",
+                        "source",
+                        "visual",
+                      ].map((theme) => (
+                        <option key={theme} value={theme}>{theme === "all" ? "All categories" : theme.charAt(0).toUpperCase() + theme.slice(1)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-[9px] text-slate-400" data-vaa1-statskit-taxonomy-subcategory-filter="true">
+                    <span>Subcategory</span>
+                    <select
+                      value={taxonomySubcategory}
+                      onChange={(event) => setTaxonomySubcategory(event.target.value)}
+                      className="rounded border border-slate-700 bg-[#090909] px-2 py-1.5 text-[10px] text-slate-200"
+                    >
+                      <option value="all">All subcategories</option>
+                      {taxonomySubcategories.map((subcategory) => (
+                        <option key={subcategory} value={subcategory}>{subcategory}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-[9px] text-slate-400" data-vaa1-statskit-taxonomy-search="true">
+                    <span>Find entry</span>
+                    <input
+                      type="search"
+                      value={taxonomySearch}
+                      onChange={(event) => setTaxonomySearch(event.target.value)}
+                      placeholder="shot, color, transcript…"
+                      className="rounded border border-slate-700 bg-[#090909] px-2 py-1.5 text-[10px] text-slate-200 placeholder:text-slate-600"
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-2 border-t border-slate-800 pt-2 md:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.4fr)_auto]" data-vaa1-statskit-governed-source-layer-navigator="true">
+                  <label className="grid gap-1 text-[9px] text-slate-400">
+                    <span>Governed measured source layer</span>
+                    <select
+                      value={selectedReadinessLayer?.id || ""}
+                      onChange={(event) => setSelectedReadinessLayerId(event.target.value)}
+                      className="rounded border border-cyan-900/70 bg-[#090909] px-2 py-1.5 text-[10px] text-cyan-100"
+                    >
+                      {sourceLayerDeliverables.map((row) => (
+                        <option key={row.id} value={row.id}>{row.layer}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedReadinessLayer ? (
+                    <div className="grid content-center gap-1 text-[9px] text-slate-400">
+                      <div>
+                        <span className={selectedReadinessLayer.status === "available" ? "text-cyan-200" : selectedReadinessLayer.status === "partial_proxy" ? "text-sky-200" : "text-amber-200"}>
+                          {selectedReadinessLayer.status.replace(/_/g, " ")}
+                        </span>
+                        <span className="ml-2 font-mono text-slate-300">{selectedReadinessLayer.availableRows} rows</span>
+                      </div>
+                      <div>{selectedReadinessLayer.currentSource}</div>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!selectedReadinessLayer}
+                    className="self-end rounded border border-cyan-800/60 bg-cyan-950/20 px-3 py-1.5 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-900/30 disabled:opacity-40"
+                    onClick={() => {
+                      if (!selectedReadinessLayer) return;
+                      const isShot = selectedReadinessLayer.id === "true-shot-boundary-intervals";
+                      const isTone = selectedReadinessLayer.id === "color-brightness-contrast";
+                      const targetFamily: StatsFamily = isShot ? "distribution" : isTone ? "visual" : "descriptive";
+                      const targetRow = operationalStatsRows.find((row) =>
+                        row.family === targetFamily &&
+                        (
+                          (isShot && row.statistic === "shot length distribution") ||
+                          (isTone && row.statistic.includes("mean brightness"))
+                        ),
+                      );
+                      setStatFamily(targetFamily);
+                      if (targetRow) {
+                        setSelectedStatId(targetRow.id);
+                        setExpandedEvidenceRowId(targetRow.id);
+                        setInlineEvidencePage(0);
+                      }
+                    }}
+                    data-vaa1-statskit-open-measured-statistics="true"
+                  >
+                    Open measured statistics
+                  </button>
+                </div>
+              </div>
             ) : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-1">
@@ -4455,7 +5049,21 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                           </div>
                           <div><span className="text-slate-500">Evidence layer:</span> {row.evidence}</div>
                           <div><span className="text-slate-500">Required layer:</span> {row.requiredLayer}</div>
-                          <div><span className="text-slate-500">Data note:</span> {row.note}</div>
+                          <div><span className="text-slate-500">{row.family === "correlation" ? "Likely statistical indication:" : "Data note:"}</span> {row.note}</div>
+                          {row.family === "comparative" ? (
+                            <button
+                              type="button"
+                              className="w-fit rounded border border-cyan-800/60 bg-cyan-950/20 px-3 py-1 text-[9px] font-semibold text-cyan-100 hover:bg-cyan-900/30"
+                              onClick={() => {
+                                setComparisonStudioOpen(true);
+                                setStudioStep("corpus");
+                                window.requestAnimationFrame(() => comparisonStudioRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                              }}
+                              data-vaa1-open-comparison-studio-from-aggregate="true"
+                            >
+                              Open this attribute in Comparison Studio
+                            </button>
+                          ) : null}
                           {inlineEvidenceRecords.length ? (
                             <div className="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
                               {visibleInlineEvidenceRecords.map((record) => {
@@ -4598,7 +5206,6 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-800 px-3 py-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Relevance scanner</div>
-              <div className="mt-0.5 text-[9px] text-slate-500">Relevance and significance rows ranked for review.</div>
             </div>
             <div className="font-mono text-[9px] text-cyan-100">{pct(overall)} mean</div>
           </summary>
@@ -4682,8 +5289,25 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       <details className="order-8 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-stats-metadata-view="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="F">
         <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Stats metadata view
-          <span className="ml-2 font-mono text-[9px] text-slate-500">schema coverage, audits, source-layer plan, and JSON contracts</span>
+          <span className="sr-only">schema coverage, audits, source-layer plan, and JSON contracts</span>
         </summary>
+        {filePatternIndex ? (
+          <div className="mt-2 grid gap-2 rounded border border-cyan-900/50 bg-[#090909] px-3 py-2 md:grid-cols-[auto_1fr]" data-vaa1-file-statistical-pattern-index="true">
+            <div className="min-w-24 rounded border border-cyan-900/60 bg-cyan-950/20 px-3 py-2 text-center">
+              <div className="text-[8px] uppercase tracking-[0.14em] text-slate-500">Pattern index</div>
+              <div className="mt-1 font-mono text-xl text-cyan-100">{Number(filePatternIndex.value || 0).toFixed(3)}</div>
+              <div className="text-[8px] text-slate-500">0–1</div>
+            </div>
+            <div className="grid content-center gap-1 text-[9px] text-slate-400">
+              <div><span className="text-slate-500">File metadata field:</span> <span className="font-mono text-cyan-100">statistical_pattern_index</span></div>
+              <div>{Number(filePatternIndex.attribute_count || 0)} workbench attributes across {Number(filePatternIndex.signal_family_count || 0)} signal families</div>
+              <div><span className="text-slate-500">Families:</span> {Array.isArray(filePatternIndex.signal_families) ? filePatternIndex.signal_families.join(", ") : "unavailable"}</div>
+              <div><span className="text-slate-500">Method:</span> mean of capped absolute robust-z components</div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-[9px] text-slate-500">Run Find statistical patterns to add the comparison index to this file's metadata.</div>
+        )}
 
       <details className="mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-master-schema-category-audit="true" data-vaa1-statskit-box-collapsible="true">
         <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">

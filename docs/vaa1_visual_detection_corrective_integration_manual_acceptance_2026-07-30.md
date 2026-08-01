@@ -131,14 +131,17 @@ shots, and identifies the measured source layer.
 
 ### F. Matcher and meaning motors
 
-1. From a source-linked visual or cinematic evidence object, launch one bounded
-   proliferation/matcher review.
-2. Confirm the evidence inventory includes:
+1. In `Tools` → `Visual cues` → `Cinematic cues`, right-click a measured shot
+   row and select `Open sheet`. Confirm the local Matcher review sheet opens
+   above the cinematic evidence list without replacing Tools or Video.
+2. Confirm `Governed evidence inventory` includes:
    - a governed `shot_boundary_interval` temporal segment; and
    - the `spatial_tone_measurements` foundational source layer.
-3. Rebuild or refresh the second-order meaning artifacts through the existing governed
-   analysis route.
-4. Confirm the resulting multimodal meaning artifact contains:
+3. Select `Run bounded matcher`. Confirm candidates are displayed in the sheet
+   as review candidates and the candidate-only governance notice remains visible.
+4. Select `Rebuild meaning artifacts` and wait for the completion message.
+5. In `Meaning projection after rebuild`, confirm the resulting multimodal
+   meaning artifact reports non-zero events for:
    - `measured_visual_tone`; and
    - `shot_boundary_interval`.
 
@@ -187,6 +190,14 @@ do not alter unrelated governed records.
 - Spatial-tone summary: mean brightness `41.708155`, mean contrast `42.740406`,
   mean saturation `73.841348`, mean luminance entropy `5.008514`.
 - Visual cues: pending interactive observation.
+- Live corrective retest at 2026-07-30 16:55:
+  - the acceptance analysis opened in a fresh Chromium session;
+  - Tools → Visual cues exposed `Measured shot boundaries`, `Measured visual tone`,
+    and `Motion and scene basis`;
+  - the existing Video surface remained selected and was not replaced or blanked;
+  - no fatal browser-console error was observed; and
+  - the reopened status payload exposed 118 shot intervals and 155 spatial-tone samples.
+  This closes the cue-ownership and persisted-measurement visibility observations.
 - Cinematic cues: partial failure observed at 2026-07-30 12:00.
   - `Motion and scene basis` renders `No dominant motion yet`, three zero-valued
     metric rows, and `Motion evidence is not available yet.` This reads as a
@@ -226,9 +237,64 @@ do not alter unrelated governed records.
     disclosures by default.
   - `Motion and scene basis` now uses a closed disclosure by default.
 - StatsKit: pending interactive observation.
-- Matcher and meaning motors:
-- Governed report traceback:
-- Reopen:
+- Stepwise manual acceptance checkpoint at 2026-07-30 17:41:
+  - Step 1 passed: persisted shot and visual-tone disclosures surfaced and
+    navigated source without replacing Video.
+  - Step 2 passed: cue inspectors retained stable Video ownership, color rows
+    were source-navigable, unavailable motion remained calm, and governed scene
+    duration rendered correctly.
+  - Step 3 passed after corrective StatsKit work:
+    - readiness now has Category, dependent Subcategory, Find entry, and a
+      Governed measured source layer navigator;
+    - true shot boundaries report `available` with 118 rows;
+    - color/brightness/contrast frame-window measurements report from the
+      governed spatial-tone layer;
+    - visual-shot taxonomy rows resolve 118 timed governed evidence records
+      without conflating visual-scene rows; and
+    - selecting a shot record seeks Video while StatsKit remains open.
+  - Resume at Step 4: matcher and multimodal meaning inputs. No Step 4 action
+    has yet been performed in this manual sequence.
+- Step 4 opening interaction defects observed on 2026-07-31:
+  - right-clicking a measured shot row in Tools fell through to Chrome's native
+    context menu rather than Datascene evidence actions;
+  - `Correct` opened a blocking browser prompt detached from the selected row;
+  - the first corrective popup was rejected in manual review because it was a
+    second generic menu, not the established Datascene regime;
+  - the revised cinematic-row menu now uses the Meaning Network menu as its
+    visual and behavioral base: governed item header, copy, local sheet,
+    matcher, quick-confirm eligibility, source jump, and traceback actions;
+  - `Open sheet`/`Correct` opens an editor attached to the selected row, with
+    its current governed value and source interval visible; and
+  - the GoldenLayout panel shell now supplies an honest Datascene fallback menu
+    when a panel target has no specialized governed action, preventing native
+    browser interaction from masquerading as application functionality.
+  - the 19:52 retest confirms the row-attached editor and Datascene menu now
+    render, but also exposes that the menu is not a complete Step 4 route:
+    matcher execution reports only a candidate count, no governed evidence
+    inventory is reviewable, and no visible second-order rebuild/result surface
+    is available.
+  The interaction repair is verified, but Step 4 is blocked by missing
+  analyst-facing matcher and meaning review surfaces. Do not record a pass from
+  the current controls.
+- Matcher and meaning motors: passed on 2026-07-31 — the live rebuild projected
+  118 `shot_boundary_interval` and 155 `measured_visual_tone` events as
+  non-semantic measured evidence. Deterministic projection now runs
+  automatically when governed measurement artifacts change; the local sheet is
+  an audit/correlation surface rather than a manual plumbing console.
+- Governed report traceback: passed on 2026-07-31 — the measured-shot
+  traceback retained its artifact reference, exact source interval, authority,
+  and working source navigation without replacing the evidence workspace.
+- Reopen: passed on 2026-07-31 — reopening the saved analysis retained 118
+  measured shot intervals, 155 tone measurements, their corresponding meaning
+  projections, source-time correlations, and working Video navigation.
+- Export: blocked by scope correction on 2026-07-31. The existing flat output-file
+  ZIP cannot prove full panel/feature delivery and its Markdown report covers only
+  scene cards. Acceptance now requires one feature-chaptered, machine-readable Data
+  Book plus one synchronized human-readable scientific report, including explicit
+  operational/partial/deferred/unavailable/not-run coverage and sentence-to-source
+  citations. Publication must support both independently complete per-video editions
+  and whole-project editions that preserve their contributing video identities and add
+  governed cross-video synthesis.
 - Browser-console findings:
 - Final result: `in progress / partial failure` — automated, runtime, route,
   extraction, and persistence gates passed; Cinematic cues motion/scene summary
@@ -246,6 +312,14 @@ do not alter unrelated governed records.
   - `VD-13-04`: Manual action annotations, Manual Narrative Agent annotations,
     and Motion and scene basis opened expanded despite being supporting
     evidence surfaces. Corrected to begin collapsed; pending manual retest.
+  - `VD-13-05`: saved-analysis hydration restored tracked objects but omitted
+    persisted `shot_boundaries.json`, `spatial_tone_scan.json`, and
+    `adaptive_visual_scan.json` from `results.visual_analysis`. After a backend
+    restart, Tools therefore reported no cinematic clue record even though the
+    measurement files existed. The canonical hydration loader now restores
+    these governed visual artifacts and registers their output paths. Focused
+    hydration/visual tests pass 7/7, and the live Chromium retest exposes the
+    measured shot and tone disclosures after reopen.
 
 ## Overall pass boundary
 

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.native_statistical_interpretation.v1.schema.json",
+  "title": "VAA1 governed native statistical interpretation run",
+  "type": "object",
+  "required": ["schema", "analysis_id", "run_id", "finding", "claim", "proposition", "panel_routes", "governance"],
+  "properties": {
+    "schema": {"const": "vaa1.native_statistical_interpretation.v1"},
+    "analysis_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "finding": {
+      "type": "object",
+      "required": ["finding_id", "source_interval", "observations", "salience_index", "statistical_terms", "limitations"],
+      "properties": {
+        "finding_id": {"type": "string"},
+        "salience_index": {"type": "number", "minimum": 0, "maximum": 1},
+        "observations": {"type": "array", "minItems": 2},
+        "source_interval": {"type": "object"},
+        "statistical_terms": {"type": "object"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "claim": {"type": "object"},
+    "proposition": {"type": "object"},
+    "panel_routes": {"type": "object"},
+    "governance": {
+      "type": "object",
+      "required": ["canonical_write", "analyst_confirmation_required", "causal_claim_created", "statistical_significance_claimed"],
+      "properties": {
+        "canonical_write": {"const": false},
+        "analyst_confirmation_required": {"const": true},
+        "causal_claim_created": {"const": false},
+        "statistical_significance_claimed": {"const": false}
+      }
+    }
+  }
+}

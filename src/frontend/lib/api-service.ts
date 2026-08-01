@@ -215,6 +215,7 @@ export interface AnalysisStatus {
     version: 1;
     decisions: Array<Record<string, unknown>>;
   };
+  native_statistical_interpretation?: NativeStatisticalInterpretationRun | null;
   projected_canonical_claims?: ProjectedCanonicalClaimCollection;
   cvat_ingest?: {
     status?: string;
@@ -246,6 +247,7 @@ export interface AnalysisStatus {
   narrative_lens_reading?: Record<string, unknown> | null;
   character_path_reading?: Record<string, unknown> | null;
   datascene_meaning_network?: Record<string, unknown> | null;
+  multimodal_meaning_stage1?: Record<string, unknown> | null;
   mise_en_scene_scene_cards?: {
     schema?: string;
     scene_card_count?: number;
@@ -287,6 +289,110 @@ export interface AnalysisStatus {
   };
   cvatID?: number;
 }
+
+export type NativeStatisticalObservation = {
+  observation_id?: string;
+  metric_id?: string;
+  metric_label?: string;
+  signal_family?: string;
+  analytical_unit?: string;
+  observed_value?: number;
+  unit?: string;
+  baseline?: {
+    definition?: string;
+    sample_size?: number;
+    median?: number;
+    median_absolute_deviation?: number;
+  };
+  standardized_deviation?: {
+    method?: string;
+    value?: number | null;
+    available?: boolean;
+    direction?: string;
+    reason_unavailable?: string | null;
+  };
+  evidence_refs?: string[];
+};
+
+export type NativeStatisticalInterpretationRun = {
+  schema?: "vaa1.native_statistical_interpretation.v1";
+  analysis_id?: string;
+  run_id?: string;
+  status?: string;
+  reason?: string;
+  finding?: {
+    finding_id?: string;
+    salience_index?: number;
+    independent_signal_family_count?: number;
+    signal_families?: string[];
+    observations?: NativeStatisticalObservation[];
+    source_interval?: {
+      source_media_id?: string;
+      clock_id?: string;
+      start_seconds?: number;
+      end_seconds?: number;
+    };
+    statistical_terms?: Record<string, string>;
+    limitations?: string[];
+    status?: string;
+  };
+  claim?: Record<string, unknown>;
+  proposition?: Record<string, unknown>;
+  panel_routes?: Record<string, { role?: string; status?: string; record_refs?: string[] }>;
+  governance?: {
+    canonical_write?: boolean;
+    analyst_confirmation_required?: boolean;
+    causal_claim_created?: boolean;
+    statistical_significance_claimed?: boolean;
+  };
+  selection?: {
+    method?: string;
+    eligible_scene_count?: number;
+    selected_scene_index?: number;
+    selected_scene_ref?: Record<string, unknown>;
+  };
+  relationships?: Array<{
+    relationship_id?: string;
+    coupling?: string;
+    left_metric?: string;
+    right_metric?: string;
+    method?: string;
+    coefficient?: number;
+    scene_count?: number;
+    direction?: string;
+    strength_label?: string;
+    interpretation?: string;
+    substantive_reading?: string;
+    status?: string;
+    scene_refs?: string[];
+    source_intervals?: Array<{ start_seconds?: number; end_seconds?: number }>;
+    paired_observations?: Array<{
+      scene_ref?: string;
+      start_seconds?: number;
+      end_seconds?: number;
+      left_value?: number;
+      right_value?: number;
+    }>;
+    analytical_frames?: {
+      scale?: { micro?: string; meso?: string; macro?: string; computed_level?: string };
+      orientation?: string[];
+      evidence_expression?: string[];
+      relationship_expression?: string;
+    };
+  }>;
+  relationship_diagnostics?: Array<{
+    coupling?: string;
+    left_metric?: string;
+    right_metric?: string;
+    status?: string;
+    paired_scene_count?: number;
+    left_unique_value_count?: number;
+    right_unique_value_count?: number;
+    left_constant_value?: number | null;
+    right_constant_value?: number | null;
+    reason?: string;
+  }>;
+};
 
 export interface ForensicRenderRegion {
   x: number;
@@ -1540,6 +1646,25 @@ class ApiService {
     for (const key of [...this.artifactPromises.keys()]) {
       if (key.startsWith(`${analysisId}:`)) this.artifactPromises.delete(key);
     }
+  }
+
+  async runNativeStatisticalInterpretation(
+    analysisId: string,
+  ): Promise<NativeStatisticalInterpretationRun> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/native-statistical-interpretation/run`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persist: true }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Statistical interpretation failed (${response.status})`);
+    }
+    this.invalidateReadCaches(analysisId);
+    return response.json();
   }
 
   /**

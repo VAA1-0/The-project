@@ -13,6 +13,7 @@ import {
   type SecondOrderLabelInstruction,
   type SourceMediaMetadata,
 } from "@/lib/api-service";
+import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import {
   retimeManualVisualAnnotationsFromPresenceInterval,
   upsertMasterSchemaPresenceInterval,
@@ -6808,6 +6809,9 @@ export default function MeaningPlotPanel({
 
       <div className="min-h-0 flex-1 overflow-auto p-3" data-vaa1-meaning-plot-panel-scroll="true">
         <MeaningPlotConfirmationStrip analysisData={analysisData} />
+        <div className="mb-3 mt-2">
+          <NativeStatisticalInterpretationStrip run={analysisData?.nativeStatisticalInterpretation} panel="meaning_plot" />
+        </div>
         {loading ? (
           <div className="grid h-full min-h-0 min-w-[980px] grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-3">
             <section className="flex min-h-0 flex-col rounded border border-white/8 bg-[#121212]">
