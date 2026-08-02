@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { apiService } from "@/lib/api-service";
+import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+
 type AdminObservabilityPanelProps = {
   analysisId?: string;
   videoId?: string;
@@ -75,7 +79,25 @@ export default function AdminObservabilityPanel({
   analysisId,
   videoId,
 }: AdminObservabilityPanelProps) {
-  const activeAnalysisId = analysisId || videoId || "no active analysis";
+  const [selectedId, setSelectedId] = useState(analysisId || videoId || "");
+  const [record, setRecord] = useState<any>(null);
+  const [error, setError] = useState("");
+  const activeAnalysisId = analysisId || videoId || selectedId;
+
+  useEffect(() => {
+    const handler = (id: string) => setSelectedId(id);
+    eventBus.on("videoIdChanged", handler);
+    return () => eventBus.off("videoIdChanged", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!activeAnalysisId) { setRecord(null); return; }
+    let alive = true;
+    const load = () => apiService.getPerformanceObservability(activeAnalysisId).then((value) => { if (alive) { setRecord(value); setError(""); } }).catch((reason) => { if (alive) setError(String(reason)); });
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [activeAnalysisId]);
 
   return (
     <div
@@ -97,12 +119,12 @@ export default function AdminObservabilityPanel({
               SignificanceKit, and RelevanceKit operational surfaces.
             </p>
           </div>
-          <StatusPill>schema ready / artifact writer pending</StatusPill>
+          <StatusPill>{record ? "live / persisted" : activeAnalysisId ? "connecting" : "awaiting analysis"}</StatusPill>
         </div>
         <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-3">
           <div className="rounded border border-white/10 bg-black/20 p-2">
             <div className="text-slate-500">Active analysis</div>
-            <div className="mt-1 font-mono text-cyan-100">{activeAnalysisId}</div>
+            <div className="mt-1 font-mono text-cyan-100">{activeAnalysisId || "no active analysis"}</div>
           </div>
           <div className="rounded border border-white/10 bg-black/20 p-2">
             <div className="text-slate-500">Observability schema</div>
@@ -210,17 +232,20 @@ export default function AdminObservabilityPanel({
 
       <AdminSection
         title="Run Artifact Status"
-        subtitle="The leaf is navigable now. The next backend slice should write actual observability and economics artifacts for this panel to read."
+        subtitle="Live governed measurements refresh every five seconds and remain persisted under the analysis output."
       >
-        <div
-          data-vaa1-admin-observability-artifact-empty-state="true"
-          className="rounded border border-amber-300/20 bg-amber-400/10 p-3 text-[11px] leading-5 text-amber-50"
-        >
-          No persisted observability run has been loaded in this first Admin
-          leaf yet. This is expected until the writer records actual
-          PerformanceObservability and DataMaturationEconomics JSON artifacts
-          under the active analysis.
-        </div>
+        {!record ? <div data-vaa1-admin-observability-artifact-empty-state="true" className="rounded border border-amber-300/20 bg-amber-400/10 p-3 text-[11px] leading-5 text-amber-50">{error || "Select or start an analysis to begin monitoring."}</div> : (
+          <div className="space-y-2 text-[11px]">
+            <div className="grid gap-2 md:grid-cols-4">
+              <div className="rounded border border-white/10 p-2">Stages<br/><b>{record.pipeline_observations?.length || 0}</b></div>
+              <div className="rounded border border-white/10 p-2">RAM<br/><b>{Number(record.resource_observations?.peak_usage?.ram_used_gb || 0).toFixed(2)} GB</b></div>
+              <div className="rounded border border-white/10 p-2">Source<br/><b>{Number(record.analysis_target?.file_size_gb || 0).toFixed(2)} GB</b></div>
+              <div className="rounded border border-white/10 p-2">Bottlenecks<br/><b>{record.bottleneck_findings?.length || 0}</b></div>
+            </div>
+            {(record.bottleneck_findings || []).map((finding: any) => <div key={finding.finding_id} className="rounded border border-amber-300/20 bg-amber-400/5 p-2"><b>{finding.severity}: {finding.affected_stage}</b><div className="mt-1 text-slate-400">{finding.evidence?.join(" ")}</div></div>)}
+            <div className="rounded border border-cyan-400/15 bg-cyan-400/5 p-2 text-cyan-50">{record.operational_verdict?.summary}</div>
+          </div>
+        )}
       </AdminSection>
     </div>
   );

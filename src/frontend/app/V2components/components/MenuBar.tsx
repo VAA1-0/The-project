@@ -29,6 +29,12 @@ const QUANT_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
 const POS_MATRIX_STORAGE_KEY = "vaa1.pos.matrix.sections";
 const POS_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
 const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
+const RESEARCH_PROJECT_STORAGE_KEY = "vaa1.research.project.id";
+
+function formatUploadBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 GB";
+  return `${(value / 1_000_000_000).toFixed(2)} GB`;
+}
 
 type UploadMetadataDraft = {
   title: string;
@@ -87,12 +93,23 @@ export function MenuBar() {
   const [showUploadMetadataDialog, setShowUploadMetadataDialog] =
     useState(false);
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
+  const [researchProjectId, setResearchProjectId] = useState("research-test-2026");
+  const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
+  const [uploadCapacity, setUploadCapacity] = useState<{
+    totalBytes: number;
+    remainingBytes: number;
+  } | null>(null);
   const [showAdvancedUploadFields, setShowAdvancedUploadFields] =
     useState(false);
   const [, setTaxonomyRefreshNonce] = useState(0);
   const [sharedTaxonomyLabels, setSharedTaxonomyLabels] = useState<
     SharedTaxonomyLabel[]
   >([]);
+
+  useEffect(() => {
+    const savedProjectId = window.localStorage.getItem(RESEARCH_PROJECT_STORAGE_KEY);
+    if (savedProjectId) setResearchProjectId(savedProjectId);
+  }, []);
 
   const buildUploadDraft = (file: File): UploadMetadataDraft => ({
     title: file.name.replace(/\.[^.]+$/, ""),
@@ -355,18 +372,24 @@ export function MenuBar() {
     drafts: UploadMetadataDraft[],
   ) => {
     try {
+      const preflight = await apiService.preflightResearchCorpus(files);
+      if (!preflight.accepted) {
+        throw new Error(preflight.reasons.join(" ") || "Corpus capacity check failed.");
+      }
+      setUploadCapacity({
+        totalBytes: preflight.total_bytes,
+        remainingBytes: preflight.remaining_after_upload_bytes,
+      });
+      window.localStorage.setItem(RESEARCH_PROJECT_STORAGE_KEY, researchProjectId);
       for (let index = 0; index < files.length; index += 1) {
         const f = files[index];
         const draft = drafts[index] || buildUploadDraft(f);
         const length = await getVideoDuration(f);
-        const res = await VideoService.upload(f, 0, length);
-
-        try {
-          const videoBlob = new Blob([f], { type: f.type });
-          await saveVideoBlob(res.analysis_id, videoBlob);
-        } catch (storageErr) {
-          console.warn("Failed to save video to IndexedDB:", storageErr);
-        }
+        const res = await VideoService.upload(f, 0, length, {
+          projectId: researchProjectId,
+          onProgress: (progress) =>
+            setUploadProgress((previous) => ({ ...previous, [index]: progress })),
+        });
 
         await apiService.updateSourceMediaMetadata(res.analysis_id, {
           title: draft.title.trim(),
@@ -418,7 +441,7 @@ export function MenuBar() {
 
       await VideoService.list();
       window.dispatchEvent(new CustomEvent("video-uploaded"));
-      alert("✅Upload successful!");
+      alert(`${files.length} videos secured in project ${researchProjectId}.`);
     } catch (err) {
       console.error(err);
       alert(
@@ -445,6 +468,8 @@ export function MenuBar() {
       setPendingUploadFiles(selectedFiles);
       setUploadMetadataDrafts(selectedFiles.map((file) => buildUploadDraft(file)));
       setShowUploadMetadataDialog(true);
+      setUploadProgress({});
+      setUploadCapacity(null);
     };
 
     // ⬇️ This MUST be outside input.onchange
@@ -1266,6 +1291,27 @@ export function MenuBar() {
                 {showAdvancedUploadFields ? "Hide advanced fields" : "Advanced fields"}
               </button>
             </div>
+            <div className="mt-3 grid gap-3 rounded-md border border-white/8 bg-[#111111] p-3 md:grid-cols-[1fr_auto] md:items-end">
+              <label className="block">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  Research project
+                </div>
+                <input
+                  value={researchProjectId}
+                  disabled={isSubmittingUpload}
+                  onChange={(event) => setResearchProjectId(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-[#171717] px-3 py-2 text-sm text-slate-200 outline-none focus:border-slate-500"
+                />
+              </label>
+              <div className="text-[10px] text-slate-400">
+                {pendingUploadFiles.length} videos · {formatUploadBytes(pendingUploadFiles.reduce((sum, file) => sum + file.size, 0))}
+              </div>
+              {uploadCapacity ? (
+                <div className="md:col-span-2 text-[10px] text-slate-500">
+                  Capacity checked · {formatUploadBytes(uploadCapacity.totalBytes)} selected · {formatUploadBytes(uploadCapacity.remainingBytes)} remains after source upload
+                </div>
+              ) : null}
+            </div>
             <div className="mt-4 space-y-4">
               {pendingUploadFiles.map((file, index) => {
                 const draft = uploadMetadataDrafts[index] || buildUploadDraft(file);
@@ -1297,7 +1343,14 @@ export function MenuBar() {
                       </button>
                     </div>
 
-                    <div className="mb-3 text-xs text-slate-400">{file.name}</div>
+                    <div className="mb-3 flex items-center justify-between gap-3 text-xs text-slate-400">
+                      <span className="truncate">{file.name}</span>
+                      <span className="shrink-0 font-mono text-[10px]">
+                        {isSubmittingUpload
+                          ? `${Math.round(uploadProgress[index] || 0)}%`
+                          : formatUploadBytes(file.size)}
+                      </span>
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="block">
                         <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">

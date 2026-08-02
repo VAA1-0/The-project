@@ -93,6 +93,8 @@ export interface VideoMetadata {
   eventLog?: AnalysisEvent[];
   sourceVideoPath?: string;
   sourceVideoExists?: boolean;
+  projectId?: string;
+  sourceSizeBytes?: number;
   sourceVideoMessage?: string;
 }
 
@@ -5166,6 +5168,8 @@ export interface UploadResponse {
   imported_analysis_ids?: string[];
   imported_count?: number;
   project_name?: string;
+  project_id?: string;
+  source_size_bytes?: number;
 }
 
 // Updated AnalysisStatus with pipeline_type
@@ -5188,6 +5192,8 @@ export interface AnalysisStatus {
   source_video_path?: string;
   source_video_exists?: boolean;
   source_video_message?: string;
+  project_id?: string;
+  source_size_bytes?: number;
   source_media_metadata?: SourceMediaMetadata;
   source_media_annotations?: Record<string, unknown>;
   annotation_corrections?: AnnotationCorrections | null;
@@ -5551,9 +5557,10 @@ export class VideoService {
     file: File,
     cvatID: number,
     duration?: number,
+    options: { projectId?: string; onProgress?: (progress: number) => void } = {},
   ): Promise<UploadResponse> {
     try {
-      const response = await apiService.uploadVideo(file, cvatID);
+      const response = await apiService.uploadVideo(file, cvatID, options);
       return {
         ...response,
         cvatID: cvatID || 0,
@@ -5620,6 +5627,8 @@ export class VideoService {
         sourceVideoPath: status.source_video_path,
         sourceVideoExists: status.source_video_exists,
         sourceVideoMessage: status.source_video_message,
+        projectId: status.project_id,
+        sourceSizeBytes: status.source_size_bytes,
       };
     } catch (error) {
       console.error("VideoService.get failed:", error);
@@ -6265,6 +6274,8 @@ export class VideoService {
         name: info.filename || "Unknown",
         status: info.status || "unknown",
         progress: info.progress || 0,
+        missionStage: info.mission_stage,
+        missionMessage: info.mission_message,
         uploadedAt:
           info.uploaded_at ||
           (info.start_time
@@ -6275,6 +6286,8 @@ export class VideoService {
         analysisTier: info.analysis_tier,
         modalityFocus: info.modality_focus,
         cvatID: info.cvatID,
+        projectId: info.project_id,
+        sourceSizeBytes: info.source_size_bytes,
       }));
     } catch (error) {
       console.warn(

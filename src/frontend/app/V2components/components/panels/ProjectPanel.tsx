@@ -30,6 +30,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+const ANALYSIS_QUEUE_STORAGE_KEY = "vaa1.analysis.queue.v1";
+
 export default function ProjectPanel() {
   const { openPanel } = useLayoutHost();
   const [libraryVideos, setLibraryVideos] = useState<VideoMetadata[]>([]);
@@ -45,9 +47,50 @@ export default function ProjectPanel() {
   const [coolingMinutes, setCoolingMinutes] = useState("2");
   const [coolingUntil, setCoolingUntil] = useState<number | null>(null);
   const [coolingNow, setCoolingNow] = useState(Date.now());
+  const [queueHydrated, setQueueHydrated] = useState(false);
 
   // Event bus video id state
   const [videoId, setVideoId] = useState("");
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(ANALYSIS_QUEUE_STORAGE_KEY) || "{}");
+      if (Array.isArray(saved.queuedAnalysisIds)) {
+        setQueuedAnalysisIds(saved.queuedAnalysisIds.filter((item: unknown) => typeof item === "string"));
+      }
+      if (typeof saved.activeQueuedAnalysisId === "string") {
+        setActiveQueuedAnalysisId(saved.activeQueuedAnalysisId);
+      }
+      if (typeof saved.queuePaused === "boolean") setQueuePaused(saved.queuePaused);
+      if (typeof saved.coolingMinutes === "string") setCoolingMinutes(saved.coolingMinutes);
+      if (typeof saved.coolingUntil === "number") setCoolingUntil(saved.coolingUntil);
+    } catch {
+      window.localStorage.removeItem(ANALYSIS_QUEUE_STORAGE_KEY);
+    } finally {
+      setQueueHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!queueHydrated) return;
+    window.localStorage.setItem(
+      ANALYSIS_QUEUE_STORAGE_KEY,
+      JSON.stringify({
+        queuedAnalysisIds,
+        activeQueuedAnalysisId,
+        queuePaused,
+        coolingMinutes,
+        coolingUntil,
+      }),
+    );
+  }, [
+    activeQueuedAnalysisId,
+    coolingMinutes,
+    coolingUntil,
+    queueHydrated,
+    queuePaused,
+    queuedAnalysisIds,
+  ]);
 
   const downloadTextFile = (filename: string, contents: string, type: string) => {
     const blob = new Blob([contents], { type });
@@ -447,6 +490,7 @@ export default function ProjectPanel() {
   };
 
   useEffect(() => {
+    if (!queueHydrated) return;
     if (queuePaused) {
       return;
     }
@@ -454,8 +498,19 @@ export default function ProjectPanel() {
     const currentStatus = activeQueuedAnalysisId
       ? libraryVideos.find((video) => video.id === activeQueuedAnalysisId)?.status
       : null;
+    const currentMissionStage = activeQueuedAnalysisId
+      ? libraryVideos.find((video) => video.id === activeQueuedAnalysisId)?.missionStage
+      : null;
 
     if (activeQueuedAnalysisId) {
+      if (currentStatus === "uploaded" && currentMissionStage === "interrupted") {
+        const interruptedId = activeQueuedAnalysisId;
+        setActiveQueuedAnalysisId(null);
+        setQueuedAnalysisIds((previous) =>
+          previous.includes(interruptedId) ? previous : [interruptedId, ...previous],
+        );
+        return;
+      }
       if (currentStatus === "completed" || currentStatus === "error") {
         setActiveQueuedAnalysisId(null);
         const coolingMs = Math.max(0, Number(coolingMinutes) || 0) * 60 * 1000;
@@ -499,6 +554,7 @@ export default function ProjectPanel() {
     libraryVideos,
     queuePaused,
     queuedAnalysisIds,
+    queueHydrated,
   ]);
 
   const coolingSecondsRemaining = coolingUntil

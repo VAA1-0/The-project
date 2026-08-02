@@ -165,6 +165,22 @@ from src.backend.analysis.native_statistical_interpretation import (
     NativeStatisticalInterpretationService,
 )
 from src.backend.analysis.stats_research_question import StatsResearchQuestionService
+from src.backend.analysis.research_corpus_ingestion import (
+    IngestionLimits,
+    assess_corpus_capacity,
+    copy_upload_bounded,
+)
+from src.backend.analysis.analysis_recovery import (
+    atomic_write_json,
+    load_analysis_checkpoint,
+    recover_interrupted_record,
+    write_analysis_checkpoint,
+)
+from src.backend.analysis.data_book_publication import (
+    build_corpus_publication,
+    build_video_publication,
+)
+from src.backend.analysis.performance_observability import write_performance_observation
 from src.backend.analysis.source_policy_service import evaluate_source_use
 from src.backend.analysis.taxonomy_application_service import apply_taxonomy_term
 from src.backend.analysis.vocabulary_service import (
@@ -207,6 +223,7 @@ TRANSCRIPTS_DIR = Path("outputs/transcripts")
 STATIC_DIR = Path("static")
 IMPORTED_WORK_DIR = Path("outputs/imported_work")
 TAXONOMY_DIR = Path("outputs/taxonomy")
+PUBLICATION_DIR = Path("outputs/publications")
 SHARED_TAXONOMY_PATH = TAXONOMY_DIR / "shared_taxonomy.json"
 CVAT_BRIDGE_BASE = os.getenv("CVAT_BRIDGE_URL", "http://localhost:3001")
 
@@ -217,6 +234,7 @@ TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
 IMPORTED_WORK_DIR.mkdir(parents=True, exist_ok=True)
 TAXONOMY_DIR.mkdir(parents=True, exist_ok=True)
+PUBLICATION_DIR.mkdir(parents=True, exist_ok=True)
 
 # Serve static files (for downloaded files)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -400,10 +418,7 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
     record_path = get_analysis_record_path(analysis_id)
     record_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(json.dumps(status, default=str))
-    record_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    atomic_write_json(record_path, payload)
 
 
 def csv_escape(value: Any) -> str:
@@ -6989,6 +7004,15 @@ def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
 
     status.setdefault("analysis_id", analysis_id)
     status.setdefault("event_log", [])
+    if recover_interrupted_record(status, recovered_at=utc_now_iso()):
+        append_analysis_event(
+            status,
+            "analysis_interruption_recovered",
+            stage="interrupted",
+            message=status.get("mission_message"),
+            details=status.get("recovery") or {},
+        )
+        persist_analysis_record_for_status(status)
     hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
     ensure_live_mature_data_proliferation_audit_for_status(status)
     analysis_status[analysis_id] = status
@@ -7019,6 +7043,18 @@ def collect_saved_analysis_records() -> Dict[str, Dict[str, Any]]:
         analysis_id = status.get("analysis_id") or record_path.parent.name
         status.setdefault("analysis_id", analysis_id)
         status.setdefault("event_log", [])
+        if analysis_id not in analysis_status and recover_interrupted_record(
+            status,
+            recovered_at=utc_now_iso(),
+        ):
+            append_analysis_event(
+                status,
+                "analysis_interruption_recovered",
+                stage="interrupted",
+                message=status.get("mission_message"),
+                details=status.get("recovery") or {},
+            )
+            persist_analysis_record_for_status(status)
         records[analysis_id] = status
 
     records.update(analysis_status)
@@ -7949,8 +7985,27 @@ def register_imported_analysis(
     persist_analysis_record_for_status(status)
     return status
 
+@app.post("/api/upload/preflight", response_model=dict)
+async def upload_preflight(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Validate a complete research-corpus selection before bytes are transferred."""
+    file_sizes = payload.get("file_sizes") or []
+    try:
+        assessment = assess_corpus_capacity(file_sizes, UPLOAD_DIR)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="file_sizes must contain byte counts")
+    return {
+        "schema": "vaa1.research_corpus_upload_preflight.v1",
+        **assessment,
+    }
+
+
 @app.post("/api/upload", response_model=dict)
-async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) -> dict:
+async def upload_video(
+    file: UploadFile = File(...),
+    cvatID: int = Form(...),
+    project_id: str = Form("local-research-project"),
+    expected_size: Optional[int] = Form(None),
+) -> dict:
     """
     Upload a video file for analysis
     Returns analysis ID for tracking
@@ -7973,11 +8028,25 @@ async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) ->
     analysis_id = str(uuid.uuid4())
     safe_filename = f"{analysis_id}{file_extension}"
     file_path = UPLOAD_DIR / safe_filename
+    project_id = normalize_taxonomy_label(project_id) or "local-research-project"
+    limits = IngestionLimits.from_environment()
+
+    if expected_size is not None:
+        capacity = assess_corpus_capacity([expected_size], UPLOAD_DIR, limits=limits)
+        if not capacity["accepted"]:
+            raise HTTPException(status_code=507, detail={
+                "message": "Upload capacity check failed.",
+                "capacity": capacity,
+            })
     
     try:
         # Save uploaded file
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        uploaded_bytes = copy_upload_bounded(
+            file.file,
+            file_path,
+            max_bytes=limits.max_file_bytes,
+            expected_bytes=expected_size,
+        )
 
         media_probe: Dict[str, Any] = {}
         try:
@@ -8009,6 +8078,8 @@ async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) ->
             "pipeline_type": "full",
             "language_pack_policy": build_language_pack_policy(),
             "cvatID": cvatID,
+            "project_id": project_id,
+            "source_size_bytes": uploaded_bytes,
             "event_log": [],
             "source_media_metadata": media_probe,
             "source_media_annotations": {
@@ -8028,6 +8099,8 @@ async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) ->
                 "filename": file.filename,
                 "stored_filename": safe_filename,
                 "cvatID": cvatID,
+                "project_id": project_id,
+                "source_size_bytes": uploaded_bytes,
             },
         )
         write_source_media_metadata_files(analysis_status[analysis_id])
@@ -8040,11 +8113,19 @@ async def upload_video(file: UploadFile = File(...), cvatID: int = Form(...)) ->
             "analysis_id": analysis_id,
             "filename": file.filename,
             "cvatID": cvatID,
+            "project_id": project_id,
+            "source_size_bytes": uploaded_bytes,
             "message": "Video uploaded successfully",
             "status": "uploaded"
         }
     
+    except ValueError as e:
+        logger.warning("Upload rejected: %s", e)
+        raise HTTPException(status_code=413, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
+        file_path.unlink(missing_ok=True)
         logger.error(f"Upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
@@ -8181,6 +8262,13 @@ async def start_analysis(
         raise HTTPException(status_code=400, detail="Analysis already in progress")
     if status["status"] == "completed":
         raise HTTPException(status_code=400, detail="Analysis already completed")
+
+    start_capacity = assess_corpus_capacity([0], RESULTS_DIR)
+    if not start_capacity["accepted"]:
+        raise HTTPException(status_code=507, detail={
+            "message": "Analysis start blocked to preserve workspace capacity.",
+            "capacity": start_capacity,
+        })
     
     # Validate pipeline type
     if pipeline_type not in ["full", "visual_only", "audio_only"]:
@@ -8204,9 +8292,11 @@ async def start_analysis(
         allow_rough_interpretation=allow_rough_interpretation,
     )
 
-    # Update status
+    # Update status. A persisted processing record is normalized to an
+    # interrupted/uploaded record during hydration and resumes here.
+    is_resume = bool((status.get("recovery") or {}).get("resumable"))
     status["status"] = "processing"
-    status["start_time"] = time.time()
+    status["start_time"] = status.get("start_time") or time.time()
     status["pipeline_type"] = analysis_profile["pipeline_type"]
     status["analysis_tier"] = analysis_tier
     status["modality_focus"] = modality_focus
@@ -8217,9 +8307,14 @@ async def start_analysis(
     status["face_requires_person_detection"] = face_requires_person_detection
     status["analysis_started_at"] = utc_now_iso()
     status["analysis_completed_at"] = None
+    if is_resume:
+        recovery = status.setdefault("recovery", {})
+        recovery["resume_count"] = int(recovery.get("resume_count") or 0) + 1
+        recovery["last_resumed_at"] = utc_now_iso()
+        recovery["resumable"] = False
     append_analysis_event(
         status,
-        "analysis_started",
+        "analysis_resumed" if is_resume else "analysis_started",
         details={
             "pipeline_type": analysis_profile["pipeline_type"],
             "analysis_tier": analysis_tier,
@@ -8228,6 +8323,10 @@ async def start_analysis(
             "apply_face_anonymization": apply_face_anonymization,
             "face_message_style": face_message_style,
             "face_requires_person_detection": face_requires_person_detection,
+            "resume": is_resume,
+            "checkpoint": load_analysis_checkpoint(RESULTS_DIR, analysis_id).get(
+                "completed_stages", []
+            ),
         },
     )
     update_analysis_progress(
@@ -8325,11 +8424,33 @@ def run_complete_analysis(
         analysis_output_dir = RESULTS_DIR / analysis_id
         analysis_output_dir.mkdir(exist_ok=True)
         
-        results = {}
-        output_files = {}
+        checkpoint = load_analysis_checkpoint(RESULTS_DIR, analysis_id)
+        results = (
+            checkpoint.get("results")
+            if isinstance(checkpoint.get("results"), dict)
+            else {}
+        )
+        output_files = (
+            checkpoint.get("output_files")
+            if isinstance(checkpoint.get("output_files"), dict)
+            else {}
+        )
+        completed_stages = set(checkpoint.get("completed_stages") or [])
+        status["recovery"] = {
+            **(status.get("recovery") if isinstance(status.get("recovery"), dict) else {}),
+            "checkpoint_schema": checkpoint.get("schema"),
+            "completed_stages": sorted(completed_stages),
+            "checkpoint_invalid": bool(checkpoint.get("checkpoint_invalid")),
+        }
+        if completed_stages:
+            append_analysis_event(
+                status,
+                "analysis_checkpoint_loaded",
+                details={"completed_stages": sorted(completed_stages)},
+            )
         
         # VISUAL PROCESSING (YOLO + OCR)
-        if pipeline_type in ["full", "visual_only"]:
+        if pipeline_type in ["full", "visual_only"] and "visual" not in completed_stages:
             try:
                 logger.info("🎥 Starting visual analysis pipeline...")
                 update_analysis_progress(
@@ -8463,6 +8584,20 @@ def run_complete_analysis(
                     )
                 
                 logger.info(f"✅ Visual analysis completed: {len(visual_results.get('yolo_results', []))} detections")
+                completed_stages.add("visual")
+                status["results"] = results
+                status["output_files"] = output_files
+                checkpoint_path = write_analysis_checkpoint(
+                    RESULTS_DIR,
+                    analysis_id,
+                    completed_stages=completed_stages,
+                    results=results,
+                    output_files=output_files,
+                    updated_at=utc_now_iso(),
+                )
+                status.setdefault("recovery", {})["completed_stages"] = sorted(completed_stages)
+                status["recovery"]["checkpoint_path"] = str(checkpoint_path)
+                persist_analysis_record_for_status(status)
                 
             except Exception as visual_error:
                 logger.error(f"❌ Visual pipeline failed: {str(visual_error)}")
@@ -8471,7 +8606,11 @@ def run_complete_analysis(
                 results["visual_error"] = str(visual_error)
         
         # AUDIO PROCESSING 
-        if pipeline_type in ["full", "audio_only"] and enable_audio_analysis:
+        if (
+            pipeline_type in ["full", "audio_only"]
+            and enable_audio_analysis
+            and "audio_language" not in completed_stages
+        ):
             try:
                 logger.info("🎵 Starting audio pipeline...")
                 pos_path: Optional[Path] = None
@@ -8917,6 +9056,20 @@ def run_complete_analysis(
                     "audio_complete",
                     "Audio branch complete. Report consolidation underway.",
                 )
+                completed_stages.add("audio_language")
+                status["results"] = results
+                status["output_files"] = output_files
+                checkpoint_path = write_analysis_checkpoint(
+                    RESULTS_DIR,
+                    analysis_id,
+                    completed_stages=completed_stages,
+                    results=results,
+                    output_files=output_files,
+                    updated_at=utc_now_iso(),
+                )
+                status.setdefault("recovery", {})["completed_stages"] = sorted(completed_stages)
+                status["recovery"]["checkpoint_path"] = str(checkpoint_path)
+                persist_analysis_record_for_status(status)
 
             except Exception as audio_error:
                 logger.error(f"❌ Audio pipeline failed: {str(audio_error)}")
@@ -9486,6 +9639,7 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    write_performance_observation(status, RESULTS_DIR)
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
     audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
@@ -9506,6 +9660,8 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
         "analysis_started_at": status.get("analysis_started_at"),
         "analysis_completed_at": status.get("analysis_completed_at"),
         "cvatID": status.get("cvatID", 0),
+        "project_id": status.get("project_id", "local-research-project"),
+        "source_size_bytes": status.get("source_size_bytes"),
         "source_video_path": source_video_path,
         "source_video_exists": bool(source_video_path and Path(str(source_video_path)).exists()),
         "source_media_metadata": status.get("source_media_metadata"),
@@ -9530,6 +9686,31 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
     })
 
 
+@app.get("/api/analysis/{analysis_id}/observability", response_model=dict)
+async def get_performance_observability(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return make_json_safe(write_performance_observation(status, RESULTS_DIR))
+
+
+@app.get("/api/observability/corpus", response_model=dict)
+async def get_corpus_observability(project_id: Optional[str] = None) -> dict:
+    records = collect_saved_analysis_records()
+    selected = [item for item in records.values() if not project_id or item.get("project_id", "local-research-project") == project_id]
+    observations = [write_performance_observation(item, RESULTS_DIR) for item in selected]
+    bottlenecks = [finding for item in observations for finding in item.get("bottleneck_findings", [])]
+    return make_json_safe({
+        "schema": "vaa1.corpus_performance_observability.v1",
+        "project_id": project_id or "all-active-projects",
+        "analysis_count": len(observations),
+        "completed_count": sum(item.get("status") == "completed" for item in selected),
+        "total_source_gb": sum(float(item.get("source_size_bytes") or 0) for item in selected) / 2**30,
+        "bottleneck_findings": bottlenecks,
+        "analyses": observations,
+    })
+
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -9538,6 +9719,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    write_performance_observation(status, RESULTS_DIR)
 
     canonical_ledger = decision_ledger_for_status(status)
     canonical_projection = project_canonical_claims(
@@ -12677,6 +12859,59 @@ async def reveal_workspace_path(path_type: str) -> dict:
         "path": str(target_path),
     }
 
+# Data Book publication endpoints
+@app.post("/api/publication/video/{analysis_id}/prepare", response_model=dict)
+async def prepare_video_publication(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        built = build_video_publication(status, PUBLICATION_DIR / "videos" / analysis_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "package_type": "video_publication",
+        "archive_name": built["archive_name"],
+        "archive_checksum": built["archive_checksum"],
+        "download_url": f"/api/publication/archive/video/{analysis_id}/{urllib.parse.quote(built['archive_name'])}",
+        "browse_manifest": built["package"]["browse_manifest"],
+        "validation": built["package"]["video_package"]["validation"],
+    }
+
+
+@app.post("/api/publication/corpus/prepare", response_model=dict)
+async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
+    requested = [str(item) for item in payload.get("analysis_ids", [])]
+    records = collect_saved_analysis_records()
+    statuses = [records[item] for item in requested if item in records and records[item].get("status") == "completed"]
+    if not statuses:
+        raise HTTPException(status_code=409, detail="No completed analyses were selected")
+    project_id = str(payload.get("project_id") or statuses[0].get("project_id") or "local-research-project")
+    built = build_corpus_publication(statuses, PUBLICATION_DIR / "corpora" / _safe_publication_path(project_id), project_id)
+    return {
+        "package_type": "corpus_publication",
+        "video_count": built["video_count"],
+        "archive_name": built["archive_name"],
+        "archive_checksum": built["archive_checksum"],
+        "download_url": f"/api/publication/archive/corpus/{urllib.parse.quote(_safe_publication_path(project_id))}/{urllib.parse.quote(built['archive_name'])}",
+        "browse_manifest": built["package"]["browse_manifest"],
+        "validation": built["package"]["corpus_package"]["validation"],
+    }
+
+
+def _safe_publication_path(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.") or "research-project"
+
+
+@app.get("/api/publication/archive/{scope}/{owner}/{filename}")
+async def download_publication_archive(scope: str, owner: str, filename: str):
+    root = PUBLICATION_DIR / ("videos" if scope == "video" else "corpora" if scope == "corpus" else "invalid") / owner
+    candidate = (root / Path(filename).name).resolve()
+    if root.name == "invalid" or root.resolve() not in candidate.parents or candidate.suffix.lower() != ".zip" or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Publication archive not found")
+    return FileResponse(candidate, media_type="application/zip", filename=candidate.name)
+
+
 # Keep your existing endpoints (they work well)
 @app.get("/api/analyses", response_model=dict)
 async def list_analyses(limit: int = 10) -> dict:
@@ -12700,11 +12935,15 @@ async def list_analyses(limit: int = 10) -> dict:
                 "status": info["status"],
                 "filename": info["original_filename"],
                 "progress": info["progress"],
+                "mission_stage": info.get("mission_stage"),
+                "mission_message": info.get("mission_message"),
                 "pipeline_type": info.get("pipeline_type", "full"),
                 "start_time": info.get("start_time"),
                 "uploaded_at": info.get("uploaded_at"),
                 "analysis_completed_at": info.get("analysis_completed_at"),
                 "cvatID": info.get("cvatID"),
+                "project_id": info.get("project_id", "local-research-project"),
+                "source_size_bytes": info.get("source_size_bytes"),
             }
             for aid, info in recent_analyses.items()
         }

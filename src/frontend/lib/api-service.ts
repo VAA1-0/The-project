@@ -40,6 +40,22 @@ export interface UploadResponse {
   imported_analysis_ids?: string[];
   imported_count?: number;
   project_name?: string;
+  project_id?: string;
+  source_size_bytes?: number;
+}
+
+export interface ResearchCorpusUploadPreflight {
+  schema: "vaa1.research_corpus_upload_preflight.v1";
+  accepted: boolean;
+  file_count: number;
+  total_bytes: number;
+  available_bytes: number;
+  required_bytes: number;
+  remaining_after_upload_bytes: number;
+  max_file_bytes: number;
+  max_corpus_bytes: number;
+  working_reserve_bytes: number;
+  reasons: string[];
 }
 
 export interface AnalysisStatus {
@@ -61,6 +77,8 @@ export interface AnalysisStatus {
   source_video_path?: string;
   source_video_exists?: boolean;
   source_video_message?: string;
+  project_id?: string;
+  source_size_bytes?: number;
   source_media_metadata?: SourceMediaMetadata;
   transcript_timing_repair?: {
     status?: string;
@@ -1658,6 +1676,39 @@ class ApiService {
     this.baseURL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
   }
 
+  async prepareVideoPublication(analysisId: string): Promise<any> {
+    const response = await fetch(`${this.baseURL}/api/publication/video/${encodeURIComponent(analysisId)}/prepare`, { method: "POST" });
+    if (!response.ok) throw new Error((await response.text()) || "Video publication failed");
+    return response.json();
+  }
+
+  async getPerformanceObservability(analysisId: string): Promise<any> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/observability`);
+    if (!response.ok) throw new Error((await response.text()) || "Observability unavailable");
+    return response.json();
+  }
+
+  async getCorpusObservability(projectId?: string): Promise<any> {
+    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    const response = await fetch(`${this.baseURL}/api/observability/corpus${query}`);
+    if (!response.ok) throw new Error((await response.text()) || "Corpus observability unavailable");
+    return response.json();
+  }
+
+  async prepareCorpusPublication(payload: { project_id: string; analysis_ids: string[] }): Promise<any> {
+    const response = await fetch(`${this.baseURL}/api/publication/corpus/prepare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error((await response.text()) || "Corpus publication failed");
+    return response.json();
+  }
+
+  downloadPublication(url: string, filename: string): void {
+    this.downloadUrl(url.startsWith("http") ? url : `${this.baseURL}${url}`, filename);
+  }
+
   invalidateReadCaches(analysisId?: string) {
     if (!analysisId) {
       this.statusCache.clear();
@@ -1720,46 +1771,70 @@ class ApiService {
   /**
    * Upload a video file for analysis
    */
-  async uploadVideo(file: File, cvatID: number): Promise<any> {
+  async preflightResearchCorpus(files: File[]): Promise<ResearchCorpusUploadPreflight> {
+    const response = await fetch(`${this.baseURL}/api/upload/preflight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_sizes: files.map((file) => file.size),
+        file_names: files.map((file) => file.name),
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Corpus capacity check failed (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async uploadVideo(
+    file: File,
+    cvatID: number,
+    options: { projectId?: string; onProgress?: (progress: number) => void } = {},
+  ): Promise<UploadResponse> {
     console.log("Uploading file:", file.name, "cvatID:", cvatID);
 
     // For development, check if backend is reachable
     const backendAvailable = await this.checkBackendAvailability();
     if (!backendAvailable && !this.useMock) {
-      console.warn("Backend not available, using mock response");
-      return this.getMockUploadResponse(file, cvatID);
+      throw new Error("Backend is not available. The video was not uploaded.");
     }
 
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("cvatID", String(cvatID));
+      formData.append("project_id", options.projectId || "local-research-project");
+      formData.append("expected_size", String(file.size));
 
-      // Direct call to FastAPI endpoint
-      const response = await fetch(`${this.baseURL}/api/upload`, {
-        method: "POST",
-        body: formData,
+      const result = await new Promise<UploadResponse>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) {
+            options.onProgress?.((event.loaded / event.total) * 100);
+          }
+        });
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              reject(new Error("Upload completed but the backend response was invalid."));
+            }
+            return;
+          }
+          reject(new Error(xhr.responseText || `Upload failed (${xhr.status})`));
+        });
+        xhr.addEventListener("error", () => reject(new Error("Upload connection failed.")));
+        xhr.open("POST", `${this.baseURL}/api/upload`);
+        xhr.send(formData);
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Upload failed with status:", response.status, errorText);
-        // Fall back to mock if API fails
-        if (!this.useMock) {
-          return this.getMockUploadResponse(file, cvatID);
-        }
-        throw new Error(
-          `Upload failed: ${response.status} ${response.statusText} - ${errorText}`,
-        );
-      }
-
-      const result = await response.json();
       console.log("Upload successful:", result);
       return result;
     } catch (error) {
       console.error("Upload error:", error);
-      // Fallback to mock response
-      return this.getMockUploadResponse(file, cvatID);
+      if (this.useMock) return this.getMockUploadResponse(file, cvatID);
+      throw error;
     }
   }
 

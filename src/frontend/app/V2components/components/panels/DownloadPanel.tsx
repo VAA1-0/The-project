@@ -14,11 +14,15 @@ import {
   FileJson,
   AudioLines,
   FileText,
+  BookOpen,
+  Archive,
+  ChevronRight,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
+import { apiService } from "@/lib/api-service";
 import {
   Tooltip,
   TooltipContent,
@@ -122,11 +126,14 @@ export default function DownloadPanel() {
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [showDebug, setShowDebug] = useState(false);
   const [projectAnalysisCount, setProjectAnalysisCount] = useState(0);
+  const [publication, setPublication] = useState<any>(null);
+  const [publicationBusy, setPublicationBusy] = useState<"video" | "corpus" | null>(null);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
+      setPublication(null);
     };
     eventBus.on("videoIdChanged", handler);
 
@@ -588,6 +595,23 @@ export default function DownloadPanel() {
     }
   };
 
+  const preparePublication = async (scope: "video" | "corpus") => {
+    try {
+      setPublicationBusy(scope);
+      const result = scope === "video"
+        ? await apiService.prepareVideoPublication(videoId)
+        : await buildProjectPayload().then((payload) => apiService.prepareCorpusPublication({
+            project_id: String(payload.project_name || "vaa1-research-project"),
+            analysis_ids: payload.analysis_ids as string[],
+          }));
+      setPublication(result);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Publication generation failed");
+    } finally {
+      setPublicationBusy(null);
+    }
+  };
+
   const getAvailableFileCount = () => {
     return availableFiles.filter((f) => f.available).length;
   };
@@ -866,6 +890,43 @@ export default function DownloadPanel() {
             </div>
           ) : (
             <div className="space-y-3">
+              <details open className="rounded-lg border border-slate-800 bg-slate-900/25">
+                <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
+                  Data Book publication
+                </summary>
+                <div className="m-3 mt-1 border-t border-slate-800 pt-3">
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => preparePublication("video")} disabled={publicationBusy !== null} className="rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50">
+                      {publicationBusy === "video" ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <BookOpen className="mr-1 inline size-3" />}Generate video publication
+                    </button>
+                    <button onClick={() => preparePublication("corpus")} disabled={publicationBusy !== null || projectAnalysisCount === 0} className="rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50">
+                      {publicationBusy === "corpus" ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <Archive className="mr-1 inline size-3" />}Generate corpus publication
+                    </button>
+                  </div>
+                  {publication && (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-[11px]">
+                        <span className="truncate text-slate-300">{publication.archive_name}</span>
+                        <button onClick={() => apiService.downloadPublication(publication.download_url, publication.archive_name)} className="shrink-0 rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700"><Download className="mr-1 inline size-3" />Download ZIP</button>
+                      </div>
+                      <div className="font-mono text-[9px] text-[var(--ui-passive-text)]">{publication.archive_checksum}</div>
+                      {(publication.browse_manifest?.root_nodes || []).map((root: any) => (
+                        <details key={root.node_id} className="border-t border-slate-800 pt-2">
+                          <summary className="cursor-pointer text-[11px] text-slate-300">{root.label}</summary>
+                          <div className="mt-1 grid gap-1 pl-2">
+                            {(root.children || []).map((node: any) => (
+                              <div key={node.node_id} className="flex items-center gap-1.5 py-0.5 text-[10px] text-[var(--ui-passive-text)]">
+                                <ChevronRight className="size-3" /><span>{node.label}</span><span className="ml-auto uppercase tracking-wide">{node.state}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+
               <details className="rounded-lg border border-slate-800 bg-slate-900/25">
                 <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
                   Whole project
