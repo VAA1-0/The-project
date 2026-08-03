@@ -141,7 +141,9 @@ class MMSASRTranscriber:
             result = self.pipe(
                 str(audio_path),
                 chunk_length_s=self.chunk_length_s,
-                return_timestamps=False,
+                # MMS is a CTC pipeline. Transformers requires an explicit
+                # character- or word-level timestamp mode; False is rejected.
+                return_timestamps="word",
             )
         except Exception as exc:
             logger.exception("Transcription failed for %s", audio_path)

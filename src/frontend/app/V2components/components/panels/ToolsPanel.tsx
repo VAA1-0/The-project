@@ -5547,10 +5547,16 @@ export default function ToolsPanel() {
                 {metadata?.analysisCompletedAt && (
                   <div>Analysis completed: {metadata.analysisCompletedAt}</div>
                 )}
-                {stageLabel && <div>Mission stage: {stageLabel}.</div>}
-                {metadata?.missionMessage && (
-                  <div>Captain&apos;s log: {metadata.missionMessage}</div>
+                {metadata?.powerAssertion && (
+                  <div>
+                    System sleep prevention: {metadata.powerAssertion.active
+                      ? `active (${metadata.powerAssertion.provider ?? "operating system"})`
+                      : metadata.powerAssertion.error
+                        ? `unavailable (${metadata.powerAssertion.error})`
+                        : "released"}.
+                  </div>
                 )}
+                {stageLabel && <div>Mission stage: {stageLabel}.</div>}
                 {metadata?.sourceVideoExists === false && metadata?.sourceVideoMessage && (
                   <div className="text-amber-300">
                     Media note: {metadata.sourceVideoMessage}
@@ -5853,8 +5859,7 @@ export default function ToolsPanel() {
             {isAnalyzing && (
               <div className="mb-3">
                 <div className="text-sm text-slate-400">
-                  {stageLabel ? `${stageLabel}: ` : "Analysis in progress: "}
-                  {analysisProgress}%
+                  Pipeline {analysisProgress}%{stageLabel ? ` · ${stageLabel}` : ""}
                 </div>
                 {metadata?.missionMessage && (
                   <div className="mt-1 text-xs text-slate-500">

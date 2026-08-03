@@ -2194,7 +2194,7 @@ export default function VideoPanel() {
 
   const loadVideoSource = React.useCallback(async (analysisId: string) => {
     const nextMetadata = await VideoService.get(analysisId);
-    if (nextMetadata.status === "completed" && nextMetadata.sourceVideoExists) {
+    if (nextMetadata.sourceVideoExists) {
       const sourceUrl = apiService.getDownloadUrl(analysisId, "source_video");
       return {
         metadata: nextMetadata,

@@ -45,6 +45,17 @@ import { readFileSync } from "fs";
 import { parse } from "csv-parse/sync";
 
 // Type Definitions
+export interface AnalysisPowerAssertion {
+  provider?: string;
+  platform?: string;
+  active?: boolean;
+  started_at?: string;
+  released_at?: string;
+  pid?: number | null;
+  error?: string | null;
+  scope?: string;
+}
+
 export interface VideoMetadata {
   id: string;
   name: string;
@@ -60,6 +71,18 @@ export interface VideoMetadata {
     | "synced"
     | "failed";
   progress: number;
+  progress_detail?: {
+    phase?: string;
+    stage_fraction?: number;
+    stage_percent?: number;
+    source_seconds?: number;
+    duration_seconds?: number;
+    processed_frames?: number;
+    total_frames?: number;
+    processed_items?: number;
+    total_items?: number;
+  };
+  powerAssertion?: AnalysisPowerAssertion;
   error?: string;
   missionStage?: string;
   missionMessage?: string;
@@ -5177,6 +5200,8 @@ export interface AnalysisStatus {
   analysis_id: string;
   status: "uploaded" | "processing" | "completed" | "error";
   progress: number;
+  progress_detail?: VideoMetadata["progress_detail"];
+  power_assertion?: AnalysisPowerAssertion;
   event_log?: AnalysisEvent[];
   mission_stage?: string;
   mission_message?: string;
@@ -5605,6 +5630,8 @@ export class VideoService {
         name: status.filename,
         status: status.status,
         progress: status.progress || 0,
+        progress_detail: status.progress_detail,
+        powerAssertion: status.power_assertion,
         error: status.error,
         missionStage: status.mission_stage,
         missionMessage: status.mission_message,
@@ -6274,6 +6301,8 @@ export class VideoService {
         name: info.filename || "Unknown",
         status: info.status || "unknown",
         progress: info.progress || 0,
+        progress_detail: info.progress_detail,
+        powerAssertion: info.power_assertion,
         missionStage: info.mission_stage,
         missionMessage: info.mission_message,
         uploadedAt:

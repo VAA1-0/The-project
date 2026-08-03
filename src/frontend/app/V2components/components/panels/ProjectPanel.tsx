@@ -463,15 +463,14 @@ export default function ProjectPanel() {
   };
 
   const analyzeVideo = async (id: string) => {
-    try {
-      await startAnalysisForVideo(id, true);
-    } catch (error) {
-      console.error("Analyze from project panel failed:", error);
-      alert(
-        "Could not start analysis: " +
-          (error instanceof Error ? error.message : String(error)),
-      );
-    }
+    // All normal launches enter the governed queue. This keeps the cooling
+    // period, shortest-source-first ordering, and single-worker boundary in
+    // force even when several Analyze buttons are pressed in quick succession.
+    setQueuedAnalysisIds((previous) =>
+      previous.includes(id) || activeQueuedAnalysisId === id
+        ? previous
+        : [...previous, id],
+    );
   };
 
   const toggleQueueVideo = (id: string) => {
@@ -536,8 +535,16 @@ export default function ProjectPanel() {
       return;
     }
 
-    const nextId = queuedAnalysisIds[0];
-    setQueuedAnalysisIds((previous) => previous.slice(1));
+    // Shortest-source-first keeps the queue productive for mixed-length
+    // research corpora and surfaces early complete cases for manual review.
+    const nextId = [...queuedAnalysisIds].sort((leftId, rightId) => {
+      const leftSize = libraryVideos.find((video) => video.id === leftId)?.sourceSizeBytes;
+      const rightSize = libraryVideos.find((video) => video.id === rightId)?.sourceSizeBytes;
+      const leftRank = typeof leftSize === "number" && leftSize > 0 ? leftSize : Number.POSITIVE_INFINITY;
+      const rightRank = typeof rightSize === "number" && rightSize > 0 ? rightSize : Number.POSITIVE_INFINITY;
+      return leftRank - rightRank;
+    })[0];
+    setQueuedAnalysisIds((previous) => previous.filter((item) => item !== nextId));
     setActiveQueuedAnalysisId(nextId);
     void startAnalysisForVideo(nextId, false).catch((error) => {
       console.error("Queued analysis start failed:", error);
@@ -867,6 +874,25 @@ export default function ProjectPanel() {
                         {activeQueuedAnalysisId === vid.id
                           ? "Queued run active"
                           : `Queued position ${queuedAnalysisIds.indexOf(vid.id) + 1}`}
+                      </div>
+                    ) : null}
+
+                    {vid.status === "processing" ? (
+                      <div className="space-y-1" aria-label={`Analysis progress ${vid.progress ?? 0}%`}>
+                        <div className="h-1.5 overflow-hidden rounded-sm bg-[#151515]">
+                          <div
+                            className="h-full bg-[#68829a] transition-[width] duration-500"
+                            style={{ width: `${Math.max(0, Math.min(100, Number(vid.progress) || 0))}%` }}
+                          />
+                        </div>
+                        <div className="flex items-start justify-between gap-2 text-[9px] text-[#858585]">
+                          <span className="min-w-0 flex-1 leading-3">
+                            {vid.missionMessage || vid.missionStage || "Analysis running"}
+                          </span>
+                          <span className="shrink-0 tabular-nums">
+                            {Number(vid.progress || 0).toFixed(1)}%
+                          </span>
+                        </div>
                       </div>
                     ) : null}
 

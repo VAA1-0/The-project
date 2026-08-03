@@ -28,6 +28,7 @@ from html.parser import HTMLParser
 from typing import Dict, Any, Optional, List
 import asyncio
 import csv
+import threading
 from datetime import datetime, timezone
 from src.backend.analysis.pipeline_video_frames import FrameAnalysisPipeline
 from src.backend.analysis.pipeline_manager import run_full_pipeline
@@ -88,6 +89,11 @@ from src.backend.analysis.evidence_linker import (
     link_ocr_csv_to_trace,
 )
 from src.backend.analysis.timestamp_schema import MediaProfile, MediaRef
+
+# A laptop analysis process must not admit concurrent heavyweight model runs.
+# The visual stack (PyTorch/Metal plus video decoders) can otherwise exhaust the
+# native MPS heap and terminate Python before a governed checkpoint is written.
+ANALYSIS_EXECUTION_LOCK = threading.Lock()
 from src.backend.analysis.identification_refinery import (
     load_identity_candidate_ledger,
     promote_identity_candidate,
@@ -176,6 +182,7 @@ from src.backend.analysis.analysis_recovery import (
     recover_interrupted_record,
     write_analysis_checkpoint,
 )
+from src.backend.analysis.power_assertion import AnalysisPowerAssertion
 from src.backend.analysis.data_book_publication import (
     build_corpus_publication,
     build_video_publication,
@@ -4785,12 +4792,12 @@ def build_master_schema_foundational_source_layers(
     spatial_tone = summary.get("spatial_tone_scan") if isinstance(summary.get("spatial_tone_scan"), dict) else {}
     if not spatial_tone:
         visual_analysis = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
-        spatial_tone = visual_analysis.get("spatial_tone_scan") if isinstance(visual_analysis, dict) else {}
+        spatial_tone = (visual_analysis.get("spatial_tone_scan") or {}) if isinstance(visual_analysis, dict) else {}
     spatial_samples = spatial_tone.get("samples") if isinstance(spatial_tone.get("samples"), list) else []
     adaptive_visual = summary.get("adaptive_visual_scan") if isinstance(summary.get("adaptive_visual_scan"), dict) else {}
     if not adaptive_visual:
         visual_analysis = ((status.get("results") or {}).get("visual_analysis") or {}) if isinstance(status.get("results"), dict) else {}
-        adaptive_visual = visual_analysis.get("adaptive_visual_scan") if isinstance(visual_analysis, dict) else {}
+        adaptive_visual = (visual_analysis.get("adaptive_visual_scan") or {}) if isinstance(visual_analysis, dict) else {}
     adaptive_samples = adaptive_visual.get("samples") if isinstance(adaptive_visual.get("samples"), list) else []
     return {
         "schema": "vaa1.master_schema_foundational_source_layers.v1",
@@ -7727,7 +7734,7 @@ def remove_analysis_artifacts(analysis_id: str, status: Dict[str, Any]) -> None:
 
 def update_analysis_progress(
     status: Dict[str, Any],
-    progress: int,
+    progress: float,
     stage: str,
     message: str,
 ) -> None:
@@ -8260,8 +8267,27 @@ async def start_analysis(
 
     if status["status"] == "processing":
         raise HTTPException(status_code=400, detail="Analysis already in progress")
-    if status["status"] == "completed":
+    completed_with_missing_required_branch = bool(
+        status["status"] == "completed"
+        and isinstance(status.get("results"), dict)
+        and status["results"].get("audio_error")
+        and (status.get("pipeline_type") or pipeline_type) == "full"
+    )
+    if status["status"] == "completed" and not completed_with_missing_required_branch:
         raise HTTPException(status_code=400, detail="Analysis already completed")
+
+    active_records = [
+        (record_id, record)
+        for record_id, record in collect_saved_analysis_records().items()
+        if record_id != analysis_id and record.get("status") == "processing"
+    ]
+    if active_records or ANALYSIS_EXECUTION_LOCK.locked():
+        active_id = active_records[0][0] if active_records else None
+        raise HTTPException(status_code=409, detail={
+            "message": "Another analysis is active. This workstation runs one governed analysis at a time.",
+            "active_analysis_id": active_id,
+            "retryable": True,
+        })
 
     start_capacity = assess_corpus_capacity([0], RESULTS_DIR)
     if not start_capacity["accepted"]:
@@ -8294,7 +8320,10 @@ async def start_analysis(
 
     # Update status. A persisted processing record is normalized to an
     # interrupted/uploaded record during hydration and resumes here.
-    is_resume = bool((status.get("recovery") or {}).get("resumable"))
+    is_resume = bool(
+        (status.get("recovery") or {}).get("resumable")
+        or completed_with_missing_required_branch
+    )
     status["status"] = "processing"
     status["start_time"] = status.get("start_time") or time.time()
     status["pipeline_type"] = analysis_profile["pipeline_type"]
@@ -8380,6 +8409,50 @@ def run_complete_analysis(
     face_requires_person_detection: bool = False,
 ):
     """Run the complete analysis pipeline in background"""
+    with ANALYSIS_EXECUTION_LOCK:
+        status = get_analysis_entry(analysis_id)
+        power_assertion = AnalysisPowerAssertion()
+        try:
+            with power_assertion:
+                if status is not None:
+                    status["power_assertion"] = power_assertion.record()
+                    append_analysis_event(
+                        status,
+                        "analysis_power_assertion_acquired" if power_assertion.active else "analysis_power_assertion_unavailable",
+                        details=status["power_assertion"],
+                    )
+                    persist_analysis_record_for_status(status)
+                result = _run_complete_analysis_unlocked(
+                    analysis_id,
+                    pipeline_type,
+                    analysis_tier,
+                    modality_focus,
+                    apply_face_anonymization,
+                    face_message_style,
+                    face_requires_person_detection,
+                )
+            return result
+        finally:
+            if status is not None:
+                status["power_assertion"] = power_assertion.record()
+                append_analysis_event(
+                    status,
+                    "analysis_power_assertion_released",
+                    details=status["power_assertion"],
+                )
+                persist_analysis_record_for_status(status)
+
+
+def _run_complete_analysis_unlocked(
+    analysis_id: str,
+    pipeline_type: str,
+    analysis_tier: str = "science_scan",
+    modality_focus: str = "multimodal",
+    apply_face_anonymization: bool = False,
+    face_message_style: str = "plain",
+    face_requires_person_detection: bool = False,
+):
+    """Execute one admitted analysis while the process-wide guard is held."""
     try:
         status = analysis_status[analysis_id]
         video_path = status["file_path"]
@@ -8472,11 +8545,57 @@ def run_complete_analysis(
                     face_message_style=face_message_style,
                     face_requires_person_detection=effective_face_requires_person_detection,
                 )
+
+                visual_progress_start = 20
+                visual_progress_end = 44 if pipeline_type == "full" else 89
+
+                def report_visual_progress(detail: Dict[str, Any]) -> None:
+                    fraction = max(0.0, min(float(detail.get("fraction") or 0.0), 1.0))
+                    source_seconds = float(detail.get("source_seconds") or 0.0)
+                    duration_seconds = float(detail.get("duration_seconds") or 0.0)
+                    processed_frames = int(detail.get("processed_frames") or 0)
+                    total_frames = int(detail.get("total_frames") or 0)
+                    processed_items = int(detail.get("processed_items") or 0)
+                    total_items = int(detail.get("total_items") or 0)
+                    phase = str(detail.get("phase") or "frame_scan")
+                    measured_progress = visual_progress_start + (
+                        visual_progress_end - visual_progress_start
+                    ) * fraction
+                    status["progress_detail"] = {
+                        **detail,
+                        "stage_fraction": fraction,
+                        "stage_percent": round(fraction * 100, 1),
+                        "source_seconds": round(source_seconds, 2),
+                        "duration_seconds": round(duration_seconds, 2),
+                    }
+                    if phase == "frame_scan":
+                        measurement = (
+                            f"{source_seconds:.1f}/{duration_seconds:.1f}s; "
+                            f"{processed_frames}/{total_frames} frames"
+                        )
+                        phase_label = "frames"
+                    elif phase == "face_analysis":
+                        measurement = f"{processed_items}/{total_items} sampled frames"
+                        phase_label = "faces"
+                    else:
+                        measurement = f"{processed_items}/{total_items} timed samples"
+                        phase_label = "expressions"
+                    update_analysis_progress(
+                        status,
+                        round(measured_progress, 1),
+                        "visual_scan",
+                        (
+                            f"Visual scan {fraction * 100:.1f}% · {phase_label} — "
+                            f"{measurement}."
+                        ),
+                    )
                 
                 # Run the analysis
                 visual_results = frame_pipeline.analyze(
                     save_video=save_annotated_video,
-                    display=False
+                    display=False,
+                    progress_callback=report_visual_progress,
+                    checkpoint_path=analysis_output_dir / "visual_frame_scan_checkpoint.json",
                 )
                 update_analysis_progress(
                     status,
@@ -8518,7 +8637,19 @@ def run_complete_analysis(
                             precheck=True,
                             skip_by_seek=True,
                         )
-                        expression_results = expression_detector.run(video_path)
+                        expression_results = expression_detector.run(
+                            video_path,
+                            checkpoint_path=RESULTS_DIR / analysis_id / "expression_analysis_checkpoint.json",
+                            progress_callback=lambda detail: report_visual_progress({
+                                **detail,
+                                "fraction": 0.90 + 0.10 * max(
+                                    0.0,
+                                    min(float(detail.get("fraction") or 0.0), 1.0),
+                                ),
+                                "phase": "expression_analysis",
+                                "phase_fraction": detail.get("fraction"),
+                            }),
+                        )
                         logger.info(f"Expression detection completed: {len(expression_results)} samples")
 
                         # Save expression results to JSON file
@@ -9131,13 +9262,18 @@ def run_complete_analysis(
         if source_video_path and Path(source_video_path).exists():
             output_files["source_video"] = str(source_video_path)
 
+        required_branch_errors = {}
+        if pipeline_type == "full" and results.get("audio_error"):
+            required_branch_errors["audio_language"] = results["audio_error"]
+        fully_completed = not required_branch_errors
         status.update({
-            "status": "completed",
-            "progress": 100,
+            "status": "completed" if fully_completed else "partial",
+            "progress": 100 if fully_completed else max(float(status.get("progress") or 0), 45),
             "results": results,
             "output_files": output_files,
             "end_time": time.time(),
-            "analysis_completed_at": utc_now_iso(),
+            "analysis_completed_at": utc_now_iso() if fully_completed else None,
+            "required_branch_errors": required_branch_errors,
         })
         write_source_media_metadata_files(status)
         try:
@@ -9204,17 +9340,22 @@ def run_complete_analysis(
             status.setdefault("results", {})["mise_en_scene_scene_cards_error"] = str(
                 scene_card_error
             )
-        status["mission_stage"] = "complete"
-        status["mission_message"] = "All available stations have reported in."
+        status["mission_stage"] = "complete" if fully_completed else "partial"
+        status["mission_message"] = (
+            "All required analysis branches have reported in."
+            if fully_completed
+            else "Visual analysis is preserved; the audio/language branch remains resumable."
+        )
         append_analysis_event(
             status,
-            "analysis_completed",
-            progress=100,
-            stage="complete",
-            message="All available stations have reported in.",
+            "analysis_completed" if fully_completed else "analysis_partial",
+            progress=status["progress"],
+            stage=status["mission_stage"],
+            message=status["mission_message"],
             details={
                 "result_keys": list(results.keys()),
                 "output_file_types": sorted(output_files.keys()),
+                "required_branch_errors": required_branch_errors,
             },
         )
         persist_analysis_record_for_status(status)
@@ -9649,6 +9790,8 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
         "analysis_id": analysis_id,
         "status": status.get("status"),
         "progress": status.get("progress"),
+        "progress_detail": status.get("progress_detail"),
+        "power_assertion": status.get("power_assertion"),
         "mission_stage": status.get("mission_stage"),
         "mission_message": status.get("mission_message"),
         "filename": status.get("original_filename"),
@@ -9731,6 +9874,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "analysis_id": analysis_id,
         "status": status["status"],
         "progress": status["progress"],
+        "progress_detail": status.get("progress_detail"),
+        "power_assertion": status.get("power_assertion"),
         "mission_stage": status.get("mission_stage"),
         "mission_message": status.get("mission_message"),
         "filename": status["original_filename"],
@@ -10313,6 +10458,16 @@ async def download_file(analysis_id: str, file_type: str):
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    # The governed source remains playable while an analysis is uploaded,
+    # queued, interrupted, or processing. Derived outputs still require a
+    # completed analysis.
+    if file_type == "source_video":
+        source_path = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+        if not source_path.is_file():
+            raise HTTPException(status_code=404, detail="Source video not found")
+        media_type = mimetypes.guess_type(source_path.name)[0] or "video/mp4"
+        return FileResponse(source_path, media_type=media_type, filename=source_path.name)
 
     if status["status"] != "completed":
         raise HTTPException(status_code=400, detail="Analysis not completed")
@@ -12935,6 +13090,8 @@ async def list_analyses(limit: int = 10) -> dict:
                 "status": info["status"],
                 "filename": info["original_filename"],
                 "progress": info["progress"],
+                "progress_detail": info.get("progress_detail"),
+                "power_assertion": info.get("power_assertion"),
                 "mission_stage": info.get("mission_stage"),
                 "mission_message": info.get("mission_message"),
                 "pipeline_type": info.get("pipeline_type", "full"),

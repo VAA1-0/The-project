@@ -25,8 +25,9 @@ import json
 import os
 import shutil
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 
 import cv2
 from deepface import DeepFace
@@ -681,7 +682,14 @@ class ExpressionDetectorDeepFace:
     # -------------------------
     # Main method — analyze entire video (multi-face)
     # -------------------------
-    def run(self, video_path: str | Path, max_duration: Optional[float] = None) -> List[Dict[str, Any]]:
+    def run(
+        self,
+        video_path: str | Path,
+        max_duration: Optional[float] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        checkpoint_path: str | Path | None = None,
+        checkpoint_every_samples: int = 10,
+    ) -> List[Dict[str, Any]]:
         """
         Analyze a video and return per-face detection results sampled every `interval` seconds.
 
@@ -748,9 +756,71 @@ class ExpressionDetectorDeepFace:
                         t += self.interval
 
             results: List[Dict[str, Any]] = []
+            completed_sample_indices: set[int] = set()
+            checkpoint = Path(checkpoint_path) if checkpoint_path else None
+            source_signature = {
+                "path": str(video_path.resolve()),
+                "size": video_path.stat().st_size,
+                "mtime_ns": video_path.stat().st_mtime_ns,
+                "interval": self.interval,
+                "face_detector": self.face_detector,
+            }
+            if checkpoint and checkpoint.is_file():
+                try:
+                    saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+                    if saved.get("source_signature") == source_signature:
+                        results = saved.get("results") if isinstance(saved.get("results"), list) else []
+                        completed_sample_indices = {
+                            int(value) for value in saved.get("completed_sample_indices", [])
+                        }
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    results = []
+                    completed_sample_indices = set()
+
+            def persist_checkpoint() -> None:
+                if checkpoint is None:
+                    return
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                temporary = checkpoint.with_name(f".{checkpoint.name}.tmp")
+                payload = {
+                    "schema": "vaa1.expression_analysis_checkpoint.v1",
+                    "source_signature": source_signature,
+                    "completed_sample_indices": sorted(completed_sample_indices),
+                    "results": results,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                try:
+                    with temporary.open("w", encoding="utf-8") as handle:
+                        json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, checkpoint)
+                finally:
+                    temporary.unlink(missing_ok=True)
+
             sample_index = 0
 
             for tsec in sample_times:
+                if sample_index in completed_sample_indices:
+                    if progress_callback:
+                        progress_callback({
+                            "fraction": (sample_index + 1) / max(len(sample_times), 1),
+                            "processed_items": sample_index + 1,
+                            "total_items": len(sample_times),
+                            "resumed_items": len(completed_sample_indices),
+                            "source_seconds": float(tsec),
+                            "duration_seconds": float(end_time) if end_time != float("inf") else 0.0,
+                        })
+                    sample_index += 1
+                    continue
+                if progress_callback:
+                    progress_callback({
+                        "fraction": sample_index / max(len(sample_times), 1),
+                        "processed_items": sample_index,
+                        "total_items": len(sample_times),
+                        "source_seconds": float(tsec),
+                        "duration_seconds": float(end_time) if end_time != float("inf") else 0.0,
+                    })
                 # Seek if requested and feasible
                 if self.skip_by_seek and duration_seconds is not None:
                     cap.set(cv2.CAP_PROP_POS_MSEC, float(tsec) * 1000.0)
@@ -771,6 +841,9 @@ class ExpressionDetectorDeepFace:
                             "detector": self.face_detector,
                             "error": "frame unreadable at seek position",
                         })
+                        completed_sample_indices.add(sample_index)
+                        if len(completed_sample_indices) % max(1, checkpoint_every_samples) == 0:
+                            persist_checkpoint()
                         sample_index += 1
                         continue
                     timestamp = float(tsec)
@@ -818,6 +891,9 @@ class ExpressionDetectorDeepFace:
                         "detector": self.face_detector,
                         "error": "no face detected (fast detector)",
                     })
+                    completed_sample_indices.add(sample_index)
+                    if len(completed_sample_indices) % max(1, checkpoint_every_samples) == 0:
+                        persist_checkpoint()
                     sample_index += 1
                     continue
 
@@ -886,11 +962,23 @@ class ExpressionDetectorDeepFace:
                         "error": analysis.get("error"),
                     })
 
+                completed_sample_indices.add(sample_index)
+                if len(completed_sample_indices) % max(1, checkpoint_every_samples) == 0:
+                    persist_checkpoint()
                 sample_index += 1
 
                 if timestamp >= end_time:
                     break
 
+            if progress_callback:
+                progress_callback({
+                    "fraction": 1.0,
+                    "processed_items": len(sample_times),
+                    "total_items": len(sample_times),
+                    "source_seconds": float(end_time) if end_time != float("inf") else 0.0,
+                    "duration_seconds": float(end_time) if end_time != float("inf") else 0.0,
+                })
+            persist_checkpoint()
             return results
 
         finally:

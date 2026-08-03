@@ -17,8 +17,10 @@ from ultralytics import YOLO
 import easyocr
 import os
 import re
+import time
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Any, Callable, Optional
 from app.pipeline.face_analysis import analyze_face_images_batch
 from app.pipeline.face_anonymizer import anonymize_face_batch_results
 from src.backend.utils.logger import get_logger
@@ -250,6 +252,11 @@ class FrameAnalysisPipeline:
 
     # Initialize only the models the selected profile actually needs
         self.yolo = YOLO(yolo_model_path) if self.enable_object_detection else None
+        if self.yolo is not None and hasattr(self.yolo, "to"):
+            # Explicit CPU placement is intentional on the local macOS runtime.
+            # Concurrent decoder/model pressure has produced native MPS allocator
+            # crashes, which cannot be caught or checkpointed by Python.
+            self.yolo.to("cpu")
         self.ocr = easyocr.Reader(languages) if self.enable_ocr else None
 
         self.video_name = self.video_path.stem
@@ -268,6 +275,15 @@ class FrameAnalysisPipeline:
     @staticmethod
     def _normalize_ocr_text(text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").strip())
+
+    def _run_yolo(self, frame):
+        """Run the detector on CPU while preserving adapter compatibility."""
+        try:
+            return self.yolo(frame, device="cpu", verbose=False)
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            return self.yolo(frame)
 
     @staticmethod
     def _ocr_text_quality_ok(text: str, confidence: float) -> bool:
@@ -390,7 +406,7 @@ class FrameAnalysisPipeline:
         )
 
         if should_detect_objects and self.yolo is not None:
-            yolo_results = self.yolo(frame)
+            yolo_results = self._run_yolo(frame)
             detections = yolo_results[0].boxes
 
             for det in detections:
@@ -456,6 +472,9 @@ class FrameAnalysisPipeline:
         *,
         fps: float,
         duration_seconds: float,
+        progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        start_sample_index: int = 0,
+        checkpoint_callback: Optional[Callable[[int], None]] = None,
     ) -> None:
         positive_intervals = [
             interval
@@ -473,7 +492,10 @@ class FrameAnalysisPipeline:
             duration_seconds,
         )
 
-        for timestamp in sample_timestamps:
+        sample_count = len(sample_timestamps)
+        for sample_index, timestamp in enumerate(sample_timestamps):
+            if sample_index < start_sample_index:
+                continue
             cap.set(cv2.CAP_PROP_POS_MSEC, float(timestamp) * 1000.0)
             ret, frame = cap.read()
             if not ret:
@@ -487,6 +509,17 @@ class FrameAnalysisPipeline:
                 previous_detection_timestamp=previous_detection_timestamp,
                 previous_ocr_timestamp=previous_ocr_timestamp,
             )
+            if progress_callback:
+                progress_callback({
+                    "fraction": (sample_index + 1) / max(sample_count, 1),
+                    "processed_frames": sample_index + 1,
+                    "total_frames": sample_count,
+                    "source_seconds": min(float(timestamp), duration_seconds),
+                    "duration_seconds": duration_seconds,
+                    "mode": "sampled",
+                })
+            if checkpoint_callback and ((sample_index + 1) % 10 == 0 or sample_index + 1 >= sample_count):
+                checkpoint_callback(sample_index + 1)
 
     def _group_yolo_results(
         self,
@@ -1330,9 +1363,31 @@ class FrameAnalysisPipeline:
             },
         }
 
-    def analyze(self, save_video: bool = True, display: bool = False):
+    def analyze(
+        self,
+        save_video: bool = True,
+        display: bool = False,
+        progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        checkpoint_path: str | Path | None = None,
+        checkpoint_interval_seconds: float = 30.0,
+    ):
         """Main processing loop"""
         logger.info(f"Starting frame analysis on {self.video_path}")
+
+        def phase_progress(detail: dict[str, Any], phase: str, base: float, span: float) -> None:
+            if not progress_callback:
+                return
+            fraction = max(0.0, min(float(detail.get("fraction") or 0.0), 1.0))
+            progress_callback({
+                **detail,
+                "fraction": base + span * fraction,
+                "phase": phase,
+                "phase_fraction": fraction,
+            })
+
+        frame_progress = (
+            lambda detail: phase_progress(detail, "frame_scan", 0.0, 0.65)
+        ) if progress_callback else None
 
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
@@ -1344,12 +1399,71 @@ class FrameAnalysisPipeline:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         duration_seconds = (total_frames / fps) if fps and fps > 0 else 0.0
         frame_count = 0
+        last_progress_emit = 0.0
+        last_checkpoint_write = 0.0
         previous_ocr_timestamp = -float("inf")
         previous_detection_timestamp = -float("inf")
+        durable_path = Path(checkpoint_path) if checkpoint_path else None
+        source_signature = {
+            "path": str(Path(self.video_path).resolve()),
+            "size": Path(self.video_path).stat().st_size,
+            "mtime_ns": Path(self.video_path).stat().st_mtime_ns,
+            "detection_interval_seconds": self.detection_interval_seconds,
+            "ocr_interval_seconds": self.ocr_interval_seconds,
+            "face_requires_person_detection": self.face_requires_person_detection,
+        }
+        resume_payload: dict[str, Any] = {}
+        if durable_path and durable_path.is_file():
+            try:
+                candidate = json.loads(durable_path.read_text(encoding="utf-8"))
+                if candidate.get("source_signature") == source_signature:
+                    resume_payload = candidate
+                    self.yolo_results_list = candidate.get("yolo_results") or []
+                    self.ocr_results_list = candidate.get("ocr_results") or []
+                    self.spatial_tone_samples = candidate.get("spatial_tone_samples") or []
+                    self.face_frame_items = candidate.get("face_frame_items") or []
+                    self.face_frames_considered = int(candidate.get("face_frames_considered") or 0)
+                    self.face_frames_selected = int(candidate.get("face_frames_selected") or 0)
+                    self.face_frames_skipped_no_person = int(candidate.get("face_frames_skipped_no_person") or 0)
+                    previous_ocr_timestamp = float(candidate.get("previous_ocr_timestamp", -float("inf")))
+                    previous_detection_timestamp = float(candidate.get("previous_detection_timestamp", -float("inf")))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                resume_payload = {}
+
+        def persist_frame_checkpoint(*, mode: str, next_index: int, completed: bool = False) -> None:
+            if durable_path is None:
+                return
+            durable_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = durable_path.with_name(f".{durable_path.name}.tmp")
+            payload = {
+                "schema": "vaa1.visual_frame_scan_checkpoint.v1",
+                "source_signature": source_signature,
+                "mode": mode,
+                "next_index": next_index,
+                "completed": completed,
+                "previous_ocr_timestamp": previous_ocr_timestamp,
+                "previous_detection_timestamp": previous_detection_timestamp,
+                "yolo_results": self.yolo_results_list,
+                "ocr_results": self.ocr_results_list,
+                "spatial_tone_samples": self.spatial_tone_samples,
+                "face_frame_items": self.face_frame_items,
+                "face_frames_considered": self.face_frames_considered,
+                "face_frames_selected": self.face_frames_selected,
+                "face_frames_skipped_no_person": self.face_frames_skipped_no_person,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                with temporary.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, durable_path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
         # Setup video writer if needed
         out = None
-        if save_video:
+        if save_video and not resume_payload:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out = cv2.VideoWriter(str(self.output_video_path), fourcc, fps, (width, height))
 
@@ -1367,11 +1481,17 @@ class FrameAnalysisPipeline:
                 cap,
                 fps=fps,
                 duration_seconds=duration_seconds,
+                progress_callback=frame_progress,
+                start_sample_index=int(resume_payload.get("next_index") or 0),
+                checkpoint_callback=lambda next_index: persist_frame_checkpoint(mode="sampled", next_index=next_index),
             )
             cap.release()
             cv2.destroyAllWindows()
             out = None
         else:
+            frame_count = int(resume_payload.get("next_index") or 0)
+            if frame_count:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -1390,7 +1510,7 @@ class FrameAnalysisPipeline:
                 )
 
                 if should_detect_objects and self.yolo is not None:
-                    yolo_results = self.yolo(frame)
+                    yolo_results = self._run_yolo(frame)
                     detections = yolo_results[0].boxes
 
                     for det in detections:
@@ -1457,20 +1577,61 @@ class FrameAnalysisPipeline:
                         break
 
                 frame_count += 1
+                now = time.monotonic()
+                if frame_progress and (now - last_progress_emit >= 1.0 or frame_count >= total_frames):
+                    fraction = (
+                        min(frame_count / total_frames, 1.0)
+                        if total_frames > 0
+                        else min(timestamp / duration_seconds, 1.0) if duration_seconds > 0 else 0.0
+                    )
+                    frame_progress({
+                        "fraction": fraction,
+                        "processed_frames": frame_count,
+                        "total_frames": total_frames,
+                        "source_seconds": min(timestamp, duration_seconds),
+                        "duration_seconds": duration_seconds,
+                        "mode": "continuous",
+                    })
+                    last_progress_emit = now
+                if durable_path and (
+                    now - last_checkpoint_write >= max(5.0, checkpoint_interval_seconds)
+                    or frame_count >= total_frames
+                ):
+                    persist_frame_checkpoint(mode="continuous", next_index=frame_count)
+                    last_checkpoint_write = now
 
             cap.release()
             if out:
                 out.release()
             cv2.destroyAllWindows()
 
+        persist_frame_checkpoint(
+            mode="sampled" if use_sampled_sweep else "continuous",
+            next_index=(len(np.arange(0.0, max(duration_seconds, 0.0) + 0.001, min([value for value in [self.detection_interval_seconds, self.ocr_interval_seconds] if value and value > 0] or [1.0]))) if use_sampled_sweep else frame_count),
+            completed=True,
+        )
+
         face_batch_result = None
         face_anonymization_result = None
         if self.enable_face_sampling and self.face_frame_items:
-            face_batch_result = analyze_face_images_batch(
-                frame_items=self.face_frame_items,
-                output_dir=self.faces_dir / "batch_analysis",
-                style_mode=self.face_message_style,
-            )
+            face_batch_kwargs = {
+                "frame_items": self.face_frame_items,
+                "output_dir": self.faces_dir / "batch_analysis",
+                "style_mode": self.face_message_style,
+            }
+            if progress_callback:
+                face_batch_kwargs["progress_callback"] = (
+                    lambda detail: phase_progress(detail, "face_analysis", 0.65, 0.25)
+                )
+            try:
+                face_batch_result = analyze_face_images_batch(**face_batch_kwargs)
+            except TypeError as exc:
+                # Keep compatibility with externally supplied analysis adapters
+                # that implement the pre-progress callback contract.
+                if "progress_callback" not in str(exc):
+                    raise
+                face_batch_kwargs.pop("progress_callback", None)
+                face_batch_result = analyze_face_images_batch(**face_batch_kwargs)
             if self.apply_face_anonymization:
                 face_anonymization_result = anonymize_face_batch_results(
                     face_batch_result=face_batch_result,
@@ -1518,7 +1679,9 @@ class FrameAnalysisPipeline:
             "motion_evidence": motion_evidence,
             "scene_segments": scene_segments,
             "shot_boundaries": shot_boundaries,
-            "annotated_video": str(self.output_video_path) if save_video else None,
+            # A resumed data sweep does not claim a complete annotated render;
+            # that derivative can be rebuilt after the governed measurements.
+            "annotated_video": str(self.output_video_path) if save_video and not resume_payload else None,
             "yolo_csv": str(self.yolo_csv_path),
             "tracked_objects_csv": str(self.tracked_objects_csv_path),
             "tracked_objects_json": str(self.tracked_objects_json_path),

@@ -1,4 +1,6 @@
 import csv
+import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -345,6 +347,8 @@ def analyze_face_images_batch(
     output_dir="tmp/face_batch",
     combined_csv_path=None,
     style_mode="plain",
+    progress_callback=None,
+    resume_existing=True,
 ):
     """
     Run face analysis across multiple frame images.
@@ -365,6 +369,7 @@ def analyze_face_images_batch(
 
     frame_results = []
     combined_rows = []
+    resumed_items = 0
 
     for batch_index, frame_item in enumerate(frame_items):
         image_path = Path(frame_item["image_path"])
@@ -373,15 +378,42 @@ def analyze_face_images_batch(
 
         safe_stem = image_path.stem.replace(" ", "_")
         frame_output_path = output_dir / f"{frame_index:06d}_{safe_stem}.json"
+        frame_checkpoint_path = output_dir / f"{frame_index:06d}_{safe_stem}.checkpoint.json"
         frame_csv_path = output_dir / f"{frame_index:06d}_{safe_stem}.csv"
 
-        result = analyze_face_image(
-            image_path=image_path,
-            output_path=frame_output_path,
-            csv_path=frame_csv_path,
-            source_timestamp=source_timestamp,
-            style_mode=style_mode,
-        )
+        result = None
+        if resume_existing and frame_checkpoint_path.is_file():
+            try:
+                candidate = json.loads(frame_checkpoint_path.read_text(encoding="utf-8"))
+                if (
+                    isinstance(candidate, dict)
+                    and isinstance(candidate.get("faces"), list)
+                    and candidate.get("analysis_timestamp")
+                ):
+                    result = candidate
+                    resumed_items += 1
+            except (OSError, json.JSONDecodeError):
+                result = None
+        if result is None:
+            # analyze_face_image atomically establishes the durable per-frame
+            # result before the batch advances. Existing valid results are the
+            # resume journal after a process or workstation interruption.
+            result = analyze_face_image(
+                image_path=image_path,
+                output_path=frame_output_path,
+                csv_path=frame_csv_path,
+                source_timestamp=source_timestamp,
+                style_mode=style_mode,
+            )
+            temporary = frame_checkpoint_path.with_name(f".{frame_checkpoint_path.name}.tmp")
+            try:
+                with temporary.open("w", encoding="utf-8") as handle:
+                    json.dump(result, handle, indent=2, ensure_ascii=False, default=str)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, frame_checkpoint_path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
         frame_result = {
             "frame_index": frame_index,
@@ -409,6 +441,14 @@ def analyze_face_images_batch(
                 )
             )
 
+        if progress_callback:
+            progress_callback({
+                "fraction": (batch_index + 1) / max(len(frame_items), 1),
+                "processed_items": batch_index + 1,
+                "total_items": len(frame_items),
+                "resumed_items": resumed_items,
+            })
+
     with open(combined_csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
         writer.writeheader()
@@ -426,6 +466,7 @@ def analyze_face_images_batch(
         "output_dir": str(output_dir),
         "combined_csv_path": str(combined_csv_path),
         "frames": frame_results,
+        "resumed_frame_count": resumed_items,
         "warnings": batch_warnings,
         "user_message": (
             STYLE_MESSAGES["plain"]["BATCH_COMPLETED_WITH_WARNINGS"]
