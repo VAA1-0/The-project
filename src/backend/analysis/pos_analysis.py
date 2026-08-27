@@ -597,6 +597,39 @@ class POSAnalysis:
 
         return {k: v for k, v in full_pos_words.items() if v}
 
+    def build_taxonomy_review(self) -> Dict[str, Any]:
+        """Expose tokens outside the ten-category dashboard taxonomy for direct review."""
+        category_counts: Counter = Counter()
+        category_examples: Dict[str, List[str]] = {}
+        represented = 0
+        for token in self.doc:
+            if token.is_space or token.is_punct:
+                continue
+            pos = token.pos_ or "UNSET"
+            tag = token.tag_.upper()
+            lemma = token.lemma_.lower()
+            is_represented = (
+                pos in {"NOUN", "PROPN", "VERB", "ADJ", "ADV", "PRON", "DET", "ADP", "CCONJ", "SCONJ", "INTJ"}
+                or tag == "MD"
+                or lemma in MODAL_LEMMAS
+            )
+            if is_represented:
+                represented += 1
+                continue
+            category = pos if pos else "UNSET"
+            category_counts[category] += 1
+            examples = category_examples.setdefault(category, [])
+            if token.text not in examples and len(examples) < 12:
+                examples.append(token.text)
+        total = sum(1 for token in self.doc if not token.is_space and not token.is_punct)
+        return {
+            "input_token_count": total,
+            "displayed_taxonomy_token_count": represented,
+            "outside_taxonomy_count": max(0, total - represented),
+            "outside_category_counts": dict(category_counts),
+            "outside_category_examples": category_examples,
+        }
+
     def compute_pos_ratios(self, pos_counts: Dict[str, int]) -> Dict[str, float]:
         # Count tokens used for ratios (non-space, non-punct)
         token_count = sum(1 for t in self.doc if not t.is_space and not t.is_punct)
@@ -1035,6 +1068,7 @@ class POSAnalysis:
         grammar_profile = self.build_grammar_profile(pos_counts)
         tense_profile = self.extract_tense_profile()
         case_profile = self.extract_case_profile()
+        taxonomy_review = self.build_taxonomy_review()
 
         return {
             "text": self.text,
@@ -1076,7 +1110,8 @@ class POSAnalysis:
             "grammar_profile": grammar_profile,
             "tense_profile": tense_profile,
             "case_profile": case_profile,
-            "pos_words": pos_words
+            "pos_words": pos_words,
+            "taxonomy_review": taxonomy_review,
         }
 
 

@@ -19,8 +19,10 @@
  */
 
 import { apiService } from "./api-service";
+import { eventBus } from "./golden-layout-lib/eventBus";
 import type {
   AnalysisEvent,
+  AnalysisCompleteness,
   AnalysisStartOptions,
   AnnotationCorrections,
   AnnotationCorrectionRule,
@@ -84,6 +86,7 @@ export interface VideoMetadata {
   };
   powerAssertion?: AnalysisPowerAssertion;
   error?: string;
+  analysisCompleteness?: AnalysisCompleteness;
   missionStage?: string;
   missionMessage?: string;
   uploadedAt?: string;
@@ -857,7 +860,7 @@ function isDetectionDropped(
   return Boolean(matched);
 }
 
-function applyAnnotationCorrectionsToTranscript(
+export function applyAnnotationCorrectionsToTranscript(
   transcript: TranscriptSegment[],
   corrections?: AnnotationCorrections | null,
 ): TranscriptSegment[] {
@@ -865,8 +868,11 @@ function applyAnnotationCorrectionsToTranscript(
   const transcriptClockOffset = shouldApplyTranscriptClockOffset(transcript)
     ? Number(corrections?.transcript_clock_offset_seconds || 0)
     : 0;
-  const correctedBase = transcript.map((segment) => {
+  const correctedBase = transcript
+    .filter((segment) => segment.segmentType !== "manual_entry")
+    .map((segment) => {
     const baseText = String(segment.text || "").trim();
+    const sourceText = String(segment.rawText || segment.text || "").trim();
     const normalizedEmpty =
       baseText.length > 0 ? baseText : segment.status === "unconfirmed" ? "Unconfirmed" : "";
     const shiftedSegment = applyTranscriptClockOffset(segment, transcriptClockOffset);
@@ -875,7 +881,7 @@ function applyAnnotationCorrectionsToTranscript(
     const spanRule = [...textRules].reverse().find((rule) => {
       if (
         rule.modality !== "text" ||
-        normalizeCorrectionValue(rule.raw_value) !== normalizeCorrectionValue(baseText) ||
+        normalizeCorrectionValue(rule.raw_value) !== normalizeCorrectionValue(sourceText) ||
         (
           rule.corrected_start_timestamp === undefined &&
           rule.corrected_end_timestamp === undefined &&
@@ -903,7 +909,7 @@ function applyAnnotationCorrectionsToTranscript(
       start: nextStart,
       end: nextEnd,
       t: hasCorrectedSpan ? `${Number(nextStart).toFixed(1)}s` : shiftedSegment.t,
-      rawText: segment.rawText || segment.text,
+      rawText: sourceText,
       text: spanRule
         ? String(spanRule.corrected_value || normalizedEmpty).trim()
         : applyTextSubstitutions(normalizedEmpty, textRules),
@@ -915,7 +921,7 @@ function applyAnnotationCorrectionsToTranscript(
       timingAuthority: spanRule ? "manual_correction" : segment.timingAuthority,
       sourceTimeValid: spanRule ? true : segment.sourceTimeValid,
     };
-  });
+    });
 
   const manualEntries = (corrections?.manual_transcript_entries || []).map(
     (entry: ManualTranscriptEntry): TranscriptSegment => {
@@ -5220,6 +5226,7 @@ export interface AnalysisStatus {
   project_id?: string;
   source_size_bytes?: number;
   source_media_metadata?: SourceMediaMetadata;
+  analysis_completeness?: AnalysisCompleteness;
   source_media_annotations?: Record<string, unknown>;
   annotation_corrections?: AnnotationCorrections | null;
   canonical_decision_ledger?: {
@@ -5633,6 +5640,7 @@ export class VideoService {
         progress_detail: status.progress_detail,
         powerAssertion: status.power_assertion,
         error: status.error,
+        analysisCompleteness: status.analysis_completeness,
         missionStage: status.mission_stage,
         missionMessage: status.mission_message,
         uploadedAt: status.uploaded_at,
@@ -5710,7 +5718,9 @@ export class VideoService {
 
     const loadPromise = (async () => {
     try {
-      const status = (await apiService.getStatus(id)) as AnalysisStatus;
+      // Open from bounded metadata first. Large detector arrays and panel data
+      // are loaded below through their dedicated artifact routes.
+      let status = (await apiService.getStatusSummary(id)) as AnalysisStatus;
       let correctionsPayload: AnnotationCorrections | null =
         status.annotation_corrections || null;
       let correctionUpdatedAt: string | undefined =
@@ -5725,24 +5735,216 @@ export class VideoService {
 
       // If analysis is not complete, return minimal data
       if (status.status !== "completed") {
+        const [
+          visualCheckpointResult,
+          transcriptData,
+          posAnalysisData,
+          quantAnalysisData,
+          audioProsodyData,
+          audioDiarizationData,
+          audioSampleCloudsData,
+          masterSchemaData,
+          secondOrderData,
+          sourceMediaMetadataData,
+          proliferationAuditData,
+        ] = await Promise.allSettled([
+          apiService.getVisualFrameCheckpoint(id),
+          this.loadTranscriptData(id),
+          this.loadPosAnalysis(id),
+          this.loadQuantAnalysis(id),
+          this.loadAudioProsodyData(id),
+          this.loadJsonArtifact(id, "audio_diarization"),
+          this.loadJsonArtifact(id, "audio_sample_clouds"),
+          this.loadJsonArtifact(id, "vaa1_annotation_master_schema"),
+          this.loadJsonArtifact(id, "second_order_label_proliferation"),
+          apiService.getSourceMediaMetadata(id),
+          this.loadJsonArtifact(id, "live_mature_data_proliferation_audit"),
+        ]);
+        const artifactValue = (result: PromiseSettledResult<any>) =>
+          result.status === "fulfilled" ? result.value : null;
+        const visualCheckpoint =
+          visualCheckpointResult.status === "fulfilled"
+            ? visualCheckpointResult.value
+            : null;
+        const masterSchemaStatus = artifactValue(masterSchemaData);
+        const secondOrderStatus = artifactValue(secondOrderData);
+        const sourceMediaMetadataStatus = artifactValue(sourceMediaMetadataData);
+        const proliferationAuditStatus = artifactValue(proliferationAuditData);
+        const transcriptBundle =
+          transcriptData.status === "fulfilled" ? transcriptData.value : { segments: [] };
+        const correctedTranscript = applyAnnotationCorrectionsToTranscript(
+          transcriptBundle.segments || [],
+          correctionsPayload || null,
+        );
+        const correctedTranscriptTimeline = applyAnnotationCorrectionsToTranscript(
+          transcriptBundle.timelineSegments || transcriptBundle.segments || [],
+          correctionsPayload || null,
+        );
+        const correctedPosAnalysis = applyAnnotationCorrectionsToPosAnalysis(
+          posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
+          correctionsPayload || null,
+        );
+        const correctedQuantAnalysis = applyAnnotationCorrectionsToQuantAnalysis(
+          quantAnalysisData.status === "fulfilled" ? quantAnalysisData.value : [],
+          correctionsPayload || null,
+        );
+        const correctedAudioProsody =
+          audioProsodyData.status === "fulfilled"
+            ? projectConfirmedSpeakersOntoProsody(
+                applyTranscriptClockOffsetToAudioProsody(
+                  audioProsodyData.value,
+                  correctionsPayload || null,
+                  correctedTranscript,
+                ),
+                correctedTranscript,
+              )
+            : [];
+        const audioDiarizationStatus =
+          audioDiarizationData.status === "fulfilled"
+            ? (audioDiarizationData.value as AudioDiarizationScaffold)
+            : null;
+        const audioSampleCloudsStatus =
+          audioSampleCloudsData.status === "fulfilled"
+            ? audioSampleCloudsData.value
+            : null;
+        const manualVisualObjects = buildManualVisualObjects(correctionsPayload || null);
+        const manualAnnotationsByCategory =
+          groupManualVisualAnnotationsByCategory(correctionsPayload || null);
+        const checkpointObjects = Array.isArray(visualCheckpoint?.yolo_results)
+          ? visualCheckpoint.yolo_results.map((row: any) => ({
+              timestamp: Number(row.timestamp || 0),
+              class_id: Number(row.class_id || 0),
+              class_name: String(row.class_name || row.label || ""),
+              confidence: Number(row.confidence || 0),
+              bbox: {
+                x1: Number(row.bbox_x1 || 0),
+                y1: Number(row.bbox_y1 || 0),
+                x2: Number(row.bbox_x2 || 0),
+                y2: Number(row.bbox_y2 || 0),
+              },
+            }))
+          : [];
+        const mergedCheckpointObjects = [...checkpointObjects, ...manualVisualObjects].sort(
+          (left, right) =>
+            Number((left as any).startTimestamp ?? left.timestamp ?? 0) -
+            Number((right as any).startTimestamp ?? right.timestamp ?? 0),
+        );
+        const checkpointOcr = Array.isArray(visualCheckpoint?.ocr_results)
+          ? visualCheckpoint.ocr_results.map((row: any) => ({
+              timestamp: Number(row.timestamp || 0),
+              text: String(row.text || row.label || ""),
+              confidence: Number(row.confidence || 0),
+              bbox: this.parseOCRBoundingBox(row.bbox),
+            }))
+          : [];
+        const checkpointTone = Array.isArray(visualCheckpoint?.spatial_tone_samples)
+          ? visualCheckpoint.spatial_tone_samples
+          : [];
+        const checkpointNextIndex = Number(visualCheckpoint?.next_index || 0);
+        const nativeAnnotations = (correctionsPayload?.manual_visual_annotations || []).map(
+          (entry: ManualVisualAnnotation) => ({
+            id: entry.id,
+            category: entry.category,
+            subcategory: entry.subcategory,
+            type: "manual_visual_annotation",
+            label: entry.label,
+            custom_label: entry.custom_label,
+            timestamp_seconds: entry.timestamp_seconds,
+            start_seconds: entry.start_seconds,
+            end_seconds: entry.end_seconds,
+            coordinates: entry.coordinates,
+            identity_affirmation: entry.identity_affirmation,
+            role_affirmation: entry.role_affirmation,
+            audio_foley_note: entry.audio_foley_note,
+            open_note: entry.open_note,
+            metadata_correlation: entry.metadata_correlation,
+            teaches_regime: entry.teaches_regime,
+          }),
+        );
+        const masterSchemaResolvedEvidence = buildMasterSchemaResolvedEvidenceView({
+          transcript: correctedTranscript,
+          objects: mergedCheckpointObjects,
+          ocr: checkpointOcr,
+          expressions: [],
+          nativeAnnotations,
+          corrections: correctionsPayload || null,
+          secondOrderLabelProliferation: secondOrderStatus || null,
+          evidenceProliferationMatches: [],
+          masterSchema: masterSchemaStatus,
+          analysisId: id,
+          sourceMediaMetadata: sourceMediaMetadataStatus || undefined,
+          sceneCardSummary: null,
+          audioDiarization: audioDiarizationStatus,
+          audioProsody: correctedAudioProsody,
+        });
+        const entityRegistry = buildDatasceneEntityRegistryView({
+          analysisId: id,
+          transcript: correctedTranscript,
+          objects: mergedCheckpointObjects,
+          ocr: checkpointOcr,
+          nativeAnnotations,
+          sourceSamples: [],
+          sourceMediaMetadata: sourceMediaMetadataStatus || undefined,
+          masterSchemaResolvedEvidence,
+        });
+        const contentSearch = buildDatasceneContentSearchView({
+          analysisId: id,
+          entityRegistry,
+          liveMatureDataProliferationAudit: proliferationAuditStatus || null,
+          transcript: correctedTranscript,
+          objects: mergedCheckpointObjects,
+          ocr: checkpointOcr,
+          sourceMediaAnnotations: null,
+        });
         this.invalidateAnalysisCache(id);
         return {
-          quantAnalysis: [],
-          posAnalysis: [],
-          transcript: [],
-          detectedObjects: [],
-          rawDetectedObjects: [],
-          ocr: [],
+          analysisId: id,
+          quantAnalysis: correctedQuantAnalysis,
+          posAnalysis: correctedPosAnalysis,
+          transcript: correctedTranscript,
+          transcriptTimeline: correctedTranscriptTimeline,
+          detectedObjects: mergedCheckpointObjects,
+          rawDetectedObjects: mergedCheckpointObjects,
+          ocr: checkpointOcr,
           expressionResults: [],
-          audioProsody: [],
+          audioProsody: correctedAudioProsody,
+          audioDiarization: audioDiarizationStatus,
+          audioSampleClouds: audioSampleCloudsStatus,
           quantityDetection: [],
-          annotations: [],
-          summary: `Analysis ${status.status} (${status.progress}%)`,
+          annotations: nativeAnnotations,
+          manualAnnotationsByCategory,
+          masterSchemaResolvedEvidence,
+          entityRegistry,
+          contentSearch,
+          secondOrderLabelProliferation: secondOrderStatus || null,
+          liveMatureDataProliferationAudit: proliferationAuditStatus || null,
+          annotationCorrections: correctionsPayload || null,
+          summary: visualCheckpoint
+            ? `Analysis ${status.status} (${status.progress}%). Governed visual checkpoint is available through frame ${checkpointNextIndex}.`
+            : `Analysis ${status.status} (${status.progress}%)`,
           rawCsv: "",
           status: status.status,
+          rawJson: {
+            vaa1_annotation_master_schema: masterSchemaStatus,
+            second_order_label_proliferation: secondOrderStatus,
+            live_mature_data_proliferation_audit: proliferationAuditStatus,
+            audio_diarization: audioDiarizationStatus,
+          },
           metadata: {
-            yoloDetections: 0,
-            ocrDetections: 0,
+            sourceName: status.filename,
+            sourceMediaMetadata: sourceMediaMetadataStatus || undefined,
+            masterSchemaMaturityAudit: masterSchemaMaturityAudit(masterSchemaStatus),
+            yoloDetections: mergedCheckpointObjects.length,
+            ocrDetections: checkpointOcr.length,
+            spatialToneScan: { samples: checkpointTone },
+            audioProsodyCues: correctedAudioProsody.length,
+            audioDiarizationTurns: Array.isArray(audioDiarizationStatus?.speaker_turns)
+              ? audioDiarizationStatus.speaker_turns.length
+              : undefined,
+            audioLanguage: transcriptBundle.languageProfile?.code,
+            audioLanguageName: transcriptBundle.languageProfile?.name,
+            audioLanguageSource: transcriptBundle.languageProfile?.source,
+            audioLanguageConfidence: transcriptBundle.languageProfile?.confidence,
           },
         };
       }
@@ -5777,6 +5979,20 @@ export class VideoService {
         audioProsodyData,
         posAnalysisData,
         quantAnalysisData,
+        masterSchemaData,
+        secondOrderData,
+        narrativeLensData,
+        characterPathData,
+        meaningNetworkData,
+        multimodalMeaningData,
+        sceneCardsData,
+        proliferationAuditData,
+        audioDiarizationData,
+        audioSampleCloudsData,
+        spatialToneData,
+        adaptiveVisualData,
+        nativeStatisticalInterpretationData,
+        sourceMediaMetadataData,
       ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
@@ -5787,7 +6003,52 @@ export class VideoService {
         this.loadAudioProsodyData(id),
         this.loadPosAnalysis(id),
         this.loadQuantAnalysis(id),
+        this.loadJsonArtifact(id, "vaa1_annotation_master_schema"),
+        this.loadJsonArtifact(id, "second_order_label_proliferation"),
+        this.loadJsonArtifact(id, "narrative_lens_reading"),
+        this.loadJsonArtifact(id, "character_path_reading"),
+        this.loadJsonArtifact(id, "datascene_meaning_network"),
+        this.loadJsonArtifact(id, "multimodal_meaning_stage1"),
+        this.loadJsonArtifact(id, "mise_en_scene_scene_cards"),
+        this.loadJsonArtifact(id, "live_mature_data_proliferation_audit"),
+        this.loadJsonArtifact(id, "audio_diarization"),
+        this.loadJsonArtifact(id, "audio_sample_clouds"),
+        this.loadJsonArtifact(id, "spatial_tone_scan"),
+        this.loadJsonArtifact(id, "adaptive_visual_scan"),
+        this.loadJsonArtifact(id, "native_statistical_interpretation"),
+        // Source Media has a canonical, user-authored sidecar. Always read it
+        // through the overlay route so generated metadata cannot hide a save.
+        apiService.getSourceMediaMetadata(id),
       ]);
+
+      const artifactValue = (result: PromiseSettledResult<any>) =>
+        result.status === "fulfilled" ? result.value : null;
+      // Reconstruct the governed projections from their canonical artifacts.
+      // This retains the existing view-building code without materializing the
+      // heavyweight analysis_record.json during panel opening.
+      status = {
+        ...status,
+        vaa1_annotation_master_schema: artifactValue(masterSchemaData),
+        second_order_label_proliferation: artifactValue(secondOrderData),
+        narrative_lens_reading: artifactValue(narrativeLensData),
+        character_path_reading: artifactValue(characterPathData),
+        datascene_meaning_network: artifactValue(meaningNetworkData),
+        multimodal_meaning_stage1: artifactValue(multimodalMeaningData),
+        mise_en_scene_scene_cards: artifactValue(sceneCardsData),
+        live_mature_data_proliferation_audit: artifactValue(proliferationAuditData),
+        audio_diarization: artifactValue(audioDiarizationData),
+        audio_sample_clouds: artifactValue(audioSampleCloudsData),
+        spatial_tone_scan: artifactValue(spatialToneData),
+        adaptive_visual_scan: artifactValue(adaptiveVisualData),
+        native_statistical_interpretation: artifactValue(nativeStatisticalInterpretationData),
+        source_media_metadata: artifactValue(sourceMediaMetadataData),
+      } as AnalysisStatus;
+      const hydratedSpatialToneScan = artifactValue(spatialToneData) as
+        | NonNullable<AnalysisData["metadata"]>["spatialToneScan"]
+        | null;
+      const hydratedAdaptiveVisualScan = artifactValue(adaptiveVisualData) as
+        | NonNullable<AnalysisData["metadata"]>["adaptiveVisualScan"]
+        | null;
 
       const transcriptSegments =
         transcriptData.status === "fulfilled" ? transcriptData.value.segments : [];
@@ -6043,6 +6304,8 @@ export class VideoService {
           audio_diarization: status.audio_diarization || null,
           native_statistical_interpretation:
             status.native_statistical_interpretation || null,
+          language_analysis_parity:
+            (status as unknown as LooseRecord).language_analysis_parity || null,
         },
         status: "completed",
         downloadLinks: status.download_links,
@@ -6064,19 +6327,19 @@ export class VideoService {
           ocrDetections: status.summary?.ocr_detections || 0,
           transcriptQuality: transcriptQualityForDisplay(transcriptData, status),
           cinematicClues: correctedCinematicClues,
-          spatialToneScan: status.summary?.spatial_tone_scan
+          spatialToneScan: hydratedSpatialToneScan || (status.summary?.spatial_tone_scan
             ? {
                 summary: status.summary.spatial_tone_scan.summary,
                 samples: status.summary.spatial_tone_scan.samples,
               }
-            : undefined,
-          adaptiveVisualScan: status.summary?.adaptive_visual_scan
+            : undefined),
+          adaptiveVisualScan: hydratedAdaptiveVisualScan || (status.summary?.adaptive_visual_scan
             ? {
                 parameters: status.summary.adaptive_visual_scan.parameters,
                 summary: status.summary.adaptive_visual_scan.summary,
                 samples: status.summary.adaptive_visual_scan.samples,
               }
-            : undefined,
+            : undefined),
           motionSceneBasis:
             status.summary?.motion_evidence || status.summary?.scene_segments || masterSchemaShotIntervals
               ? {
@@ -6215,7 +6478,26 @@ export class VideoService {
     corrections: AnnotationCorrections,
   ): Promise<AnnotationCorrections> {
     const saved = await apiService.saveAnnotationCorrections(id, corrections);
-    this.invalidateAnalysisCache(id);
+    const cached = this.analysisCache.get(id);
+    if (cached) {
+      this.analysisCache.set(id, {
+        ...cached,
+        cachedAt: Date.now(),
+        correctionUpdatedAt: saved.updated_at,
+        data: { ...cached.data, annotationCorrections: saved },
+      });
+    }
+    this.analysisPromiseCache.delete(id);
+    // The committed bundle is associated memory: every mounted consumer gets
+    // the canonical merged value immediately, without reloading the video or
+    // waiting for heavyweight analysis hydration.
+    eventBus.emit("analysisCorrectionsChanged", { analysisId: id, corrections: saved });
+    eventBus.emit("analysisCorrectionCommitted", {
+      analysisId: id,
+      corrections: saved,
+      projection_state: "queued",
+      canonical_artifact: "annotation_corrections.json",
+    });
     return saved;
   }
 
@@ -6300,6 +6582,7 @@ export class VideoService {
         id,
         name: info.filename || "Unknown",
         status: info.status || "unknown",
+        error: info.error,
         progress: info.progress || 0,
         progress_detail: info.progress_detail,
         powerAssertion: info.power_assertion,
@@ -6449,6 +6732,11 @@ export class VideoService {
       console.warn("Failed to load CSV data:", error);
       return "CSV data not available";
     }
+  }
+
+  private static async loadJsonArtifact(id: string, fileType: string): Promise<any> {
+    const blob = await apiService.downloadFile(id, fileType);
+    return JSON.parse(await blob.text());
   }
 
   private static async loadTranscriptData(

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-import { VideoService } from "@/lib/video-service";
+import { VideoService, applyAnnotationCorrectionsToTranscript } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -16,6 +16,7 @@ import {
   undoLastCorrectionSnapshot,
   upsertManualTranscriptEntry,
 } from "@/lib/annotation-corrections";
+import LanguageParityMetaView from "../LanguageParityMetaView";
 
 import {
   Download,
@@ -36,6 +37,7 @@ import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-naviga
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
+import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
 
 const TRANSCRIPT_SOURCE_SPEAKERS = [
   "Announcer",
@@ -180,7 +182,7 @@ function normalizeTranscriptPayloadRows(rows: any[] = []) {
   });
 }
 
-async function loadAuthoritativeTranscriptRows(videoId: string) {
+async function loadAuthoritativeTranscriptRows(videoId: string, corrections?: any | null) {
   const noCacheToken = Date.now().toString(36);
   const response = await fetch(
     `/api/local-analysis/${videoId}/download/transcript?_=${noCacheToken}`,
@@ -193,11 +195,26 @@ async function loadAuthoritativeTranscriptRows(videoId: string) {
   if (!transcriptPayloadHasTimingAuthority(payload)) {
     return null;
   }
+  let canonicalCorrections = corrections || null;
+  if (!canonicalCorrections) {
+    try {
+      canonicalCorrections = await apiService.getAnnotationCorrections(videoId);
+    } catch (error) {
+      console.warn("Authoritative transcript correction sidecar unavailable:", error);
+    }
+  }
+  const transcript = applyAnnotationCorrectionsToTranscript(
+    normalizeTranscriptPayloadRows(payload.segments || []) as any,
+    canonicalCorrections,
+  );
+  const transcriptTimeline = applyAnnotationCorrectionsToTranscript(
+    normalizeTranscriptPayloadRows(payload.timeline_segments || payload.segments || []) as any,
+    canonicalCorrections,
+  );
   return {
-    transcript: normalizeTranscriptPayloadRows(payload.segments || []),
-    transcriptTimeline: normalizeTranscriptPayloadRows(
-      payload.timeline_segments || payload.segments || [],
-    ),
+    transcript,
+    transcriptTimeline,
+    annotationCorrections: canonicalCorrections,
   };
 }
 
@@ -250,6 +267,24 @@ export default function SpeechToTextPanel({
   const [editorDraft, setEditorDraft] = useState<TranscriptEditorDraft | null>(null);
   const [editorMessage, setEditorMessage] = useState<string | null>(null);
 
+  function surfaceCorrections(savedCorrections: any) {
+    setAnalysisData((current: any) => {
+      if (!current) return current;
+      return {
+        ...current,
+        annotationCorrections: savedCorrections,
+        transcript: applyAnnotationCorrectionsToTranscript(
+          current.transcript || [],
+          savedCorrections,
+        ),
+        transcriptTimeline: applyAnnotationCorrectionsToTranscript(
+          current.transcriptTimeline || current.transcript || [],
+          savedCorrections,
+        ),
+      };
+    });
+  }
+
   // State for show/hide summary
   const [showSummary, setShowSummary] = useState(false);
 
@@ -267,19 +302,36 @@ export default function SpeechToTextPanel({
     const timeHandler = (time: number) => {
       setVideoTimeLine(Number(time) || 0);
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId: string; corrections?: any }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === videoId) {
-        setRefreshNonce((current) => current + 1);
+        if (typeof payload !== "string" && payload.corrections) {
+          surfaceCorrections(payload.corrections);
+        } else {
+          setRefreshNonce((current) => current + 1);
+        }
       }
+    };
+    const sourceMetadataHandler = (
+      payload: string | { analysisId?: string; videoId?: string; metadata?: SourceMediaMetadata },
+    ) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId || payload.videoId;
+      if (id !== videoId || typeof payload === "string" || !payload.metadata) return;
+      setAnalysisData((current: any) => current ? {
+        ...current,
+        metadata: { ...current.metadata, sourceMediaMetadata: payload.metadata },
+      } : current);
     };
     eventBus.on("videoIdChanged", handler);
     eventBus.on("videoTimeLineChanged", timeHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
+    eventBus.on("sourceMediaMetadataChanged", sourceMetadataHandler);
 
     return () => {
       eventBus.off("videoIdChanged", handler);
       eventBus.off("videoTimeLineChanged", timeHandler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
+      eventBus.off("sourceMediaMetadataChanged", sourceMetadataHandler);
     };
   }, [videoId]);
 
@@ -324,16 +376,21 @@ export default function SpeechToTextPanel({
         let displayAnalysis = analysis;
         const analysisRows = analysis.transcript ?? analysis.transcriptTimeline ?? [];
         if (transcriptRowsLookLikeScaffold(analysisRows)) {
-          const authoritativeRows = await loadAuthoritativeTranscriptRows(videoId);
+          const authoritativeRows = await loadAuthoritativeTranscriptRows(
+            videoId,
+            analysis.annotationCorrections,
+          );
           if (authoritativeRows) {
             displayAnalysis = {
               ...analysis,
               transcript: authoritativeRows.transcript,
               transcriptTimeline: authoritativeRows.transcriptTimeline,
+              annotationCorrections:
+                authoritativeRows.annotationCorrections || analysis.annotationCorrections,
               metadata: {
                 ...((analysis.metadata || {}) as Record<string, unknown>),
                 transcriptSourceDecision:
-                  "rejected scaffold transcript rows; surfaced original Whisper timecode artifact",
+                  "rejected scaffold transcript rows; surfaced original Whisper timecode artifact with canonical human annotations",
               },
             } as unknown as typeof analysis;
           }
@@ -376,6 +433,25 @@ export default function SpeechToTextPanel({
     analysisData?.manualAnnotationsByCategory?.Audio ?? [];
   const manualTranscriptionAnnotations =
     analysisData?.manualAnnotationsByCategory?.Transcription ?? [];
+  const manualBboxHumanAnnotations = [
+    ...(analysisData?.manualAnnotationsByCategory?.Identification ?? []),
+    ...(analysisData?.manualAnnotationsByCategory?.Role ?? []),
+    ...(analysisData?.manualAnnotationsByCategory?.OBJ ?? []),
+  ].sort((left: any, right: any) => {
+    const leftTime = Number(
+      left?.timestamp_seconds ??
+        left?.start_seconds ??
+        left?.geometry_keyframes?.[0]?.time ??
+        0,
+    );
+    const rightTime = Number(
+      right?.timestamp_seconds ??
+        right?.start_seconds ??
+        right?.geometry_keyframes?.[0]?.time ??
+        0,
+    );
+    return leftTime - rightTime;
+  });
   const transcriptQuality = analysisData?.metadata?.transcriptQuality;
   const transcriptMissionNote =
     metadata?.missionMessage ||
@@ -719,9 +795,8 @@ export default function SpeechToTextPanel({
       buildCorrectionRule("text", rawValue, correctedValue.trim()),
     );
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setSelectedWord("");
     setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -780,9 +855,8 @@ export default function SpeechToTextPanel({
       analysisData?.annotationCorrections,
       nextOffset,
     );
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setEditorMessage(
       `Transcript clock synced: ${nextOffset.toFixed(3)}s offset from transcript source time.`,
     );
@@ -847,13 +921,14 @@ export default function SpeechToTextPanel({
       );
     }
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setSelectedWord("");
     setSelectedWordDraft("");
     setEditorDraft(null);
-    setEditorMessage(null);
+    setEditorMessage(
+      `Saved and verified ${normalizedStatus} transcript correction at ${start.toFixed(2)}–${end.toFixed(2)}s.`,
+    );
     broadcastAnalysisCorrectionRefresh(videoId);
   };
 
@@ -866,9 +941,8 @@ export default function SpeechToTextPanel({
       analysisData?.annotationCorrections,
       editorDraft.targetId,
     );
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setSelectedWord("");
     setSelectedWordDraft("");
     setEditorDraft(null);
@@ -885,9 +959,8 @@ export default function SpeechToTextPanel({
       buildDropCorrectionRule("text", rawValue),
     );
     pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setSelectedWord("");
     setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -903,9 +976,8 @@ export default function SpeechToTextPanel({
     }
     const nextCorrections =
       restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+    surfaceCorrections(savedCorrections);
     setSelectedWord("");
     setSelectedWordDraft("");
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -916,6 +988,7 @@ export default function SpeechToTextPanel({
   return (
     <TooltipProvider delayDuration={200}>
       <main className="h-full flex flex-col overflow-hidden">
+        <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
         <div className="text-xs text-slate-400 px-3 py-2 shrink-0 flex items-center justify-between gap-3">
           <span>video Id: {videoId}</span>
           <div className="flex items-center gap-1">
@@ -1379,6 +1452,51 @@ export default function SpeechToTextPanel({
               </div>
             ) : null}
             <div className={transcriptSectionClass}>
+              {manualBboxHumanAnnotations.length > 0 ? (
+                <div className="rounded border border-emerald-500/20 bg-emerald-950/10 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-emerald-100/80">
+                      BBox/ROI human confirmations
+                    </div>
+                    <div className="rounded border border-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-100/70">
+                      {manualBboxHumanAnnotations.length}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {manualBboxHumanAnnotations.map((item: any) => {
+                      const sourceTime = Number(
+                        item?.timestamp_seconds ??
+                          item?.start_seconds ??
+                          item?.geometry_keyframes?.[0]?.time ??
+                          0,
+                      );
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="w-full rounded border border-white/8 bg-[#141414] px-2 py-2 text-left text-xs text-slate-300 transition hover:bg-slate-800/30"
+                          onClick={() => {
+                            openManualAnnotationInVideo(videoId, item);
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-medium text-slate-100">
+                              {item.custom_label || item.label || "Human confirmation"}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-slate-500">
+                              {formatSpeechSeconds(sourceTime)}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {item.category}
+                            {item.subcategory ? ` / ${item.subcategory}` : ""}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               {manualTranscriptionAnnotations.length > 0 ? (
                 <div className="rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-3">
                   <div className="mb-2 flex items-center justify-between gap-3">
@@ -1430,6 +1548,15 @@ export default function SpeechToTextPanel({
                 transcript.map((row: any) => {
                   const isSynthetic = Boolean(row.synthetic);
                   const hasSourceTiming = rowHasTimingAuthority(row);
+                  const transcriptMaturityLabel = !hasSourceTiming
+                    ? "Needs timing"
+                    : row.speakerConfirmation
+                      ? "Agent confirmed"
+                      : row.correctionSource === "manual"
+                        ? "Text corrected"
+                        : row.status === "unconfirmed"
+                          ? "Unconfirmed"
+                          : "Whisper timed";
                   const linkedSpeakerTurn = (
                     analysisData?.audioDiarization?.speaker_turns || []
                   )
@@ -1501,11 +1628,7 @@ export default function SpeechToTextPanel({
                       ) : (
                         <div className="flex items-center gap-2">
                           <div className="rounded border border-white/8 bg-[#121212] px-2 py-1 text-[10px] text-slate-400">
-                            {!hasSourceTiming
-                              ? "Needs timing"
-                              : row.status === "unconfirmed"
-                                ? "Unconfirmed"
-                                : "Confirmed"}
+                            {transcriptMaturityLabel}
                           </div>
                           <button
                             type="button"

@@ -4,6 +4,9 @@ import {
   Copy,
   ChevronRight,
   ChevronDown,
+  RefreshCw,
+  ShieldCheck,
+  TriangleAlert,
 } from "lucide-react";
 
 import { useState, useEffect } from "react";
@@ -48,9 +51,15 @@ export default function ProjectPanel() {
   const [coolingUntil, setCoolingUntil] = useState<number | null>(null);
   const [coolingNow, setCoolingNow] = useState(Date.now());
   const [queueHydrated, setQueueHydrated] = useState(false);
+  const [repairingAnalysisId, setRepairingAnalysisId] = useState<string | null>(null);
+  const [repairMessages, setRepairMessages] = useState<Record<string, string>>({});
 
   // Event bus video id state
   const [videoId, setVideoId] = useState("");
+
+  const hasProcessingVideos = libraryVideos.some(
+    (video) => video.status === "processing",
+  );
 
   useEffect(() => {
     try {
@@ -106,12 +115,22 @@ export default function ProjectPanel() {
 
   useEffect(() => {
     let mounted = true;
+    let retryTimeout: number | undefined;
     async function loadListSafe() {
       try {
         const list = await VideoService.list(50);
-        if (mounted) setLibraryVideos(list);
+        if (!mounted) return;
+        setLibraryVideos(list);
+        // Retry only a transient empty bootstrap. Processing records have their
+        // own bounded reconciliation loop below.
+        if (list.length === 0) {
+          retryTimeout = window.setTimeout(() => void loadListSafe(), 10_000);
+        }
       } catch {
-        if (mounted) setLibraryVideos([]);
+        if (mounted) {
+          setLibraryVideos([]);
+          retryTimeout = window.setTimeout(() => void loadListSafe(), 10_000);
+        }
       }
     }
     loadListSafe();
@@ -120,12 +139,22 @@ export default function ProjectPanel() {
     window.addEventListener("video-uploaded", handler);
     return () => {
       mounted = false;
+      if (retryTimeout !== undefined) window.clearTimeout(retryTimeout);
       window.removeEventListener("video-uploaded", handler);
     };
   }, []);
 
   useEffect(() => {
-    if (!activeQueuedAnalysisId && queuedAnalysisIds.length === 0 && !coolingUntil) {
+    // Backend completion is authoritative. The browser queue may already be
+    // empty (for example after a reload or recovery), while locally rendered
+    // records still say processing. Keep reconciling those records until the
+    // backend reports a terminal state.
+    if (
+      !activeQueuedAnalysisId &&
+      queuedAnalysisIds.length === 0 &&
+      !coolingUntil &&
+      !hasProcessingVideos
+    ) {
       return;
     }
 
@@ -150,7 +179,12 @@ export default function ProjectPanel() {
       mounted = false;
       window.clearInterval(interval);
     };
-  }, [activeQueuedAnalysisId, queuedAnalysisIds, coolingUntil]);
+  }, [
+    activeQueuedAnalysisId,
+    queuedAnalysisIds,
+    coolingUntil,
+    hasProcessingVideos,
+  ]);
 
   useEffect(() => {
     if (!coolingUntil) {
@@ -196,6 +230,46 @@ export default function ProjectPanel() {
   const selectVideo = (id: string) => {
     setVideoId(id);
     eventBus.emit("videoIdChanged", id);
+    void VideoService.get(id).then((authoritative) => {
+      setLibraryVideos((current) =>
+        current.map((video) =>
+          video.id === id ? { ...video, ...authoritative } : video,
+        ),
+      );
+    });
+  };
+
+  const inspectCompleteness = (id: string) => {
+    selectVideo(id);
+    openPanel("StatsKit", { videoId: id, focus: "analysis-completeness" });
+  };
+
+  const refreshMissingFeatures = async (id: string) => {
+    setRepairingAnalysisId(id);
+    setRepairMessages((current) => ({ ...current, [id]: "Repairing missing analysis features…" }));
+    try {
+      const result = await apiService.refreshAnalysisCompleteness(id);
+      const authoritative = await VideoService.get(id);
+      setLibraryVideos((current) => current.map((video) =>
+        video.id === id ? { ...video, ...authoritative } : video
+      ));
+      eventBus.emit("videoIdChanged", id);
+      const repaired = result.repaired_branch_ids.length;
+      const remaining = result.analysis_completeness.missing_count;
+      setRepairMessages((current) => ({
+        ...current,
+        [id]: remaining === 0
+          ? `Verified full analysis · ${result.analysis_completeness.required_count}/${result.analysis_completeness.required_count}`
+          : `Repaired ${repaired}; ${remaining} feature${remaining === 1 ? "" : "s"} still need attention`,
+      }));
+    } catch (error) {
+      setRepairMessages((current) => ({
+        ...current,
+        [id]: error instanceof Error ? error.message : "Completeness refresh failed",
+      }));
+    } finally {
+      setRepairingAnalysisId(null);
+    }
   };
 
   const formatTimestamp = (value?: string) => {
@@ -212,7 +286,9 @@ export default function ProjectPanel() {
     if (video.status === "processing") {
       return `Processing ${video.progress ?? 0}%`;
     }
-    if (video.status === "error") {
+    if (video.status === "error" || video.status === "failed") {
+      if (video.error?.startsWith("Visual analysis incomplete")) return "Visual analysis incomplete";
+      if (video.error?.startsWith("Audio analysis incomplete")) return "Audio analysis incomplete";
       return "Needs review";
     }
     return "Uploaded";
@@ -811,7 +887,8 @@ export default function ProjectPanel() {
                         </div>
                         <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
                           {describeStatus(vid)}
-                          {vid.pipelineType && ` • ${vid.pipelineType}`}
+                          {vid.pipelineType && vid.status !== "error" && vid.status !== "failed" &&
+                            ` • ${vid.pipelineType.replaceAll("_", " ")} profile`}
                         </div>
                         <div className="mt-1 text-[10px] text-[var(--ui-passive-text)]">
                           {formatTimestamp(vid.analysisCompletedAt)
@@ -820,6 +897,35 @@ export default function ProjectPanel() {
                               ? `Uploaded ${formatTimestamp(vid.uploadedAt)}`
                               : "Saved run available"}
                         </div>
+                        {vid.status === "completed" && vid.analysisCompleteness ? (
+                          <button
+                            type="button"
+                            className={`mt-2 flex max-w-full items-center gap-1.5 rounded border px-2 py-1 text-left text-[10px] ${
+                              vid.analysisCompleteness.missing_count === 0
+                                ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-300"
+                                : "border-amber-900/70 bg-amber-950/20 text-amber-300"
+                            }`}
+                            title={vid.analysisCompleteness.branches
+                              .filter((branch) => branch.state !== "computed")
+                              .map((branch) => `${branch.label}: ${branch.state.replaceAll("_", " ")}`)
+                              .join("\n") || "Every required feature is verified"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              inspectCompleteness(vid.id);
+                            }}
+                          >
+                            {vid.analysisCompleteness.missing_count === 0 ? (
+                              <ShieldCheck className="size-3 shrink-0" />
+                            ) : (
+                              <TriangleAlert className="size-3 shrink-0" />
+                            )}
+                            <span className="truncate">
+                              {vid.analysisCompleteness.missing_count === 0
+                                ? `Full analysis verified · ${vid.analysisCompleteness.computed_count}/${vid.analysisCompleteness.required_count}`
+                                : `${vid.analysisCompleteness.missing_count} analysis feature${vid.analysisCompleteness.missing_count === 1 ? "" : "s"} missing`}
+                            </span>
+                          </button>
+                        ) : null}
                       </div>
                       <button
                         type="button"
@@ -866,7 +972,28 @@ export default function ProjectPanel() {
                       >
                         Media
                       </button>
+                      {vid.status === "completed" && vid.analysisCompleteness?.missing_count ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 rounded border border-amber-900/70 px-2 py-1 text-[10px] text-amber-300 hover:bg-amber-950/30 disabled:opacity-50"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void refreshMissingFeatures(vid.id);
+                          }}
+                          disabled={repairingAnalysisId === vid.id || !vid.analysisCompleteness.can_repair}
+                          title="Recompute only missing features, refresh their projections, and verify delivery"
+                        >
+                          <RefreshCw className={`size-3 ${repairingAnalysisId === vid.id ? "animate-spin" : ""}`} />
+                          {repairingAnalysisId === vid.id ? "Repairing…" : "Refresh missing"}
+                        </button>
+                      ) : null}
                     </div>
+
+                    {repairMessages[vid.id] ? (
+                      <div className="text-[9px] leading-3 text-[#9a9a9a]" role="status">
+                        {repairMessages[vid.id]}
+                      </div>
+                    ) : null}
 
                     {activeQueuedAnalysisId === vid.id ||
                     queuedAnalysisIds.includes(vid.id) ? (

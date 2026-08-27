@@ -94,6 +94,32 @@ from src.backend.analysis.timestamp_schema import MediaProfile, MediaRef
 # The visual stack (PyTorch/Metal plus video decoders) can otherwise exhaust the
 # native MPS heap and terminate Python before a governed checkpoint is written.
 ANALYSIS_EXECUTION_LOCK = threading.Lock()
+INTERACTIVE_MEMORY_HEADROOM_BYTES = int(
+    os.environ.get("VAA1_INTERACTIVE_MEMORY_HEADROOM_BYTES", str(2 * 1024**3))
+)
+
+
+def interactive_memory_headroom() -> Dict[str, Any]:
+    """Keep heavyweight admission subordinate to the analyst workspace."""
+
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        available = int(memory.available)
+        return {
+            "available_bytes": available,
+            "reserved_bytes": INTERACTIVE_MEMORY_HEADROOM_BYTES,
+            "accepted": available >= INTERACTIVE_MEMORY_HEADROOM_BYTES,
+        }
+    except Exception as exc:
+        # The sidecar commit remains available even when host telemetry is not.
+        return {
+            "available_bytes": None,
+            "reserved_bytes": INTERACTIVE_MEMORY_HEADROOM_BYTES,
+            "accepted": True,
+            "telemetry_error": str(exc),
+        }
 from src.backend.analysis.identification_refinery import (
     load_identity_candidate_ledger,
     promote_identity_candidate,
@@ -182,6 +208,13 @@ from src.backend.analysis.analysis_recovery import (
     recover_interrupted_record,
     write_analysis_checkpoint,
 )
+from src.backend.analysis.full_analysis_manifest import (
+    evaluate_full_analysis_manifest,
+    write_full_analysis_manifest,
+)
+from src.backend.analysis.language_analysis_parity import build_language_analysis_parity
+from src.backend.analysis.visual_analysis_parity import build_visual_analysis_parity
+from src.backend.analysis.audio_analysis_parity import build_audio_analysis_parity
 from src.backend.analysis.power_assertion import AnalysisPowerAssertion
 from src.backend.analysis.data_book_publication import (
     build_corpus_publication,
@@ -3039,6 +3072,8 @@ def build_source_media_metadata_payload(
 
     payload = {
         "analysis_id": status.get("analysis_id"),
+        "annotations_revision": int(status.get("source_media_annotations_revision") or 0),
+        "annotations_updated_at": status.get("source_media_annotations_updated_at"),
         "original_filename": status.get("original_filename") or probe.get("original_filename"),
         "stored_filename": status.get("filename") or probe.get("stored_filename") or (path_obj.name if path_obj else None),
         "source_video_path": source_video_path,
@@ -3133,7 +3168,12 @@ def build_source_media_metadata_payload(
     return payload
 
 
-def write_source_media_metadata_files(status: Dict[str, Any]) -> None:
+def write_source_media_metadata_files(
+    status: Dict[str, Any],
+    *,
+    strict_master_schema: bool = False,
+    refresh_master_schema: bool = True,
+) -> None:
     analysis_id = status.get("analysis_id")
     if not analysis_id:
         return
@@ -3144,10 +3184,7 @@ def write_source_media_metadata_files(status: Dict[str, Any]) -> None:
     status["source_media_metadata"] = metadata_payload
 
     json_path = analysis_dir / "source_media_metadata.json"
-    json_path.write_text(
-        json.dumps(metadata_payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    atomic_write_json(json_path, metadata_payload)
 
     csv_path = analysis_dir / "source_media_metadata.csv"
     flat_payload = dict(metadata_payload)
@@ -3166,11 +3203,13 @@ def write_source_media_metadata_files(status: Dict[str, Any]) -> None:
     output_files["source_media_metadata_json"] = str(json_path)
     output_files["source_media_metadata_csv"] = str(csv_path)
     refresher = globals().get("refresh_master_schema_metadata_surfaces")
-    if callable(refresher):
+    if refresh_master_schema and callable(refresher):
         try:
             refresher(status)
         except Exception as exc:
             status.setdefault("summary", {})["master_schema_metadata_refresh_error"] = str(exc)
+            if strict_master_schema:
+                raise
 
 
 def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, Any]:
@@ -3195,6 +3234,47 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
             "transcript_clock_offset_seconds"
         ),
     }
+
+
+ANNOTATION_CORRECTION_COLLECTIONS = (
+    "text_substitutions",
+    "label_overrides",
+    "manual_transcript_entries",
+    "manual_visual_annotations",
+    "proliferation_decisions",
+    "master_schema_presence_intervals",
+    "meaning_network_custom_lanes",
+)
+
+
+def annotation_correction_maturity_score(corrections: Any) -> int:
+    if not isinstance(corrections, dict):
+        return 0
+    total = 0
+    for key in ANNOTATION_CORRECTION_COLLECTIONS:
+        value = corrections.get(key)
+        if isinstance(value, list):
+            total += len(value)
+    return total
+
+
+def hydrate_richer_persisted_annotation_corrections(status: Dict[str, Any]) -> None:
+    analysis_id = str(status.get("analysis_id") or status.get("id") or "").strip()
+    if not analysis_id:
+        return
+    correction_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
+    if not correction_path.exists():
+        return
+    try:
+        persisted = json.loads(correction_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return
+    if not isinstance(persisted, dict):
+        return
+    current = status.get("annotation_corrections")
+    if annotation_correction_maturity_score(persisted) >= annotation_correction_maturity_score(current):
+        status["annotation_corrections"] = persisted
+        status.setdefault("output_files", {})["annotation_corrections"] = str(correction_path)
 
 
 def tracked_objects_for_projection(status: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3287,7 +3367,12 @@ def write_decision_ledger_file(status: Dict[str, Any]) -> Path:
     return path
 
 
-def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
+def write_annotation_corrections_file(
+    status: Dict[str, Any],
+    *,
+    strict_master_schema: bool = False,
+    refresh_master_schema: bool = True,
+) -> None:
     analysis_id = status.get("analysis_id")
     if not analysis_id:
         return
@@ -3296,18 +3381,17 @@ def write_annotation_corrections_file(status: Dict[str, Any]) -> None:
     analysis_dir.mkdir(parents=True, exist_ok=True)
     payload = build_annotation_corrections_payload(status)
     json_path = analysis_dir / "annotation_corrections.json"
-    json_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    atomic_write_json(json_path, payload)
     output_files = status.setdefault("output_files", {})
     output_files["annotation_corrections"] = str(json_path)
     refresher = globals().get("refresh_master_schema_metadata_surfaces")
-    if callable(refresher):
+    if refresh_master_schema and callable(refresher):
         try:
             refresher(status)
         except Exception as exc:
             status.setdefault("summary", {})["master_schema_annotation_refresh_error"] = str(exc)
+            if strict_master_schema:
+                raise
 
 
 def collect_manual_identity_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -6182,10 +6266,14 @@ def build_vaa1_master_schema_from_cvat(
             "cvat_job_id": job_id,
         },
         "source_context_snapshot": {
+            "editor_notes": user_annotations.get("editor_notes", ""),
+            "source_context": user_annotations.get("source_context", ""),
+            "provenance_notes": user_annotations.get("provenance_notes", ""),
             "title": user_annotations.get("title", ""),
             "scope": user_annotations.get("scope", ""),
             "description": user_annotations.get("description", ""),
             "persons": user_annotations.get("persons", []),
+            "organizations": user_annotations.get("organizations", []),
             "character_roles": user_annotations.get("character_roles", []),
             "character_definitions": user_annotations.get("character_definitions", []),
             "narrative_agent_profiles": user_annotations.get("narrative_agent_profiles", []),
@@ -6215,6 +6303,14 @@ def build_vaa1_master_schema_from_cvat(
             "expected_identities": user_annotations.get("expected_identities", []),
             "confidence": user_annotations.get("confidence", ""),
             "notes": user_annotations.get("notes", ""),
+            "source_policy": user_annotations.get("source_policy", {}),
+            "confirmation": {
+                "authority": "user_confirmed",
+                "source": "source_media_annotations",
+                "revision": int(status.get("source_media_annotations_revision") or 0),
+                "confirmed_at": status.get("source_media_annotations_updated_at"),
+                "manual_wins": True,
+            },
         },
         "raw_import_reference": {
             "export_format": "CVAT JSON",
@@ -6367,6 +6463,7 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
     analysis_id = str(status.get("analysis_id") or status.get("id") or "").strip()
     if not analysis_id:
         return
+    hydrate_richer_persisted_annotation_corrections(status)
     analysis_dir = RESULTS_DIR / analysis_id
     internal_artifacts = status.setdefault("internal_artifacts", {})
     master_path = Path(
@@ -6410,6 +6507,9 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
         build_master_schema_music_lyric_temporal_segments(status),
     )
 
+    existing_review_layer = (
+        existing.get("review_layer") if isinstance(existing.get("review_layer"), dict) else {}
+    )
     merged = {
         **scaffold,
         **existing,
@@ -6420,6 +6520,11 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
         "character_role_annotations": scaffold.get("character_role_annotations", []),
         "character_definition_annotations": scaffold.get("character_definition_annotations", []),
         "narrative_agent_profile_annotations": scaffold.get("narrative_agent_profile_annotations", []),
+        "review_layer": {
+            **existing_review_layer,
+            "status": existing_review_layer.get("status", "unreviewed"),
+            "annotation_corrections": build_annotation_corrections_payload(status),
+        },
         "temporal_segments": temporal_segments,
         "foundational_source_layers": build_master_schema_foundational_source_layers(
             status,
@@ -6435,7 +6540,7 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
         master_schema_payload=merged,
     )
     master_path.parent.mkdir(parents=True, exist_ok=True)
-    master_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(master_path, merged)
     internal_artifacts["vaa1_annotation_master_schema"] = str(master_path)
     status["vaa1_annotation_master_schema"] = merged
 
@@ -6466,6 +6571,15 @@ def build_master_schema_maturity_audit(
     source_metadata = status.get("source_media_metadata") if isinstance(status.get("source_media_metadata"), dict) else {}
     source_annotations = status.get("source_media_annotations") if isinstance(status.get("source_media_annotations"), dict) else {}
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    foundational_source_layers = master_schema_payload.get("foundational_source_layers")
+    if not isinstance(foundational_source_layers, dict):
+        foundational_source_layers = {}
+    foundational_layers = foundational_source_layers.get("layers")
+    if not isinstance(foundational_layers, dict):
+        foundational_layers = {}
+    spatial_tone_layer = foundational_layers.get("spatial_tone_measurements")
+    if not isinstance(spatial_tone_layer, dict):
+        spatial_tone_layer = {}
 
     producers = [
         {
@@ -6536,11 +6650,7 @@ def build_master_schema_maturity_audit(
         },
         {
             "producer": "spatial_tone_measurements",
-            "status": "active" if (
-                ((master_schema_payload.get("foundational_source_layers") or {}).get("layers") or {})
-                .get("spatial_tone_measurements", {})
-                .get("status") == "available"
-            ) else "missing",
+            "status": "active" if spatial_tone_layer.get("status") == "available" else "missing",
             "master_schema_surface": "foundational_source_layers.spatial_tone_measurements",
             "maturity_route": "master_schema.spatial_tone_measurement_maturity",
         },
@@ -7265,6 +7375,7 @@ def rewrite_pos_quant_from_transcript(
     status: Dict[str, Any],
     transcript: Dict[str, Any],
     transcript_path: Path,
+    requested_branches: Optional[set[str]] = None,
 ) -> List[str]:
     output_files = status.setdefault("output_files", {})
     language_code = (
@@ -7281,6 +7392,7 @@ def rewrite_pos_quant_from_transcript(
         return []
 
     rewritten: List[str] = []
+    requested_branches = requested_branches or {"pos_analysis", "quan_analysis"}
     pos_path = (
         Path(output_files["pos_analysis"])
         if output_files.get("pos_analysis")
@@ -7289,16 +7401,17 @@ def rewrite_pos_quant_from_transcript(
         )
     )
     timing_authority = build_transcript_timing_authority(transcript)
-    pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
-    pos_result["transcript_timing_authority"] = timing_authority
-    pos_result["source_transcript_clock"] = "operational_transcript"
-    pos_path.parent.mkdir(parents=True, exist_ok=True)
-    pos_path.write_text(
-        json.dumps(normalize_analysis_json_for_write(pos_result), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    output_files["pos_analysis"] = str(pos_path)
-    rewritten.append("pos_analysis")
+    if "pos_analysis" in requested_branches:
+        pos_result = POSAnalysis(transcript_text, language_code=language_code).run()
+        pos_result["transcript_timing_authority"] = timing_authority
+        pos_result["source_transcript_clock"] = "operational_transcript"
+        pos_path.parent.mkdir(parents=True, exist_ok=True)
+        pos_path.write_text(
+            json.dumps(normalize_analysis_json_for_write(pos_result), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["pos_analysis"] = str(pos_path)
+        rewritten.append("pos_analysis")
 
     quant_path = (
         Path(output_files["quan_analysis"])
@@ -7307,26 +7420,39 @@ def rewrite_pos_quant_from_transcript(
             f"{transcript_path.stem.replace('_transcript', '')}_quan.json"
         )
     )
-    qa = QuantitativeAnalysis(
-        docs=[transcript_text],
-        file_paths=[transcript_path],
-        document_labels=[Path(status.get("original_filename") or transcript_path.name).stem],
-        language_code=language_code,
-    )
-    quant_result = qa.run()
-    quant_result = attach_quant_evidence_to_transcript(
-        quant_result,
-        transcript.get("segments", []),
-    )
-    quant_result["transcript_timing_authority"] = timing_authority
-    quant_result["source_transcript_clock"] = "operational_transcript"
-    quant_path.parent.mkdir(parents=True, exist_ok=True)
-    quant_path.write_text(
-        json.dumps(normalize_analysis_json_for_write(quant_result), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    output_files["quan_analysis"] = str(quant_path)
-    rewritten.append("quan_analysis")
+    if "quan_analysis" in requested_branches:
+        qa = QuantitativeAnalysis(
+            docs=[transcript_text],
+            file_paths=[transcript_path],
+            document_labels=[Path(status.get("original_filename") or transcript_path.name).stem],
+            language_code=language_code,
+        )
+        quant_result = qa.run()
+        quant_result = attach_quant_evidence_to_transcript(
+            quant_result,
+            transcript.get("segments", []),
+        )
+        quant_result["transcript_timing_authority"] = timing_authority
+        quant_result["source_transcript_clock"] = "operational_transcript"
+        quant_path.parent.mkdir(parents=True, exist_ok=True)
+        quant_path.write_text(
+            json.dumps(normalize_analysis_json_for_write(quant_result), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["quan_analysis"] = str(quant_path)
+        rewritten.append("quan_analysis")
+    pos_payload = read_json_artifact_if_available(output_files.get("pos_analysis")) or {}
+    quant_payload = read_json_artifact_if_available(output_files.get("quan_analysis")) or {}
+    linked_payload = read_json_artifact_if_available(output_files.get("linked_transcript")) or {}
+    if pos_payload and quant_payload:
+        parity = build_language_analysis_parity(transcript, pos_payload, quant_payload, linked_payload)
+        parity_path = transcript_path.with_name(
+            f"{transcript_path.stem.replace('_transcript', '')}_language_parity.json"
+        )
+        atomic_write_json(parity_path, parity)
+        output_files["language_analysis_parity"] = str(parity_path)
+        status["language_analysis_parity"] = parity
+        rewritten.append("language_analysis_parity")
     return rewritten
 
 
@@ -7409,6 +7535,39 @@ def rebuild_audio_diarization_after_timing_change(
 
     status["output_files"] = output_files
     return rewritten
+
+
+def refresh_visual_analysis_parity(status: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Persist the visual row/consumer contract from the hydrated canonical inputs."""
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    visual = ((status.get("results") or {}).get("visual_analysis") or {})
+    if not analysis_id or not isinstance(visual, dict):
+        return None
+    parity = build_visual_analysis_parity(
+        visual.get("tracked_objects"), visual.get("ocr_results"), visual.get("expression_results")
+    )
+    parity_path = RESULTS_DIR / analysis_id / "visual_analysis_parity.json"
+    atomic_write_json(parity_path, parity)
+    status["visual_analysis_parity"] = parity
+    status.setdefault("output_files", {})["visual_analysis_parity"] = str(parity_path)
+    return parity
+
+
+def refresh_audio_analysis_parity(status: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Persist the audio artifact/hydration/consumer contract without recomputation."""
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    audio = ((status.get("results") or {}).get("audio_analysis") or {})
+    if not analysis_id or not isinstance(audio, dict):
+        return None
+    parity = build_audio_analysis_parity(
+        audio.get("audio_prosody"), audio.get("audio_event_intervals"),
+        audio.get("audio_diarization"), audio.get("audio_sample_clouds"),
+    )
+    parity_path = RESULTS_DIR / analysis_id / "audio_analysis_parity.json"
+    atomic_write_json(parity_path, parity)
+    status["audio_analysis_parity"] = parity
+    status.setdefault("output_files", {})["audio_analysis_parity"] = str(parity_path)
+    return parity
 
 
 def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
@@ -8270,8 +8429,17 @@ async def start_analysis(
     completed_with_missing_required_branch = bool(
         status["status"] == "completed"
         and isinstance(status.get("results"), dict)
-        and status["results"].get("audio_error")
-        and (status.get("pipeline_type") or pipeline_type) == "full"
+        and (
+            (
+                status["results"].get("audio_error")
+                and (status.get("pipeline_type") or pipeline_type) == "full"
+            )
+            or (
+                status["results"].get("visual_error")
+                and (status.get("pipeline_type") or pipeline_type)
+                in {"full", "visual_only"}
+            )
+        )
     )
     if status["status"] == "completed" and not completed_with_missing_required_branch:
         raise HTTPException(status_code=400, detail="Analysis already completed")
@@ -8286,6 +8454,17 @@ async def start_analysis(
         raise HTTPException(status_code=409, detail={
             "message": "Another analysis is active. This workstation runs one governed analysis at a time.",
             "active_analysis_id": active_id,
+            "retryable": True,
+        })
+
+    memory_headroom = interactive_memory_headroom()
+    if not memory_headroom["accepted"]:
+        raise HTTPException(status_code=503, detail={
+            "message": (
+                "Analysis start is resting to preserve memory for dashboard "
+                "navigation and analyst commits."
+            ),
+            "interactive_memory_headroom": memory_headroom,
             "retryable": True,
         })
 
@@ -8715,6 +8894,11 @@ def _run_complete_analysis_unlocked(
                     )
                 
                 logger.info(f"✅ Visual analysis completed: {len(visual_results.get('yolo_results', []))} detections")
+                # A recovery run may begin with a persisted visual_error from the
+                # interrupted attempt.  Successful governed output supersedes that
+                # attempt: retaining the stale flag makes a complete visual branch
+                # appear failed and can cause unattended launchers to retry forever.
+                results.pop("visual_error", None)
                 completed_stages.add("visual")
                 status["results"] = results
                 status["output_files"] = output_files
@@ -9265,10 +9449,21 @@ def _run_complete_analysis_unlocked(
         required_branch_errors = {}
         if pipeline_type == "full" and results.get("audio_error"):
             required_branch_errors["audio_language"] = results["audio_error"]
+        if pipeline_type in {"full", "visual_only"} and results.get("visual_error"):
+            required_branch_errors["visual_analysis"] = results["visual_error"]
         fully_completed = not required_branch_errors
         status.update({
             "status": "completed" if fully_completed else "partial",
             "progress": 100 if fully_completed else max(float(status.get("progress") or 0), 45),
+            "progress_detail": {
+                "fraction": 1.0,
+                "processed_items": 1,
+                "total_items": 1,
+                "phase": "complete" if fully_completed else "partial",
+                "phase_fraction": 1.0 if fully_completed else None,
+                "stage_fraction": 1.0 if fully_completed else None,
+                "stage_percent": 100.0 if fully_completed else None,
+            },
             "results": results,
             "output_files": output_files,
             "end_time": time.time(),
@@ -9276,6 +9471,17 @@ def _run_complete_analysis_unlocked(
             "required_branch_errors": required_branch_errors,
         })
         write_source_media_metadata_files(status)
+        if status.pop("deferred_source_media_projection", None):
+            append_analysis_event(
+                status,
+                "source_media_master_projection_refreshed",
+                details={
+                    "annotations_revision": int(
+                        status.get("source_media_annotations_revision") or 0
+                    ),
+                    "trigger": "analysis_completion",
+                },
+            )
         try:
             proliferation_plan = write_second_order_meaning_artifacts_for_status(status)
             if proliferation_plan:
@@ -9340,6 +9546,17 @@ def _run_complete_analysis_unlocked(
             status.setdefault("results", {})["mise_en_scene_scene_cards_error"] = str(
                 scene_card_error
             )
+        if status.get("deferred_annotation_projection"):
+            try:
+                refresh_annotation_dependent_surfaces(status)
+            except Exception as projection_error:
+                logger.warning(
+                    "Deferred annotation projection failed: %s",
+                    projection_error,
+                )
+                status.setdefault("results", {})[
+                    "deferred_annotation_projection_error"
+                ] = str(projection_error)
         status["mission_stage"] = "complete" if fully_completed else "partial"
         status["mission_message"] = (
             "All required analysis branches have reported in."
@@ -9358,6 +9575,9 @@ def _run_complete_analysis_unlocked(
                 "required_branch_errors": required_branch_errors,
             },
         )
+        refresh_visual_analysis_parity(status)
+        refresh_audio_analysis_parity(status)
+        write_full_analysis_manifest(status, RESULTS_DIR / analysis_id)
         persist_analysis_record_for_status(status)
         
         logger.info(f"🎉 Analysis marked as COMPLETED for {analysis_id}")
@@ -9774,6 +9994,119 @@ async def get_audio_timing_health(analysis_id: str) -> dict:
     return make_json_safe(build_audio_timing_health_report(status))
 
 
+def effective_analysis_status(status: Dict[str, Any]) -> str:
+    """Do not present a required-branch failure as a completed full run."""
+
+    stored_status = str(status.get("status") or "uploaded")
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    pipeline_type = str(status.get("pipeline_type") or "full")
+    if stored_status == "completed" and (
+        (pipeline_type == "full" and results.get("audio_error"))
+        or (pipeline_type in {"full", "visual_only"} and results.get("visual_error"))
+    ):
+        return "failed"
+    return stored_status
+
+
+FULL_ANALYSIS_COMPLETENESS_BRANCHES = (
+    ("transcript", "Transcript", "transcript"),
+    ("pos_analysis", "POS analysis", "pos_analysis"),
+    ("quan_analysis", "Quant analysis", "quan_analysis"),
+    ("audio_event_intervals", "Audio event intervals", "audio_event_intervals"),
+    ("audio_diarization", "Speaker diarization", "audio_diarization"),
+    ("shot_boundaries", "Shot boundaries", "shot_boundaries"),
+    ("spatial_tone_scan", "Color / brightness / contrast", "spatial_tone_scan"),
+    ("adaptive_visual_scan", "Adaptive visual measurement", "adaptive_visual_scan"),
+)
+
+
+def build_analysis_completeness(status: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a bounded, UI-safe view of required full-profile deliverables."""
+    manifest = evaluate_full_analysis_manifest(status)
+    required_branches = [item for item in manifest["branches"] if item.get("required")]
+    missing = [item for item in required_branches if item.get("state") != "computed"]
+    return {
+        "schema": "vaa1.full_analysis_completeness.v1",
+        "overall_state": "full" if not missing else "completed_with_gaps",
+        "delivery_percentage": manifest["delivery_percentage"],
+        "computed_count": manifest["delivered_count"],
+        "required_count": manifest["required_count"],
+        "missing_count": len(missing),
+        "branches": required_branches,
+        "missing_branch_ids": [item["branch_id"] for item in missing],
+        "can_repair": any(item.get("retryable") for item in missing),
+        "verified_at": manifest["verified_at"],
+    }
+
+
+def build_legacy_analysis_completeness(status: Dict[str, Any]) -> Dict[str, Any]:
+    """Retained temporarily for comparison while historical records are audited."""
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    pipeline_type = str(status.get("pipeline_type") or "full")
+    branches: List[Dict[str, Any]] = []
+    for branch_id, label, artifact_key in FULL_ANALYSIS_COMPLETENESS_BRANCHES:
+        path_value = output_files.get(artifact_key)
+        artifact_exists = bool(path_value and Path(str(path_value)).is_file())
+        branch_state = "computed" if artifact_exists else "artifact_missing"
+        if branch_id == "audio_diarization" and artifact_exists:
+            diarization = read_json_artifact_if_available(path_value) or {}
+            if diarization.get("status") != "completed_measured":
+                branch_state = "computed_degraded"
+        branches.append({
+            "branch_id": branch_id,
+            "label": label,
+            "state": branch_state,
+            "artifact_key": artifact_key,
+            "artifact_exists": artifact_exists,
+            "retryable": branch_id not in {"audio_diarization"},
+            "recovery_action": (
+                "verify" if artifact_exists else
+                "repair_missing" if branch_id not in {"audio_diarization"} else
+                "inspect_capability"
+            ),
+        })
+
+    native_payload = status.get("native_statistical_interpretation")
+    native_computed = isinstance(native_payload, dict) and bool(
+        native_payload.get("finding") or native_payload.get("findings")
+        or native_payload.get("records") or native_payload.get("status") == "completed"
+    )
+    branches.append({
+        "branch_id": "native_statistical_interpretation",
+        "label": "Relational connectivity",
+        "state": "computed" if native_computed else "consumer_missing",
+        "artifact_key": "native_statistical_interpretation",
+        "artifact_exists": native_computed,
+        "retryable": True,
+        "recovery_action": "verify" if native_computed else "repair_missing",
+    })
+
+    if pipeline_type == "visual_only":
+        required_ids = {"shot_boundaries", "spatial_tone_scan", "adaptive_visual_scan"}
+        required = [item for item in branches if item["branch_id"] in required_ids]
+    elif pipeline_type == "audio_only":
+        required_ids = {
+            "transcript", "pos_analysis", "quan_analysis",
+            "audio_event_intervals", "audio_diarization",
+        }
+        required = [item for item in branches if item["branch_id"] in required_ids]
+    else:
+        required = branches
+    missing = [item for item in required if item["state"] != "computed"]
+    computed_count = len(required) - len(missing)
+    return {
+        "schema": "vaa1.full_analysis_completeness.v1",
+        "overall_state": "full" if not missing else "completed_with_gaps",
+        "computed_count": computed_count,
+        "required_count": len(required),
+        "missing_count": len(missing),
+        "branches": required,
+        "missing_branch_ids": [item["branch_id"] for item in missing],
+        "can_repair": any(item.get("retryable") for item in missing),
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/api/status/{analysis_id}/summary", response_model=dict)
 async def get_analysis_status_summary(analysis_id: str) -> dict:
     """Return the bounded shell/panel bootstrap view without materializing artifacts."""
@@ -9788,7 +10121,7 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
     return make_json_safe({
         "schema": "vaa1.analysis_status_summary.v1",
         "analysis_id": analysis_id,
-        "status": status.get("status"),
+        "status": effective_analysis_status(status),
         "progress": status.get("progress"),
         "progress_detail": status.get("progress_detail"),
         "power_assertion": status.get("power_assertion"),
@@ -9809,6 +10142,8 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
         "source_video_exists": bool(source_video_path and Path(str(source_video_path)).exists()),
         "source_media_metadata": status.get("source_media_metadata"),
         "transcript_timing_repair": status.get("transcript_timing_repair"),
+        "analysis_completeness": build_analysis_completeness(status),
+        "full_analysis_manifest": evaluate_full_analysis_manifest(status),
         "summary": {
             "yolo_detections": len(visual.get("yolo_results") or []),
             "tracked_objects": len(visual.get("tracked_objects") or []),
@@ -9826,6 +10161,114 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
             "corrections_updated_at": (status.get("annotation_corrections") or {}).get("updated_at"),
         },
         "download_links": build_download_links(analysis_id, status.get("output_files") or {}),
+    })
+
+
+@app.post("/api/analysis/{analysis_id}/completeness/refresh", response_model=dict)
+async def refresh_analysis_completeness(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Repair missing deliverables, refresh projections, and verify UI consumers."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    # Canonical artifacts take precedence over stale runtime hydration. Reconcile
+    # them before deciding that an expensive producer rerun is necessary.
+    hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+    before = build_analysis_completeness(status)
+    requested = payload.get("branch_ids")
+    branch_ids = {
+        str(value) for value in requested
+        if isinstance(value, str)
+    } if isinstance(requested, list) else set(before.get("missing_branch_ids") or [])
+    repaired: List[str] = []
+    failures: List[Dict[str, str]] = []
+
+    verified_ids = {
+        str(item.get("branch_id"))
+        for item in before.get("branches", [])
+        if item.get("state") == "computed"
+    }
+    already_reconciled = branch_ids.intersection(verified_ids)
+    repaired.extend(sorted(already_reconciled))
+    branch_ids.difference_update(already_reconciled)
+
+    output_files = status.setdefault("output_files", {})
+    transcript_path_raw = output_files.get("transcript")
+    if branch_ids.intersection({"pos_analysis", "quan_analysis"}):
+        if not transcript_path_raw or not Path(str(transcript_path_raw)).is_file():
+            failures.append({"branch_id": "transcript", "error": "Transcript artifact is unavailable"})
+        else:
+            try:
+                transcript_path = Path(str(transcript_path_raw))
+                transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+                rewritten = rewrite_pos_quant_from_transcript(
+                    status,
+                    transcript,
+                    transcript_path,
+                    branch_ids.intersection({"pos_analysis", "quan_analysis"}),
+                )
+                repaired.extend(item for item in rewritten if item in branch_ids)
+            except Exception as exc:
+                failures.append({"branch_id": "pos_quant", "error": str(exc)})
+
+    measurement_actions = (
+        ("shot_boundaries", measure_analysis_shot_boundaries),
+        ("spatial_tone_scan", measure_analysis_spatial_tone),
+        ("adaptive_visual_scan", measure_analysis_adaptive_visual),
+    )
+    for branch_id, action in measurement_actions:
+        if branch_id not in branch_ids:
+            continue
+        try:
+            if branch_id == "shot_boundaries":
+                visual = ((status.get("results") or {}).get("visual_analysis") or {})
+                existing = visual.get("shot_boundaries") if isinstance(visual, dict) else None
+                intervals = existing.get("intervals") if isinstance(existing, dict) else None
+                if isinstance(intervals, list) and intervals:
+                    output_path = RESULTS_DIR / analysis_id / "shot_boundaries.json"
+                    atomic_write_json(output_path, existing)
+                    output_files["shot_boundaries"] = str(output_path)
+                    repaired.append(branch_id)
+                    continue
+            await action(analysis_id, {"persist": True})
+            repaired.append(branch_id)
+        except Exception as exc:
+            failures.append({"branch_id": branch_id, "error": str(exc)})
+
+    if "native_statistical_interpretation" in branch_ids:
+        try:
+            await run_native_statistical_interpretation(analysis_id, {"persist": True})
+            repaired.append("native_statistical_interpretation")
+        except Exception as exc:
+            failures.append({"branch_id": "native_statistical_interpretation", "error": str(exc)})
+
+    # Valid canonical artifacts are cheaper to re-project than to recompute.
+    try:
+        refresh_master_schema_metadata_surfaces(status)
+        write_iterative_derived_artifacts_for_status(status)
+        write_second_order_meaning_artifacts_for_status(status)
+    except Exception as exc:
+        failures.append({"branch_id": "projections", "error": str(exc)})
+
+    append_analysis_event(status, "analysis_completeness_refreshed", details={
+        "requested_branch_ids": sorted(branch_ids),
+        "repaired_branch_ids": sorted(set(repaired)),
+        "failure_count": len(failures),
+        "initiated_by": str(payload.get("initiated_by") or "datascene_ui"),
+    })
+    refresh_visual_analysis_parity(status)
+    refresh_audio_analysis_parity(status)
+    write_full_analysis_manifest(status, RESULTS_DIR / analysis_id)
+    persist_analysis_record_for_status(status)
+    after = build_analysis_completeness(status)
+    return make_json_safe({
+        "status": "verified" if not failures else "completed_with_failures",
+        "analysis_id": analysis_id,
+        "repaired_branch_ids": sorted(set(repaired)),
+        "failures": failures,
+        "analysis_completeness": after,
     })
 
 
@@ -9872,7 +10315,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
 
     response_data = {
         "analysis_id": analysis_id,
-        "status": status["status"],
+        "status": effective_analysis_status(status),
         "progress": status["progress"],
         "progress_detail": status.get("progress_detail"),
         "power_assertion": status.get("power_assertion"),
@@ -9917,6 +10360,18 @@ async def get_analysis_status(analysis_id: str) -> dict:
         ),
         "audio_event_intervals": (status.get("results", {}).get("audio_analysis", {}) or {}).get("audio_event_intervals"),
         "speaker_prosody_projection": status.get("speaker_prosody_projection"),
+        "language_analysis_parity": status.get("language_analysis_parity")
+        or read_json_artifact_if_available(
+            (status.get("output_files") or {}).get("language_analysis_parity")
+        ),
+        "visual_analysis_parity": status.get("visual_analysis_parity")
+        or read_json_artifact_if_available(
+            (status.get("output_files") or {}).get("visual_analysis_parity")
+        ),
+        "audio_analysis_parity": status.get("audio_analysis_parity")
+        or read_json_artifact_if_available(
+            (status.get("output_files") or {}).get("audio_analysis_parity")
+        ),
     }
 
     source_video_path = status.get("source_video_path")
@@ -11125,17 +11580,35 @@ async def get_source_media_metadata(analysis_id: str) -> dict:
 
 
 @app.post("/api/source-media/{analysis_id}/refresh-maturity", response_model=dict)
-async def refresh_source_media_maturity(analysis_id: str) -> dict:
+def refresh_source_media_maturity(
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+) -> dict:
     """Run a visible Source Media metadata maturity iteration."""
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
-    write_source_media_metadata_files(status)
-    status.pop("live_mature_data_proliferation_audit", None)
-    ensure_live_mature_data_proliferation_audit_for_status(status)
-    persist_analysis_record_for_status(status)
+    # Maturity calculation belongs to the interactive save/read boundary. The
+    # heavier Master Schema and proliferation projections must not block the
+    # panel or turn a valid Source Media record into a failed UI operation.
+    write_source_media_metadata_files(status, refresh_master_schema=False)
     metadata = status.get("source_media_metadata", {})
+    projection_state = "queued"
+    if status.get("status") == "processing":
+        projection_state = "deferred_until_analysis_completion"
+        status["deferred_source_media_projection"] = {
+            "requested_at": utc_now_iso(),
+            "revision": int(status.get("source_media_annotations_revision") or 0),
+            "reason": "analysis_processing",
+        }
+    else:
+        threading.Thread(
+            target=refresh_source_media_master_projection_when_idle,
+            args=(status,),
+            daemon=True,
+            name=f"source-media-maturity-{analysis_id[:8]}",
+        ).start()
     append_analysis_event(
         status,
         "source_media_maturity_refreshed",
@@ -11144,12 +11617,14 @@ async def refresh_source_media_maturity(analysis_id: str) -> dict:
             "filled_count": (metadata.get("maturity_iteration") or {}).get("filled_count", 0),
             "manual_protected_count": (metadata.get("maturity_iteration") or {}).get("manual_protected_count", 0),
             "review_candidate_count": (metadata.get("maturity_iteration") or {}).get("review_candidate_count", 0),
+            "dependent_projection": projection_state,
         },
     )
-    persist_analysis_record_for_status(status)
 
     return {
         "analysis_id": analysis_id,
+        "status": "refreshed",
+        "dependent_projection": projection_state,
         "source_media_metadata": metadata,
         "maturity_iteration": metadata.get("maturity_iteration", {}),
     }
@@ -11282,8 +11757,42 @@ async def sync_cvat_annotations(
     }
 
 
+def refresh_source_media_master_projection(status: Dict[str, Any]) -> None:
+    """Project an already-durable Source Media confirmation downstream."""
+
+    refresh_master_schema_metadata_surfaces(status)
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
+    status.pop("deferred_source_media_projection", None)
+    append_analysis_event(
+        status,
+        "source_media_master_projection_refreshed",
+        details={
+            "annotations_revision": int(
+                status.get("source_media_annotations_revision") or 0
+            ),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+
+def refresh_source_media_master_projection_when_idle(status: Dict[str, Any]) -> None:
+    try:
+        with ANALYSIS_EXECUTION_LOCK:
+            refresh_source_media_master_projection(status)
+    except Exception:
+        logger.exception(
+            "Deferred Source Media projection failed for analysis %s",
+            status.get("analysis_id"),
+        )
+
+
 @app.post("/api/source-media/{analysis_id}", response_model=dict)
-async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+def update_source_media_metadata(
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
     """Update user-added source media metadata notes for an analysis."""
     status = get_analysis_entry(analysis_id)
     if status is None:
@@ -11338,11 +11847,37 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
             else:
                 annotations[key] = value or ""
 
-    write_source_media_metadata_files(status)
+    # The revision is persisted with both the analysis record and the exported
+    # metadata. It makes a successful save distinguishable from a merely
+    # rendered/derived value and gives the client a durable reopen check.
+    status["source_media_annotations_revision"] = int(
+        status.get("source_media_annotations_revision") or 0
+    ) + 1
+    status["source_media_annotations_updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # The analyst commit is the transaction boundary. Downstream projections
+    # must never make the editor wait for the analysis/proliferation pipeline.
+    write_source_media_metadata_files(status, refresh_master_schema=False)
+    projection_state = "queued"
+    if status.get("status") == "processing":
+        projection_state = "deferred_until_analysis_completion"
+        status["deferred_source_media_projection"] = {
+            "requested_at": status["source_media_annotations_updated_at"],
+            "revision": status["source_media_annotations_revision"],
+            "reason": "analysis_processing",
+        }
+    else:
+        threading.Thread(
+            target=refresh_source_media_master_projection_when_idle,
+            args=(status,),
+            daemon=True,
+            name=f"source-media-projection-{analysis_id[:8]}",
+        ).start()
     append_analysis_event(
         status,
         "source_media_metadata_updated",
         details={
+            "dependent_projection": projection_state,
             "fields": [
                 key
                 for key in (
@@ -11388,13 +11923,10 @@ async def update_source_media_metadata(analysis_id: str, payload: Dict[str, Any]
             ]
         },
     )
-    status.pop("live_mature_data_proliferation_audit", None)
-    ensure_live_mature_data_proliferation_audit_for_status(status)
-    persist_analysis_record_for_status(status)
-
     return {
         "status": "saved",
         "analysis_id": analysis_id,
+        "dependent_projection": projection_state,
         "source_media_metadata": status.get("source_media_metadata", {}),
     }
 
@@ -12237,8 +12769,6 @@ async def upload_source_media_references(
         "source_media_references_uploaded",
         details={"count": len(uploaded_items)},
     )
-    persist_analysis_record_for_status(status)
-
     return {
         "status": "saved",
         "analysis_id": analysis_id,
@@ -12585,14 +13115,28 @@ async def download_source_media_reference(analysis_id: str, stored_filename: str
 
 
 @app.get("/api/annotation-corrections/{analysis_id}", response_model=dict)
-async def get_annotation_corrections(analysis_id: str) -> dict:
+def get_annotation_corrections(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
-    if status.get("annotation_corrections"):
-        write_annotation_corrections_file(status)
-        persist_analysis_record_for_status(status)
+    # The correction sidecar is the interactive source of truth. Read it
+    # directly so a dashboard-side emergency commit is visible immediately;
+    # never rewrite the full analysis record merely to open an editor.
+    correction_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
+    if correction_path.exists():
+        try:
+            persisted = json.loads(correction_path.read_text(encoding="utf-8"))
+            if isinstance(persisted, dict):
+                status["annotation_corrections"] = persisted
+                status.setdefault("output_files", {})[
+                    "annotation_corrections"
+                ] = str(correction_path)
+        except (OSError, ValueError, TypeError):
+            logger.exception(
+                "Could not reopen annotation correction sidecar for %s",
+                analysis_id,
+            )
 
     return {
         "status": "ok",
@@ -12826,9 +13370,58 @@ async def invalidate_decisions_for_dependency_change(
     }
 
 
+def refresh_annotation_dependent_surfaces(status: Dict[str, Any]) -> None:
+    """Rebuild correction consumers after the durable analyst commit returns."""
+
+    analysis_id = str(status.get("analysis_id") or "")
+    refresh_master_schema_metadata_surfaces(status)
+    corrections = status.get("annotation_corrections") or {}
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    audio_analysis = (
+        results.get("audio_analysis")
+        if isinstance(results.get("audio_analysis"), dict)
+        else {}
+    )
+    status["speaker_prosody_projection"] = project_confirmed_speaker_prosody(
+        analysis_id,
+        corrections=corrections,
+        audio_prosody=resolve_audio_prosody_for_meaning(status, audio_analysis),
+    )
+    write_mise_en_scene_artifacts_for_status(status)
+    write_second_order_meaning_artifacts_for_status(status)
+    status.pop("live_mature_data_proliferation_audit", None)
+    ensure_live_mature_data_proliferation_audit_for_status(status)
+    status.pop("deferred_annotation_projection", None)
+    append_analysis_event(
+        status,
+        "annotation_dependent_surfaces_refreshed",
+        details={
+            "speaker_prosody_projections": (
+                status.get("speaker_prosody_projection") or {}
+            ).get("projection_count", 0),
+        },
+    )
+    persist_analysis_record_for_status(status)
+
+
+def refresh_annotation_dependent_surfaces_when_idle(status: Dict[str, Any]) -> None:
+    """Wait for the heavyweight analysis slot without delaying the save response."""
+
+    try:
+        with ANALYSIS_EXECUTION_LOCK:
+            refresh_annotation_dependent_surfaces(status)
+    except Exception:
+        logger.exception(
+            "Deferred annotation projection failed for analysis %s",
+            status.get("analysis_id"),
+        )
+
+
 @app.post("/api/annotation-corrections/{analysis_id}", response_model=dict)
-async def update_annotation_corrections(
-    analysis_id: str, payload: Dict[str, Any] = Body(...)
+def update_annotation_corrections(
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any] = Body(...),
 ) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
@@ -12936,22 +13529,28 @@ async def update_annotation_corrections(
             },
         )
 
-    results = status.get("results") if isinstance(status.get("results"), dict) else {}
-    audio_analysis = (
-        results.get("audio_analysis")
-        if isinstance(results.get("audio_analysis"), dict)
-        else {}
-    )
-    status["speaker_prosody_projection"] = project_confirmed_speaker_prosody(
-        analysis_id,
-        corrections=corrections,
-        audio_prosody=resolve_audio_prosody_for_meaning(status, audio_analysis),
-    )
-    write_annotation_corrections_file(status)
-    write_mise_en_scene_artifacts_for_status(status)
-    write_second_order_meaning_artifacts_for_status(status)
-    status.pop("live_mature_data_proliferation_audit", None)
-    ensure_live_mature_data_proliferation_audit_for_status(status)
+    # The correction sidecar and Master Schema review layer are the durable
+    # acknowledgement boundary. Heavy dependent projections may still run
+    # later, but a saved analyst confirmation must be visible through Master
+    # Schema immediately.
+    write_annotation_corrections_file(status, refresh_master_schema=True)
+    projection_state = "queued"
+    if status.get("status") == "processing":
+        # Do not make a transcript or BBox save compete with the admitted heavy
+        # analysis. Completion already rebuilds Scene Cards and Meaning/Plot;
+        # this marker adds the remaining correction consumers to that pass.
+        projection_state = "deferred_until_analysis_completion"
+        status["deferred_annotation_projection"] = {
+            "requested_at": corrections["updated_at"],
+            "reason": "analysis_processing",
+        }
+    else:
+        threading.Thread(
+            target=refresh_annotation_dependent_surfaces_when_idle,
+            args=(status,),
+            daemon=True,
+            name=f"annotation-projection-{analysis_id[:8]}",
+        ).start()
     append_analysis_event(
         status,
         "annotation_corrections_updated",
@@ -12970,16 +13569,14 @@ async def update_annotation_corrections(
             "meaning_network_custom_lanes": len(
                 corrections.get("meaning_network_custom_lanes", [])
             ),
-            "speaker_prosody_projections": (
-                status.get("speaker_prosody_projection") or {}
-            ).get("projection_count", 0),
+            "dependent_projection": projection_state,
         },
     )
-    persist_analysis_record_for_status(status)
 
     return {
         "status": "saved",
         "analysis_id": analysis_id,
+        "dependent_projection": projection_state,
         "annotation_corrections": build_annotation_corrections_payload(status),
     }
 
@@ -13038,9 +13635,13 @@ async def prepare_video_publication(analysis_id: str) -> dict:
 async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
     requested = [str(item) for item in payload.get("analysis_ids", [])]
     records = collect_saved_analysis_records()
-    statuses = [records[item] for item in requested if item in records and records[item].get("status") == "completed"]
+    statuses = [
+        records[item]
+        for item in requested
+        if item in records and records[item].get("status") != "error"
+    ]
     if not statuses:
-        raise HTTPException(status_code=409, detail="No completed analyses were selected")
+        raise HTTPException(status_code=409, detail="No publishable saved analyses were selected")
     project_id = str(payload.get("project_id") or statuses[0].get("project_id") or "local-research-project")
     built = build_corpus_publication(statuses, PUBLICATION_DIR / "corpora" / _safe_publication_path(project_id), project_id)
     return {
@@ -13087,7 +13688,7 @@ async def list_analyses(limit: int = 10) -> dict:
     return {
         "analyses": {
             aid: {
-                "status": info["status"],
+                "status": effective_analysis_status(info),
                 "filename": info["original_filename"],
                 "progress": info["progress"],
                 "progress_detail": info.get("progress_detail"),

@@ -43,6 +43,16 @@ CANONICAL_ARTIFACTS = {
     "tracked_objects_json": ("tracked_objects.json", "tracked_objects"),
 }
 
+CORRECTION_COLLECTIONS = (
+    "text_substitutions",
+    "label_overrides",
+    "manual_transcript_entries",
+    "manual_visual_annotations",
+    "proliferation_decisions",
+    "master_schema_presence_intervals",
+    "meaning_network_custom_lanes",
+)
+
 VISUAL_RESULT_ARTIFACTS = {
     "shot_boundaries": "shot_boundaries.json",
     "spatial_tone_scan": "spatial_tone_scan.json",
@@ -90,6 +100,15 @@ def load_first_json(candidates: Iterable[Path]) -> tuple[Any, Optional[Path]]:
     return None, None
 
 
+def visual_payload_row_count(payload: Any) -> Optional[int]:
+    if not isinstance(payload, dict):
+        return len(payload) if isinstance(payload, list) else None
+    for key in ("intervals", "samples", "records", "speaker_turns"):
+        if isinstance(payload.get(key), list):
+            return len(payload[key])
+    return None
+
+
 def hydrate_artifact(
     status: Dict[str, Any],
     *,
@@ -104,11 +123,30 @@ def hydrate_artifact(
         return
 
     status.setdefault("output_files", {}).setdefault(file_key, str(path))
-    if status.get(status_key) in (None, "", []):
+    existing_value = status.get(status_key)
+    if (
+        status_key == "annotation_corrections"
+        and isinstance(existing_value, dict)
+        and isinstance(payload, dict)
+        and correction_maturity_score(payload) > correction_maturity_score(existing_value)
+    ):
+        status[status_key] = payload
+        audit["hydrated"].append(status_key)
+        audit.setdefault("maturity_replacements", []).append(status_key)
+    elif existing_value in (None, "", []):
         status[status_key] = payload
         audit["hydrated"].append(status_key)
     else:
         audit["already_present"].append(status_key)
+
+
+def correction_maturity_score(payload: Dict[str, Any]) -> int:
+    """Count durable analyst correction records for mature-data precedence."""
+    return sum(
+        len(payload.get(key) or [])
+        for key in CORRECTION_COLLECTIONS
+        if isinstance(payload.get(key) or [], list)
+    )
 
 
 def hydrate_evidence_proliferation_matches(
@@ -193,9 +231,21 @@ def hydrate_visual_results(
             continue
         status.setdefault("output_files", {}).setdefault(result_key, str(path))
         audit_key = f"results.visual_analysis.{result_key}"
-        if not visual.get(result_key):
+        existing = visual.get(result_key)
+        canonical_rows = visual_payload_row_count(payload)
+        existing_rows = visual_payload_row_count(existing)
+        if not existing:
             visual[result_key] = payload
             audit["hydrated"].append(audit_key)
+        elif canonical_rows is not None and existing_rows != canonical_rows:
+            visual[result_key] = payload
+            audit["hydrated"].append(audit_key)
+            audit.setdefault("parity_replacements", []).append({
+                "surface": audit_key,
+                "previous_row_count": existing_rows,
+                "canonical_row_count": canonical_rows,
+                "artifact_path": str(path),
+            })
         else:
             audit["already_present"].append(audit_key)
 

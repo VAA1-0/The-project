@@ -4,6 +4,7 @@ import { useLayoutHost } from "../LayoutHost";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
+import LanguageParityMetaView from "../LanguageParityMetaView";
 
 import { VideoService } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
@@ -989,6 +990,7 @@ export default function QuantitativeAnalysisPanel() {
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
+      <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>

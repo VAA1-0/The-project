@@ -80,6 +80,7 @@ export interface AnalysisStatus {
   project_id?: string;
   source_size_bytes?: number;
   source_media_metadata?: SourceMediaMetadata;
+  analysis_completeness?: AnalysisCompleteness;
   transcript_timing_repair?: {
     status?: string;
     reason?: string;
@@ -307,6 +308,28 @@ export interface AnalysisStatus {
   };
   cvatID?: number;
 }
+
+export type AnalysisCompletenessBranch = {
+  branch_id: string;
+  label: string;
+  state: string;
+  artifact_key: string;
+  artifact_exists: boolean;
+  retryable: boolean;
+  recovery_action: "verify" | "repair_missing" | "inspect_capability";
+};
+
+export type AnalysisCompleteness = {
+  schema: "vaa1.full_analysis_completeness.v1";
+  overall_state: "full" | "completed_with_gaps";
+  computed_count: number;
+  required_count: number;
+  missing_count: number;
+  branches: AnalysisCompletenessBranch[];
+  missing_branch_ids: string[];
+  can_repair: boolean;
+  verified_at: string;
+};
 
 export type NativeStatisticalObservation = {
   observation_id?: string;
@@ -1990,14 +2013,29 @@ class ApiService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const existingPromise = this.statusPromises.get(cacheKey);
     if (existingPromise) return existingPromise;
-    const request = fetch(`${this.baseURL}/api/status/${analysisId}/summary`)
+    const request = fetch(`${this.baseURL}/api/status/${analysisId}/summary`, {
+      signal: AbortSignal.timeout(2_000),
+      cache: "no-store",
+    })
       .then(async (response) => {
-        if (!response.ok) return this.getStatus(analysisId);
+        if (!response.ok) throw new Error(`Status summary unavailable (${response.status})`);
         const value = await response.json();
         this.statusCache.set(cacheKey, { expiresAt: Date.now() + 15_000, value });
         return value;
       })
-      .catch(() => this.getStatus(analysisId));
+      .catch(async () => {
+        // Never fall back to the heavyweight full-record status route during
+        // shell/bootstrap. The local route reads a bounded record prefix only.
+        const response = await fetch(`/api/local-analysis/${analysisId}?summary=1`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`Local status summary unavailable (${response.status})`);
+        }
+        const value = await response.json();
+        this.statusCache.set(cacheKey, { expiresAt: Date.now() + 15_000, value });
+        return value;
+      });
     this.statusPromises.set(cacheKey, request);
     try {
       return await request;
@@ -2356,7 +2394,7 @@ class ApiService {
     try {
       response = await fetch(
         `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: AbortSignal.timeout(2_000) },
       );
     } catch (error) {
       console.warn("Backend download failed, trying local analysis artifact:", error);
@@ -2398,7 +2436,10 @@ class ApiService {
 
   getDownloadUrl(analysisId: string, fileType: string): string {
     if (fileType === "source_video") {
-      return `${this.baseURL}/api/download/${analysisId}/${fileType}`;
+      // Native <video> requests cannot participate in fetch timeout/fallback.
+      // Keep playback on the range-capable dashboard route so analysis load
+      // cannot starve source navigation.
+      return `/api/local-analysis/${analysisId}/download/${fileType}`;
     }
     const noCacheToken = Date.now().toString(36);
     return `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`;
@@ -2536,75 +2577,72 @@ class ApiService {
   }
 
   async getAnnotationCorrections(analysisId: string): Promise<AnnotationCorrections> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`);
-    } catch {
-      response = await fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`);
-    }
+    // The sidecar is canonical. The backend may still hold an older correction
+    // bundle embedded in analysis_record.json and must not replace foreground
+    // analyst work during refresh hydration.
+    const response = await fetch(
+      `/api/local-analysis/${analysisId}/download/annotation_corrections?_=${Date.now().toString(36)}`,
+      { cache: "no-store" },
+    );
     if (!response.ok) {
-      const localResponse = response.url.includes("/api/local-analysis/")
-        ? response
-        : await fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`);
-      if (!localResponse.ok) {
-        const errorText = await localResponse.text();
-        throw new Error(
-          `Annotation corrections fetch failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
-        );
-      }
-      response = localResponse;
+      const errorText = await response.text();
+      throw new Error(
+        `Canonical annotation corrections fetch failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
     }
     const result = await response.json();
     return result.annotation_corrections || result || {};
+  }
+
+  async getVisualFrameCheckpoint(analysisId: string): Promise<Record<string, any> | null> {
+    try {
+      const response = await fetch(
+        `/api/local-analysis/${analysisId}/download/visual_frame_scan_checkpoint`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const payload = await response.json();
+      return payload && typeof payload === "object" ? payload : null;
+    } catch {
+      return null;
+    }
   }
 
   async saveAnnotationCorrections(
     analysisId: string,
     corrections: AnnotationCorrections,
   ): Promise<AnnotationCorrections> {
-    const localSave = async () =>
-      fetch(`/api/local-analysis/${analysisId}/download/annotation_corrections`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(corrections),
-      });
-
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseURL}/api/annotation-corrections/${analysisId}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(corrections),
-      });
-    } catch (error) {
-      console.warn("Backend annotation corrections save failed, trying local analysis save:", error);
-      response = await localSave();
-    }
+    // The sidecar is the canonical foreground commit. Write it through the
+    // isolated dashboard process, then read the same file back before telling
+    // the analyst that the correction was saved.
+    const artifactUrl = `/api/local-analysis/${analysisId}/download/annotation_corrections`;
+    const response = await fetch(artifactUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corrections),
+    });
     if (!response.ok) {
-      const localResponse = response.url.includes("/api/local-analysis/")
-        ? response
-        : await localSave();
-      if (localResponse.ok) {
-        const result = await localResponse.json();
-        this.invalidateReadCaches(analysisId);
-        return result.annotation_corrections || {};
-      }
-      const errorText = await localResponse.text();
-      throw new Error(
-        `Annotation corrections save failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
-      );
-    } else if (response.url.includes("/api/local-analysis/")) {
-      const result = await response.json();
-      this.invalidateReadCaches(analysisId);
-      return result.annotation_corrections || {};
+      throw new Error(`Annotation correction commit failed (${response.status})`);
     }
-    const result = await response.json();
+    const committed = await response.json();
+    const expected = committed.annotation_corrections || corrections;
+    const verificationResponse = await fetch(`${artifactUrl}?verify=${Date.now().toString(36)}`, {
+      cache: "no-store",
+    });
+    if (!verificationResponse.ok) {
+      throw new Error(`Annotation correction readback failed (${verificationResponse.status})`);
+    }
+    const verified = await verificationResponse.json();
+    if (
+      expected.updated_at &&
+      verified.updated_at !== expected.updated_at
+    ) {
+      throw new Error("Annotation correction readback did not match the committed version");
+    }
     this.invalidateReadCaches(analysisId);
-    return result.annotation_corrections || {};
+    return verified;
   }
 
   private getMimeType(fileType: string): string {
@@ -2806,16 +2844,21 @@ class ApiService {
     filename?: string,
   ): Promise<void> {
     try {
-      const prepared = await this.prepareProjectBundle(payload);
-      if (prepared.download_url === "/api/local-project-bundle") {
-        const blob = await this.downloadProjectBundle(payload);
-        this.downloadBlob(blob, filename || prepared.filename);
-        return;
+      // Project records must remain saveable while the analysis backend is
+      // saturated. The local route is independent and deliberately bounded.
+      const response = await fetch("/api/local-project-bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(`Local project bundle failed: ${response.status} ${await response.text()}`);
       }
-      const downloadUrl = prepared.download_url.startsWith("http")
-        ? prepared.download_url
-        : `${this.baseURL}${prepared.download_url}`;
-      this.downloadUrl(downloadUrl, filename || prepared.filename);
+      const blob = await response.blob();
+      this.downloadBlob(
+        blob,
+        filename || `${String(payload.project_name || "vaa1_project")}_project_bundle.zip`,
+      );
     } catch (error) {
       console.error("Failed to download project bundle:", error);
       throw error;
@@ -2869,12 +2912,7 @@ class ApiService {
   }
 
   async getSourceMediaMetadata(analysisId: string): Promise<SourceMediaMetadata> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`);
-    } catch {
-      response = await fetch(`/api/local-analysis/${analysisId}/download/source_media_metadata_json`);
-    }
+    let response = await fetch(`/api/local-analysis/${analysisId}/source-media`, { cache: "no-store" });
     if (!response.ok) {
       const localResponse = response.url.includes("/api/local-analysis/")
         ? response
@@ -2960,7 +2998,7 @@ class ApiService {
       notes?: string;
     },
   ): Promise<SourceMediaMetadata> {
-    const response = await fetch(`${this.baseURL}/api/source-media/${analysisId}`, {
+    const response = await fetch(`/api/local-analysis/${analysisId}/source-media`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -3278,6 +3316,32 @@ class ApiService {
     return response.json();
   }
 
+  async refreshAnalysisCompleteness(
+    analysisId: string,
+    branchIds?: string[],
+  ): Promise<{
+    status: string;
+    analysis_id: string;
+    repaired_branch_ids: string[];
+    failures: Array<{ branch_id: string; error: string }>;
+    analysis_completeness: AnalysisCompleteness;
+  }> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/completeness/refresh`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch_ids: branchIds, initiated_by: "datascene_ui" }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Completeness refresh failed (${response.status})`);
+    }
+    this.invalidateReadCaches(analysisId);
+    return response.json();
+  }
+
   /**
    * Get list of recent analyses (for admin/debugging)
    */
@@ -3287,6 +3351,7 @@ class ApiService {
     try {
       const response = await fetch(
         `${this.baseURL}/api/analyses?limit=${limit}`,
+        { signal: AbortSignal.timeout(2_000), cache: "no-store" },
       );
 
       if (!response.ok) {

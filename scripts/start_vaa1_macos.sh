@@ -97,7 +97,10 @@ frontend_ok() {
 
 wait_for_backend() {
   local attempt
-  for attempt in $(seq 1 60); do
+  # Full core imports can exceed one minute on a cold Mac start (OpenCV,
+  # statistical and multimodal providers). Keep the wait bounded while
+  # allowing the documented runtime to finish initializing.
+  for attempt in $(seq 1 180); do
     if backend_health_ok; then
       return 0
     fi

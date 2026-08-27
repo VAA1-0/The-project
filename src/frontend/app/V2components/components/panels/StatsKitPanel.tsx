@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   apiService,
   type NativeStatisticalInterpretationRun,
+  type AnalysisCompleteness,
   type SourceMediaMetadata,
   type StatsResearchQuestionRun,
 } from "@/lib/api-service";
@@ -3019,7 +3020,7 @@ function researchQuestionVisualizationData(workflow: StatsResearchQuestionRun | 
     return [
       Number.isFinite(leftValue) ? { id: `${result.result_id}:${index}:left`, label: scene, value: leftValue, detail: `${left} / ${source}`, group: left, status: "computed" } : null,
       Number.isFinite(rightValue) ? { id: `${result.result_id}:${index}:right`, label: scene, value: rightValue, detail: `${right} / ${source}`, group: right, status: "computed" } : null,
-    ].filter((item): item is VisualizationDatum => item !== null);
+    ].filter((item): item is Exclude<typeof item, null> => item !== null);
   });
 }
 
@@ -3126,7 +3127,6 @@ function MaturityRadar({ layers, metrics, masterRows, relationshipCount, onInspe
     { id: "taxonomy", label: "Taxonomy completeness", value: meanScore(taxonomyValues), target: .8, basis: `${masterRows.filter((row) => row.status === "master_schema").length}/${masterRows.length} audited categories resolve at Master Schema level`, affected: "Search, comparison, report terminology", action: "Promote governed candidates and raw substrate through the existing confirmation regime.", inspectId: layers[0]?.id },
     { id: "confirmation", label: "Human confirmation", value: Math.min(1, matureAnchors / 12), target: .8, basis: `${matureAnchors} mature anchors against the declared 12-anchor review target`, affected: "Interpretive authority, identity attribution, report eligibility", action: "Review the highest-impact expression, speaker, object, and scene assignments.", inspectId: layers.find((layer) => /speaker|audio|visual/i.test(layer.layer))?.id || layers[0]?.id },
     { id: "agreement", label: "Cross-modal agreement", value: Math.min(1, relationshipCount / 5), target: .8, basis: `${relationshipCount}/5 delivered coupling families have estimable relationships`, affected: "Significance propositions and multimodal report sentences", action: "Run the remaining delivered motors and inspect contradictory scene pairs.", inspectId: layers[0]?.id },
-    { id: "contradiction", label: "Contradiction resolution", value: null, target: .8, basis: "No governed contradiction-resolution aggregate is recorded", affected: "Acceptance, report qualification, downstream interpretation", action: "Review counter-evidence and persist contradiction decisions before marking the analysis ready.", inspectId: layers[0]?.id },
     { id: "connectivity", label: "Relational connectivity", value: Math.min(1, relationshipCount / 10), target: .7, basis: `${relationshipCount} computed cross-signal relationships`, affected: "Meaning Network, comparison, significance routing", action: "Compute additional eligible cross-signal relationships from the available array.", inspectId: layers[0]?.id },
   ];
   const axes = mode === "coverage" ? coverageAxes : maturityAxes;
@@ -3158,6 +3158,7 @@ function MaturityRadar({ layers, metrics, masterRows, relationshipCount, onInspe
         {axes.map((axis, index) => { const [px, py] = point(index, axis.value ?? 0); const state = level(axis.value); return <g key={`point:${axis.id}`}>{state === "Developing" ? <rect x={px - 5} y={py - 5} width="10" height="10" fill={color(axis.value)} /> : state === "Needs attention" ? <polygon points={`${px},${py - 7} ${px + 7},${py} ${px},${py + 7} ${px - 7},${py}`} fill={color(axis.value)} /> : state === "Not assessed" ? <g stroke={color(axis.value)} strokeWidth="3"><line x1={px - 6} y1={py - 6} x2={px + 6} y2={py + 6} /><line x1={px + 6} y1={py - 6} x2={px - 6} y2={py + 6} /></g> : <circle cx={px} cy={py} r="6" fill={color(axis.value)} />}<title>{`${axis.label}: ${state}; ${axis.basis}`}</title></g>; })}
       </svg>
       <div className="flex flex-wrap gap-4 border-t border-slate-800 pt-2 text-[9px] text-slate-400"><span style={{ color: "#7f9f8a" }}>● Ready</span><span style={{ color: "#b59a62" }}>■ Developing</span><span style={{ color: "#a87878" }}>◆ Needs attention</span><span style={{ color: "#7b8491" }}>× Not assessed</span><span>– – target</span></div>
+      {mode === "maturity" ? <div className="mt-2 rounded border border-slate-800 bg-[#0c0c0c] px-3 py-2 text-[9px] text-slate-400" data-vaa1-unimplemented-maturity-capability="contradiction-resolution">Contradiction resolution is excluded from this video's measured radar: no governed contradiction-resolution aggregate is implemented yet. This is a platform capability gap, not a measured zero or a deficiency attributed to the selected analysis.</div> : null}
     </div>
     <div className="overflow-auto rounded border border-slate-800"><table className="w-full border-collapse text-left text-[9px]"><thead className="bg-[#151515] uppercase tracking-[0.1em] text-slate-500"><tr><th className="px-2 py-1.5">Dimension</th><th className="px-2 py-1.5">Level</th><th className="px-2 py-1.5">Current</th><th className="px-2 py-1.5">Target</th><th className="px-2 py-1.5">Measured basis</th><th className="px-2 py-1.5">Affected analyses</th><th className="px-2 py-1.5">Next action</th></tr></thead><tbody>{axes.map((axis) => <tr key={axis.id} onClick={() => axis.inspectId && onInspect(axis.inspectId)} className="cursor-pointer border-t border-slate-900 hover:bg-white/[.02]"><td className="px-2 py-1.5 text-slate-200">{axis.label}</td><td className="px-2 py-1.5 font-semibold" style={{ color: color(axis.value) }}>{level(axis.value)}</td><td className="px-2 py-1.5 font-mono text-slate-300">{axis.value === null ? "—" : axis.value.toFixed(2)}</td><td className="px-2 py-1.5 font-mono text-slate-400">{axis.target.toFixed(2)}</td><td className="px-2 py-1.5 text-slate-400">{axis.basis}</td><td className="px-2 py-1.5 text-slate-400">{axis.affected}</td><td className="px-2 py-1.5 text-slate-300">{axis.action}</td></tr>)}</tbody></table></div>
     <div className="text-[9px] text-slate-500">Levels: Ready ≥ 0.80; Developing 0.55–0.79; Needs attention &lt; 0.55; Not assessed = no governed aggregate. Overall level is constrained by the weakest measured dimension and cannot be Ready while a critical dimension is unassessed.</div>
@@ -3390,6 +3391,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
   const [sourceMetadataRefreshNonce, setSourceMetadataRefreshNonce] = useState(0);
   const [metadata, setMetadata] = useState<SourceMediaMetadata | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [analysisCompleteness, setAnalysisCompleteness] = useState<AnalysisCompleteness | null>(null);
+  const [completenessRefreshing, setCompletenessRefreshing] = useState(false);
+  const [completenessMessage, setCompletenessMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "complete" | "failed">("idle");
@@ -3490,8 +3494,9 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
     Promise.allSettled([
       apiService.getSourceMediaMetadata(activeAnalysisId),
       VideoService.getAnalysis(activeAnalysisId),
+      apiService.getStatusSummary(activeAnalysisId),
     ])
-      .then(([metadataResult, analysisResult]) => {
+      .then(([metadataResult, analysisResult, statusResult]) => {
         if (cancelled) return;
         if (metadataResult.status === "fulfilled") {
           setMetadata(metadataResult.value);
@@ -3506,6 +3511,11 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         } else {
           setAnalysisData(null);
         }
+        setAnalysisCompleteness(
+          statusResult.status === "fulfilled"
+            ? statusResult.value.analysis_completeness || null
+            : null,
+        );
         if (metadataResult.status === "rejected" && analysisResult.status === "rejected") {
           throw metadataResult.reason || analysisResult.reason;
         }
@@ -3524,6 +3534,26 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
       cancelled = true;
     };
   }, [activeAnalysisId, sourceMetadataRefreshNonce]);
+
+  const refreshMissingAnalysisFeatures = async () => {
+    if (!activeAnalysisId) return;
+    setCompletenessRefreshing(true);
+    setCompletenessMessage("Repairing and verifying missing features…");
+    try {
+      const result = await apiService.refreshAnalysisCompleteness(activeAnalysisId);
+      setAnalysisCompleteness(result.analysis_completeness);
+      setCompletenessMessage(
+        result.analysis_completeness.missing_count === 0
+          ? "Full analysis verified."
+          : `${result.analysis_completeness.missing_count} feature${result.analysis_completeness.missing_count === 1 ? "" : "s"} still require attention.`,
+      );
+      setSourceMetadataRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setCompletenessMessage(error instanceof Error ? error.message : "Completeness refresh failed");
+    } finally {
+      setCompletenessRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (!comparisonStudioOpen) return;
@@ -4295,7 +4325,44 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </div>
 
-      <details open className="order-2 mt-2 rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-box-collapsible="true">
+      {analysisCompleteness ? (
+        <details
+          open={analysisCompleteness.missing_count > 0}
+          className={`order-2 mt-2 rounded border ${analysisCompleteness.missing_count > 0 ? "border-amber-900/70 bg-amber-950/10" : "border-emerald-900/60 bg-emerald-950/10"}`}
+          data-vaa1-analysis-completeness="true"
+        >
+          <summary className="cursor-pointer list-none px-3 py-2 text-[10px] font-semibold marker:hidden">
+            {analysisCompleteness.missing_count === 0
+              ? `Full analysis verified · ${analysisCompleteness.computed_count}/${analysisCompleteness.required_count}`
+              : `Analysis completeness · ${analysisCompleteness.missing_count} missing feature${analysisCompleteness.missing_count === 1 ? "" : "s"}`}
+          </summary>
+          <div className="border-t border-slate-800 p-3">
+            <div className="grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+              {analysisCompleteness.branches.map((branch) => (
+                <div key={branch.branch_id} className="flex items-center justify-between gap-2 rounded border border-slate-800 bg-[#0c0c0c] px-2 py-1.5 text-[9px]">
+                  <span>{branch.label}</span>
+                  <span className={branch.state === "computed" ? "text-emerald-300" : branch.state === "computed_degraded" ? "text-amber-300" : "text-rose-300"}>
+                    {branch.state.replaceAll("_", " ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshMissingAnalysisFeatures()}
+                disabled={completenessRefreshing || !analysisCompleteness.can_repair}
+                className="rounded border border-amber-700/70 px-3 py-1.5 text-[10px] text-amber-200 hover:bg-amber-950/30 disabled:opacity-40"
+              >
+                {completenessRefreshing ? "Repairing and verifying…" : "Refresh missing features"}
+              </button>
+              {completenessMessage ? <span className="text-[9px] text-slate-400" role="status">{completenessMessage}</span> : null}
+            </div>
+          </div>
+        </details>
+      ) : null}
+
+      <details open className="order-3 mt-2 rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-box-collapsible="true">
         <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-200 marker:hidden">Analysis setup</summary>
         <div className="grid gap-2 border-t border-slate-800 p-2 xl:grid-cols-4">
         <label className="rounded border border-slate-800 bg-[#101010] px-2 py-1.5">

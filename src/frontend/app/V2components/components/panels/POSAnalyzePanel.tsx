@@ -7,6 +7,7 @@ import { getVideoBlob } from "@/lib/blob-store";
 import { apiService } from "@/lib/api-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
+import LanguageParityMetaView from "../LanguageParityMetaView";
 
 import {
   Download,
@@ -196,6 +197,8 @@ export default function POSAnalyzePanel() {
   const [showPosWords, setShowPosWords] = useState(false);
   const [expandedGrammarBuckets, setExpandedGrammarBuckets] = useState<string[]>([]);
   const [showPosMenu, setShowPosMenu] = useState(false);
+  const [attentionTarget, setAttentionTarget] = useState<string | null>(null);
+  const [showClassificationReview, setShowClassificationReview] = useState(false);
   const [matrixSections, setMatrixSections] = useState<string[]>([]);
   const [matrixAnalysisIds, setMatrixAnalysisIds] = useState<string[]>([]);
 
@@ -217,6 +220,34 @@ export default function POSAnalyzePanel() {
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
   }, [videoId]);
+
+  useEffect(() => {
+    const attentionHandler = (payload: { panelType?: string; target?: string }) => {
+      if (payload?.panelType !== "POS" || payload?.target !== "pos_counts") return;
+      setShowPosCounts(true);
+      setShowPosWords(true);
+      setShowClassificationReview(true);
+      setAttentionTarget("pos_counts");
+    };
+    eventBus.on("languageParityAttentionRequest", attentionHandler);
+    return () => eventBus.off("languageParityAttentionRequest", attentionHandler);
+  }, []);
+
+  useEffect(() => {
+    if (attentionTarget !== "pos_counts" || !showPosCounts || !showPosWords) return;
+    let clearHighlightTimer = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const destination = document.querySelector('[data-vaa1-pos-section="pos_counts"]');
+        destination?.scrollIntoView({ behavior: "smooth", block: "start" });
+        clearHighlightTimer = window.setTimeout(() => setAttentionTarget(null), 2400);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (clearHighlightTimer) window.clearTimeout(clearHighlightTimer);
+    };
+  }, [attentionTarget, showPosCounts, showPosWords]);
 
   useEffect(() => {
     const syncMatrixSections = () => {
@@ -396,22 +427,25 @@ export default function POSAnalyzePanel() {
   const formatConfidence = (value?: number) =>
     Number.isFinite(value) ? Number(value).toFixed(2).replace(/\.?0+$/, "") : "0";
   const summaryChips = [
-    posAnalysisMode ? `mode ${posAnalysisMode}` : null,
-    posTokenCount !== undefined ? `${posTokenCount} tokens` : null,
+    posAnalysisMode ? { label: `mode ${posAnalysisMode}`, target: "pos_counts", action: "expand" } : null,
+    posTokenCount !== undefined ? { label: `${posTokenCount} tokens`, target: "pos_words", action: "expand" } : null,
     posConfidence?.overall?.level
-      ? `${posConfidence.overall.level} confidence${
+      ? { label: `${posConfidence.overall.level} confidence${
           posConfidence.overall.score !== undefined
             ? ` ${formatConfidence(posConfidence.overall.score)}`
             : ""
-        }`
+        }`, target: "pos_counts", action: "review" }
       : null,
     posConfidence?.overall?.triangulation_ready
-      ? "triangulation ready"
+      ? { label: "triangulation ready", target: "grammar_features", action: "expand" }
       : null,
     posConfidence?.overall?.timestamp_ready === false
-      ? "timestamp pending"
+      ? { label: "timestamp pending", target: "transcript", action: "navigate" }
       : null,
-  ].filter(Boolean);
+  ].filter(Boolean) as Array<{ label: string; target: string; action: string }>;
+  const classifiedOccurrenceCount = Object.values(pos_counts).reduce((sum: number, value) => sum + Number(value || 0), 0);
+  const taxonomyGapCount = Math.max(0, Number(posTokenCount || 0) - classifiedOccurrenceCount);
+  const taxonomyGapPercent = posTokenCount ? Math.round(taxonomyGapCount / Number(posTokenCount) * 100) : 0;
   const interrogativeRows = [
     { key: "who", label: "who", value: interrogative_lens.who },
     { key: "what", label: "what", value: interrogative_lens.what },
@@ -656,7 +690,7 @@ export default function POSAnalyzePanel() {
     onToggle: () => void,
     matrixKey: string,
   ) => (
-    <div className="border-b border-white/8 shrink-0">
+    <div data-vaa1-pos-section={matrixKey} className={`border-b border-white/8 shrink-0 transition-colors ${attentionTarget === matrixKey ? "bg-amber-500/10 ring-1 ring-inset ring-amber-500/50" : ""}`}>
       <div className="w-full px-3 py-2 flex items-center justify-between gap-2">
         <button
           onClick={onToggle}
@@ -754,9 +788,29 @@ export default function POSAnalyzePanel() {
     "rounded border border-white/8 bg-[#111111] px-3 py-2 text-sm text-slate-200";
   const panelChipClass =
     "rounded-full border border-white/10 bg-[#101010] px-2.5 py-1 text-[11px] text-slate-300";
+  const activateSummaryChip = (chip: { target: string; action: string }) => {
+    if (chip.target === "transcript") {
+      eventBus.emit("openPanelRequest", { panelType: "Transcript" });
+      return;
+    }
+    if (chip.target === "pos_counts") {
+      setShowPosCounts(true);
+      setShowClassificationReview(true);
+    } else if (chip.target === "pos_words") {
+      setShowPosWords(true);
+    } else if (chip.target === "grammar_features") {
+      setShowGrammarFeatures(true);
+    }
+    setAttentionTarget(chip.target);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.querySelector(`[data-vaa1-pos-section="${chip.target}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.setTimeout(() => setAttentionTarget(null), 2400);
+    }));
+  };
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
+      <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>
@@ -835,12 +889,23 @@ export default function POSAnalyzePanel() {
             {summaryChips.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {summaryChips.map((chip) => (
-                  <span key={chip} className={panelChipClass}>
-                    {chip}
-                  </span>
+                  <button type="button" key={chip.label} onClick={() => activateSummaryChip(chip)} title={`Open ${chip.target.replaceAll("_", " ")}`} className={`${panelChipClass} hover:border-cyan-600/60 hover:text-cyan-200 focus:outline-none focus:ring-2 focus:ring-cyan-600/50`}>
+                    {chip.label} <span aria-hidden="true">→</span>
+                  </button>
                 ))}
               </div>
             )}
+            {showClassificationReview && taxonomyGapCount > 0 ? (
+              <div className="rounded border border-amber-500/40 bg-amber-950/15 px-3 py-3 text-xs text-slate-300" data-vaa1-pos-review-focus="taxonomy-gap">
+                <div className="font-semibold text-amber-200">Review focus: {taxonomyGapCount} of {posTokenCount} tokens ({taxonomyGapPercent}%) sit outside the ten displayed POS categories</div>
+                <p className="mt-2 text-slate-400">This is a taxonomy-scope gap, not yet evidence of failed classification. Confirm the excluded POS categories (commonly NUM, PART, SYM or X), their token examples, and timestamp linkage before marking this attribute ready.</p>
+                <div className="mt-2 grid gap-1 sm:grid-cols-3">
+                  <div className="rounded border border-white/10 px-2 py-1">1. Category counts</div>
+                  <div className="rounded border border-white/10 px-2 py-1">2. Token examples</div>
+                  <div className="rounded border border-white/10 px-2 py-1">3. Timestamp links</div>
+                </div>
+              </div>
+            ) : null}
             {posNotes.length > 0 && (
               <div className={panelQuietNoteClass}>
                 {posNotes.join(" ")}

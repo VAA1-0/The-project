@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1.full_analysis_manifest.v1.schema.json",
+  "title": "VAA1 Full Analysis Manifest v1",
+  "type": "object",
+  "required": ["schema", "analysis_id", "requested_profile", "overall_state", "branches", "blocking_reasons", "verified_at"],
+  "properties": {
+    "schema": { "const": "vaa1.full_analysis_manifest.v1" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "requested_profile": { "enum": ["full", "visual_only", "audio_only"] },
+    "overall_state": { "enum": ["full", "degraded", "partial", "failed"] },
+    "blocking_reasons": { "type": "array", "items": { "type": "string" } },
+    "verified_at": { "type": "string", "format": "date-time" },
+    "branches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["branch_id", "label", "required", "state", "retryable", "recovery_action"],
+        "properties": {
+          "branch_id": { "type": "string" },
+          "label": { "type": "string" },
+          "required": { "type": "boolean" },
+          "state": { "enum": ["computed", "computed_degraded", "not_run", "failed", "stale", "artifact_missing", "projection_missing", "hydration_missing", "consumer_missing", "unsupported_platform_capability", "not_applicable"] },
+          "producer": { "type": ["string", "null"] },
+          "method_version": { "type": ["string", "null"] },
+          "artifact_path": { "type": ["string", "null"] },
+          "artifact_checksum": { "type": ["string", "null"] },
+          "artifact_schema": { "type": ["string", "null"] },
+          "row_count": { "type": ["integer", "null"], "minimum": 0 },
+          "projection_state": { "type": ["string", "null"] },
+          "hydration_state": { "type": ["string", "null"] },
+          "consumer_state": { "type": ["string", "null"] },
+          "error": { "type": ["string", "null"] },
+          "retryable": { "type": "boolean" },
+          "recovery_action": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

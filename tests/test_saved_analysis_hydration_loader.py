@@ -168,6 +168,57 @@ class SavedAnalysisHydrationLoaderTests(unittest.TestCase):
                 hydrated["saved_analysis_hydration_audit"]["already_present"],
             )
 
+    def test_more_mature_disk_corrections_replace_sparse_status_values(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results_dir = Path(tmpdir)
+            analysis_id = "analysis-recovered"
+            analysis_dir = results_dir / analysis_id
+            existing_corrections = {
+                "analysis_id": analysis_id,
+                "manual_visual_annotations": [],
+                "manual_transcript_entries": [],
+            }
+            disk_corrections = {
+                "analysis_id": analysis_id,
+                "manual_visual_annotations": [{"id": "bbox-recovered"}],
+                "manual_transcript_entries": [{"id": "line-recovered"}],
+            }
+            status = {
+                "analysis_id": analysis_id,
+                "annotation_corrections": existing_corrections,
+                "output_files": {},
+            }
+
+            self.write_json(analysis_dir / "annotation_corrections.json", disk_corrections)
+            hydrated = hydrate_saved_analysis_status(status, results_dir=results_dir)
+
+            self.assertEqual(hydrated["annotation_corrections"], disk_corrections)
+            self.assertIn(
+                "annotation_corrections",
+                hydrated["saved_analysis_hydration_audit"]["maturity_replacements"],
+            )
+
+    def test_canonical_visual_artifact_replaces_row_mismatched_hydration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results_dir = Path(tmpdir)
+            analysis_id = "analysis-visual-parity"
+            analysis_dir = results_dir / analysis_id
+            canonical = {"schema": "vaa1.spatial_tone_measurement.v1", "samples": [{"id": 1}, {"id": 2}]}
+            stale = {"samples": [{"id": value} for value in range(6)]}
+            self.write_json(analysis_dir / "spatial_tone_scan.json", canonical)
+            status = {
+                "analysis_id": analysis_id,
+                "output_files": {},
+                "results": {"visual_analysis": {"spatial_tone_scan": stale}},
+            }
+
+            hydrated = hydrate_saved_analysis_status(status, results_dir=results_dir)
+
+            self.assertEqual(hydrated["results"]["visual_analysis"]["spatial_tone_scan"], canonical)
+            replacement = hydrated["saved_analysis_hydration_audit"]["parity_replacements"][0]
+            self.assertEqual(replacement["previous_row_count"], 6)
+            self.assertEqual(replacement["canonical_row_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
