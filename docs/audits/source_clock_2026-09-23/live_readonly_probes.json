@@ -1,0 +1,39 @@
+[
+  {
+    "check": "context",
+    "status": 200,
+    "binding_status": "content_bound"
+  },
+  {
+    "check": "current",
+    "status": 200,
+    "binding_status": "content_bound",
+    "detail": null
+  },
+  {
+    "check": "stale revision",
+    "status": 409,
+    "binding_status": null,
+    "detail": "Source or clock revision changed; reload the evidence before continuing"
+  },
+  {
+    "check": "foreign content",
+    "status": 409,
+    "binding_status": null,
+    "detail": "Source or clock revision changed; reload the evidence before continuing"
+  },
+  {
+    "check": "legacy",
+    "status": 200,
+    "binding_status": "legacy_unversioned",
+    "detail": null
+  },
+  {
+    "check": "frontend",
+    "status": 200
+  },
+  {
+    "check": "protected saved corrections/ledgers/metadata",
+    "unchanged": 32
+  }
+]

@@ -1,4 +1,7 @@
 "use client";
+import { formatPreciseSourceTime } from "@/lib/source-clock";
+
+import { sourceTimeBoundary } from "@/lib/source-clock";
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -27,6 +30,7 @@ import {
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type MatureEvidenceAuthority } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { subscribeSourceTime } from "@/lib/source-clock-events";
 import {
   matureSceneSegmentsFromAnalysis,
   matureSceneSegmentSourceLabel,
@@ -273,10 +277,7 @@ function secondsFromMs(value?: number): number {
 }
 
 function formatTime(seconds: number): string {
-  const safe = Math.max(0, Number(seconds || 0));
-  const minutes = Math.floor(safe / 60);
-  const wholeSeconds = Math.floor(safe % 60);
-  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}`;
+  return formatPreciseSourceTime(seconds);
 }
 
 function compactReportTitle(title?: string): string {
@@ -323,34 +324,23 @@ function intervalsOverlap(start: number, end: number, itemStart?: number, itemEn
 }
 
 function instructionStartSeconds(instruction: SecondOrderLabelInstruction): number {
-  const raw = instruction.time_span?.start_ms ?? instruction.time_span?.start ?? 0;
-  const value = Number(raw || 0);
-  return instruction.time_span?.start_ms !== undefined || value > 1000 ? value / 1000 : value;
+  const span = instruction.time_span;
+  return sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function instructionEndSeconds(instruction: SecondOrderLabelInstruction): number {
-  const raw =
-    instruction.time_span?.end_ms ??
-    instruction.time_span?.end ??
-    instruction.time_span?.start_ms ??
-    instruction.time_span?.start ??
-    0;
-  const value = Number(raw || 0);
-  return instruction.time_span?.end_ms !== undefined || value > 1000 ? value / 1000 : value;
+  const span = instruction.time_span;
+  return sourceTimeBoundary(span, "end") ?? sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function readingStartSeconds(reading: SceneInterpretiveReading): number {
-  const span = reading.target?.time_span || reading.time_span || {};
-  const raw = span.start_ms ?? span.start ?? 0;
-  const value = Number(raw || 0);
-  return span.start_ms !== undefined || value > 1000 ? value / 1000 : value;
+  const span = reading.target?.time_span || reading.time_span;
+  return sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function readingEndSeconds(reading: SceneInterpretiveReading): number {
-  const span = reading.target?.time_span || reading.time_span || {};
-  const raw = span.end_ms ?? span.end ?? span.start_ms ?? span.start ?? 0;
-  const value = Number(raw || 0);
-  return span.end_ms !== undefined || value > 1000 ? value / 1000 : value;
+  const span = reading.target?.time_span || reading.time_span;
+  return sourceTimeBoundary(span, "end") ?? sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function readingEvidenceSummary(reading: SceneInterpretiveReading): string {
@@ -450,6 +440,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   const [reportDraftWriting, setReportDraftWriting] = useState(false);
   const [reportDraftMessage, setReportDraftMessage] = useState("");
   const [evidenceMenu, setEvidenceMenu] = useState<EvidenceContextMenuState | null>(null);
+  const sceneButtonRefs = React.useRef(new Map<string, HTMLButtonElement>());
 
   useEffect(() => {
     const handler = (id: string) => setSelectedVideoId(id);
@@ -529,6 +520,23 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   }, [selectedVideoId, refreshNonce]);
 
   const cards = useMemo(() => bundle?.scene_cards || [], [bundle?.scene_cards]);
+  useEffect(() => {
+    if (!selectedVideoId || !cards.length) return;
+    return subscribeSourceTime(selectedVideoId, (time) => {
+      const containingIndex = cards.findIndex((card, index) => {
+        const start = secondsFromMs(card.time_interval?.start_ms);
+        const end = secondsFromMs(card.time_interval?.end_ms);
+        return time >= start && (time < end || (index === cards.length - 1 && time <= end));
+      });
+      if (containingIndex < 0) return;
+      const containing = cards[containingIndex];
+      const sceneId = containing.scene_id || "";
+      setSelectedSceneId(sceneId);
+      window.requestAnimationFrame(() => {
+        sceneButtonRefs.current.get(sceneId)?.scrollIntoView({ block: "nearest" });
+      });
+    });
+  }, [cards, selectedVideoId]);
   const matureSceneSegments = useMemo(
     () => matureSceneSegmentsFromAnalysis(analysisData),
     [analysisData],
@@ -914,7 +922,6 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       updated_at: new Date().toISOString(),
       updated_by: "analyst",
     };
-    pushCorrectionSnapshot(selectedVideoId, existing || baseCorrections);
     const nextCorrections = upsertManualVisualAnnotation(existing || baseCorrections, annotation);
     await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
     broadcastAnalysisCorrectionRefresh(selectedVideoId);
@@ -1072,7 +1079,6 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
         updated_at: new Date().toISOString(),
         updated_by: "analyst",
       };
-      pushCorrectionSnapshot(selectedVideoId, existing || baseCorrections);
       const nextCorrections = upsertManualVisualAnnotation(existing || baseCorrections, annotation);
       await VideoService.saveAnnotationCorrections(selectedVideoId, nextCorrections);
       broadcastAnalysisCorrectionRefresh(selectedVideoId);
@@ -1171,6 +1177,12 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                 return (
                   <button
                     key={card.scene_id || index}
+                    ref={(element) => {
+                      const sceneId = card.scene_id || "";
+                      if (element) sceneButtonRefs.current.set(sceneId, element);
+                      else sceneButtonRefs.current.delete(sceneId);
+                    }}
+                    data-scene-card-id={card.scene_id || `scene-${index + 1}`}
                     type="button"
                     onClick={() => navigateToScene(card)}
                     className={`w-full rounded border px-2 py-2 text-left text-[11px] ${

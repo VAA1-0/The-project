@@ -3,7 +3,6 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { useLayoutHost } from "../LayoutHost";
 
 import { VideoService } from "@/lib/video-service";
-import { getVideoBlob } from "@/lib/blob-store";
 import { apiService } from "@/lib/api-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
@@ -15,6 +14,7 @@ import {
   MoreHorizontal,
   ChevronDown,
   ChevronRight,
+  RefreshCw,
 } from "lucide-react";
 
 const POS_CATEGORY_GROUPS = [
@@ -170,22 +170,22 @@ function confidenceSymbol(level?: string) {
   return "·";
 }
 
-export default function POSAnalyzePanel() {
+export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { videoId?: string }) {
   const { openPanel } = useLayoutHost();
   const MATRIX_STORAGE_KEY = "vaa1.pos.matrix.sections";
   const MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
-  const [videoId, setVideoId] = useState("");
+  const [videoId, setVideoId] = useState(
+    () => eventBus.getLast<string>("videoIdChanged") || initialVideoId,
+  );
 
-  const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<any>(null);
-  const [blobMissing, setBlobMissing] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [isRefreshingPOS, setIsRefreshingPOS] = useState(false);
   const [posRefreshMessage, setPosRefreshMessage] = useState<string | null>(null);
+  const [posRefreshError, setPosRefreshError] = useState<string | null>(null);
 
   // State for show/hide sections
   const [showPosCounts, setShowPosCounts] = useState(false);
@@ -207,8 +207,14 @@ export default function POSAnalyzePanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const correctionHandler = (id: string) => {
-      if (id === videoId) {
+    const correctionHandler = (
+      payload: string | { analysisId?: string; videoId?: string },
+    ) => {
+      const id =
+        typeof payload === "string"
+          ? payload
+          : payload?.analysisId || payload?.videoId || "";
+      if (id && id === videoId) {
         setRefreshNonce((current) => current + 1);
       }
     };
@@ -308,57 +314,27 @@ export default function POSAnalyzePanel() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setAnalysisData(null);
+    setRawCsv(null);
+    setLoadError(null);
+    setIsLoading(Boolean(videoId));
+    if (!videoId) return;
     async function load() {
-      if (!videoId) {
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-
       try {
-        // Load metadata
-        const m = await VideoService.get(videoId);
-
-        console.log("Loaded metadata:", m);
-
-        setMetadata(m);
-
-        // Load video blob - hybrid approach
-        // 1. First try to get the original video from IndexedDB (instant preview)
-        let blob = await getVideoBlob(videoId);
-
-        if (!blob) {
-          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
-          blob = await VideoService.getBlob(videoId);
-        }
-        if (blob) {
-          if (lastObjectUrl.current) {
-            URL.revokeObjectURL(lastObjectUrl.current);
-          }
-          const url = URL.createObjectURL(blob);
-          lastObjectUrl.current = url;
-          setVideoUrl(url);
-          setBlobMissing(false);
-        } else {
-          setBlobMissing(true);
-          setVideoUrl(null);
-        }
-
-        // Load analysis data
+        // Saved linguistic evidence does not depend on downloading playable media.
         const analysis = await VideoService.getAnalysis(videoId);
-
+        if (cancelled) return;
         setAnalysisData(analysis);
         setRawCsv(analysis.rawCsv || null);
-      } catch (err) {
-        console.error("Failed to load data:", err);
-        setBlobMissing(true);
-        setVideoUrl(null);
+      } catch (error) {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load saved analysis");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
-    load();
+    void load();
+    return () => { cancelled = true; };
   }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to empty arrays if not available)
@@ -513,25 +489,28 @@ export default function POSAnalyzePanel() {
   };
 
   const toggleMatrixSection = (section: string) => {
-    setMatrixSections((current) => {
-      const next = current.includes(section)
-        ? current.filter((item) => item !== section)
-        : [...current, section];
-      window.localStorage.setItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
-      if (!current.includes(section) && videoId) {
-        const nextAnalysisIds = matrixAnalysisIds.includes(videoId)
-          ? matrixAnalysisIds
-          : [...matrixAnalysisIds, videoId];
-        window.localStorage.setItem(
-          MATRIX_ANALYSES_STORAGE_KEY,
-          JSON.stringify(nextAnalysisIds),
-        );
-        setMatrixAnalysisIds(nextAnalysisIds);
-        eventBus.emit("posMatrixAnalysesChanged", nextAnalysisIds);
-      }
-      eventBus.emit("posMatrixSectionsChanged", next);
-      return next;
-    });
+    // Keep storage writes and event publication outside React's state updater.
+    // React may replay functional updaters; publishing from inside one caused
+    // re-entrant matrix state updates and could remount the entire workbench.
+    const isRemoving = matrixSections.includes(section);
+    const next = isRemoving
+      ? matrixSections.filter((item) => item !== section)
+      : [...matrixSections, section];
+    setMatrixSections(next);
+    window.localStorage.setItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
+
+    if (!isRemoving && videoId) {
+      const nextAnalysisIds = matrixAnalysisIds.includes(videoId)
+        ? matrixAnalysisIds
+        : [...matrixAnalysisIds, videoId];
+      window.localStorage.setItem(
+        MATRIX_ANALYSES_STORAGE_KEY,
+        JSON.stringify(nextAnalysisIds),
+      );
+      setMatrixAnalysisIds(nextAnalysisIds);
+      eventBus.emit("posMatrixAnalysesChanged", nextAnalysisIds);
+    }
+    eventBus.emit("posMatrixSectionsChanged", next);
   };
   const currentAnalysisInMatrix = !!videoId && matrixAnalysisIds.includes(videoId);
 
@@ -551,6 +530,7 @@ export default function POSAnalyzePanel() {
     try {
       setIsRefreshingPOS(true);
       setPosRefreshMessage(null);
+      setPosRefreshError(null);
       await apiService.refreshPOSAnalysis(videoId, {
         segments: transcriptSegments.map((segment: any) => ({
           text: segment?.text || "",
@@ -565,13 +545,12 @@ export default function POSAnalyzePanel() {
       const refreshedAnalysis = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshedAnalysis);
       setRawCsv(refreshedAnalysis.rawCsv || null);
-      setRefreshNonce((current) => current + 1);
       setPosRefreshMessage("POS refreshed from corrected transcript.");
+      eventBus.emit("posAnalysisChanged", { analysisId: videoId });
       window.setTimeout(() => setPosRefreshMessage(null), 2500);
-      alert("POS refreshed from corrected transcript.");
     } catch (error) {
       console.error("POS refresh failed:", error);
-      alert(
+      setPosRefreshError(
         "Could not refresh POS from the corrected transcript: " +
           (error instanceof Error ? error.message : String(error)),
       );
@@ -810,14 +789,21 @@ export default function POSAnalyzePanel() {
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
+      {isLoading && <p role="status">Loading saved language analysis…</p>}
+      {loadError && <p role="alert">{loadError} <button onClick={() => setRefreshNonce((value) => value + 1)}>Retry loading</button></p>}
       <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}
       </div>
       {videoId && <div className="mx-3 mb-2"><SceneLanguageSFLView analysisId={videoId} perspective="pos" /></div>}
       {posRefreshMessage ? (
-        <div className="mx-3 mb-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+        <div role="status" data-vaa1-pos-refresh-status="success" className="mx-3 mb-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
           {posRefreshMessage}
+        </div>
+      ) : null}
+      {posRefreshError ? (
+        <div role="alert" data-vaa1-pos-refresh-status="error" className="mx-3 mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          {posRefreshError}
         </div>
       ) : null}
       <div className="flex-1 overflow-y-auto">
@@ -827,6 +813,17 @@ export default function POSAnalyzePanel() {
             POS governance
           </span>
           <div className="relative flex items-center gap-1">
+            <button
+              type="button"
+              data-vaa1-pos-refresh="true"
+              onClick={() => void refreshPOSFromCorrectedTranscript()}
+              disabled={!videoId || isRefreshingPOS}
+              title="Rebuild this analysis from the corrected, source-timed transcript"
+              className="inline-flex items-center gap-1.5 rounded border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`size-3.5 ${isRefreshingPOS ? "animate-spin" : ""}`} />
+              {isRefreshingPOS ? "Refreshing…" : "Refresh POS"}
+            </button>
             <button className="p-1 hover:bg-[#2a2a2a] rounded">
               <Search className="size-3.5 text-[#b8b8b8]" />
             </button>

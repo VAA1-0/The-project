@@ -20,6 +20,7 @@ SCHEMA_ID = "https://datascene.eu/schemas/publication/data-book-package/1.0.0"
 ENGINE_VERSION = "1.0.0"
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 MAX_EMBEDDED_FILE_BYTES = int(os.getenv("VAA1_PUBLICATION_EMBED_FILE_MAX_BYTES", str(100 * 1024 * 1024)))
+DEFAULT_RESULTS_DIR = Path(os.getenv("VAA1_RESULTS_DIR", "outputs/api_results"))
 
 
 FEATURES = [
@@ -172,6 +173,32 @@ def _artifact_count(path: Path) -> int:
     return 1
 
 
+def _analysis_results_dir(status: dict[str, Any]) -> Path | None:
+    analysis_id = str(status.get("analysis_id") or status.get("id") or "").strip()
+    if not analysis_id:
+        return None
+    return DEFAULT_RESULTS_DIR / analysis_id
+
+
+def _overlay_canonical_artifact_paths(status: dict[str, Any]) -> dict[str, str]:
+    """Return output files plus canonical sidecars that must win for publication."""
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    merged = {str(key): str(value) for key, value in output_files.items() if value}
+    analysis_dir = _analysis_results_dir(status)
+    if analysis_dir is None:
+        return merged
+    canonical_files = {
+        "annotation_corrections": "annotation_corrections.json",
+        "vaa1_annotation_master_schema": "vaa1_annotation_master_schema.json",
+        "live_mature_data_proliferation_audit": "live_mature_data_proliferation_audit.json",
+    }
+    for artifact_key, filename in canonical_files.items():
+        canonical_path = analysis_dir / filename
+        if canonical_path.is_file():
+            merged[artifact_key] = str(canonical_path)
+    return merged
+
+
 def _write_deterministic_zip(path: Path, files: dict[str, bytes | Path]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
@@ -198,8 +225,8 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
     video_id = analysis_id
     project_id = str(status.get("project_id") or "local-research-project")
     source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
-    if status.get("status") != "completed": raise ValueError("Video publication requires a completed analysis")
     if not source.exists(): raise ValueError("Source video is missing")
+    is_completed = status.get("status") == "completed"
     title = _safe_name(Path(str(status.get("original_filename") or source.name)).stem)
     source_checksum = _sha_file(source)
     edition_id = _id("video-edition", {"analysis": analysis_id, "completed": status.get("analysis_completed_at"), "source": source_checksum})
@@ -208,7 +235,7 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
     report_id = _id("scientific-report", edition_id)
     clock_id = _id("source-clock", {"video": video_id, "source": source_checksum})
     generated_at = str(status.get("analysis_completed_at") or status.get("uploaded_at") or _now())
-    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    output_files = _overlay_canonical_artifact_paths(status)
     output_files = {"source_video": str(source), **output_files}
     archive_files: dict[str, bytes | Path] = {}
     associated_files: list[dict[str, Any]] = []
@@ -269,7 +296,20 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
         browse_children.append({"node_id": chapter_id, "label": f"{index:02d} - {chapter_title}", "node_type": "chapter", "state": "ready" if populated else "empty", "target": {"resource_type": "chapter", "resource_id": chapter_id, "archive_path": f"{folder}/Chapter.json"}, "actions": ["open", "inspect", "trace_to_source", "show_provenance", "export_item"]})
 
     chapter_ids = [item["chapter_id"] for item in chapters]
-    completeness = _completeness([_check("PUB-001", "Every operational registry feature has exactly one chapter."), _check("PUB-003", "Empty chapters use governed empty states.")], checked_at=generated_at)
+    validation_checks = [
+        _check("PUB-001", "Every operational registry feature has exactly one chapter."),
+        _check("PUB-003", "Empty chapters use governed empty states."),
+    ]
+    if not is_completed:
+        validation_checks.append(
+            _check(
+                "PUB-004",
+                "Analysis is not marked completed; Data Book publishes the mature saved artifacts available now.",
+                status="warning",
+                severity="warning",
+            )
+        )
+    completeness = _completeness(validation_checks, checked_at=generated_at)
     report = {
         "report_id": report_id, "report_type": "video_scientific_report", "edition_id": edition_id,
         "video_id": video_id, "title": f"Scientific Report - {title}", "language": "en",

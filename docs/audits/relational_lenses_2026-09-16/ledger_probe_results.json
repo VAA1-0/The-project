@@ -1,0 +1,8 @@
+{
+  "scope": "in-memory only, no live API calls",
+  "omitted_authority_defaults_to": "explicit_user_correction",
+  "omitted_maturity_defaults_to": "analyst_confirmed",
+  "second_same_subject_property_interval_supersedes": [
+    "first"
+  ]
+}

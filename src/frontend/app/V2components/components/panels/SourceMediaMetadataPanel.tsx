@@ -622,19 +622,30 @@ export default function SourceMediaMetadataPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const metadataHandler = (payload: string | { videoId?: string }) => {
-      const changedVideoId = typeof payload === "string" ? payload : payload?.videoId;
+    const metadataHandler = (
+      payload: string | { videoId?: string; analysisId?: string; metadata?: SourceMediaMetadata },
+    ) => {
+      const changedVideoId =
+        typeof payload === "string"
+          ? payload
+          : payload?.videoId || payload?.analysisId;
       if (changedVideoId === videoId) {
-        setRefreshNonce((value) => value + 1);
+        if (typeof payload !== "string" && payload.metadata) {
+          hydrateMetadataState(payload.metadata);
+        } else {
+          setRefreshNonce((value) => value + 1);
+        }
       }
     };
     eventBus.on("videoIdChanged", handler);
     eventBus.on("sourceMediaMetadataChanged", metadataHandler);
+    eventBus.on("sourceMediaMetadataUpdated", metadataHandler);
     eventBus.on("analysisCorrectionsChanged", metadataHandler);
     eventBus.on("narrativeAgentProfilePresenceUpdated", metadataHandler);
     return () => {
       eventBus.off("videoIdChanged", handler);
       eventBus.off("sourceMediaMetadataChanged", metadataHandler);
+      eventBus.off("sourceMediaMetadataUpdated", metadataHandler);
       eventBus.off("analysisCorrectionsChanged", metadataHandler);
       eventBus.off("narrativeAgentProfilePresenceUpdated", metadataHandler);
     };
@@ -699,19 +710,16 @@ export default function SourceMediaMetadataPanel() {
       }
 
       try {
-        const [nextMetadata, nextAnalysis] = await Promise.all([
+        const [nextMetadata, corrections] = await Promise.all([
           apiService.getSourceMediaMetadata(videoId),
-          VideoService.refreshAnalysis(videoId).catch((error) => {
-            console.warn("Failed to load Narrative Agent presence intervals:", error);
-            return null;
-          }),
+          apiService.getAnnotationCorrections(videoId).catch(() => null),
         ]);
         if (cancelled) {
           return;
         }
         hydrateMetadataState(nextMetadata);
-        setAnalysisData(nextAnalysis);
-        setPresenceIntervals(nextAnalysis?.annotationCorrections?.master_schema_presence_intervals || []);
+        setAnalysisData(null);
+        setPresenceIntervals(corrections?.master_schema_presence_intervals || []);
       } catch (error) {
         if (cancelled) {
           return;
@@ -747,7 +755,7 @@ export default function SourceMediaMetadataPanel() {
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      const saved = await apiService.updateSourceMediaMetadata(videoId, {
+      const persisted = await apiService.updateSourceMediaMetadata(videoId, {
         editor_notes: editorNotes,
         source_context: sourceContext,
         provenance_notes: provenanceNotes,
@@ -812,8 +820,8 @@ export default function SourceMediaMetadataPanel() {
         confidence,
         notes,
       });
-      setMetadata(saved);
-      eventBus.emit("sourceMediaMetadataUpdated", { analysisId: videoId });
+      hydrateMetadataState(persisted);
+      eventBus.emit("sourceMediaMetadataChanged", { analysisId: videoId, metadata: persisted });
       setSaveMessage("Metadata notes saved.");
       window.setTimeout(() => setSaveMessage(null), 1800);
     } catch (error) {
@@ -834,7 +842,7 @@ export default function SourceMediaMetadataPanel() {
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      const saved = await apiService.updateSourceMediaMetadata(videoId, {
+      const persisted = await apiService.updateSourceMediaMetadata(videoId, {
         editor_notes: editorNotes,
         source_context: sourceContext,
         provenance_notes: provenanceNotes,
@@ -900,7 +908,8 @@ export default function SourceMediaMetadataPanel() {
         notes,
         ...patch,
       });
-      setMetadata(saved);
+      hydrateMetadataState(persisted);
+      eventBus.emit("sourceMediaMetadataChanged", { analysisId: videoId, metadata: persisted });
       setSaveMessage(message);
       window.setTimeout(() => setSaveMessage(null), 2200);
     } catch (error) {
@@ -1543,7 +1552,7 @@ export default function SourceMediaMetadataPanel() {
     try {
       const refreshed = await apiService.refreshSourceMediaMaturity(videoId);
       hydrateMetadataState(refreshed);
-      eventBus.emit("sourceMediaMetadataUpdated", { analysisId: videoId });
+      eventBus.emit("sourceMediaMetadataChanged", { analysisId: videoId, metadata: refreshed });
       const iteration = refreshed.maturity_iteration;
       setSaveMessage(
         `Maturity refreshed: ${iteration?.filled_count || 0} filled, ${iteration?.manual_protected_count || 0} manual protected, ${iteration?.review_candidate_count || 0} review candidates.`,

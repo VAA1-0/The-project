@@ -230,7 +230,7 @@ export default function DownloadPanel() {
       try {
         const analyses = await VideoService.list(200);
         setProjectAnalysisCount(
-          analyses.filter((analysis) => analysis.status === "completed").length,
+          analyses.filter((analysis) => analysis.status !== "error").length,
         );
       } catch (projectError) {
         console.warn("Failed to load project analysis count:", projectError);
@@ -525,8 +525,8 @@ export default function DownloadPanel() {
 
   const buildProjectPayload = async () => {
     const analyses = await VideoService.list(200);
-    const completedAnalyses = analyses
-      .filter((analysis) => analysis.status === "completed")
+    const savedAnalyses = analyses
+      .filter((analysis) => analysis.status !== "error")
       .map((analysis) => analysis.id);
 
     const quantMatrixSections = (() => {
@@ -567,7 +567,7 @@ export default function DownloadPanel() {
 
     return {
       project_name: "vaa1_project",
-      analysis_ids: completedAnalyses,
+      analysis_ids: savedAnalyses,
       matrices: {
         pos: {
           selected_sections: posMatrixSections,
@@ -585,7 +585,7 @@ export default function DownloadPanel() {
     try {
       const payload = await buildProjectPayload();
       if (!Array.isArray(payload.analysis_ids) || payload.analysis_ids.length === 0) {
-        alert("There are no completed analyses yet to save as a project.");
+        alert("There are no saved analyses yet to save as a project.");
         return;
       }
       await VideoService.exportProjectBundle(payload, "vaa1_project_bundle.zip");
@@ -937,10 +937,10 @@ export default function DownloadPanel() {
                       Full project bundle
                     </div>
                     <div className="mt-1 text-[11px] leading-5 text-[var(--ui-passive-text)]">
-                      Saves all completed analyses together with the current matrix state as one project package.
+                      Saves all publishable saved analyses together with the current matrix state as one project package.
                     </div>
                     <div className="mt-2 text-[11px] text-[var(--ui-passive-text)]">
-                      Completed analyses in project: {projectAnalysisCount}
+                      Saved analyses in project: {projectAnalysisCount}
                     </div>
                   </div>
                   <button

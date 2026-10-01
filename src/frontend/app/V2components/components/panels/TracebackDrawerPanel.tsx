@@ -1,5 +1,9 @@
 "use client";
 
+import { publishSourceTime } from "@/lib/source-clock-events";
+
+import { formatPreciseSourceTime, sourceSeconds } from "@/lib/source-clock";
+
 import React, { useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService, type ForensicTracebackRecord, type ForensicTracebackTree } from "@/lib/api-service";
@@ -105,11 +109,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function secondsText(value: unknown): string {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return valueText(value);
-  const minutes = Math.floor(numeric / 60);
-  const seconds = numeric - minutes * 60;
-  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
+  const numeric = sourceSeconds(value);
+  return numeric === null ? valueText(value) : formatPreciseSourceTime(numeric);
 }
 
 function confidenceText(value: unknown): string {
@@ -511,7 +512,7 @@ export default function TracebackDrawerPanel({ payload: initialPayload }: Traceb
       normalized.source_refs?.time_range?.start ??
       nodes.find((node) => node.source_refs?.video_time)?.source_refs?.video_time;
     const numeric = Number(time);
-    if (Number.isFinite(numeric)) eventBus.emit("videoTimeLineChanged", numeric);
+    if (Number.isFinite(numeric)) publishSourceTime(normalized.videoId, numeric);
     eventBus.emit("openPanelRequest", {
       panelType: "VideoPanel",
       panelProps: normalized.videoId ? { videoId: normalized.videoId } : {},
@@ -527,7 +528,7 @@ export default function TracebackDrawerPanel({ payload: initialPayload }: Traceb
 
   const jumpToTimelineEvent = (event: TracebackTimelineEvent) => {
     if (normalized.videoId) eventBus.emit("videoIdChanged", normalized.videoId);
-    eventBus.emit("videoTimeLineChanged", event.time);
+    publishSourceTime(normalized.videoId, event.time);
     eventBus.emit("openPanelRequest", {
       panelType: "VideoPanel",
       panelProps: normalized.videoId ? { videoId: normalized.videoId } : {},
@@ -701,11 +702,15 @@ export default function TracebackDrawerPanel({ payload: initialPayload }: Traceb
                       levelNodes.length > 1 ? "grid-cols-2" : "grid-cols-1"
                     }`}
                   >
-                    {levelNodes.map((node) => {
+                    {levelNodes.map((node, nodeIndex) => {
                       const incoming = edges.filter((edge) => edge.target === node.node_id);
                       return (
                         <div
-                          key={`tree-${node.node_id}`}
+                          // Evidence IDs describe provenance and may repeat when
+                          // the same source node participates more than once at
+                          // one tree level. React identity also needs the stable
+                          // position inside that level.
+                          key={`tree-${level}-${node.node_id}-${nodeIndex}`}
                           data-vaa1-traceback-node-id={`tree-${node.node_id}`}
                           className={`rounded border px-2 py-1.5 ${nodeToneClass(node)}`}
                         >

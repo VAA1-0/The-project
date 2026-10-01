@@ -20,6 +20,12 @@
 
 import { apiService } from "./api-service";
 import { eventBus } from "./golden-layout-lib/eventBus";
+import {
+  activeProjectScopeId,
+  isAnalysisAllowedInActiveProject,
+  projectScopeViolation,
+  setActiveProjectMembership,
+} from "./active-project-scope";
 import type {
   AnalysisEvent,
   AnalysisCompleteness,
@@ -37,7 +43,8 @@ import type {
   SourceMediaMetadata,
   SourceSample,
 } from "./api-service";
-import { DROP_CORRECTION_VALUE } from "./annotation-corrections";
+import { correctionUndoSnapshot } from "./correction-word-undo";
+import { DROP_CORRECTION_VALUE, pushCorrectionSnapshot } from "./annotation-corrections";
 import { hasExpressionSourceEvidence } from "./expression-weighting";
 import {
   applyTranscriptClockOffset,
@@ -940,6 +947,11 @@ export function applyAnnotationCorrectionsToTranscript(
         synthetic: false,
         status,
         correctionSource: "manual",
+        timingStatus: "manual_correction",
+        timingAuthority: "manual_correction",
+        sourceTimeValid: true,
+        sourceStart: Number(entry.start || 0),
+        sourceEnd: Number(entry.end ?? entry.start ?? 0),
         targetId: entry.id,
       };
     },
@@ -5572,14 +5584,23 @@ export class VideoService {
     Promise<AnalysisData>
   >();
 
+  private static analysisCacheKey(id: string) {
+    return `${activeProjectScopeId() || "catalogue"}::${id}`;
+  }
+
   private static invalidateAnalysisCache(id?: string) {
     if (!id) {
       this.analysisCache.clear();
       this.analysisPromiseCache.clear();
       return;
     }
-    this.analysisCache.delete(id);
-    this.analysisPromiseCache.delete(id);
+    const suffix = `::${id}`;
+    for (const key of this.analysisCache.keys()) {
+      if (key.endsWith(suffix)) this.analysisCache.delete(key);
+    }
+    for (const key of this.analysisPromiseCache.keys()) {
+      if (key.endsWith(suffix)) this.analysisPromiseCache.delete(key);
+    }
   }
 
   /**
@@ -5611,8 +5632,7 @@ export class VideoService {
 
   static async updateCvatLink(id: string, cvatID: number): Promise<void> {
     await apiService.updateCvatLink(id, cvatID);
-    this.analysisCache.delete(id);
-    this.analysisPromiseCache.delete(id);
+    this.invalidateAnalysisCache(id);
   }
 
   static async importSavedWork(file: File): Promise<UploadResponse> {
@@ -5707,11 +5727,12 @@ export class VideoService {
    * Get comprehensive analysis results
    */
   static async getAnalysis(id: string): Promise<AnalysisData> {
-    const existingPromise = this.analysisPromiseCache.get(id);
+    const cacheKey = this.analysisCacheKey(id);
+    const existingPromise = this.analysisPromiseCache.get(cacheKey);
     if (existingPromise) {
       return existingPromise;
     }
-    const recentlyResolved = this.analysisCache.get(id);
+    const recentlyResolved = this.analysisCache.get(cacheKey);
     if (recentlyResolved && Date.now() - recentlyResolved.cachedAt < 5_000) {
       return recentlyResolved.data;
     }
@@ -5949,7 +5970,7 @@ export class VideoService {
         };
       }
 
-      const cached = this.analysisCache.get(id);
+      const cached = this.analysisCache.get(cacheKey);
       if (
         cached &&
         cached.completedAt &&
@@ -6422,7 +6443,7 @@ export class VideoService {
             status.summary?.face_frames_skipped_no_person,
         },
       };
-      this.analysisCache.set(id, {
+      this.analysisCache.set(cacheKey, {
         cachedAt: Date.now(),
         completedAt: status.analysis_completed_at,
         correctionUpdatedAt: correctionUpdatedAt || undefined,
@@ -6436,11 +6457,11 @@ export class VideoService {
     }
     })();
 
-    this.analysisPromiseCache.set(id, loadPromise);
+    this.analysisPromiseCache.set(cacheKey, loadPromise);
     try {
       return await loadPromise;
     } finally {
-      this.analysisPromiseCache.delete(id);
+      this.analysisPromiseCache.delete(cacheKey);
     }
   }
 
@@ -6476,18 +6497,25 @@ export class VideoService {
   static async saveAnnotationCorrections(
     id: string,
     corrections: AnnotationCorrections,
+    options: { recordUndo?: boolean } = {},
   ): Promise<AnnotationCorrections> {
+    const recordUndo = options.recordUndo !== false && !corrections._word_undo && !corrections._correction_undo;
+    const before = recordUndo ? await apiService.getAnnotationCorrections(id) : null;
     const saved = await apiService.saveAnnotationCorrections(id, corrections);
-    const cached = this.analysisCache.get(id);
-    if (cached) {
-      this.analysisCache.set(id, {
-        ...cached,
-        cachedAt: Date.now(),
-        correctionUpdatedAt: saved.updated_at,
-        data: { ...cached.data, annotationCorrections: saved },
-      });
+    if (before) {
+      try {
+        const snapshot = correctionUndoSnapshot(before, saved);
+        if (snapshot) pushCorrectionSnapshot(id, snapshot);
+      } catch (error) {
+        eventBus.emit("correctionUndoUnavailable", { analysisId: id, message: String(error) });
+      }
     }
-    this.analysisPromiseCache.delete(id);
+    // A correction changes derived consumer projections, not only the sidecar.
+    // Keeping a pre-save transcript/master-schema projection beside the new
+    // correction bundle makes close/reopen serve a mixed generation. Mounted
+    // panels receive the verified bundle below; a later reopen must rebuild all
+    // projections from canonical artifacts.
+    this.invalidateAnalysisCache(id);
     // The committed bundle is associated memory: every mounted consumer gets
     // the canonical merged value immediately, without reloading the video or
     // waiting for heavyweight analysis hydration.
@@ -6507,6 +6535,10 @@ export class VideoService {
     timestampSeconds: number,
   ) {
     return apiService.getProjectedSubjectState(id, subjectRef, timestampSeconds);
+  }
+
+  static async getSourceClockContext(id: string) {
+    return apiService.getSourceClockContext(id);
   }
 
   static async resolveSourceClock(
@@ -6575,8 +6607,31 @@ export class VideoService {
    */
   static async listVideos(limit: number = 20): Promise<VideoMetadata[]> {
     try {
-      const response = await apiService.listAnalyses(limit);
+      let activeProject: string | undefined;
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const requestedProject = params.get("activeProject")?.trim();
+        // The ordinary dashboard is a bounded research-project workspace. An
+        // explicit catalogue route is the only UI allowed to aggregate
+        // projects; this prevents saved Marcella and acceptance-fixture data
+        // from leaking into the active Bond/COP30/Helsinki surface on refresh.
+        activeProject = requestedProject || (
+          params.has("catalogue") ? undefined : "bond-cop30-helsinki"
+        );
+      }
+      const response = await apiService.listAnalyses(limit, activeProject);
       const analyses = response.analyses || {};
+      setActiveProjectMembership(activeProject, Object.keys(analyses));
+      const activeAnalysisId = eventBus.getLast<string>("videoIdChanged");
+      if (activeAnalysisId && !isAnalysisAllowedInActiveProject(activeAnalysisId)) {
+        eventBus.emit(
+          "projectScopeViolation",
+          projectScopeViolation(activeAnalysisId, "event"),
+        );
+        // Evict a foreign selection which may have been restored before project
+        // membership finished loading. Empty is the canonical fail-closed state.
+        eventBus.emit("videoIdChanged", "");
+      }
 
       return Object.entries(analyses).map(([id, info]: [string, any]) => ({
         id,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -141,6 +142,22 @@ def append_invalidation(
         "created_at": str(payload.get("created_at") or datetime.now(timezone.utc).isoformat()),
         "created_by": str(payload.get("created_by") or "analyst"),
     }
+    if "source_clock_scope" in payload:
+        clock_scope = payload["source_clock_scope"]
+        if not isinstance(clock_scope, dict):
+            raise ValueError("source_clock_scope must be an object")
+        if clock_scope.get("clock_id") != "source_media.clock" or clock_scope.get("analysis_id") != analysis_id:
+            raise ValueError("source_clock_scope must belong to this analysis and source clock")
+        for key in ("source_fingerprint", "clock_revision"):
+            if not isinstance(clock_scope.get(key), str) or not clock_scope[key].strip():
+                raise ValueError(f"source_clock_scope requires {key}")
+        for key in ("start_seconds", "end_seconds"):
+            value = clock_scope.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("source_clock_scope requires finite nonnegative numeric bounds")
+        if clock_scope["end_seconds"] < clock_scope["start_seconds"]:
+            raise ValueError("source_clock_scope requires ordered bounds")
+        event["source_clock_scope"] = copy.deepcopy(clock_scope)
     existing = next((item for item in decisions if item.get("decision_id") == event["decision_id"]), None)
     if existing is not None:
         if json.dumps(existing, sort_keys=True) != json.dumps(event, sort_keys=True):

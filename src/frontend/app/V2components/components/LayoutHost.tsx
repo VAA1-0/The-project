@@ -34,7 +34,12 @@ import TracebackDrawerPanel from "./panels/TracebackDrawerPanel";
 import AudioPanel from "./panels/AudioPanel";
 import { MenuBar } from "./MenuBar";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { startSourceClockSession, refreshSourceClock } from "@/lib/source-clock-events";
+import { apiService } from "@/lib/api-service";
 import { installIdlePrecompute } from "@/lib/idle-precompute";
+import SourceClockBrowser from "./SourceClockBrowser";
+import PanelSourceClockConcordance from "./PanelSourceClockConcordance";
+import { activeProjectScopeId, type ProjectScopeViolation } from "@/lib/active-project-scope";
 
 // --- Context Setup ---
 type LayoutHostContextType = {
@@ -46,6 +51,8 @@ const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
 );
 
 const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
+const projectLayoutStorageKey = () =>
+  `${SAVED_LAYOUT_STORAGE_KEY}.${encodeURIComponent(activeProjectScopeId() || "catalogue")}`;
 
 const RIGHT_STACK_ANCHOR_TYPES = [
   "TracebackDrawer",
@@ -403,6 +410,36 @@ export default function LayoutHost({
   children?: React.ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [clockUnavailable, setClockUnavailable] = useState(false);
+  const [projectScopeIncident, setProjectScopeIncident] = useState<ProjectScopeViolation | null>(null);
+  useEffect(() => {
+    const violated = (payload: ProjectScopeViolation) => setProjectScopeIncident(payload);
+    const violatedFromDom = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectScopeViolation>).detail;
+      if (detail) setProjectScopeIncident(detail);
+    };
+    const validSelection = (analysisId: string) => {
+      if (analysisId) setProjectScopeIncident(null);
+    };
+    eventBus.on<ProjectScopeViolation>("projectScopeViolation", violated);
+    eventBus.on<string>("videoIdChanged", validSelection);
+    window.addEventListener("vaa1-project-scope-violation", violatedFromDom);
+    return () => {
+      eventBus.off<ProjectScopeViolation>("projectScopeViolation", violated);
+      eventBus.off<string>("videoIdChanged", validSelection);
+      window.removeEventListener("vaa1-project-scope-violation", violatedFromDom);
+    };
+  }, []);
+  useEffect(() => {
+    const unavailable = () => setClockUnavailable(true);
+    const available = (context: unknown) => { if (context) setClockUnavailable(false); };
+    eventBus.on("sourceClockNavigationUnavailable", unavailable);
+    eventBus.on("sourceClockContextChanged", available);
+    return () => {
+      eventBus.off("sourceClockNavigationUnavailable", unavailable);
+      eventBus.off("sourceClockContextChanged", available);
+    };
+  }, []);
   const layoutRef = useRef<GoldenLayout | null>(null);
   const [fallbackContextMenu, setFallbackContextMenu] = useState<{
     x: number;
@@ -411,6 +448,7 @@ export default function LayoutHost({
     content: string;
   } | null>(null);
   useEffect(() => installIdlePrecompute(), []);
+  useEffect(() => startSourceClockSession(id => apiService.getSourceClockContext(id)), []);
   useEffect(() => {
     if (!fallbackContextMenu) return;
     const close = () => setFallbackContextMenu(null);
@@ -564,11 +602,23 @@ export default function LayoutHost({
     let saveTimeout: ReturnType<typeof setTimeout> | undefined;
 
     // Create a wrapper component that provides the context
-    const ContextWrapper: React.FC<{ children: React.ReactNode }> = ({
-      children,
+    const ContextWrapper: React.FC<{ children: React.ReactNode; componentName?: string; category?: string }> = ({
+      children, componentName = "", category,
     }) => (
       <LayoutHostContext.Provider value={{ openPanel }}>
-        {children}
+        {projectScopeIncident && <div role="alert" className="fixed left-4 top-4 z-[10001] max-w-xl rounded border-2 border-red-500 bg-red-950 p-3 text-sm text-red-50 shadow-xl">
+          <strong>PROJECT BOUNDARY VIOLATION — foreign analysis blocked.</strong>
+          <div className="mt-1">Analysis {projectScopeIncident.rejected_analysis_id} is not part of {projectScopeIncident.active_project_id}. It was evicted and was not authorized to populate this workspace.</div>
+        </div>}
+        {clockUnavailable && <div role="status" className="fixed bottom-4 left-4 z-[10000] rounded border border-amber-600 bg-slate-950 p-3 text-sm text-amber-100">
+        Source timing could not be verified. Navigation is paused.
+        <button className="ml-3 underline" onClick={() => void refreshSourceClock()}>Retry timing check</button>
+      </div>}
+      <div className="flex h-full min-h-0 flex-col">
+        <SourceClockBrowser />
+        <PanelSourceClockConcordance componentName={componentName} category={category} />
+        <div className="min-h-0 flex-1">{children}</div>
+      </div>
       </LayoutHostContext.Provider>
     );
 
@@ -667,7 +717,7 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           OCRPanel,
-          {},
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },
@@ -679,7 +729,7 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           POSAnalyzePanel,
-          {},
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },
@@ -703,7 +753,7 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           QuantitativeAnalysisPanel,
-          {},
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },
@@ -727,7 +777,7 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           ExpressionPanel,
-          {},
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },
@@ -899,7 +949,7 @@ export default function LayoutHost({
           const resolvedConfig = layout.saveLayout();
           const restorableConfig = LayoutConfig.fromResolved(resolvedConfig);
           window.localStorage.setItem(
-            SAVED_LAYOUT_STORAGE_KEY,
+            projectLayoutStorageKey(),
             JSON.stringify(restorableConfig),
           );
         } catch (error) {
@@ -912,7 +962,7 @@ export default function LayoutHost({
     let requestedAnalysisId = "";
     let requestedWorkspace = "";
     try {
-      const stored = window.localStorage.getItem(SAVED_LAYOUT_STORAGE_KEY);
+      const stored = window.localStorage.getItem(projectLayoutStorageKey());
       if (stored) {
         const restoredLayout = normalizeLegacyLayoutLabels(
           JSON.parse(stored),
@@ -1073,6 +1123,14 @@ export default function LayoutHost({
           ))}
         </div>
       ) : null}
+      {clockUnavailable && <div role="status" className="fixed bottom-4 left-4 z-[10000] rounded border border-amber-600 bg-slate-950 p-3 text-sm text-amber-100">
+        Source timing could not be verified. Navigation is paused.
+        <button className="ml-3 underline" onClick={() => void refreshSourceClock()}>Retry timing check</button>
+      </div>}
+      {projectScopeIncident && <div role="alert" className="fixed left-4 top-4 z-[10001] max-w-xl rounded border-2 border-red-500 bg-red-950 p-3 text-sm text-red-50 shadow-xl">
+        <strong>PROJECT BOUNDARY VIOLATION — foreign analysis blocked.</strong>
+        <div className="mt-1">Analysis {projectScopeIncident.rejected_analysis_id} is not part of {projectScopeIncident.active_project_id}. It was evicted and was not authorized to populate this workspace.</div>
+      </div>}
       {children}
     </LayoutHostContext.Provider>
   );

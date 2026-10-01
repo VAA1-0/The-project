@@ -1,3 +1,6 @@
+import { prepareCorrectionUndo, correctionUndoVerified } from "@/lib/correction-word-undo";
+
+import { formatPreciseSourceTime } from "@/lib/source-clock";
 import React, { useState, useEffect, useMemo } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
@@ -12,7 +15,8 @@ import {
   mergeCorrectionRule,
   pushCorrectionSnapshot,
   removeCorrectionRule,
-  undoLastCorrectionSnapshot,
+  peekCorrectionSnapshot,
+  acknowledgeCorrectionSnapshot,
 } from "@/lib/annotation-corrections";
 
 import { Search, MoreHorizontal, RotateCcw } from "lucide-react";
@@ -30,12 +34,7 @@ function normalizeOCRText(value: string): string {
 }
 
 function formatPanelTime(value?: number | null): string {
-  const safe = Number(value ?? 0);
-  if (!Number.isFinite(safe)) return "0:00.000";
-  const clamped = Math.max(0, safe);
-  const minutes = Math.floor(clamped / 60);
-  const seconds = clamped - minutes * 60;
-  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
+  return formatPreciseSourceTime(Number(value ?? 0));
 }
 
 function looksLikeUsefulOCR(text: string, confidence: number): boolean {
@@ -216,8 +215,8 @@ function buildDisplayedOCRResults(results: Array<OCR>) {
   });
 }
 
-export default function OCRPanel() {
-  const [videoId, setVideoId] = useState("");
+export default function OCRPanel({ videoId: initialVideoId = "" }: { videoId?: string }) {
+  const [videoId, setVideoId] = useState(initialVideoId);
 
   // Event bus video time line state
   const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
@@ -232,6 +231,12 @@ export default function OCRPanel() {
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Listen for video ID changes via event bus
+  useEffect(() => {
+    if (initialVideoId) {
+      setVideoId(initialVideoId);
+    }
+  }, [initialVideoId]);
+
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
@@ -327,7 +332,6 @@ export default function OCRPanel() {
       analysisData?.annotationCorrections,
       buildCorrectionRule("ocr", rawValue, correctedValue.trim()),
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -344,7 +348,6 @@ export default function OCRPanel() {
         targetTimestamp: obj.timestamp,
       }),
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -362,7 +365,6 @@ export default function OCRPanel() {
       analysisData?.annotationCorrections,
       scopedRuleId,
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -370,19 +372,23 @@ export default function OCRPanel() {
   };
 
   const undoLastCorrection = async () => {
-    if (!videoId) {
-      return;
+    if (!videoId) return;
+    const snapshot = peekCorrectionSnapshot(videoId);
+    if (!snapshot) return;
+    try {
+      const request = prepareCorrectionUndo(snapshot.corrections, analysisData?.annotationCorrections);
+      const saved = await VideoService.saveAnnotationCorrections(videoId, request);
+      if (!correctionUndoVerified(snapshot.corrections, saved)) throw new Error("Undo could not be verified. History is retained.");
+      acknowledgeCorrectionSnapshot(videoId, snapshot.token);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+      setAnalysisData(refreshed);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Undo failed; history is retained.");
     }
-    const restored = undoLastCorrectionSnapshot(videoId);
-    if (restored === null && !analysisData?.annotationCorrections) {
-      return;
-    }
-    const nextCorrections =
-      restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
 
   const canUndo = canUndoCorrectionSnapshot(videoId);

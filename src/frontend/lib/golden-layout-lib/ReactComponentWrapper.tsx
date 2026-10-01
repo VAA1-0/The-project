@@ -1,6 +1,7 @@
 import { createRoot, Root } from "react-dom/client";
 import { ComponentContainer } from "golden-layout";
 import React from "react";
+import { sanitizeProjectScopedProps } from "@/lib/active-project-scope";
 
 export class ReactComponentWrapper {
   private root: Root;
@@ -11,7 +12,7 @@ export class ReactComponentWrapper {
     container: ComponentContainer,
     Component: React.FC<any>,
     props?: any,
-    WrapperComponent?: React.FC<{ children: React.ReactNode }>,
+    WrapperComponent?: React.FC<{ children: React.ReactNode; componentName?: string; category?: string }>,
   ) {
     this.el = document.createElement("div");
     this.el.className = "vaa1-panel-leaf";
@@ -27,12 +28,13 @@ export class ReactComponentWrapper {
     const mount = () => {
       if (mounted || this.destroyed) return;
       mounted = true;
+      const safeProps = sanitizeProjectScopedProps((props || {}) as Record<string, unknown>);
       const element = WrapperComponent ? (
-        <WrapperComponent>
-          <Component {...props} />
+        <WrapperComponent componentName={String(container.componentType || "")} category={props?.category}>
+          <Component {...safeProps} />
         </WrapperComponent>
       ) : (
-        <Component {...props} />
+        <Component {...safeProps} />
       );
       this.root.render(element);
     };

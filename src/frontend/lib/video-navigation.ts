@@ -1,3 +1,6 @@
+
+import { publishSourceTime } from "@/lib/source-clock-events";
+import { sourceSeconds } from "@/lib/source-clock";
 import type { ManualVisualAnnotation } from "@/lib/api-service";
 import {
   buildEvidenceNavigationState,
@@ -10,13 +13,14 @@ function annotationCueTime(annotation: ManualVisualAnnotation): number {
 }
 
 export function openVideoAtTime(videoId: string, time: number) {
-  const timestamp = Math.max(0, Number(time || 0));
+  const timestamp = sourceSeconds(time);
+  if (!videoId.trim() || timestamp === null) return;
   eventBus.emit("openPanelRequest", {
     panelType: "VideoPanel",
     panelProps: { videoId },
   });
   eventBus.emit("videoIdChanged", videoId);
-  eventBus.emit("videoTimeLineChanged", timestamp);
+  publishSourceTime(videoId, timestamp);
 }
 
 export function openManualAnnotationInVideo(
@@ -28,15 +32,13 @@ export function openManualAnnotationInVideo(
   const seekVideo = options.seekVideo ?? true;
   const resolvedEvidence = resolveManualVisualEvidence(videoId, annotation);
   const navigationState = buildEvidenceNavigationState(resolvedEvidence);
-  const timestamp = navigationState.activeTime || annotationCueTime(annotation);
+  const timestamp = sourceSeconds(navigationState.activeTime) ?? sourceSeconds(annotationCueTime(annotation));
+  if (!videoId.trim() || timestamp === null) return;
   if (focusVideoPanel) {
-    openVideoAtTime(videoId, timestamp);
-  } else {
-    eventBus.emit("videoIdChanged", videoId);
-    if (seekVideo) {
-      eventBus.emit("videoTimeLineChanged", timestamp);
-    }
+    eventBus.emit("openPanelRequest", { panelType: "VideoPanel", panelProps: { videoId } });
   }
+  eventBus.emit("videoIdChanged", videoId);
+  if (seekVideo) publishSourceTime(videoId, timestamp);
   eventBus.emit("videoIndicationEditOpen", {
     videoId,
     annotationId: annotation.id,

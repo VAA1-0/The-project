@@ -7,8 +7,6 @@ import type {
   ProliferationDecision,
 } from "./api-service";
 
-const POS_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.pos.matrix.analyses";
-const QUANT_MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
 const CORRECTION_HISTORY_PREFIX = "vaa1.annotation.corrections.history.";
 export const DROP_CORRECTION_VALUE = "__drop__";
 
@@ -166,7 +164,14 @@ export function pushCorrectionSnapshot(
     ) as Array<AnnotationCorrections | null>;
     const next = [...current, cloneCorrections(corrections)].slice(-12);
     window.localStorage.setItem(storageKey, JSON.stringify(next));
-  } catch {}
+    eventBus.emit("correctionUndoHistoryChanged", { analysisId: videoId });
+  } catch (error) {
+    eventBus.emit("correctionUndoUnavailable", {
+      analysisId: videoId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export function canUndoCorrectionSnapshot(videoId: string): boolean {
@@ -181,6 +186,44 @@ export function canUndoCorrectionSnapshot(videoId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Read without consuming: failed or unverified undo must retain history. */
+export function peekCorrectionSnapshot(videoId: string): { token: string; corrections: AnnotationCorrections | null } | null {
+  if (!videoId || typeof window === "undefined") return null;
+  try {
+    const token = window.localStorage.getItem(getCorrectionHistoryKey(videoId)) || "[]";
+    const history = JSON.parse(token);
+    if (!Array.isArray(history) || history.length === 0) return null;
+    return { token, corrections: history[history.length - 1] ?? null };
+  } catch { return null; }
+}
+
+export function acknowledgeCorrectionSnapshot(videoId: string, token: string): boolean {
+  if (!videoId || typeof window === "undefined") return false;
+  try {
+    const key = getCorrectionHistoryKey(videoId);
+    if (window.localStorage.getItem(key) !== token) return false;
+    const history = JSON.parse(token);
+    if (!Array.isArray(history) || !history.length) return false;
+    window.localStorage.setItem(key, JSON.stringify(history.slice(0, -1)));
+    eventBus.emit("correctionUndoHistoryChanged", { analysisId: videoId });
+    return true;
+  } catch { return false; }
+}
+
+/** Conservative verification: the merge writer may retain entries an undo removed. */
+export function correctionSnapshotRestored(expected: AnnotationCorrections, actual: AnnotationCorrections): boolean {
+  const ignored = new Set(["_clock_write_guard", "correction_generation", "updated_at", "updated_by", "version"]);
+  const collections = new Set(["text_substitutions", "label_overrides", "manual_transcript_entries",
+    "manual_visual_annotations", "proliferation_decisions", "master_schema_presence_intervals",
+    "meaning_network_custom_lanes"]);
+  const value = (document: AnnotationCorrections, key: string) => {
+    const item = (document as any)[key];
+    return collections.has(key) && item == null ? [] : item;
+  };
+  return [...new Set([...Object.keys(expected), ...Object.keys(actual)])].every(key => ignored.has(key) ||
+    JSON.stringify(value(expected, key)) === JSON.stringify(value(actual, key)));
 }
 
 export function undoLastCorrectionSnapshot(
@@ -207,26 +250,11 @@ export function undoLastCorrectionSnapshot(
 }
 
 export function broadcastAnalysisCorrectionRefresh(videoId: string) {
-  eventBus.emit("analysisCorrectionsChanged", videoId);
-  eventBus.emit("videoIdChanged", videoId);
-
-  try {
-    const posIds = JSON.parse(
-      window.localStorage.getItem(POS_MATRIX_ANALYSES_STORAGE_KEY) || "[]",
-    );
-    if (Array.isArray(posIds)) {
-      eventBus.emit("posMatrixAnalysesChanged", [...posIds]);
-    }
-  } catch {}
-
-  try {
-    const quantIds = JSON.parse(
-      window.localStorage.getItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY) || "[]",
-    );
-    if (Array.isArray(quantIds)) {
-      eventBus.emit("quantMatrixAnalysesChanged", [...quantIds]);
-    }
-  } catch {}
+  eventBus.emit("analysisCorrectionCommitted", {
+    analysisId: videoId,
+    projection_state: "queued",
+    canonical_artifact: "annotation_corrections.json",
+  });
 }
 
 export function removeCorrectionRule(

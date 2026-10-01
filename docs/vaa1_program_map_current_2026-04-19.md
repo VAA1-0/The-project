@@ -11,6 +11,11 @@ Update note, 2026-04-30:
 - For the latest delivered functionality audit, including SFL/Dependency, multimodal meaning, second-order label proliferation, Meaning/Plot, Time Bank Meaning, audio sample clouds, identity triangulation, forensic traceback, and evidence-authority navigation, see:
   `docs/vaa1_functionality_delivery_audit_2026-04-30.md`
 
+Current-map notice, 2026-08-30:
+
+- This file is retained as the April architecture baseline.
+- The current post-May program map is `docs/vaa1_program_map_current_2026-08-30.md`.
+
 This document is the current architectural map of VAA1 as it exists in the working repository. It is intentionally concrete: file paths, runtime components, data stores, analyst panels, pipeline modules, and known seams are named explicitly.
 
 ## 1. Executive Map

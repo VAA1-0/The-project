@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "reading_id": "synthetic-unresolved-ref",
+  "framework": {
+    "framework_id": "morenoan_relational_configuration",
+    "display_name": "Relational Configuration, Role Enactment and Group Dynamics",
+    "principal_attribution": "Jacob L. Moreno; psychodrama, sociodrama, sociometry, role theory and group psychotherapy",
+    "scope": "sociometric",
+    "reading_type": "interpretive_lens"
+  },
+  "governance": {
+    "record_status": "candidate",
+    "authority": "automated_candidate",
+    "ledger_event_id": "synthetic-unresolved-ref",
+    "created_at": "2026-09-16T09:00:00Z",
+    "created_by": "synthetic-unresolved-ref",
+    "dependency_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "input_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_anchors": [
+    {
+      "source_id": "synthetic-unresolved-ref",
+      "anchor_type": "time_interval",
+      "clock_unit": "source_relative_seconds",
+      "time_start": 0,
+      "time_end": 0,
+      "clock_authority": "synthetic-unresolved-ref",
+      "precision_seconds": 0
+    }
+  ],
+  "persons_or_collectives": [
+    {
+      "participant_id": "synthetic-unresolved-ref",
+      "participant_type": "person",
+      "designation": "synthetic-unresolved-ref",
+      "evidence_anchor_ids": [
+        "synthetic-unresolved-ref"
+      ]
+    }
+  ],
+  "role_relations": [
+    {
+      "role_relation_id": "synthetic-unresolved-ref",
+      "participant_id": "synthetic-unresolved-ref",
+      "role_name": "synthetic-unresolved-ref",
+      "role_state": "enacted",
+      "role_process": "role_taking",
+      "counterrole_ids": [],
+      "evidence_anchor_ids": [
+        "synthetic-unresolved-ref"
+      ],
+      "epistemic_status": "observed_relation"
+    }
+  ],
+  "interpretive_summary": {
+    "claim_text": "synthetic-unresolved-ref",
+    "epistemic_level": "candidate_interpretation",
+    "evidence_anchor_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "inferential_distance": "proximal",
+    "uncertainty_note": "synthetic-unresolved-ref"
+  }
+}

@@ -7,7 +7,6 @@ import SceneLanguageSFLView from "../SceneLanguageSFLView";
 import LanguageParityMetaView from "../LanguageParityMetaView";
 
 import { VideoService } from "@/lib/video-service";
-import { getVideoBlob } from "@/lib/blob-store";
 
 import {
   Download,
@@ -17,17 +16,14 @@ import {
   ChevronRight,
 } from "lucide-react";
 
-export default function QuantitativeAnalysisPanel() {
+export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = "" }: { videoId?: string }) {
   const { openPanel } = useLayoutHost();
   const MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
   const MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
-  const [videoId, setVideoId] = useState("");
+  const [videoId, setVideoId] = useState(() => eventBus.getLast<string>("videoIdChanged") || initialVideoId);
 
-  const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<any>(null);
-  const [blobMissing, setBlobMissing] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -51,7 +47,8 @@ export default function QuantitativeAnalysisPanel() {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId?: string; videoId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload?.analysisId || payload?.videoId;
       if (id === videoId) {
         setRefreshNonce((current) => current + 1);
       }
@@ -124,57 +121,27 @@ export default function QuantitativeAnalysisPanel() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setAnalysisData(null);
+    setRawCsv(null);
+    setLoadError(null);
+    setIsLoading(Boolean(videoId));
+    if (!videoId) return;
     async function load() {
-      if (!videoId) {
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-
       try {
-        // Load metadata
-        const m = await VideoService.get(videoId);
-
-        console.log("Loaded metadata:", m);
-
-        setMetadata(m);
-
-        // Load video blob - hybrid approach
-        // 1. First try to get the original video from IndexedDB (instant preview)
-        let blob = await getVideoBlob(videoId);
-
-        if (!blob) {
-          // 2. Fallback: try to get the annotated video from the backend (after analysis completes)
-          blob = await VideoService.getBlob(videoId);
-        }
-        if (blob) {
-          if (lastObjectUrl.current) {
-            URL.revokeObjectURL(lastObjectUrl.current);
-          }
-          const url = URL.createObjectURL(blob);
-          lastObjectUrl.current = url;
-          setVideoUrl(url);
-          setBlobMissing(false);
-        } else {
-          setBlobMissing(true);
-          setVideoUrl(null);
-        }
-
-        // Load analysis data
+        // Saved linguistic evidence does not depend on downloading playable media.
         const analysis = await VideoService.getAnalysis(videoId);
-
+        if (cancelled) return;
         setAnalysisData(analysis);
         setRawCsv(analysis.rawCsv || null);
-      } catch (err) {
-        console.error("Failed to load data:", err);
-        setBlobMissing(true);
-        setVideoUrl(null);
+      } catch (error) {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load saved analysis");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
-    load();
+    void load();
+    return () => { cancelled = true; };
   }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to mock data if not available)
@@ -990,6 +957,8 @@ export default function QuantitativeAnalysisPanel() {
 
   return (
     <main className="h-full flex flex-col overflow-hidden">
+      {isLoading && <p role="status">Loading saved language analysis…</p>}
+      {loadError && <p role="alert">{loadError} <button onClick={() => setRefreshNonce((value) => value + 1)}>Retry loading</button></p>}
       <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
       <div className="text-xs text-slate-400 px-3 py-2 shrink-0">
         video Id: {videoId}

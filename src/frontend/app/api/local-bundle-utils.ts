@@ -7,8 +7,9 @@ type ZipEntry = {
   data: Buffer;
 };
 
-type LocalAnalysisRecord = {
+export type LocalAnalysisRecord = {
   analysis_id?: string;
+  status?: string;
   original_filename?: string;
   source_video_path?: string;
   file_path?: string;
@@ -21,7 +22,7 @@ type LocalAnalysisRecord = {
   modality_focus?: string;
 };
 
-const FILE_MAPPING: Record<string, string> = {
+export const FILE_MAPPING: Record<string, string> = {
   video: "annotated_video.mp4",
   source_video: "source_video.mp4",
   yolo_csv: "yolo_detections.csv",
@@ -92,7 +93,30 @@ export function slugifyName(value: string) {
 export async function readAnalysisRecord(analysisId: string) {
   const recordPath = path.join(projectRoot(), "outputs", "api_results", analysisId, "analysis_record.json");
   const record = JSON.parse(await fs.readFile(recordPath, "utf8"));
-  return { ...record, analysis_id: record.analysis_id || analysisId };
+  const resolvedAnalysisId = record.analysis_id || analysisId;
+  return {
+    ...record,
+    analysis_id: resolvedAnalysisId,
+    annotation_corrections: await readCanonicalJsonArtifact(
+      resolvedAnalysisId,
+      "annotation_corrections.json",
+      record.annotation_corrections || {},
+    ),
+    vaa1_annotation_master_schema: await readCanonicalJsonArtifact(
+      resolvedAnalysisId,
+      "vaa1_annotation_master_schema.json",
+      record.vaa1_annotation_master_schema || null,
+    ),
+  };
+}
+
+export async function readCanonicalJsonArtifact(analysisId: string, filename: string, fallback: unknown) {
+  try {
+    const artifactPath = path.join(projectRoot(), "outputs", "api_results", analysisId, filename);
+    return JSON.parse(await fs.readFile(artifactPath, "utf8"));
+  } catch {
+    return fallback;
+  }
 }
 
 export function safeProjectPath(rawPath: string) {
@@ -186,12 +210,20 @@ export function makeZip(entries: ZipEntry[]) {
   return Buffer.concat([...localParts, ...centralParts, end]);
 }
 
-export async function entriesForAnalysis(record: LocalAnalysisRecord, archivePrefix = "") {
+export async function entriesForAnalysis(
+  record: LocalAnalysisRecord,
+  archivePrefix = "",
+  options: { includeMedia?: boolean } = {},
+) {
   const entries: ZipEntry[] = [];
   const skipped: Array<{ file_type: string; reason: string }> = [];
   const outputFiles = record.output_files || {};
 
   for (const [fileType, rawPath] of Object.entries(outputFiles)) {
+    if (options.includeMedia === false && ["video", "source_video", "audio"].includes(fileType)) {
+      skipped.push({ file_type: fileType, reason: "excluded_from_bounded_project_bundle" });
+      continue;
+    }
     if (!rawPath || typeof rawPath !== "string") {
       skipped.push({ file_type: fileType, reason: "empty_path" });
       continue;
@@ -217,7 +249,11 @@ export async function entriesForAnalysis(record: LocalAnalysisRecord, archivePre
           original_filename: record.original_filename,
           source_video_path: record.source_video_path || record.file_path,
           source_media_metadata: record.source_media_metadata || {},
-          annotation_corrections: record.annotation_corrections || {},
+          annotation_corrections: await readCanonicalJsonArtifact(
+            String(record.analysis_id || ""),
+            "annotation_corrections.json",
+            record.annotation_corrections || {},
+          ),
           analysis_completed_at: record.analysis_completed_at,
           pipeline_type: record.pipeline_type || "full",
           analysis_tier: record.analysis_tier || "science_scan",

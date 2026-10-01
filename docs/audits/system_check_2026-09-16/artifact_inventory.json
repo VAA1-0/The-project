@@ -1,0 +1,123 @@
+[
+  {
+    "analysis_id": "5bbeac10-6452-4b49-82d4-da216e5c114f",
+    "project": "bond-cop30-helsinki",
+    "filename": "english_brazil_short.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 35,
+    "artifact_issues": [],
+    "manual_annotations": 0
+  },
+  {
+    "analysis_id": "8febdee0-c524-480d-aa37-cad7bc2a01cd",
+    "project": "bond-cop30-helsinki",
+    "filename": "vaa1_working_checkpoint_2026-03-25.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 37,
+    "artifact_issues": [],
+    "manual_annotations": 23
+  },
+  {
+    "analysis_id": "c32f5846-5ee4-45d0-b071-284e7cbc27e6",
+    "project": "bond-cop30-helsinki",
+    "filename": "Diamonds_Are_Forever_1971_James_Bond.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 37,
+    "artifact_issues": [],
+    "manual_annotations": 11
+  },
+  {
+    "analysis_id": "29b4070e-ee04-4d48-986c-ddec2b502ad3",
+    "project": "bond-cop30-helsinki",
+    "filename": "brazil_complete.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 37,
+    "artifact_issues": [],
+    "manual_annotations": 18
+  },
+  {
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "project": "bond-cop30-helsinki",
+    "filename": "NO_TIME_TO_DIE_Trailer_UK_-_James_Bond_007_720p_h264.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 48,
+    "artifact_issues": [],
+    "manual_annotations": 161,
+    "71_second_correction_unchanged": true
+  },
+  {
+    "analysis_id": "00c22625-82e8-4ddc-bb36-317422664214",
+    "project": "research-test-2026",
+    "filename": "1MarcellaPhd_VSpirituality BLS S20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 48,
+    "artifact_issues": [],
+    "manual_annotations": 18
+  },
+  {
+    "analysis_id": "c034341f-3fba-495e-a7d1-0af03a46cb6c",
+    "project": "research-test-2026",
+    "filename": "2MarcellaPhd_VBusiness BLS S20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 48,
+    "artifact_issues": [],
+    "manual_annotations": 11
+  },
+  {
+    "analysis_id": "ca6d0ebf-cbb5-4f7e-8502-f8b0693daf33",
+    "project": "research-test-2026",
+    "filename": "3MarcellaPhd_VTechnology BLS S20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 48,
+    "artifact_issues": [],
+    "manual_annotations": 6
+  },
+  {
+    "analysis_id": "e9cffc4c-275b-4dcb-b475-600b3c9ac2d7",
+    "project": "research-test-2026",
+    "filename": "4MarcellaPhd_VHealth BLS F20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 50,
+    "artifact_issues": [],
+    "manual_annotations": 4
+  },
+  {
+    "analysis_id": "2368228a-f46d-4339-bf7b-5f1966a33ee5",
+    "project": "research-test-2026",
+    "filename": "5MarcellaPhd_VTime BLS F20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 49,
+    "artifact_issues": [],
+    "manual_annotations": 10
+  },
+  {
+    "analysis_id": "fe2c60ec-94b2-4fcd-82d4-34ea7a4f4dd8",
+    "project": "research-test-2026",
+    "filename": "6MarcellaPhd_VSpace BLS F20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 49,
+    "artifact_issues": [],
+    "manual_annotations": 6
+  },
+  {
+    "analysis_id": "ac1af180-df4a-41cd-aed9-c79b91329197",
+    "project": "research-test-2026",
+    "filename": "7MarcellaPhd_VVision BLS F20.mp4",
+    "status": "completed",
+    "source_exists": true,
+    "registered_artifacts_present": 50,
+    "artifact_issues": [],
+    "manual_annotations": 24
+  }
+]

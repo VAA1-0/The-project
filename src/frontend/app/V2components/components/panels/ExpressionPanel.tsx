@@ -1,3 +1,6 @@
+import { prepareCorrectionUndo, correctionUndoVerified } from "@/lib/correction-word-undo";
+import { formatPreciseSourceTime, sourceClockConcordance } from "@/lib/source-clock";
+import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-events";
 import React, { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
@@ -12,7 +15,8 @@ import {
   mergeCorrectionRule,
   pushCorrectionSnapshot,
   removeCorrectionRule,
-  undoLastCorrectionSnapshot,
+  peekCorrectionSnapshot,
+  acknowledgeCorrectionSnapshot,
 } from "@/lib/annotation-corrections";
 import { Search, MoreHorizontal, RotateCcw } from "lucide-react";
 import {
@@ -22,14 +26,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
+import SourceClockConcordanceRail, { type ConcordanceDisplayItem } from "../SourceClockConcordanceRail";
 
 function formatPanelTime(value?: number | null): string {
-  const safe = Number(value ?? 0);
-  if (!Number.isFinite(safe)) return "0:00.000";
-  const clamped = Math.max(0, safe);
-  const minutes = Math.floor(clamped / 60);
-  const seconds = clamped - minutes * 60;
-  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
+  return formatPreciseSourceTime(Number(value ?? 0));
 }
 
 const EXPRESSION_CORRECTION_OPTIONS = [
@@ -55,21 +55,24 @@ const EXPRESSION_CORRECTION_OPTIONS = [
   "warm",
 ] as const;
 
-export default function ExpressionPanel() {
-  const [videoId, setVideoId] = useState("");
+export default function ExpressionPanel({ videoId: initialVideoId = "" }: { videoId?: string }) {
+  const [videoId, setVideoId] = useState(() => eventBus.getLast<string>("videoIdChanged") || initialVideoId);
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [sourceMetadata, setSourceMetadata] = useState<SourceMediaMetadata | null>(
     null,
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [openCorrectionKey, setOpenCorrectionKey] = useState<string | null>(null);
+  const [activeSourceTime, setActiveSourceTime] = useState<number | null>(null);
 
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId?: string; videoId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload?.analysisId || payload?.videoId;
       if (id === videoId) {
         setRefreshNonce((current) => current + 1);
       }
@@ -84,6 +87,16 @@ export default function ExpressionPanel() {
   }, [videoId]);
 
   useEffect(() => {
+    setActiveSourceTime(null);
+    if (!videoId) return;
+    return subscribeSourceTime(videoId, (time) => setActiveSourceTime(time));
+  }, [videoId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAnalysisData(null);
+    setSourceMetadata(null);
+    setLoadError(null);
     async function load() {
       if (!videoId) {
         setAnalysisData(null);
@@ -98,18 +111,40 @@ export default function ExpressionPanel() {
           VideoService.getAnalysis(videoId),
           apiService.getSourceMediaMetadata(videoId).catch(() => null),
         ]);
+        if (cancelled) return;
         setAnalysisData(analysis);
         setSourceMetadata(metadata);
       } catch (err) {
-        console.error("Failed to load expression data:", err);
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Unable to load saved expressions");
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
     void load();
+    return () => { cancelled = true; };
   }, [videoId, refreshNonce]);
 
   const expressionResults = analysisData?.expressionResults ?? [];
+  const expressionConcordance = activeSourceTime === null
+    ? null
+    : sourceClockConcordance<ConcordanceDisplayItem & { timestamp: number }>(
+        expressionResults.map((sample: any, index: number): ConcordanceDisplayItem & { timestamp: number } => ({
+          id: `${sample?.timestamp ?? "untimed"}:${sample?.face_id ?? index}`,
+          label: sample?.interpreted_expression?.label || sample?.dominant_emotion || "Unknown expression",
+          detail: sample?.quality ? `quality ${sample.quality}` : undefined,
+          timestamp: Number(sample?.timestamp),
+        })),
+        activeSourceTime,
+        (sample) => ({ start: sample.timestamp }),
+      );
+  const beforeExpression = expressionConcordance?.before || null;
+  const afterExpression = expressionConcordance?.after || null;
+  const expressionRelationForIndex = (index: number) => {
+    if (expressionConcordance?.on_beat.some((hit) => hit.index === index)) return "on-beat";
+    if (beforeExpression?.index === index) return "before";
+    if (afterExpression?.index === index) return "after";
+    return null;
+  };
 
   const saveExpressionCorrection = async (
     rawValue: string,
@@ -142,7 +177,6 @@ export default function ExpressionPanel() {
         targetTimestamp: timestamp,
       }),
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -169,7 +203,6 @@ export default function ExpressionPanel() {
       analysisData?.annotationCorrections,
       scopedRuleId,
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -188,7 +221,6 @@ export default function ExpressionPanel() {
         targetTimestamp: sample.timestamp,
       }),
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     const refreshed = await VideoService.refreshAnalysis(videoId);
     setAnalysisData(refreshed);
@@ -196,19 +228,23 @@ export default function ExpressionPanel() {
   };
 
   const undoLastCorrection = async () => {
-    if (!videoId) {
-      return;
+    if (!videoId) return;
+    const snapshot = peekCorrectionSnapshot(videoId);
+    if (!snapshot) return;
+    try {
+      const request = prepareCorrectionUndo(snapshot.corrections, analysisData?.annotationCorrections);
+      const saved = await VideoService.saveAnnotationCorrections(videoId, request);
+      if (!correctionUndoVerified(snapshot.corrections, saved)) throw new Error("Undo could not be verified. History is retained.");
+      acknowledgeCorrectionSnapshot(videoId, snapshot.token);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+      setAnalysisData(refreshed);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Undo failed; history is retained.");
     }
-    const restored = undoLastCorrectionSnapshot(videoId);
-    if (restored === null && !analysisData?.annotationCorrections) {
-      return;
-    }
-    const nextCorrections =
-      restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
 
   const canUndo = canUndoCorrectionSnapshot(videoId);
@@ -268,6 +304,15 @@ export default function ExpressionPanel() {
             <div className="mb-2 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
               Emotion timeline
             </div>
+            {activeSourceTime !== null && expressionConcordance ? (
+              <div data-testid="expression-source-clock-cursor">
+                <SourceClockConcordanceRail
+                  modality="Expressions"
+                  concordance={expressionConcordance}
+                  onNavigate={(timestamp) => publishSourceTime(videoId, timestamp)}
+                />
+              </div>
+            ) : null}
             {analysisData?.expressionSamplingCoverage?.noFaceOrInvalidSamples > 0 ? (
               <div className="mb-2 shrink-0 rounded border border-slate-800 bg-slate-950/20 px-3 py-1.5 text-[10px] text-[var(--ui-passive-text)]">
                 {analysisData.expressionSamplingCoverage.sourceDetections} source-linked
@@ -277,7 +322,9 @@ export default function ExpressionPanel() {
               </div>
             ) : null}
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-2">
-              {isLoading ? (
+              {loadError ? (
+                <div role="alert">{loadError} <button onClick={() => setRefreshNonce(value => value + 1)}>Retry loading</button></div>
+              ) : isLoading ? (
                 <div className="rounded border border-slate-800 bg-slate-950/30 px-3 py-2 text-[11px] text-[var(--ui-passive-text)]">
                   Loading expression results...
                 </div>
@@ -323,6 +370,7 @@ export default function ExpressionPanel() {
                     </div>
                   )}
                   {expressionResults.map((sample: any, idx: number) => {
+                  const clockRelation = expressionRelationForIndex(idx);
                   const weighting = buildExpressionWeighting(sample, sourceMetadata);
                   const weightedPrimaryLabel = weighting.ranking.weighted_primary.label;
                   const matureExpressionLabel =
@@ -337,7 +385,16 @@ export default function ExpressionPanel() {
                   return (
                     <details
                       key={correctionKey}
-                      className="group rounded border border-slate-800 bg-slate-950/20"
+                      data-source-clock-relation={clockRelation || undefined}
+                      className={`group rounded border bg-slate-950/20 ${
+                        clockRelation === "on-beat"
+                          ? "border-cyan-300/80 ring-1 ring-cyan-300/30"
+                          : clockRelation === "before"
+                            ? "border-violet-400/55 ring-1 ring-violet-400/15"
+                            : clockRelation === "after"
+                              ? "border-amber-400/55 ring-1 ring-amber-400/15"
+                          : "border-slate-800"
+                      }`}
                   >
                       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 marker:hidden">
                         <span
@@ -350,7 +407,7 @@ export default function ExpressionPanel() {
                           {matureExpressionLabel}
                         </span>
                         <span className="shrink-0 text-[10px] text-[var(--ui-passive-text)]">
-                          {Number(sample.timestamp).toFixed(2)}s
+                          {formatPanelTime(sample.timestamp)}
                           {` · ${(weighting.ranking.margin_to_second * 100).toFixed(1)}% margin`}
                         </span>
                       </summary>

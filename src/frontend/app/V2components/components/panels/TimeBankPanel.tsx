@@ -1,3 +1,5 @@
+
+import { formatPreciseSourceTime, sourceSeconds } from "@/lib/source-clock";
 import React, { useEffect, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService } from "@/lib/api-service";
@@ -356,12 +358,7 @@ async function loadTimeBankEnvelope(
 }
 
 function formatTimeMs(ms?: number | null) {
-  const safe = Math.max(0, Number(ms || 0));
-  const totalSeconds = safe / 1000;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  const milliseconds = Math.floor(safe % 1000);
-  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+  return formatPreciseSourceTime(sourceSeconds(ms, "milliseconds") ?? 0);
 }
 
 function buildAnchorMap(envelope?: TimeBankEnvelope | null) {

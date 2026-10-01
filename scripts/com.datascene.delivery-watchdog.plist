@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.datascene.delivery-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project/scripts/vaa1_delivery_checkpoint_watchdog.py</string>
+    <string>--poll-seconds</string>
+    <string>30</string>
+    <string>--stall-seconds</string>
+    <string>300</string>
+    <string>--max-recoveries</string>
+    <string>3</string>
+    <string>--cycle-cooling-seconds</string>
+    <string>600</string>
+    <string>ca6d0ebf-cbb5-4f7e-8502-f8b0693daf33</string>
+    <string>c034341f-3fba-495e-a7d1-0af03a46cb6c</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project/outputs/runtime/delivery_watchdog_launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/admin/Desktop/VAA1/VAA1 on Python 1.0/The-project/outputs/runtime/delivery_watchdog_launchd.err.log</string>
+</dict>
+</plist>

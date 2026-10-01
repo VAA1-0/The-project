@@ -1,5 +1,7 @@
 "use client";
 
+import { publishSourceTime, subscribeSourceTime, captureSourceClockNavigation, isCurrentSourceClockNavigation } from "@/lib/source-clock-events";
+
 import {
   MessageSquareText,
   Brain,
@@ -1203,19 +1205,20 @@ export default function ToolsPanel() {
       const mappedCue = cueKey ? cueMap[cueKey] : undefined;
       eventBus.emit("videoIdChanged", videoId);
       openPanel("VideoPanel");
+      const clockTicket = captureSourceClockNavigation(videoId);
       window.setTimeout(() => {
-        eventBus.emit("videoIdChanged", videoId);
+        if (!isCurrentSourceClockNavigation(clockTicket)) return;
         if (mappedCue) {
           eventBus.emit("visualCueOpen", mappedCue);
         }
-        eventBus.emit("videoTimeLineChanged", nextTime);
+        publishSourceTime(videoId, nextTime, clockTicket);
       }, 60);
       window.setTimeout(() => {
-        eventBus.emit("videoIdChanged", videoId);
+        if (!isCurrentSourceClockNavigation(clockTicket)) return;
         if (mappedCue) {
           eventBus.emit("visualCueOpen", mappedCue);
         }
-        eventBus.emit("videoTimeLineChanged", nextTime);
+        publishSourceTime(videoId, nextTime, clockTicket);
       }, 180);
     },
     [openPanel, videoId],
@@ -1691,7 +1694,6 @@ export default function ToolsPanel() {
           targetTimestamp: entry.start,
         }),
       );
-      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
       await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
@@ -1864,7 +1866,6 @@ export default function ToolsPanel() {
           },
         ),
       );
-      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
       await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
@@ -1900,7 +1901,6 @@ export default function ToolsPanel() {
         ...(analysisData?.annotationCorrections || {}),
         label_overrides: filteredOverrides,
       };
-      pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
       await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
       const refreshed = await VideoService.refreshAnalysis(videoId);
       setAnalysisData(refreshed);
@@ -2406,12 +2406,12 @@ export default function ToolsPanel() {
     const handler = (nextTime: number) => {
       setCurrentVideoTime(Number(nextTime) || 0);
     };
-    eventBus.on("videoTimeLineChanged", handler);
+    const unsubscribeClock = subscribeSourceTime(videoId, handler);
 
     return () => {
-      eventBus.off("videoTimeLineChanged", handler);
+      unsubscribeClock();
     };
-  }, []);
+  }, [videoId]);
 
   useEffect(() => {
     if (!pendingShotSizeTimestamp) {
@@ -3937,7 +3937,7 @@ export default function ToolsPanel() {
                                               className="text-cyan-300/80 hover:text-cyan-200"
                                               onClick={() => {
                                                 if (!videoId) return;
-                                                eventBus.emit("videoTimeLineChanged", timestamp);
+                                                publishSourceTime(videoId, timestamp);
                                               }}
                                             >
                                               Open source
@@ -4029,7 +4029,7 @@ export default function ToolsPanel() {
                                                   className="mr-3 text-cyan-300/80 hover:text-cyan-200"
                                                   onClick={() => {
                                                     if (!videoId) return;
-                                                    eventBus.emit("videoTimeLineChanged", entry.start);
+                                                    publishSourceTime(videoId, entry.start);
                                                   }}
                                                 >
                                                   Open source

@@ -1,5 +1,6 @@
 // services/eventBus.ts
 type Callback<T> = (payload: T) => void;
+import { isAnalysisAllowedInActiveProject, projectScopeViolation } from "@/lib/active-project-scope";
 
 class EventBus {
   private events = new Map<string, Set<Callback<any>>>();
@@ -17,6 +18,15 @@ class EventBus {
   }
 
   emit<T>(event: string, payload: T) {
+    if (event === "videoIdChanged" && typeof payload === "string" && payload && !isAnalysisAllowedInActiveProject(payload)) {
+      const violation = projectScopeViolation(payload, "event");
+      this.latest.set("projectScopeViolation", violation);
+      this.events.get("projectScopeViolation")?.forEach((cb) => cb(violation));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("vaa1-project-scope-violation", { detail: violation }));
+      }
+      return;
+    }
     this.latest.set(event, payload);
     this.events.get(event)?.forEach((cb) => cb(payload));
   }

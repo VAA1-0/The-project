@@ -226,6 +226,30 @@ export default function ProjectPanel() {
   const filteredVideos = libraryVideos.filter((video) =>
     video.name?.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+  const projectGroups = Array.from(
+    filteredVideos.reduce((groups, video) => {
+      const projectId = video.projectId || "unassigned-saved-work";
+      const existing = groups.get(projectId) || [];
+      existing.push(video);
+      groups.set(projectId, existing);
+      return groups;
+    }, new Map<string, VideoMetadata[]>()),
+  ).sort(([left], [right]) => {
+    if (left === "bond-cop30-helsinki") return -1;
+    if (right === "bond-cop30-helsinki") return 1;
+    if (left === "research-test-2026") return -1;
+    if (right === "research-test-2026") return 1;
+    return left.localeCompare(right);
+  });
+
+  const projectLabel = (projectId: string) => {
+    if (projectId === "bond-cop30-helsinki") {
+      return "Bond, COP30 and Helsinki project";
+    }
+    if (projectId === "research-test-2026") return "Marcella project";
+    if (projectId === "unassigned-saved-work") return "Unassigned saved work";
+    return projectId.replaceAll("-", " ");
+  };
 
   const selectVideo = (id: string) => {
     setVideoId(id);
@@ -836,11 +860,22 @@ export default function ProjectPanel() {
               </div>
             )}
 
-            {filteredVideos.map((vid, idx: number) => (
+            {projectGroups.map(([projectId, projectVideos]) => (
+              <section key={projectId} className="space-y-2">
+                <div className="sticky top-0 z-10 border-y border-[#292929] bg-[#171717]/95 px-2 py-1.5 backdrop-blur">
+                  <div className="truncate text-[10px] font-medium uppercase tracking-[0.12em] text-[#9a9a9a]">
+                    {projectLabel(projectId)}
+                  </div>
+                  <div className="text-[9px] text-[#626262]">
+                    {projectVideos.length} saved analysis{projectVideos.length === 1 ? "" : "es"}
+                  </div>
+                </div>
+                {projectVideos.map((vid, idx: number) => (
               <div
                 key={vid.id}
                 role="button"
                 aria-label={`Select video ${vid.name}`}
+                data-analysis-id={vid.id}
                 tabIndex={0}
                 className={`min-w-0 overflow-hidden p-2.5 rounded-md cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   videoId === vid.id
@@ -1034,6 +1069,8 @@ export default function ProjectPanel() {
                   </div>
                 </div>
               </div>
+                ))}
+              </section>
             ))}
           </div>
         </div>

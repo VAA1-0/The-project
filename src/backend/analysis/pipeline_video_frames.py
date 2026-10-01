@@ -1569,7 +1569,11 @@ class FrameAnalysisPipeline:
                     )
                 )
 
-                if save_video:
+                # A resumed measurement sweep deliberately does not reopen the
+                # prior MP4 writer: OpenCV cannot safely append to that file.
+                # Continue the governed detections and checkpoint instead of
+                # failing the entire visual branch on an absent derivative.
+                if save_video and out is not None:
                     out.write(annotated_frame)
                 if display:
                     cv2.imshow("Frame Analysis", annotated_frame)

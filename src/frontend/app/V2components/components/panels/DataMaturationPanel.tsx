@@ -1,9 +1,12 @@
 "use client";
 
+import { publishSourceTime } from "@/lib/source-clock-events";
+
 import React, { useEffect, useMemo, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
   CANONICAL_SOURCE_CLOCK_ID,
+  sourceSeconds,
   formatPreciseSourceTime,
   parsePreciseSourceTime,
   sourceClockStatusForAuthority,
@@ -17,6 +20,7 @@ import {
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-navigation";
 import { VideoService, type AnalysisData, type DetectedObject } from "@/lib/video-service";
+import { apiService } from "@/lib/api-service";
 import type {
   AnnotationCorrections,
   ManualVisualAnnotation,
@@ -39,6 +43,23 @@ type MaturationDecision = "confirmed" | "deferred" | "canceled" | "staged_annota
 
 type DataMaturationPanelProps = {
   videoId?: string;
+};
+
+type NarrativeAgentDigitalTwin = {
+  twin_id: string;
+  narrative_agent_label: string;
+  anchor_count: number;
+  modality_coverage: { present: string[]; missing: string[]; percentage: number };
+  visual_quality_guard?: {
+    automatic_recognition_ready?: boolean;
+    minimum_independent_confirmations?: number;
+  };
+  evidence: Record<string, Array<{
+    evidence_id: string;
+    analysis_id: string;
+    source_interval?: { start?: number | null; end?: number | null };
+    source_geometry?: Record<string, unknown> | null;
+  }>>;
 };
 
 type GovernanceMatrixRow = {
@@ -213,18 +234,16 @@ function timestampFromRecord(record: Record<string, unknown>): number | null {
     "time",
     "time_start",
   ]) {
-    const value = Number(record[key]);
-    if (Number.isFinite(value) && value >= 0) {
-      return value > 1000 ? value / 1000 : value;
+    const value = sourceSeconds(record[key]);
+    if (value !== null) {
+      return value;
     }
   }
   return null;
 }
 
 function secondsFrom(value: unknown): number | null {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0) return null;
-  return numeric > 1000 ? numeric / 1000 : numeric;
+  return sourceSeconds(value);
 }
 
 function rangeFromRecord(record: Record<string, unknown>): { start: number | null; end: number | null } {
@@ -671,15 +690,20 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
     .filter((item) => !textFrom(item.candidate_id).startsWith("tracked_object:"))
     .slice(0, 4)
     .forEach((item, index) => {
-    const timeRange = rangeFromRecord(item);
     const sourceAnchors = asArray<Record<string, unknown>>(item.source_anchors);
+    const sourceAnchor = sourceAnchors[0] || {};
+    const timeRange = rangeFromRecord(
+      Object.keys(sourceAnchor).length > 0 ? asRecord(sourceAnchor.source_time) : item,
+    );
     const anchorBBox = sourceAnchors.map(firstBBoxFromRecord).find(Boolean) || null;
+    const decisionState = textFrom(item.decision || item.status, "reviewed");
+    const isConfirmedDecision = /confirm|accept|proliferat|promote/i.test(decisionState);
     rows.push({
       id: textFrom(item.id || item.decision_id || item.candidate_id, `decision-${index}`),
       label: textFrom(item.label || item.target_label || item.candidate_label, "decision"),
       family: textFrom(item.target || item.category, "proliferation"),
       authority: "decision_ledger",
-      maturity: textFrom(item.decision || item.status, "reviewed"),
+      maturity: decisionState,
       source: textFrom(item.source_panel, "candidate review"),
       propagation: Array.isArray(item.proliferates_to) ? "confirmed projection" : "review only",
       traceback: textFrom(item.source_traceback_refs, "traceback required"),
@@ -693,7 +717,9 @@ function buildGovernanceMatrixRows(source: Record<string, unknown>): GovernanceM
       clusterKey: textFrom(item.cluster_key),
       hypothesisId: textFrom(item.hypothesis_id),
       opportunityId: textFrom(item.opportunity_id || item.source_opportunity_id),
-      queue: "confirmations",
+      // A ledgered decision is closed work. Confirmed decisions remain visible
+      // as delivered mature data, but must never inflate the awaiting queue.
+      queue: isConfirmedDecision ? "content" : "manual",
     });
   });
 
@@ -1161,6 +1187,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
   const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState(initialVideoId || "");
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [digitalTwins, setDigitalTwins] = useState<NarrativeAgentDigitalTwin[]>([]);
+  const [digitalTwinMessage, setDigitalTwinMessage] = useState("Loading Digital Twin samples...");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ProliferationMode>("dynamic");
   const [activeQueue, setActiveQueue] = useState<MaturationQueue>("confirmations");
@@ -1183,6 +1211,28 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     eventBus.emit("maturationWorkbenchActive", true);
     return () => eventBus.emit("maturationWorkbenchActive", false);
   }, []);
+
+  useEffect(() => {
+    let canceled = false;
+    apiService.getNarrativeAgentDigitalTwins()
+      .then((payload) => {
+        if (canceled) return;
+        const twins = asArray<NarrativeAgentDigitalTwin>(asRecord(payload).digital_twins);
+        setDigitalTwins(twins);
+        setDigitalTwinMessage(twins.length ? "" : "No Digital Twin samples are available.");
+      })
+      .catch((error) => {
+        console.warn("Failed to load Narrative Agent Digital Twins:", error);
+        if (!canceled) setDigitalTwinMessage("Digital Twin samples are not available from the backend.");
+      });
+    return () => { canceled = true; };
+  }, [refreshNonce]);
+
+  const visibleDigitalTwins = useMemo(() => digitalTwins.filter((twin) =>
+    Object.values(twin.evidence || {}).some((records) =>
+      records.some((record) => !videoId || record.analysis_id === videoId),
+    ),
+  ), [digitalTwins, videoId]);
 
   useEffect(() => {
     const videoHandler = (id: string) => {
@@ -1615,7 +1665,7 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     const normalizedRegion = normalizedBBoxFromRow(row.bbox);
     if (normalizedRegion && row.timestamp !== null && row.timestamp !== undefined) {
       eventBus.emit("videoIdChanged", videoId);
-      eventBus.emit("videoTimeLineChanged", row.timestamp);
+      publishSourceTime(videoId, row.timestamp);
       eventBus.emit("forensicRegionDraftOpen", {
         videoId,
         time: row.timestamp,
@@ -1783,10 +1833,10 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       ],
       source_traceback_refs: row.traceback ? [row.traceback] : [],
       projection_targets: confirmed
-        ? ["MasterSchema", "MeaningNetwork", "TracebackDrawer", "VideoPanel"]
+        ? ["MasterSchema", "NarrativeAgent", "VideoPanel", "BBox/ROI", "Audio", "Transcript", "OCR", "SceneCards", "MeaningNetwork", "MeaningPlot", "DataMaturation", "Search", "StatsKit", "TracebackDrawer", "DataBook", "ScientificReport", "Export"]
         : [],
       proliferates_to: confirmed
-        ? ["master_schema", "meaning_network", "traceback", "source_timed_panels"]
+        ? ["master_schema", "narrative_agent", "video", "bbox_roi", "audio", "transcript", "ocr", "scene_cards", "meaning_network", "meaning_plot", "data_maturation", "search", "statskit", "traceback", "data_book", "scientific_report", "export"]
         : [],
       proliferation_allowed: confirmed,
       decision_reason:
@@ -1943,6 +1993,212 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           panel="data_maturation"
         />
       </div>
+
+      <details
+        open
+        className="border-b border-white/8 bg-[#222222]"
+        data-vaa1-narrative-agent-digital-twin-navigation="true"
+      >
+        <summary className="cursor-pointer list-none px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-slate-400 marker:hidden hover:bg-white/[0.03]">
+          Narrative Agent Digital Twins · {visibleDigitalTwins.length} samples
+        </summary>
+        <div className="border-t border-white/8 px-3 py-2">
+          <div
+            className="mb-2 grid gap-px border border-white/8 bg-white/8 md:grid-cols-5"
+            data-vaa1-digital-twin-recognition-workflow="true"
+          >
+            {[
+              ["1", "Digital Twin", "Confirmed multimodal reference"],
+              ["2", "Federate", "Find similar source patterns"],
+              ["3", "Review", "Strong, review, or blocked"],
+              ["4", "Decide", "Confirm, defer, or reject"],
+              ["5", "Proliferate", "Refresh governed consumers"],
+            ].map(([step, title, detail]) => (
+              <div key={step} className="bg-[#1b1b1b] px-2 py-2">
+                <div className="text-[9px] uppercase tracking-[0.14em] text-slate-600">Step {step}</div>
+                <div className="mt-0.5 text-[10px] text-slate-300">{title}</div>
+                <div className="mt-0.5 text-[9px] text-slate-500">{detail}</div>
+              </div>
+            ))}
+          </div>
+          <div
+            className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500"
+            data-vaa1-digital-twin-candidate-bands="true"
+          >
+            <span><span className="text-slate-300">Strong candidate</span> · multiple modalities agree</span>
+            <span><span className="text-slate-400">Review candidate</span> · more evidence or judgement needed</span>
+            <span><span className="text-slate-500">Blocked</span> · conflict, missing measurement, or negative evidence</span>
+          </div>
+          <div className="mb-2 text-[10px] text-slate-500" data-vaa1-digital-twin-shared-decision-regime="true">
+            Review here in batches, or use Datascene right-click on the same candidate in Video,
+            Audio, Transcript, OCR, Scene Cards, Meaning Network, or Narrative Agent. Every route
+            writes the same canonical decision; confirmation is never requested twice.
+          </div>
+          {digitalTwinMessage ? <div className="text-[11px] text-slate-500">{digitalTwinMessage}</div> : null}
+          <div className="space-y-1">
+            {visibleDigitalTwins.map((twin) => {
+              const localAnchors = asArray<NarrativeAgentDigitalTwin["evidence"][string][number]>(
+                twin.evidence?.manual_confirmation,
+              ).filter(
+                (record) => !videoId || record.analysis_id === videoId,
+              );
+              const confirmedTwinDecision = asArray<ProliferationDecision>(
+                analysisData?.annotationCorrections?.proliferation_decisions,
+              ).find(
+                (decision) =>
+                  decision.candidate_id === twin.twin_id &&
+                  decision.decision === "confirmed" &&
+                  decision.proliferation_allowed === true,
+              );
+              return (
+                <details open key={twin.twin_id} className="border border-white/8 bg-[#1b1b1b]">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-2 py-1.5 marker:hidden">
+                    <span className="text-[11px] text-slate-200">{twin.narrative_agent_label}</span>
+                    <span className="text-[10px] text-slate-500">
+                      {twin.modality_coverage.percentage}% · {twin.anchor_count} confirmations
+                    </span>
+                  </summary>
+                  <div className="border-t border-white/8 px-2 py-2 text-[10px] text-slate-400">
+                    <div>Present: {twin.modality_coverage.present.join(", ") || "none"}</div>
+                    <div className="mt-1">Missing: {twin.modality_coverage.missing.join(", ") || "none"}</div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {localAnchors.map((anchor) => {
+                        const start = Number(anchor.source_interval?.start);
+                        return (
+                          <button
+                            key={anchor.evidence_id}
+                            type="button"
+                            className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5"
+                            data-vaa1-digital-twin-source-jump="true"
+                            onClick={() => {
+                              if (anchor.analysis_id && Number.isFinite(start)) {
+                                setVideoId(anchor.analysis_id);
+                                openVideoAtTime(anchor.analysis_id, start);
+                              }
+                            }}
+                          >
+                            Open confirmation at {Number.isFinite(start) ? formatPreciseSourceTime(start) : "source"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 border-y border-white/8 py-2" data-vaa1-digital-twin-primary-confirmation="true">
+                      {confirmedTwinDecision ? (
+                        <div className="mb-1 text-[10px] text-emerald-200/80">
+                          Analyst-confirmed Digital Twin. One user confirmation satisfies maturation;
+                          additional shots strengthen automatic matching only.
+                        </div>
+                      ) : twin.visual_quality_guard?.automatic_recognition_ready ? (
+                        <div className="mb-1 text-[10px] text-slate-400">
+                          Multiple independent confirmations support automatic recognition trials.
+                        </div>
+                      ) : (
+                        <div className="mb-1 text-[10px] text-amber-200/80" data-vaa1-digital-twin-single-frame-warning="true">
+                          Single-confirmation sample: review cross-dissolve, transition, colour/filter dominance,
+                          and another shot before enabling automatic recognition.
+                        </div>
+                      )}
+                      {confirmedTwinDecision ? (
+                        <div
+                          className="w-full border border-emerald-400/60 bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-100"
+                          data-vaa1-digital-twin-confirmed="true"
+                        >
+                          <div className="font-semibold">Digital Twin confirmed 100%</div>
+                          <div className="mt-0.5 text-[10px] font-normal text-emerald-200/75">
+                            Analyst authority recorded · governed projections refreshed
+                            {confirmedTwinDecision.created_at
+                              ? ` · ${new Date(confirmedTwinDecision.created_at).toLocaleString()}`
+                              : ""}
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="w-full border border-cyan-400/70 bg-cyan-400/15 px-3 py-2 text-left text-[12px] font-semibold text-cyan-100 hover:bg-cyan-400/25"
+                          onClick={() => {
+                            const anchor = localAnchors[0];
+                            const start = Number(anchor?.source_interval?.start);
+                            const end = Number(anchor?.source_interval?.end);
+                            if (!anchor || !Number.isFinite(start)) {
+                              setSaveMessage("Digital Twin confirmation blocked: no source-timed confirmation anchor.");
+                              return;
+                            }
+                            void persistProliferationDecision({
+                              id: twin.twin_id,
+                              label: twin.narrative_agent_label,
+                              family: "Narrative Agent Digital Twin",
+                              authority: "explicit analyst confirmation",
+                              maturity: "analyst confirmed",
+                              source: "DataMaturation",
+                              propagation: "all governed consumers",
+                              traceback: anchor.evidence_id,
+                              panel: "DataMaturation",
+                              reviewNeed: "Confirm the complete Digital Twin constellation",
+                              candidateId: twin.twin_id,
+                              timestamp: start,
+                              timeRange: { start, end: Number.isFinite(end) ? end : start },
+                              bbox: anchor.source_geometry || null,
+                              sourceRef: anchor.evidence_id,
+                              canConfirm: true,
+                              queue: "confirmations",
+                            }, "confirmed", "candidate");
+                          }}
+                        >
+                          Confirm Digital Twin 100%
+                          <span className="ml-2 font-normal text-cyan-200/70">
+                            Analyst authority · proliferate everywhere
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                    <div
+                      className="mt-2 flex flex-wrap gap-1 border-t border-white/8 pt-2"
+                      data-vaa1-digital-twin-applicable-navigation="true"
+                    >
+                      <button
+                        type="button"
+                        className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5"
+                        onClick={() => openPanel("ManualIdentification", { videoId, narrativeAgent: twin.narrative_agent_label })}
+                      >
+                        Open Narrative Agent
+                      </button>
+                      {twin.evidence?.scene_card?.length ? (
+                        <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("SceneCards", { videoId })}>
+                          Open Scene Cards
+                        </button>
+                      ) : null}
+                      {twin.evidence?.transcript?.length ? (
+                        <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("Transcript", { videoId })}>
+                          Open Transcript
+                        </button>
+                      ) : null}
+                      {twin.evidence?.audio?.length ? (
+                        <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("Audio", { videoId })}>
+                          Open Audio
+                        </button>
+                      ) : null}
+                      {twin.evidence?.ocr?.length ? (
+                        <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("OCR", { videoId })}>
+                          Open OCR
+                        </button>
+                      ) : null}
+                      <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("MeaningNetwork", { videoId })}>
+                        Open Meaning Network
+                      </button>
+                      <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("MasterSchema", { videoId })}>
+                        Open Master Schema
+                      </button>
+                      <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("TracebackDrawer", { videoId, sourceId: twin.twin_id })}>
+                        Open Traceback
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </div>
+      </details>
 
       <section
         className="border-b border-white/8 bg-[#222222] px-3 py-2"

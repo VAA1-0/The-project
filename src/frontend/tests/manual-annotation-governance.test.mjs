@@ -179,7 +179,7 @@ test("Visual cues uses a top alphabetical selector without replacing the Video p
   );
   assert.match(
     inspectorBlock,
-    /activeVisualCueEntries[\s\S]*videoTimeLineChanged/,
+    /activeVisualCueEntries[\s\S]*publishSourceTime/,
     "non-color cue families must render source-linked Tools records with explicit video seeking",
   );
   assert.match(
@@ -1268,7 +1268,7 @@ test("Audio prosody follows corrected transcript operational clock without doubl
   );
   assert.match(
     speechPanel,
-    /transcriptSourceBlocked[\s\S]*Scaffold transcript timing rejected[\s\S]*spoken rows at 0,2,4,6 seconds are not displayed/,
+    /transcriptSourceBlocked[\s\S]*recovered transcript text spans are displayed[\s\S]*scaffold timestamps are quarantined/,
     "Transcript panel must not render spoken scaffold rows if a stale source still reaches the component",
   );
 });
@@ -2079,7 +2079,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /data-vaa1-statskit-inline-evidence="true"[\s\S]*videoTimeLineChanged/,
+    /data-vaa1-statskit-inline-evidence="true"[\s\S]*publishSourceTime/,
     "StatsKit row inspection must stay inline and seek timed evidence on the existing video surface",
   );
 
@@ -2173,7 +2173,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     audioPanel,
-    /eventBus\.emit\("videoTimeLineChanged"[\s\S]*jumpTo\(event\.start, \{ analysisId[\s\S]*jumpTo\(cue\.start, \{ analysisId/,
+    /publishSourceTime\(context\?\.analysisId[\s\S]*jumpTo\(event\.start, \{ analysisId[\s\S]*jumpTo\(cue\.start, \{ analysisId/,
     "Audio workbench rows must navigate the source video through the shared timeline event",
   );
 
@@ -2497,14 +2497,26 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /findNarrativeAgentRowKey[\s\S]*sharesProfile[\s\S]*sharesAlias[\s\S]*likelySame/,
-    "Narrative Agent rows must combine multiple labels for the same character through profile, alias, or clear label evidence",
+    /rowKey: `confirmed-occurrence:\$\{occurrenceKey\}`/,
+    "each manually confirmed BBox geometry track must remain a distinct Narrative Agent occurrence",
   );
 
   assert.match(
     masterSchemaPanel,
-    /data-vaa1-narrative-agent-combined-profile-aliases="true"/,
-    "Narrative Agent panel must keep combined labels visible as source evidence",
+    /splitNarrativeAgentLabels[\s\S]*split\(\/\[,;\\n\]\+\//,
+    "aggregate character-label strings must be split before entering Narrative Agent rows",
+  );
+
+  assert.match(
+    masterSchemaPanel,
+    /duplicateLabelCount > 1[\s\S]*confirmed occurrence/,
+    "same-label Narrative Agents must remain distinguishable in the selector",
+  );
+
+  assert.match(
+    meaningPlotPanel,
+    /key=\{`\$\{activeSceneKey\}:\$\{row\.profileKey\}:line:\$\{line\.start\}:\$\{lineIndex\}`\}/,
+    "repeated transcript lines in scene-agent rows must retain unique React child keys",
   );
 
   assert.match(
@@ -2545,7 +2557,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /eventBus\.on\("videoTimeLineChanged", handler\)/,
+    /subscribeSourceTime\(videoId, handler\)/,
     "Narrative Agent timeline cursor must use the shared source-video timeline event",
   );
 
@@ -2653,7 +2665,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     masterSchemaPanel,
-    /function seekNarrativeAgentGraphSource[\s\S]*videoTimeLineChanged[\s\S]*narrativeAgentGraphSourceSeekRequested[\s\S]*focus_panel_changed:\s*false/,
+    /function seekNarrativeAgentGraphSource[\s\S]*publishSourceTime[\s\S]*narrativeAgentGraphSourceSeekRequested[\s\S]*focus_panel_changed:\s*false/,
     "Narrative Agent graph source seeking must use the loaded source-video clock instead of opening another panel",
   );
 
@@ -5814,7 +5826,7 @@ test("Maturation owns BBox navigation while its confirmation worktable is open",
   );
   assert.match(
     videoPanel,
-    /getLast<boolean>\("maturationWorkbenchActive"\)[\s\S]*videoTimeLineChanged[\s\S]*return;/,
+    /getLast<boolean>\("maturationWorkbenchActive"\)[\s\S]*publishSourceTime[\s\S]*return;/,
     "Video BBox navigation must seek without opening a replacement panel during maturation",
   );
   assert.match(

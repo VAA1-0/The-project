@@ -23,6 +23,38 @@ def _status(tmp_path: Path, analysis_id: str = "analysis-001") -> dict:
     }
 
 
+def test_video_publication_includes_canonical_annotation_sidecars(tmp_path: Path, monkeypatch):
+    status = _status(tmp_path, "analysis-with-corrections")
+    status["status"] = "uploaded"
+    results_dir = tmp_path / "api_results"
+    analysis_dir = results_dir / status["analysis_id"]
+    analysis_dir.mkdir(parents=True)
+    corrections = {
+        "text_substitutions": [{"from": "UNKNOWN", "to": "Agent A"}],
+        "manual_transcript_entries": [{"text": "confirmed line"}],
+        "manual_visual_annotations": [{"label": "speaker"}],
+        "master_schema_presence_intervals": [{"start": 1, "end": 2}],
+    }
+    master = {"review_layer": {"annotation_corrections": corrections}}
+    (analysis_dir / "annotation_corrections.json").write_text(json.dumps(corrections), encoding="utf-8")
+    (analysis_dir / "vaa1_annotation_master_schema.json").write_text(json.dumps(master), encoding="utf-8")
+    monkeypatch.setattr("src.backend.analysis.data_book_publication.DEFAULT_RESULTS_DIR", results_dir)
+
+    built = build_video_publication(status, tmp_path / "publication")
+
+    with zipfile.ZipFile(built["archive_path"]) as archive:
+        names = archive.namelist()
+        assert "Data Book/Chapters/16 - Master Schema and Governance/Files/Annotation Corrections.json" in names
+        assert "Data Book/Chapters/16 - Master Schema and Governance/Files/Annotation Master Schema.json" in names
+        correction_payload = json.loads(
+            archive.read("Data Book/Chapters/16 - Master Schema and Governance/Files/Annotation Corrections.json")
+        )
+        assert len(correction_payload["manual_visual_annotations"]) == 1
+    validation = built["package"]["video_package"]["validation"]
+    assert validation["status"] == "complete_with_warnings"
+    assert any(check["check_id"] == "PUB-004" for check in validation["checks"])
+
+
 def test_video_publication_has_readable_complete_chapter_tree_and_is_repeatable(tmp_path: Path):
     status = _status(tmp_path)
     first = build_video_publication(status, tmp_path / "publication")

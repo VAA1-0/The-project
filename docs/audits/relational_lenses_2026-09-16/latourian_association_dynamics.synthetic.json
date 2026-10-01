@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0.0",
+  "reading_id": "synthetic-unresolved-ref",
+  "framework": {
+    "framework_id": "latourian_association_dynamics",
+    "display_name": "Association Dynamics and Heterogeneous Agency",
+    "principal_attribution": "Bruno Latour and actor-network theory",
+    "reading_type": "interpretive_lens"
+  },
+  "governance": {
+    "record_status": "candidate",
+    "authority": "automated_candidate",
+    "ledger_event_id": "synthetic-unresolved-ref",
+    "created_at": "2026-09-16T09:00:00Z",
+    "created_by": "synthetic-unresolved-ref",
+    "dependency_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "input_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_anchors": [
+    {
+      "source_id": "synthetic-unresolved-ref",
+      "anchor_type": "time_interval",
+      "clock_unit": "source_relative_seconds",
+      "time_start": 0,
+      "time_end": 0,
+      "clock_authority": "synthetic-unresolved-ref",
+      "precision_seconds": 0
+    }
+  ],
+  "associations": [
+    {
+      "association_id": "synthetic-unresolved-ref",
+      "from_participant_id": "synthetic-unresolved-ref",
+      "to_participant_id": "synthetic-unresolved-ref",
+      "relation_type": "enables",
+      "directionality": "directed",
+      "evidence_anchor_ids": [
+        "synthetic-unresolved-ref"
+      ],
+      "epistemic_status": "observed_relation"
+    }
+  ],
+  "interpretive_summary": {
+    "claim_text": "synthetic-unresolved-ref",
+    "epistemic_level": "candidate_interpretation",
+    "evidence_anchor_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "inferential_distance": "proximal",
+    "uncertainty_note": "synthetic-unresolved-ref"
+  }
+}

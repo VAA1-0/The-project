@@ -8,6 +8,7 @@ import { VideoService, type VideoMetadata } from "@/lib/video-service";
 import { clearAllVideoBlobs, saveVideoBlob } from "@/lib/blob-store";
 import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { activeProjectScopeId } from "@/lib/active-project-scope";
 import { Library } from "@/lib/local-library";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
@@ -556,6 +557,11 @@ export function MenuBar() {
 
   const handleRestoreWindows = () => {
     try {
+      window.localStorage.removeItem(
+        `${SAVED_LAYOUT_STORAGE_KEY}.${encodeURIComponent(activeProjectScopeId() || "catalogue")}`,
+      );
+      // Remove the legacy unscoped layout so it can never reintroduce a panel
+      // identity from another research project.
       window.localStorage.removeItem(SAVED_LAYOUT_STORAGE_KEY);
     } catch (error) {
       console.warn("Failed to clear saved workspace layout:", error);
@@ -1105,6 +1111,15 @@ export function MenuBar() {
           label: "StatsKit",
           onClick: () => {
             openSourceLinkedPanel("StatsKit");
+          },
+        },
+        {
+          label: "Traceback",
+          onClick: () => {
+            openPanel(
+              "TracebackDrawer",
+              selectedVideoId ? { videoId: selectedVideoId } : {},
+            );
           },
         },
         {

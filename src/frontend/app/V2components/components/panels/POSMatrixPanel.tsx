@@ -29,10 +29,57 @@ const SECTION_LABELS: Record<string, string> = {
 };
 
 function normalizeSectionOrder(sections: string[]) {
-  const uniqueSections = Array.from(new Set(sections));
+  const uniqueSections = Array.from(
+    new Set((Array.isArray(sections) ? sections : []).filter((section): section is string => typeof section === "string")),
+  );
   const knownSections = SECTION_ORDER.filter((section) => uniqueSections.includes(section));
   const extraSections = uniqueSections.filter((section) => !SECTION_ORDER.includes(section as any));
   return [...knownSections, ...extraSections];
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string" || typeof item === "number") return String(item);
+      if (item && typeof item === "object") {
+        const candidate = item as Record<string, unknown>;
+        return String(candidate.text ?? candidate.word ?? candidate.label ?? "").trim();
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+class POSMatrixCellBoundary extends React.Component<
+  { children: React.ReactNode; analysisId: string; section: string },
+  { error: string | null }
+> {
+  state = { error: null as string | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("POS matrix cell render failed", {
+      analysisId: this.props.analysisId,
+      section: this.props.section,
+      error,
+    });
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div data-vaa1-pos-matrix-cell-error="true" role="alert" className="rounded border border-red-500/20 bg-red-500/10 p-2 text-[11px] text-red-200">
+          This POS field could not be displayed. The analysis remains in the matrix.
+          <div className="mt-1 text-red-300/70">{this.state.error}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function downloadTextFile(filename: string, contents: string, type: string) {
@@ -318,17 +365,16 @@ export default function POSMatrixPanel({
         }),
       );
       const validRows = rows.filter((row) => row.analysisData !== null);
-      const validIds = validRows.map((row) => row.id);
-      if (validIds.length !== matrixAnalysisIds.length) {
-        setMatrixAnalysisIds(validIds);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(MATRIX_ANALYSES_STORAGE_KEY, JSON.stringify(validIds));
-        }
-        eventBus.emit("posMatrixAnalysesChanged", validIds);
-      }
-
+      // A transient read failure must not mutate the analyst's comparison
+      // cohort. Keep the requested IDs in localStorage and retry on the next
+      // explicit refresh/open instead of silently deleting a matrix column.
       setAnalysisRows(validRows);
-      setSourceName(validRows[0]?.sourceName || "Selected analysis");
+      setSourceName(
+        validRows[0]?.sourceName ||
+          (matrixAnalysisIds.length > 0
+            ? "Selected analyses temporarily unavailable"
+            : "Selected analysis"),
+      );
     }
     void loadRows();
   }, [matrixAnalysisIds]);
@@ -413,10 +459,10 @@ export default function POSMatrixPanel({
   const renderClickableWords = (
     analysisId: string,
     analysisData: AnalysisData | null,
-    words: string[],
+    words: unknown,
     limit = 4,
   ) => {
-    const visible = words.slice(0, limit);
+    const visible = asStringList(words).slice(0, limit);
     if (visible.length === 0) {
       return <span className="text-slate-500">none</span>;
     }
@@ -441,14 +487,15 @@ export default function POSMatrixPanel({
   const renderClickableList = (
     analysisId: string,
     analysisData: AnalysisData | null,
-    values: string[],
+    values: unknown,
   ) => {
-    if (!values.length) {
+    const normalizedValues = asStringList(values);
+    if (!normalizedValues.length) {
       return <span className="text-slate-500">none</span>;
     }
     return (
       <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
-        {values.map((value, index) => (
+        {normalizedValues.map((value, index) => (
           <button
             key={`${analysisId}-${value}-${index}`}
             type="button"
@@ -469,12 +516,12 @@ export default function POSMatrixPanel({
 
   const getOrderedWordEntries = (
     analysisData: AnalysisData | null,
-    words: string[],
+    words: unknown,
   ) => {
     const transcript = analysisData?.transcriptTimeline || analysisData?.transcript || [];
     let searchStartIndex = 0;
 
-    return words
+    return asStringList(words)
       .map((word) => String(word || "").trim())
       .filter(Boolean)
       .map((word, index, normalizedWords) => {
@@ -513,7 +560,7 @@ export default function POSMatrixPanel({
   const renderOrderedWordList = (
     analysisId: string,
     analysisData: AnalysisData | null,
-    words: string[],
+    words: unknown,
   ) => {
     const orderedWords = getOrderedWordEntries(analysisData, words);
     if (orderedWords.length === 0) {
@@ -556,7 +603,7 @@ export default function POSMatrixPanel({
     return (
       <div className="space-y-1 border-b border-slate-900/70 pb-1 text-[11px] text-slate-400">
         {noteLines.map((line, index) => (
-          <div key={`morph-note-${index}`}>{line}</div>
+          <div key={`morph-note-${index}`}>{String(line)}</div>
         ))}
       </div>
     );
@@ -1336,7 +1383,9 @@ export default function POSMatrixPanel({
                         key={`${row.id}-${section}`}
                         className="border-b border-slate-900/60 p-2"
                       >
-                        {renderCell(section, row.id, row.analysisData)}
+                        <POSMatrixCellBoundary analysisId={row.id} section={section}>
+                          {renderCell(section, row.id, row.analysisData)}
+                        </POSMatrixCellBoundary>
                       </div>
                     ))
                   )}

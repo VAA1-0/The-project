@@ -1,0 +1,431 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:datascene:relational-lenses:common:1.1.0",
+  "$defs": {
+    "nonEmptyId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_status",
+        "authority",
+        "created_at",
+        "created_by",
+        "dependency_ids",
+        "input_snapshot_hash",
+        "candidate_record_id"
+      ],
+      "properties": {
+        "record_status": {
+          "enum": [
+            "candidate",
+            "provisionally_accepted",
+            "confirmed",
+            "corrected",
+            "rejected",
+            "conflicted",
+            "superseded",
+            "invalidated",
+            "stale",
+            "unresolved"
+          ]
+        },
+        "authority": {
+          "enum": [
+            "automated_candidate",
+            "imported_candidate",
+            "analyst_proposal",
+            "analyst_confirmed",
+            "analyst_corrected"
+          ]
+        },
+        "ledger_event_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        },
+        "supersedes_event_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_or_rule_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "dependency_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "input_snapshot_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-fA-F0-9]{64}$"
+        },
+        "invalidation_reason": {
+          "type": "string"
+        },
+        "candidate_record_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        }
+      },
+      "description": "Declared projection state only; validation never grants authority. A trusted service must resolve decision references and verify their writer and dependencies.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "record_status": {
+                "enum": [
+                  "confirmed",
+                  "corrected",
+                  "provisionally_accepted"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "ledger_event_id"
+            ],
+            "properties": {
+              "authority": {
+                "enum": [
+                  "analyst_confirmed",
+                  "analyst_corrected"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "record_status": {
+                "const": "corrected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "authority": {
+                "const": "analyst_corrected"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "authority": {
+                "enum": [
+                  "analyst_confirmed",
+                  "analyst_corrected"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "ledger_event_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "authority": {
+                "const": "automated_candidate"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "provider",
+              "model_or_rule_version",
+              "parameters"
+            ]
+          }
+        }
+      ]
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "anchor_type",
+        "clock_unit",
+        "time_start",
+        "time_end",
+        "clock_authority",
+        "precision_seconds",
+        "anchor_id",
+        "source_revision_id"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        },
+        "anchor_type": {
+          "enum": [
+            "time_interval",
+            "transcript_span",
+            "frame",
+            "roi",
+            "document_span",
+            "image_region",
+            "web_region",
+            "metadata_record"
+          ]
+        },
+        "clock_unit": {
+          "const": "source_relative_seconds"
+        },
+        "time_start": {
+          "type": "number",
+          "minimum": 0
+        },
+        "time_end": {
+          "type": "number",
+          "minimum": 0
+        },
+        "clock_authority": {
+          "type": "string",
+          "minLength": 1
+        },
+        "precision_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "spatial_region": {
+          "$ref": "#/$defs/spatialRegion"
+        },
+        "text_quote": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "anchor_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        },
+        "source_revision_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        }
+      },
+      "description": "Versioned source anchor. Interval ordering, bounds and reference resolution require semantic validation."
+    },
+    "spatialRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinate_system",
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "coordinate_system": {
+          "enum": [
+            "normalized_0_1",
+            "pixels"
+          ]
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "coordinate_system": {
+                "const": "normalized_0_1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "x": {
+                "maximum": 1
+              },
+              "y": {
+                "maximum": 1
+              },
+              "width": {
+                "maximum": 1
+              },
+              "height": {
+                "maximum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "interpretiveClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_text",
+        "epistemic_level",
+        "evidence_anchor_ids",
+        "inferential_distance",
+        "uncertainty_note"
+      ],
+      "properties": {
+        "claim_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "epistemic_level": {
+          "enum": [
+            "candidate_interpretation",
+            "confirmed_interpretation"
+          ]
+        },
+        "evidence_anchor_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "inferential_distance": {
+          "enum": [
+            "proximal",
+            "moderate",
+            "extended"
+          ]
+        },
+        "uncertainty_note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "alternative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alternative_id",
+        "claim",
+        "status",
+        "evidence_anchor_ids"
+      ],
+      "properties": {
+        "alternative_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "retained",
+            "preferred",
+            "rejected",
+            "unresolved",
+            "superseded",
+            "stale"
+          ]
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "evidence_anchor_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          }
+        },
+        "ledger_event_id": {
+          "$ref": "#/$defs/nonEmptyId"
+        }
+      }
+    },
+    "projectionBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "meaning_network_relation_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "narrative_agent_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "scene_card_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "statskit_variable_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        },
+        "governed_claim_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyId"
+          },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

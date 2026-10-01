@@ -46,6 +46,59 @@ test("Transcript speaker confirmation uses governed characters and durable sourc
   assert.match(service, /identity_auto_promotion_allowed:\s*false/);
 });
 
+test("source metadata persons surface as individual Narrative Agents", () => {
+  const registry = read("lib/narrative-agent-registry.ts");
+  const service = read("lib/video-service.ts");
+  const audio = read("app/V2components/components/panels/AudioPanel.tsx");
+  const video = read("app/V2components/components/panels/VideoPanel.tsx");
+  const transcript = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
+  const meaning = read("app/V2components/components/panels/MeaningPlotPanel.tsx");
+
+  assert.match(registry, /const knownPersons = Array\.isArray\(annotations\?\.persons\)/);
+  assert.match(registry, /if \(knownPersons\.length > 0\)[\s\S]*?addValues\(labels, knownPersons\)/);
+  assert.match(registry, /split\(\/\[,;\\n\]\+\/\)/);
+  assert.match(service, /apiService\.getSourceMediaMetadata\(id\)/);
+  assert.match(video, /eventBus\.on\("sourceMediaMetadataChanged", sourceMetadataHandler\)/);
+  assert.match(transcript, /eventBus\.on\("sourceMediaMetadataChanged", sourceMetadataHandler\)/);
+  assert.match(audio, /governedNarrativeAgentLabels\(analysisData\)/);
+  assert.match(meaning, /metadata-person:[\s\S]*?source_media_metadata\.user_annotations\.persons/);
+  assert.match(meaning, /if \(knownPersons\.length === 0\)/);
+});
+
+test("transcript saves require canonical sidecar readback before acknowledgement", () => {
+  const panel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
+  const api = read("lib/api-service.ts");
+
+  assert.match(api, /const artifactUrl = `\/api\/local-analysis\/\$\{analysisId\}\/download\/annotation_corrections`/);
+  assert.match(api, /method: "POST"[\s\S]*?verificationResponse[\s\S]*?cache: "no-store"/);
+  assert.match(api, /verified\.updated_at !== expected\.updated_at/);
+  assert.match(panel, /Saved and verified \$\{normalizedStatus\} transcript correction/);
+});
+
+test("transcript interval saves retain a guarded inverse after verified readback", () => {
+  const service = read("lib/video-service.ts");
+  assert.match(
+    service,
+    /const before = recordUndo \? await apiService\.getAnnotationCorrections\(id\) : null;[\s\S]*const saved = await apiService\.saveAnnotationCorrections\(id, corrections\);[\s\S]*correctionUndoSnapshot\(before, saved\)[\s\S]*pushCorrectionSnapshot\(id, snapshot\)/,
+  );
+});
+
+test("saved manual intervals reopen as time-authoritative clock evidence", () => {
+  const service = read("lib/video-service.ts");
+  assert.match(
+    service,
+    /const manualEntries[\s\S]*timingStatus:\s*"manual_correction"[\s\S]*timingAuthority:\s*"manual_correction"[\s\S]*sourceTimeValid:\s*true/,
+  );
+});
+
+test("verified correction saves invalidate stale derived projections before reopen", () => {
+  const service = read("lib/video-service.ts");
+  assert.match(
+    service,
+    /const saved = await apiService\.saveAnnotationCorrections\(id, corrections\);[\s\S]*this\.analysisCache\.delete\(id\);[\s\S]*eventBus\.emit\("analysisCorrectionsChanged"/,
+  );
+});
+
 test("Speaker confirmations project into Meaning Network and Narrative Agent evidence", () => {
   const meaning = read("app/V2components/components/panels/MeaningPlotPanel.tsx");
 

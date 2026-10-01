@@ -1,3 +1,9 @@
+
+import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-events";
+
+import { formatPreciseSourceTime } from "@/lib/source-clock";
+
+import { sourceTimeBoundary } from "@/lib/source-clock";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type AnalysisData, type DatasceneEntityRegistryRecord, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
@@ -1182,42 +1188,27 @@ const CHARACTER_FAMILIES = new Set([
 const PLOT_FAMILIES = new Set(["Scene", "Episode", "Situation", "Action", "ReportClaim"]);
 
 function secondsFromInstruction(instruction: SecondOrderLabelInstruction): number {
-  const raw = instruction.time_span?.start_ms ?? instruction.time_span?.start ?? 0;
-  const number = Number(raw || 0);
-  return instruction.time_span?.start_ms !== undefined || number > 1000 ? number / 1000 : number;
+  const span = instruction.time_span;
+  return sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function endSecondsFromInstruction(instruction: SecondOrderLabelInstruction): number {
-  const raw =
-    instruction.time_span?.end_ms ??
-    instruction.time_span?.end ??
-    instruction.time_span?.start_ms ??
-    instruction.time_span?.start ??
-    0;
-  const number = Number(raw || 0);
-  return instruction.time_span?.end_ms !== undefined || number > 1000 ? number / 1000 : number;
+  const span = instruction.time_span;
+  return sourceTimeBoundary(span, "end") ?? sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function formatTime(seconds: number): string {
-  const safe = Math.max(0, Number(seconds || 0));
-  const minutes = Math.floor(safe / 60);
-  const wholeSeconds = Math.floor(safe % 60);
-  const millis = Math.floor((safe % 1) * 1000);
-  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+  return formatPreciseSourceTime(seconds);
 }
 
 function readingStartSeconds(reading: InterpretiveReading): number {
-  const span = reading.target?.time_span || reading.time_span || {};
-  const raw = span.start_ms ?? span.start ?? 0;
-  const number = Number(raw || 0);
-  return span.start_ms !== undefined || number > 1000 ? number / 1000 : number;
+  const span = reading.target?.time_span || reading.time_span;
+  return sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function readingEndSeconds(reading: InterpretiveReading): number {
-  const span = reading.target?.time_span || reading.time_span || {};
-  const raw = span.end_ms ?? span.end ?? span.start_ms ?? span.start ?? 0;
-  const number = Number(raw || 0);
-  return span.end_ms !== undefined || number > 1000 ? number / 1000 : number;
+  const span = reading.target?.time_span || reading.time_span;
+  return sourceTimeBoundary(span, "end") ?? sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function readingEvidenceSummary(reading: InterpretiveReading): string {
@@ -2840,6 +2831,23 @@ function sourceMetadataNarrativeAgentProfiles(
       ),
   );
 
+  const knownPersons = (annotations.persons || [])
+    .map((value) => String(value || "").trim())
+    .filter((value) => !isUnknownAgentLabel(value));
+  for (const [index, name] of knownPersons.entries()) {
+    profiles.push({
+      profile_id: `metadata-person:${normalizeAgentKey(name) || index}`,
+      profile_type: "narrative_agent_profile",
+      narrative_agent_name: name,
+      aliases: [],
+      source_metadata: {
+        role_labels: [name],
+        source_preference: "source_media_metadata.user_annotations.persons",
+      },
+      evidence_slots: { scene_links: [], meaning_plot_refs: [] },
+    } as NarrativeAgentProfile);
+  }
+
   for (const [index, definition] of (annotations.character_definitions || []).entries()) {
     const name = String(definition.character_name || "").trim();
     if (isUnknownAgentLabel(name)) continue;
@@ -2869,9 +2877,13 @@ function sourceMetadataNarrativeAgentProfiles(
     } as NarrativeAgentProfile);
   }
 
-  for (const [index, roleLine] of (annotations.character_roles || []).entries()) {
-    const profile = parseRoleLineToProfile(roleLine, index);
-    if (profile) profiles.push(profile);
+  if (knownPersons.length === 0) {
+    for (const [index, roleLine] of (annotations.character_roles || []).entries()) {
+      for (const [roleIndex, role] of String(roleLine || "").split(/[,;\n]+/).entries()) {
+        const profile = parseRoleLineToProfile(role, index * 100 + roleIndex);
+        if (profile) profiles.push(profile);
+      }
+    }
   }
 
   const seen = new Set<string>();
@@ -2944,8 +2956,10 @@ function masterSchemaRecordNarrativeAgentProfile(
 
 function masterSchemaNarrativeAgentProfiles(
   records: MasterSchemaResolvedEvidenceRecord[] | undefined,
+  sourcePersonsAreAuthoritative = false,
 ): NarrativeAgentProfile[] {
   const profiles = (records || [])
+    .filter((record) => !(sourcePersonsAreAuthoritative && record.category === "character_role"))
     .map(masterSchemaRecordNarrativeAgentProfile)
     .filter((profile): profile is NarrativeAgentProfile => Boolean(profile));
   const seen = new Set<string>();
@@ -3616,6 +3630,7 @@ export default function MeaningPlotPanel({
   const [meaningNetworkCursorSeconds, setMeaningNetworkCursorSeconds] = useState(0);
   const [focusedMeaningNetworkSceneKey, setFocusedMeaningNetworkSceneKey] = useState<string | null>(null);
   const meaningNetworkGraphSvgRef = useRef<SVGSVGElement | null>(null);
+  const meaningNetworkGraphScrollRef = useRef<HTMLDivElement | null>(null);
   const meaningNetworkLiveScrubRef = useRef(0);
   const plotPathRef = useRef<HTMLDivElement | null>(null);
   const sceneAgentBrowserRef = useRef<HTMLDivElement | null>(null);
@@ -3681,9 +3696,9 @@ export default function MeaningPlotPanel({
         setMeaningNetworkCursorSeconds(Math.max(0, seconds));
       }
     };
-    eventBus.on("videoTimeLineChanged", handler);
-    return () => eventBus.off("videoTimeLineChanged", handler);
-  }, []);
+    const unsubscribeClock = subscribeSourceTime(selectedVideoId, handler);
+    return () => unsubscribeClock();
+  }, [selectedVideoId]);
 
   useEffect(() => {
     const handler = (lens: DramaticArchetypeLens) => {
@@ -3934,8 +3949,11 @@ export default function MeaningPlotPanel({
   );
   const sourceMediaMetadata = governedSourceMetadata || analysisData?.metadata?.sourceMediaMetadata;
   const masterNarrativeAgentProfiles = useMemo(
-    () => masterSchemaNarrativeAgentProfiles(analysisData?.masterSchemaResolvedEvidence?.records),
-    [analysisData?.masterSchemaResolvedEvidence?.records],
+    () => masterSchemaNarrativeAgentProfiles(
+      analysisData?.masterSchemaResolvedEvidence?.records,
+      Boolean(sourceMediaMetadata?.user_annotations?.persons?.length),
+    ),
+    [analysisData?.masterSchemaResolvedEvidence?.records, sourceMediaMetadata],
   );
   const sourceNarrativeAgentProfiles = useMemo(
     () => sourceMetadataNarrativeAgentProfiles(sourceMediaMetadata),
@@ -4344,6 +4362,42 @@ export default function MeaningPlotPanel({
     const ratio = Math.min(1, Math.max(0, (meaningNetworkCursorSeconds - meaningNetworkGraph.temporalStart) / span));
     return 80 + ratio * Math.max(meaningNetworkGraph.width - 160, 1);
   }, [meaningNetworkCursorSeconds, meaningNetworkGraph.temporalEnd, meaningNetworkGraph.temporalStart, meaningNetworkGraph.width]);
+  const activeMeaningNetworkNodesAtCursor = useMemo(
+    () => meaningNetworkGraph.nodes.filter((node) => {
+      const range = meaningNetworkEvidenceTimeRange(node.evidence_refs);
+      if (!range) return false;
+      if (range.end > range.start) {
+        return meaningNetworkCursorSeconds >= range.start && meaningNetworkCursorSeconds <= range.end;
+      }
+      return Math.abs(meaningNetworkCursorSeconds - range.start) <= 0.001;
+    }),
+    [meaningNetworkCursorSeconds, meaningNetworkGraph.nodes],
+  );
+  const activeMeaningNetworkNodeIdsAtCursor = useMemo(
+    () => new Set(activeMeaningNetworkNodesAtCursor.map((node) => node.node_id)),
+    [activeMeaningNetworkNodesAtCursor],
+  );
+
+  useEffect(() => {
+    if (meaningNetworkViewMode !== "graph") return;
+    const viewport = meaningNetworkGraphScrollRef.current;
+    if (!viewport) return;
+    const frame = window.requestAnimationFrame(() => {
+      const cursorLeft = meaningNetworkCursorX * meaningNetworkZoom;
+      const firstActivePoint = activeMeaningNetworkNodesAtCursor
+        .map((node) => meaningNetworkGraph.positions.get(node.node_id))
+        .find((point) => Boolean(point));
+      viewport.scrollTo({
+        left: Math.max(0, cursorLeft - viewport.clientWidth / 2),
+        top: firstActivePoint
+          ? Math.max(0, firstActivePoint.y * meaningNetworkZoom - viewport.clientHeight / 2)
+          : viewport.scrollTop,
+        behavior: "auto",
+      });
+      viewport.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeMeaningNetworkNodesAtCursor, meaningNetworkCursorX, meaningNetworkGraph.positions, meaningNetworkViewMode, meaningNetworkZoom]);
   const activeSceneMeaningNodes = useMemo(
     () =>
       activeMeaningNetworkScene
@@ -7174,7 +7228,32 @@ export default function MeaningPlotPanel({
                   </div>
                 )}
                 {meaningNetworkViewMode === "graph" && meaningNetworkGraph.nodes.length > 0 ? (
+                  <>
+                  <div className="mb-2 rounded border border-yellow-900/60 bg-yellow-950/10 px-2 py-2" data-vaa1-meaning-network-cursor-concordance="true">
+                    <div className="text-[9px] uppercase tracking-[0.13em] text-yellow-200/70">
+                      Cursor-associated nodes · {formatTime(meaningNetworkCursorSeconds)} · {activeMeaningNetworkNodesAtCursor.length}
+                    </div>
+                    {activeMeaningNetworkNodesAtCursor.length ? (
+                      <div className="mt-1 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                        {activeMeaningNetworkNodesAtCursor.map((node) => (
+                          <button
+                            key={`cursor-node:${node.node_id}`}
+                            type="button"
+                            onClick={() => setSelectedMeaningNetworkNodeId(node.node_id)}
+                            className="rounded border border-yellow-800/70 bg-black/20 px-2 py-1 text-left text-[10px] text-yellow-50 hover:border-yellow-400"
+                            data-vaa1-meaning-network-cursor-node={node.node_id}
+                          >
+                            <span className="font-medium">{renamedMeaningNetworkMarkers[node.node_id] || node.label}</span>
+                            <span className="ml-1 text-yellow-200/55">{meaningNetworkNodeKindLabel(node.node_type)} · {meaningNetworkSourceTimeLabel(node.evidence_refs)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[10px] text-slate-500">No source-timed Knowledge Graph node addresses this beat.</div>
+                    )}
+                  </div>
                   <div
+                    ref={meaningNetworkGraphScrollRef}
                     className={`${meaningNetworkExpanded ? "h-[calc(100vh-260px)] min-h-[520px]" : "h-[280px]"} overflow-auto rounded bg-[#050707]`}
                     onWheel={handleMeaningNetworkWheelZoom}
                     data-vaa1-meaning-network-scrollable-graph="true"
@@ -7271,6 +7350,7 @@ export default function MeaningPlotPanel({
                       const label = renamedMeaningNetworkMarkers[bar.node.node_id] || bar.node.label;
                       const confirmed = confirmedMeaningNetworkMarkers[bar.node.node_id];
                       const selected = selectedMeaningNetworkNodeId === bar.node.node_id;
+                      const activeAtCursor = activeMeaningNetworkNodeIdsAtCursor.has(bar.node.node_id);
                       const isObject = bar.node.node_type === "object";
                       const agencyScore = meaningNetworkLensNodeScore(bar.node, activeLens, meaningNetworkGraph.lensProfile);
                       const highAgency = agencyScore < 40;
@@ -7319,10 +7399,11 @@ export default function MeaningPlotPanel({
                             height={bar.height}
                             rx={5}
                             fill={fill}
-                            stroke={selected ? "#e0f2fe" : stroke}
-                            strokeWidth={selected ? 2.4 : highAgency ? 2 : 1.4}
+                            stroke={selected ? "#e0f2fe" : activeAtCursor ? "#facc15" : stroke}
+                            strokeWidth={selected ? 2.4 : activeAtCursor ? 3 : highAgency ? 2 : 1.4}
                             opacity={bar.sourceTimed ? (highAgency ? 0.92 : 0.78) : 0.56}
                             data-vaa1-meaning-network-lens-agency={highAgency ? "true" : "false"}
+                            data-vaa1-meaning-network-active-at-cursor={activeAtCursor ? "true" : "false"}
                           />
                           <rect
                             x={bar.x - 3}
@@ -7465,6 +7546,7 @@ export default function MeaningPlotPanel({
                       if (!point) return null;
                       const confirmed = confirmedMeaningNetworkMarkers[node.node_id];
                       const selected = selectedMeaningNetworkNodeId === node.node_id;
+                      const activeAtCursor = activeMeaningNetworkNodeIdsAtCursor.has(node.node_id);
                       const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
                       const rawLike = node.node_type === "evidence_fragment";
                       const nodeAgency = meaningNetworkLensNodeScore(node, activeLens, meaningNetworkGraph.lensProfile) < 40;
@@ -7512,6 +7594,8 @@ export default function MeaningPlotPanel({
                             fill={confirmed ? "#064e3b" : rawLike ? "#422006" : "#0f172a"}
                             stroke={selected
                               ? "#e0f2fe"
+                              : activeAtCursor
+                                ? "#facc15"
                               : nodeAgency
                                 ? meaningNetworkGraph.lensProfile.agencyColor
                                 : confirmed
@@ -7519,8 +7603,9 @@ export default function MeaningPlotPanel({
                                   : rawLike
                                     ? "#f59e0b"
                                     : "#2dd4bf"}
-                            strokeWidth={selected ? 3 : nodeAgency ? 2.8 : 2}
+                            strokeWidth={selected ? 3 : activeAtCursor ? 4 : nodeAgency ? 2.8 : 2}
                             data-vaa1-meaning-network-lens-agency={nodeAgency ? "true" : "false"}
+                            data-vaa1-meaning-network-active-at-cursor={activeAtCursor ? "true" : "false"}
                           />
                           {selected && !meaningNetworkGraph.nodeBars.some((bar) => bar.node.node_id === node.node_id) ? (
                             <>
@@ -7557,6 +7642,7 @@ export default function MeaningPlotPanel({
                     })}
                   </svg>
                   </div>
+                  </>
                 ) : null}
                 {meaningNetworkContextMenu ? (
                   <div
@@ -8740,7 +8826,7 @@ export default function MeaningPlotPanel({
                                       forceNewPanel: true,
                                     },
                                   });
-                                  eventBus.emit("videoTimeLineChanged", start);
+                                  publishSourceTime(selectedVideoId, start);
                                 }}
                                 className="rounded border border-cyan-800/70 bg-[#080b0b] px-2 py-1 text-[9px] text-cyan-100 hover:bg-cyan-950/30 disabled:cursor-not-allowed disabled:opacity-40"
                                 data-vaa1-meaning-network-matcher-second-screen="true"
@@ -9668,9 +9754,9 @@ export default function MeaningPlotPanel({
                             </div>
                             {row.lines.length > 0 && (
                               <div className="mt-1 space-y-1">
-                                {row.lines.slice(0, 2).map((line) => (
+                                {row.lines.slice(0, 2).map((line, lineIndex) => (
                                   <button
-                                    key={`${row.profileKey}:line:${line.start}:${line.text}`}
+                                    key={`${activeSceneKey}:${row.profileKey}:line:${line.start}:${lineIndex}`}
                                     type="button"
                                     onClick={() => openVideoAtTime(selectedVideoId, line.start)}
                                     className="block w-full truncate rounded border border-slate-800 px-1.5 py-0.5 text-left text-[9px] text-slate-300 hover:border-cyan-800/60"
@@ -9682,9 +9768,9 @@ export default function MeaningPlotPanel({
                             )}
                             {row.manualAnnotations.length > 0 && (
                               <div className="mt-1 flex flex-wrap gap-1">
-                                {row.manualAnnotations.slice(0, 4).map((annotation) => (
+                                {row.manualAnnotations.slice(0, 4).map((annotation, annotationIndex) => (
                                   <button
-                                    key={`${row.profileKey}:manual:${annotation.id || manualAnnotationStart(annotation)}`}
+                                    key={`${activeSceneKey}:${row.profileKey}:manual:${annotation.id || manualAnnotationStart(annotation)}:${annotationIndex}`}
                                     type="button"
                                     onClick={() => openVideoAtTime(selectedVideoId, manualAnnotationStart(annotation))}
                                     className="rounded border border-emerald-700/50 px-1.5 py-0.5 text-[9px] text-emerald-100 hover:bg-emerald-950/25"

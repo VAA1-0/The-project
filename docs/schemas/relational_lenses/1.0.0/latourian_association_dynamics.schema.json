@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.example/schemas/latourian_association_dynamics.schema.json",
+  "title": "Association Dynamics and Heterogeneous Agency",
+  "description": "A candidate interpretive lens for tracing how heterogeneous human and non-human participants associate, translate action, mediate relations, and provisionally stabilize collectives. This schema cannot create canonical Datascene truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "reading_id", "framework", "governance", "source_anchors", "associations", "interpretive_summary"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "reading_id": {"$ref": "#/$defs/nonEmptyId"},
+    "framework": {
+      "type": "object", "additionalProperties": false,
+      "required": ["framework_id", "display_name", "principal_attribution", "reading_type"],
+      "properties": {
+        "framework_id": {"const": "latourian_association_dynamics"},
+        "display_name": {"const": "Association Dynamics and Heterogeneous Agency"},
+        "principal_attribution": {"const": "Bruno Latour and actor-network theory"},
+        "reading_type": {"const": "interpretive_lens"},
+        "concept_provenance": {"type": "array", "items": {"$ref": "#/$defs/conceptProvenance"}, "uniqueItems": true}
+      }
+    },
+    "governance": {"$ref": "#/$defs/governance"},
+    "source_anchors": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourceAnchor"}},
+    "participants": {"type": "array", "items": {"$ref": "#/$defs/participant"}},
+    "associations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/association"}},
+    "translations": {"type": "array", "items": {"$ref": "#/$defs/translation"}},
+    "controversies": {"type": "array", "items": {"$ref": "#/$defs/controversy"}},
+    "stabilization": {"$ref": "#/$defs/stabilization"},
+    "interpretive_summary": {"$ref": "#/$defs/interpretiveClaim"},
+    "alternatives": {"type": "array", "items": {"$ref": "#/$defs/alternative"}},
+    "projection_bindings": {"$ref": "#/$defs/projectionBindings"}
+  },
+  "$defs": {
+    "nonEmptyId": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "conceptProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["concept", "attribution", "relation_to_framework", "source_reference"],
+      "properties": {
+        "concept": {"type": "string", "minLength": 1},
+        "attribution": {"type": "string", "minLength": 1},
+        "relation_to_framework": {"enum": ["principal_concept", "co-developed_concept", "documented_influence", "antecedent", "parallel_development", "later_extension"]},
+        "source_reference": {"type": "string", "minLength": 1},
+        "note": {"type": "string"}
+      }
+    },
+    "governance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["record_status", "authority", "ledger_event_id", "created_at", "created_by", "dependency_ids", "input_snapshot_hash"],
+      "properties": {
+        "record_status": {"enum": ["candidate", "provisionally_accepted", "confirmed", "corrected", "rejected", "conflicted", "superseded", "invalidated", "stale", "unresolved"]},
+        "authority": {"enum": ["automated_candidate", "imported_candidate", "analyst_proposal", "analyst_confirmed", "analyst_corrected"]},
+        "ledger_event_id": {"$ref": "#/$defs/nonEmptyId"},
+        "supersedes_event_id": {"$ref": "#/$defs/nonEmptyId"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "created_by": {"type": "string", "minLength": 1},
+        "provider": {"type": "string"},
+        "model_or_rule_version": {"type": "string"},
+        "parameters": {"type": "object"},
+        "dependency_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "input_snapshot_hash": {"type": "string", "pattern": "^sha256:[a-fA-F0-9]{64}$"},
+        "invalidation_reason": {"type": "string"}
+      }
+    },
+    "sourceAnchor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_id", "anchor_type", "clock_unit", "time_start", "time_end", "clock_authority", "precision_seconds"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/nonEmptyId"},
+        "anchor_type": {"enum": ["time_interval", "transcript_span", "frame", "roi", "document_span", "image_region", "web_region", "metadata_record"]},
+        "clock_unit": {"const": "source_relative_seconds"},
+        "time_start": {"type": "number", "minimum": 0},
+        "time_end": {"type": "number", "minimum": 0},
+        "clock_authority": {"type": "string", "minLength": 1},
+        "precision_seconds": {"type": "number", "minimum": 0},
+        "spatial_region": {"$ref": "#/$defs/spatialRegion"},
+        "text_quote": {"type": "string", "maxLength": 500},
+        "evidence_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true}
+      }
+    },
+    "spatialRegion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["coordinate_system", "x", "y", "width", "height"],
+      "properties": {
+        "coordinate_system": {"enum": ["normalized_0_1", "pixels"]},
+        "x": {"type": "number", "minimum": 0}, "y": {"type": "number", "minimum": 0},
+        "width": {"type": "number", "exclusiveMinimum": 0}, "height": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "participant": {
+      "type": "object", "additionalProperties": false,
+      "required": ["participant_id", "participant_kind", "designation", "evidence_anchor_ids"],
+      "properties": {
+        "participant_id": {"$ref": "#/$defs/nonEmptyId"},
+        "narrative_agent_id": {"$ref": "#/$defs/nonEmptyId"},
+        "participant_kind": {"enum": ["human", "collective", "organization", "institution", "technology", "platform", "document", "artifact", "place", "organism", "material", "idea", "rule", "event", "other"]},
+        "designation": {"type": "string", "minLength": 1},
+        "actor_labels": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "evidence_anchor_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "analytical_note": {"type": "string"}
+      }
+    },
+    "association": {
+      "type": "object", "additionalProperties": false,
+      "required": ["association_id", "from_participant_id", "to_participant_id", "relation_type", "directionality", "evidence_anchor_ids", "epistemic_status"],
+      "properties": {
+        "association_id": {"$ref": "#/$defs/nonEmptyId"},
+        "from_participant_id": {"$ref": "#/$defs/nonEmptyId"},
+        "to_participant_id": {"$ref": "#/$defs/nonEmptyId"},
+        "relation_type": {"enum": ["enables", "constrains", "authorizes", "delegates", "represents", "transports", "transforms", "translates", "enrols", "obliges_passage", "inscribes", "black_boxes", "opens_black_box", "contests", "aligns", "disconnects", "other"]},
+        "directionality": {"enum": ["directed", "reciprocal", "undetermined"]},
+        "mediational_status": {"enum": ["intermediary_candidate", "mediator_candidate", "mixed", "not_assessed"]},
+        "evidence_anchor_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "epistemic_status": {"enum": ["observed_relation", "derived_relation", "candidate_interpretation", "confirmed_interpretation"]},
+        "rationale": {"type": "string", "minLength": 1}
+      }
+    },
+    "translation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["translation_id", "translation_type", "participant_ids", "before", "after", "evidence_anchor_ids"],
+      "properties": {
+        "translation_id": {"$ref": "#/$defs/nonEmptyId"},
+        "translation_type": {"enum": ["problematization", "interessement", "enrolment", "mobilization", "delegation", "displacement", "transformation", "other"]},
+        "participant_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "before": {"type": "string", "minLength": 1}, "after": {"type": "string", "minLength": 1},
+        "evidence_anchor_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true}
+      }
+    },
+    "controversy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["controversy_id", "issue", "participant_ids", "state", "evidence_anchor_ids"],
+      "properties": {
+        "controversy_id": {"$ref": "#/$defs/nonEmptyId"}, "issue": {"type": "string", "minLength": 1},
+        "participant_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "state": {"enum": ["emerging", "open", "intensifying", "settling", "provisionally_stabilized", "reopened"]},
+        "evidence_anchor_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true}
+      }
+    },
+    "stabilization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "assessment"],
+      "properties": {
+        "state": {"enum": ["not_assessed", "fluid", "aligning", "provisionally_stable", "black_boxed", "destabilizing", "reopened"]},
+        "assessment": {"type": "string", "minLength": 1},
+        "supporting_association_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true}
+      }
+    },
+    "interpretiveClaim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["claim_text", "epistemic_level", "evidence_anchor_ids", "inferential_distance", "uncertainty_note"],
+      "properties": {
+        "claim_text": {"type": "string", "minLength": 1},
+        "epistemic_level": {"enum": ["candidate_interpretation", "confirmed_interpretation"]},
+        "evidence_anchor_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "inferential_distance": {"enum": ["proximal", "moderate", "extended"]},
+        "uncertainty_note": {"type": "string", "minLength": 1}
+      }
+    },
+    "alternative": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alternative_id", "claim", "status"],
+      "properties": {"alternative_id": {"$ref": "#/$defs/nonEmptyId"}, "claim": {"type": "string", "minLength": 1}, "status": {"enum": ["retained", "preferred", "rejected", "unresolved"]}, "rationale": {"type": "string"}}
+    },
+    "projectionBindings": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "meaning_network_relation_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "narrative_agent_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "scene_card_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "statskit_variable_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true},
+        "governed_claim_ids": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyId"}, "uniqueItems": true}
+      }
+    }
+  }
+}

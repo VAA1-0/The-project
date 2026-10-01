@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -13,7 +14,10 @@ CHECKPOINT_FILENAME = "analysis_checkpoint.json"
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
+    # A panel save and the background analysis may persist the same record at
+    # nearly the same time. A per-write temporary name prevents one writer from
+    # replacing or unlinking the other writer's temporary file.
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)

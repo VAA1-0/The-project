@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0.0",
+  "reading_id": "synthetic-unresolved-ref",
+  "framework": {
+    "framework_id": "goffmanian_situated_conduct",
+    "display_name": "Comparative Sociology of Situated Conduct",
+    "principal_attribution": "Erving Goffman",
+    "reading_type": "interpretive_lens",
+    "concept_provenance": [
+      {
+        "concept": "synthetic-unresolved-ref",
+        "attribution": "synthetic-unresolved-ref",
+        "relation_to_goffman": "goffman_original_or_principal_synthesis",
+        "source_reference": "synthetic-unresolved-ref"
+      }
+    ]
+  },
+  "governance": {
+    "record_status": "candidate",
+    "authority": "automated_candidate",
+    "ledger_event_id": "synthetic-unresolved-ref",
+    "created_at": "2026-09-16T09:00:00Z",
+    "created_by": "synthetic-unresolved-ref",
+    "dependency_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "input_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_anchors": [
+    {
+      "source_id": "synthetic-unresolved-ref",
+      "anchor_type": "time_interval",
+      "clock_unit": "source_relative_seconds",
+      "time_start": 0,
+      "time_end": 0,
+      "clock_authority": "synthetic-unresolved-ref",
+      "precision_seconds": 0
+    }
+  ],
+  "participants": [
+    {
+      "participant_id": "synthetic-unresolved-ref",
+      "designation": "synthetic-unresolved-ref",
+      "presence_status": "copresent",
+      "evidence_anchor_ids": [
+        "synthetic-unresolved-ref"
+      ]
+    }
+  ],
+  "situation_definition": {
+    "occasion_type": "synthetic-unresolved-ref",
+    "working_definition": "synthetic-unresolved-ref",
+    "consensus_state": "not_assessed",
+    "evidence_anchor_ids": [
+      "synthetic-unresolved-ref"
+    ]
+  },
+  "interaction_events": [
+    {
+      "event_id": "synthetic-unresolved-ref",
+      "event_type": "face_claim",
+      "participant_ids": [
+        "synthetic-unresolved-ref"
+      ],
+      "evidence_anchor_ids": [
+        "synthetic-unresolved-ref"
+      ],
+      "epistemic_status": "observed_relation"
+    }
+  ],
+  "interpretive_summary": {
+    "claim_text": "synthetic-unresolved-ref",
+    "epistemic_level": "candidate_interpretation",
+    "evidence_anchor_ids": [
+      "synthetic-unresolved-ref"
+    ],
+    "inferential_distance": "proximal",
+    "uncertainty_note": "synthetic-unresolved-ref"
+  }
+}

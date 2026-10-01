@@ -17,6 +17,77 @@ Every major panel must answer four questions in the first working viewport:
 
 The redesign is not primarily about adding features. It is about making Datascene's existing and emerging intelligence visible, navigable, and source-governed.
 
+### Narrative Agent terminology
+
+Datascene describes represented participants as **Narrative Agents**. Analyst-facing
+design, documentation, reports, exports, APIs, and new schemas must not describe them
+as identities or frame recognition as identity resolution. The governed analytical
+object is a Narrative Agent recognition: a source-linked claim that a represented
+agent occurs, speaks, acts, listens, or participates at a particular point in the
+material.
+
+Legacy fields containing `identity` may remain temporarily at compatibility boundaries,
+but they must be translated into Narrative Agent language before reaching an analyst or
+a new canonical contract. A track id, face, speaker cluster, name mention, or role is
+evidence for a Narrative Agent recognition; none is the Narrative Agent by itself.
+
+Once every Narrative Agent has at least one explicit analyst-confirmed recognition, those
+confirmations become the strongest anchors for finding further occurrences across the
+governed data array. Automatic extension is permitted only for source-occurrence-scoped
+matches that pass the configured audiovisual/contextual similarity, competing-agent,
+negative-evidence, timing, and traceback gates. The operation must preserve the original
+confirmation, the matched occurrence, its confidence and method, and a reversible
+proliferation event.
+
+### Narrative Agent Digital Twin sample
+
+Every confirmed Narrative Agent should accumulate one governed **Narrative Agent Digital
+Twin sample**. The sample is a multimodal reference constellation assembled from Visual,
+Audio, Transcript, OCR, Music theme, Source Media Data, Scene Cards, and explicit panel
+or BBox/ROI confirmations. It is not a biometric profile, a natural-person identity
+record, or one global embedding. Each modality retains its own source interval, method,
+confidence, authority, maturity, and traceback.
+
+Scene Cards participate bidirectionally. Governed scene participation, speaking,
+listening, action, relation, setting, object, and meaning records may strengthen a
+Digital Twin sample. A newly accepted Narrative Agent recognition must in turn queue a
+rebuild of only the affected Scene Cards from canonical evidence. Scene Card prose,
+private panel state, or an automatic scene interpretation cannot independently confirm a
+Narrative Agent or overwrite manual Scene Card evidence.
+
+Data Maturation is the overview and batch-review home for this workflow. It must explain
+the sequence in one first-read path: confirmed Digital Twin sample, federated occurrence
+patterns, ranked recognition candidates, source review, canonical decision, and consumer
+proliferation. Candidate bands are `strong candidate`, `review candidate`, and `blocked`;
+none is presented as confirmed merely because it ranks highly.
+
+The same governed candidate may be decided from any supporting Datascene panel through
+the shared right-click regime. Data Maturation and contextual menus must invoke the same
+canonical decision operation with the same candidate id, source interval, Narrative Agent
+Digital Twin reference, modality evidence, confidence, ambiguity margin, negative
+evidence, and traceback. A decision made anywhere disappears from every open review queue
+and refreshes the same governed projections without a second confirmation ritual.
+
+Automatic recognition is never established from one first-occurring frame. Visual
+support must span independent times or shots and must expose checks for cross-dissolves,
+transitions, dominant colour treatments, filters, and comparable editorial contamination.
+The Data Maturation panel places a primary **Confirm Digital Twin 100%** decision on each
+twin, while keeping that analyst decision distinct from automatic-recognition readiness.
+
+The Digital Twin sample supports two distinct operations:
+
+1. compare unresolved, source-timed occurrences against the confirmed multimodal
+   constellation; and
+2. after an occurrence passes the configured similarity, modality-coverage, ambiguity,
+   negative-evidence, and source-integrity gates, write one reversible Narrative Agent
+   recognition decision and project that decision to governed consumers.
+
+The consumers include Video/BBox/ROI, Audio, Transcript, OCR, Scene Cards, Meaning
+Network, Meaning/Plot, Narrative Agent, Master Schema, Data Maturation, Search, StatsKit,
+Traceback, Data Book, Scientific Report, and export. Consumers receive a projection of
+the canonical recognition decision; they must not independently rerun recognition or
+copy a label into panel-local state.
+
 ## Shared Panel Pattern
 
 All analytical panels should converge on the same interaction grammar:
@@ -28,6 +99,83 @@ All analytical panels should converge on the same interaction grammar:
 - **Workspace expansion:** major graph, matcher, schema, or lens work can detach or enter full-screen mode without losing source context.
 
 This pattern should become a shared UI component family rather than a one-off design in each panel.
+
+## The Saloon Doors Swing Both Ways Principle
+
+Navigation and correction feedback between the Video panel and every analytical
+**leaf panel** must be reciprocal. The Video panel is not merely a source viewer,
+and a leaf is not a detached report. They are two entrances to the same governed,
+source-linked working object.
+
+When an analyst activates a correction entry, detection, annotation, candidate,
+claim, scene, utterance, object, OCR row, expression, Narrative Agent occurrence,
+or other evidence item in the Video panel, Datascene must promptly:
+
+1. open or focus the applicable leaf panel;
+2. select and reveal the corresponding governed record;
+3. preserve the analysis id, canonical evidence/decision id, source interval,
+   BBox/ROI geometry where applicable, maturity, authority and traceback context.
+
+When the analyst activates the corresponding entry in a leaf panel, Datascene
+must promptly perform the reciprocal action in Video:
+
+1. focus the already governed source video without creating a duplicate viewer;
+2. seek to the source interval and pause when review requires a stable frame;
+3. reveal and highlight the applicable overlay, BBox/ROI, cue or time range;
+4. expose the same correction/confirmation state visible in the leaf.
+
+The two directions must resolve through one canonical navigation payload and one
+canonical saved decision. They may not synchronize by display text, array index,
+provisional track id or panel-local copy. Navigation events must carry an origin
+and correlation id so the reciprocal surfacing does not create an event loop,
+duplicate panels, repeated saves or oscillating focus.
+
+“Promptly” means that the receiving surface shows an immediate selected/loading
+state and completes local navigation within the panel-hydration performance
+budget. If its artifact is unavailable, the receiving surface must still open in
+context and explain the typed unavailability reason; it must not fail silently.
+
+This is the **saloon doors swing both ways principle**: entering the feedback loop
+through Video must surface the leaf, and entering it through the leaf must surface
+Video. A route is not operational until both directions are proven with the same
+governed record after save, reload and project reopen.
+
+Acceptance applies to Transcript, Audio, Objects, OCR, Expressions, POS, Quant,
+Scene Cards, Narrative Agent, Meaning Network/Plot, Master Schema, Data
+Maturation, Search, StatsKit and Traceback, plus every future source-linked leaf.
+
+### Raised Here, Navigable Here
+
+When Datascene raises an indication inside a leaf panel, the indication must
+remain inspectable, selectable, reviewable and actionable inside that same leaf.
+The system may synchronize Video or another supporting surface in the background,
+but it must not unexpectedly replace the leaf, open an unrelated overview, move
+the analyst into another tab or steal focus merely because the indication has a
+source link.
+
+Every leaf-raised indication must provide enough local context to understand and
+work with it: current belief, evidence summary, source time/range, maturity and
+authority, available decision actions, and local next/previous navigation where
+the indication belongs to a set. Source Video, Traceback, Meaning Network, Master
+Schema and other consumers are explicit drill-down or synchronized-support
+actions, not mandatory detours.
+
+This principle qualifies—but does not weaken—the saloon-doors rule. “The other
+surface should also surface” means that its corresponding record, source interval
+or overlay becomes ready and synchronized. It does not mean that the destination
+must take foreground focus. The panel in which the analyst activated the
+indication remains the primary working context until the analyst explicitly
+chooses **Open**, **Focus**, **Show in Video**, **Traceback** or another named
+transfer action.
+
+Leaf-local state must survive reciprocal synchronization: active record, expanded
+disclosure, scroll position, filters, review queue position and unsaved draft may
+not be reset. Keyboard next/previous operations continue within that leaf rather
+than alternating panel focus. Background synchronization must be source-tagged so
+it cannot trigger a panel-jumping loop.
+
+A leaf indication is not operational if its only useful action is an automatic
+redirect. Calm local evidence first, optional cross-panel drill-down second.
 
 ## Meaning / Plot Panel
 
@@ -142,12 +290,12 @@ The Narrative Agent panel should remain the home for one agent at a time.
 
 Default structure:
 
-1. **Agent selector and identity state**
+1. **Agent selector and recognition state**
    - canonical profile dropdown;
    - aliases;
    - maturity status;
    - source coverage;
-   - unresolved identity conflicts.
+   - unresolved Narrative Agent recognition conflicts.
 
 2. **Agent belief card**
    - who Datascene believes this agent is;
@@ -195,7 +343,7 @@ The analyst should not need to leave the Narrative Agent panel to add, confirm, 
 
 Required local annotation affordances:
 
-- identity and alias;
+- Narrative Agent recognition and alias;
 - visual presence;
 - speaking;
 - listening;
@@ -552,7 +700,7 @@ Inputs:
 - actions;
 - scene participation;
 - matcher candidates;
-- rejected identity hypotheses.
+- rejected Narrative Agent recognition hypotheses.
 
 Outputs:
 
@@ -561,7 +709,7 @@ Outputs:
 - presence intervals;
 - speaking/listening candidates;
 - role and relation hypotheses;
-- identity conflicts.
+- Narrative Agent recognition conflicts.
 
 UI surface:
 

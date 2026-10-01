@@ -1,3 +1,8 @@
+import { subscribeSourceTime } from "@/lib/source-clock-events";
+import { wordUndoSnapshot, prepareCorrectionUndo, correctionUndoVerified } from "@/lib/correction-word-undo";
+import { captureCorrectionDraftBinding, correctionsForDraft, type CorrectionDraftBinding } from "@/lib/correction-draft-binding";
+
+import { formatPreciseSourceTime } from "@/lib/source-clock";
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
@@ -8,12 +13,12 @@ import {
   buildDropCorrectionRule,
   canUndoCorrectionSnapshot,
   buildCorrectionRule,
-  createEmptyCorrections,
+  peekCorrectionSnapshot,
+  acknowledgeCorrectionSnapshot,
   mergeCorrectionRule,
   pushCorrectionSnapshot,
   removeManualTranscriptEntry,
   setTranscriptClockOffset,
-  undoLastCorrectionSnapshot,
   upsertManualTranscriptEntry,
 } from "@/lib/annotation-corrections";
 import LanguageParityMetaView from "../LanguageParityMetaView";
@@ -47,12 +52,30 @@ const TRANSCRIPT_SOURCE_SPEAKERS = [
 ] as const;
 
 function formatSpeechSeconds(value?: number | null): string {
-  const safe = Number(value);
-  if (!Number.isFinite(safe)) return "0:00.000";
-  const clamped = Math.max(0, safe);
-  const minutes = Math.floor(clamped / 60);
-  const seconds = clamped - minutes * 60;
-  return `${minutes}:${seconds.toFixed(3).padStart(6, "0")}`;
+  return formatPreciseSourceTime(Number(value ?? 0));
+}
+
+type TranscriptCursorMatch = {
+  row: any;
+  index: number;
+  relation: "inside" | "before" | "after";
+  distance: number;
+};
+
+function nearestTranscriptCursorMatch(rows: any[], cursor: number): TranscriptCursorMatch | null {
+  if (!Number.isFinite(cursor)) return null;
+  return rows.reduce<TranscriptCursorMatch | null>((nearest, row, index) => {
+    if (!rowHasTimingAuthority(row)) return nearest;
+    const start = Number(row?.start);
+    const end = Number(row?.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return nearest;
+    const relation = cursor < start ? "before" : cursor > end ? "after" : "inside";
+    const distance = relation === "before" ? start - cursor : relation === "after" ? cursor - end : 0;
+    const candidate = { row, index, relation, distance } as TranscriptCursorMatch;
+    if (candidate.distance === 0) return candidate;
+    if (!nearest || candidate.distance < nearest.distance) return candidate;
+    return nearest;
+  }, null);
 }
 
 const VERIFIED_TRANSCRIPT_REPAIR_STATUSES = new Set(["manual_correction", "original_whisper_timecode"]);
@@ -219,6 +242,7 @@ async function loadAuthoritativeTranscriptRows(videoId: string, corrections?: an
 }
 
 type TranscriptEditorDraft = {
+  binding: CorrectionDraftBinding;
   mode: "span" | "manual";
   source: "transcript" | "manual";
   targetId?: string;
@@ -241,9 +265,13 @@ export default function SpeechToTextPanel({
   panelMode?: "transcript" | "audio";
 }) {
   const [videoId, setVideoId] = useState(initialVideoId);
+  const activeVideoId = React.useRef(videoId);
+  activeVideoId.current = videoId;
 
   // Event bus video time line state
   const [videoTimeLine, setVideoTimeLine] = useState<number>(0);
+  const panelRootRef = React.useRef<HTMLElement | null>(null);
+  const transcriptRowRefs = React.useRef(new Map<number, HTMLDivElement>());
 
   const lastObjectUrl = React.useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -264,7 +292,13 @@ export default function SpeechToTextPanel({
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedWord, setSelectedWord] = useState<string>("");
   const [selectedWordDraft, setSelectedWordDraft] = useState<string>("");
+  const wordBinding = React.useRef<CorrectionDraftBinding | null>(null);
+  const [wordMessage, setWordMessage] = useState<string | null>(null);
+  const undoPending = React.useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
   const [editorDraft, setEditorDraft] = useState<TranscriptEditorDraft | null>(null);
+  const activeEditorDraft = React.useRef(editorDraft);
+  activeEditorDraft.current = editorDraft;
   const [editorMessage, setEditorMessage] = useState<string | null>(null);
 
   function surfaceCorrections(savedCorrections: any) {
@@ -296,6 +330,26 @@ export default function SpeechToTextPanel({
   }, [initialVideoId]);
 
   useEffect(() => {
+    const refreshUndoState = (payload?: { analysisId?: string }) => {
+      if (!payload?.analysisId || payload.analysisId === videoId) {
+        setCanUndo(canUndoCorrectionSnapshot(videoId));
+      }
+    };
+    const storageChanged = (event: StorageEvent) => {
+      if (!event.key || event.key === `vaa1.annotation.corrections.history.${videoId}`) {
+        refreshUndoState();
+      }
+    };
+    refreshUndoState();
+    eventBus.on("correctionUndoHistoryChanged", refreshUndoState);
+    window.addEventListener("storage", storageChanged);
+    return () => {
+      eventBus.off("correctionUndoHistoryChanged", refreshUndoState);
+      window.removeEventListener("storage", storageChanged);
+    };
+  }, [videoId]);
+
+  useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
@@ -323,13 +377,13 @@ export default function SpeechToTextPanel({
       } : current);
     };
     eventBus.on("videoIdChanged", handler);
-    eventBus.on("videoTimeLineChanged", timeHandler);
+    const unsubscribeClock = subscribeSourceTime(videoId, timeHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
     eventBus.on("sourceMediaMetadataChanged", sourceMetadataHandler);
 
     return () => {
       eventBus.off("videoIdChanged", handler);
-      eventBus.off("videoTimeLineChanged", timeHandler);
+      unsubscribeClock();
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
       eventBus.off("sourceMediaMetadataChanged", sourceMetadataHandler);
     };
@@ -416,17 +470,57 @@ export default function SpeechToTextPanel({
       : analysisData?.transcript ?? analysisData?.transcriptTimeline ?? [];
   const transcriptSourceBlocked = transcriptRowsLookLikeScaffold(rawTranscript);
   const transcript = transcriptSourceBlocked
-    ? rawTranscript.filter((row: any) => {
-        const text = String(row?.text || "").trim();
-        return (
-          text.startsWith("[Unresolved") ||
-          row?.segmentType === "unresolved_interval" ||
-          row?.segment_type === "unresolved_interval"
-        );
-      })
+    ? rawTranscript.map((row: any, index: number) => ({
+        ...row,
+        // Preserve recovered speech text while quarantining a legacy
+        // mechanically spaced clock. Text availability and time authority are
+        // separate maturities; an invalid clock must not erase the transcript.
+        start: null,
+        end: null,
+        candidateStart: row?.candidateStart ?? row?.candidate_start ?? row?.start,
+        candidateEnd: row?.candidateEnd ?? row?.candidate_end ?? row?.end,
+        sourceTimeValid: false,
+        timingStatus: "needs_per_line_sync",
+        timingAuthority: "text_only_no_source_timing",
+        timingSource: "legacy scaffold timing quarantined",
+        targetId: row?.targetId || `recovered-text:${index}`,
+      }))
     : rawTranscript;
+  const transcriptCursorMatch = nearestTranscriptCursorMatch(transcript, videoTimeLine);
+  const followedTranscriptRowIndex = transcriptCursorMatch?.index ?? null;
+
+  useEffect(() => {
+    if (followedTranscriptRowIndex === null) return;
+    const focusFollowedRow = () => {
+      transcriptRowRefs.current
+        .get(followedTranscriptRowIndex)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    const frame = window.requestAnimationFrame(focusFollowedRow);
+    const root = panelRootRef.current;
+    const observer = root && typeof IntersectionObserver !== "undefined"
+      ? new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            window.requestAnimationFrame(focusFollowedRow);
+          }
+        }, { threshold: 0.01 })
+      : null;
+    if (root && observer) observer.observe(root);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [followedTranscriptRowIndex, videoId]);
   const transcriptClockOffset = Number(
     analysisData?.annotationCorrections?.transcript_clock_offset_seconds || 0,
+  );
+  const transcriptCorrectionGuard = analysisData?.annotationCorrections?._clock_write_guard;
+  const transcriptEditingReady = Boolean(
+    videoId &&
+      transcriptCorrectionGuard?.analysis_id === videoId &&
+      transcriptCorrectionGuard?.binding_status === "content_bound" &&
+      transcriptCorrectionGuard?.source_fingerprint &&
+      transcriptCorrectionGuard?.clock_revision,
   );
   const audioProsody = analysisData?.audioProsody ?? [];
   const manualAudioAnnotations =
@@ -785,26 +879,36 @@ export default function SpeechToTextPanel({
     ? "min-h-[170px] max-h-[42%] overflow-y-auto space-y-2 pr-2"
     : "flex-1 overflow-y-auto space-y-2 pr-2";
 
-  const saveTextCorrection = async (rawValue: string) => {
-    if (!videoId || !rawValue) {
-      return;
+  const commitWordCorrection = async (rawValue: string, drop: boolean) => {
+    if (!videoId || !rawValue) return;
+    const binding = wordBinding.current;
+    try {
+      if (!binding) throw new Error("Reopen the word correction before saving.");
+      const previous = analysisData?.annotationCorrections;
+      const bound = correctionsForDraft(binding, videoId, previous);
+      const rule = drop ? buildDropCorrectionRule("text", rawValue)
+        : buildCorrectionRule("text", rawValue, selectedWordDraft.trim() || "Unconfirmed");
+      const next = mergeCorrectionRule(bound, rule);
+      const saved = await VideoService.saveAnnotationCorrections(videoId, next, { recordUndo: false });
+      pushCorrectionSnapshot(videoId, wordUndoSnapshot(previous, saved, rule.id));
+      if (activeVideoId.current !== videoId || wordBinding.current !== binding) return;
+      surfaceCorrections(saved);
+      setSelectedWord("");
+      setSelectedWordDraft("");
+      setWordMessage(null);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      if (activeVideoId.current === videoId && wordBinding.current === binding) {
+        setWordMessage(error instanceof Error ? error.message : "Correction failed; your draft is retained.");
+      }
     }
-    const correctedValue = selectedWordDraft.trim() || "Unconfirmed";
-    const nextCorrections = mergeCorrectionRule(
-      analysisData?.annotationCorrections,
-      buildCorrectionRule("text", rawValue, correctedValue.trim()),
-    );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    surfaceCorrections(savedCorrections);
-    setSelectedWord("");
-    setSelectedWordDraft("");
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
+  const saveTextCorrection = (rawValue: string) => commitWordCorrection(rawValue, false);
 
   const openTranscriptSpanEditor = (row: any) => {
     setEditorMessage(null);
     setEditorDraft({
+      binding: captureCorrectionDraftBinding(videoId, analysisData?.annotationCorrections),
       mode: "span",
       source: row?.correctionSource === "manual" ? "manual" : "transcript",
       targetId: row?.targetId,
@@ -828,6 +932,7 @@ export default function SpeechToTextPanel({
     const baseEnd = Number((baseStart + 2).toFixed(2));
     setEditorMessage(null);
     setEditorDraft({
+      binding: captureCorrectionDraftBinding(videoId, analysisData?.annotationCorrections),
       mode: "manual",
       source: "manual",
       start: String(Number(baseStart.toFixed(2))),
@@ -850,7 +955,6 @@ export default function SpeechToTextPanel({
     }
     const currentVideoTime = Math.max(0, Number(videoTimeLine || 0));
     const nextOffset = currentVideoTime - sourceStart;
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     const nextCorrections = setTranscriptClockOffset(
       analysisData?.annotationCorrections,
       nextOffset,
@@ -892,102 +996,107 @@ export default function SpeechToTextPanel({
         ? "unconfirmed"
         : "confirmed";
 
-    let nextCorrections = analysisData?.annotationCorrections;
-    if (editorDraft.source === "manual") {
-      const entryId =
-        editorDraft.targetId || `manual:${start.toFixed(2)}:${end.toFixed(2)}`;
-      nextCorrections = upsertManualTranscriptEntry(nextCorrections, {
-        id: entryId,
-        start,
-        end,
-        text: normalizedStatus === "unconfirmed" ? "" : normalizedText,
-        status: normalizedStatus,
-        speaker_confirmation: editorDraft.speakerConfirmation.trim() || undefined,
-        note: editorDraft.note.trim(),
-        updated_at: new Date().toISOString(),
-        updated_by: "analyst",
-      });
-    } else {
-      const rawText = String(editorDraft.rawText || "").trim() || "Unconfirmed";
-      nextCorrections = mergeCorrectionRule(
-        nextCorrections,
-        buildCorrectionRule("text", rawText, normalizedText, editorDraft.note.trim(), {
-          targetStartTimestamp: editorDraft.targetStart,
-          targetEndTimestamp: editorDraft.targetEnd,
-          correctedStartTimestamp: start,
-          correctedEndTimestamp: end,
-          speakerConfirmation: editorDraft.speakerConfirmation.trim() || undefined,
-        }),
+    try {
+      let nextCorrections = correctionsForDraft(editorDraft.binding, videoId, analysisData?.annotationCorrections);
+      if (editorDraft.source === "manual") {
+        const entryId =
+          editorDraft.targetId || `manual:${start.toFixed(2)}:${end.toFixed(2)}`;
+        nextCorrections = upsertManualTranscriptEntry(nextCorrections, {
+          id: entryId,
+          start,
+          end,
+          text: normalizedStatus === "unconfirmed" ? "" : normalizedText,
+          status: normalizedStatus,
+          speaker_confirmation: editorDraft.speakerConfirmation.trim() || undefined,
+          note: editorDraft.note.trim(),
+          updated_at: new Date().toISOString(),
+          updated_by: "analyst",
+        });
+      } else {
+        const rawText = String(editorDraft.rawText || "").trim() || "Unconfirmed";
+        nextCorrections = mergeCorrectionRule(
+          nextCorrections,
+          buildCorrectionRule("text", rawText, normalizedText, editorDraft.note.trim(), {
+            targetStartTimestamp: editorDraft.targetStart,
+            targetEndTimestamp: editorDraft.targetEnd,
+            correctedStartTimestamp: start,
+            correctedEndTimestamp: end,
+            speakerConfirmation: editorDraft.speakerConfirmation.trim() || undefined,
+          }),
+        );
+      }
+      const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      if (activeVideoId.current !== videoId || activeEditorDraft.current !== editorDraft) return;
+      surfaceCorrections(savedCorrections);
+      setSelectedWord("");
+      setSelectedWordDraft("");
+      setEditorDraft(null);
+      setEditorMessage(
+        `Saved and verified ${normalizedStatus} transcript correction at ${start.toFixed(2)}–${end.toFixed(2)}s.`,
       );
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      if (activeVideoId.current === videoId && activeEditorDraft.current === editorDraft) {
+        setEditorMessage(error instanceof Error ? error.message : "Correction could not be saved. Your draft is retained.");
+      }
     }
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    surfaceCorrections(savedCorrections);
-    setSelectedWord("");
-    setSelectedWordDraft("");
-    setEditorDraft(null);
-    setEditorMessage(
-      `Saved and verified ${normalizedStatus} transcript correction at ${start.toFixed(2)}–${end.toFixed(2)}s.`,
-    );
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
 
   const removeTranscriptEditorEntry = async () => {
     if (!videoId || !editorDraft || editorDraft.source !== "manual" || !editorDraft.targetId) {
       return;
     }
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    const nextCorrections = removeManualTranscriptEntry(
-      analysisData?.annotationCorrections,
-      editorDraft.targetId,
-    );
-    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    surfaceCorrections(savedCorrections);
-    setSelectedWord("");
-    setSelectedWordDraft("");
-    setEditorDraft(null);
-    setEditorMessage(null);
-    broadcastAnalysisCorrectionRefresh(videoId);
+    try {
+      const boundCorrections = correctionsForDraft(editorDraft.binding, videoId, analysisData?.annotationCorrections);
+      const nextCorrections = removeManualTranscriptEntry(
+        boundCorrections,
+        editorDraft.targetId,
+      );
+      const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      if (activeVideoId.current !== videoId || activeEditorDraft.current !== editorDraft) return;
+      surfaceCorrections(savedCorrections);
+      setSelectedWord("");
+      setSelectedWordDraft("");
+      setEditorDraft(null);
+      setEditorMessage(null);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      if (activeVideoId.current === videoId && activeEditorDraft.current === editorDraft) {
+        setEditorMessage(error instanceof Error ? error.message : "Correction could not be saved. Your draft is retained.");
+      }
+    }
   };
 
-  const dropTextCorrection = async (rawValue: string) => {
-    if (!videoId || !rawValue) {
-      return;
-    }
-    const nextCorrections = mergeCorrectionRule(
-      analysisData?.annotationCorrections,
-      buildDropCorrectionRule("text", rawValue),
-    );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
-    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    surfaceCorrections(savedCorrections);
-    setSelectedWord("");
-    setSelectedWordDraft("");
-    broadcastAnalysisCorrectionRefresh(videoId);
-  };
+
+  const dropTextCorrection = (rawValue: string) => commitWordCorrection(rawValue, true);
 
   const undoLastCorrection = async () => {
-    if (!videoId) {
-      return;
+    if (!videoId || undoPending.current) return;
+    const snapshot = peekCorrectionSnapshot(videoId);
+    if (!snapshot) return;
+    undoPending.current = true;
+    try {
+      if (!snapshot.corrections) throw new Error("This legacy undo snapshot has no source-clock binding; history has been retained.");
+      const request = prepareCorrectionUndo(snapshot.corrections, analysisData?.annotationCorrections);
+      const saved = await VideoService.saveAnnotationCorrections(videoId, request);
+      if (!correctionUndoVerified(snapshot.corrections, saved)) {
+        throw new Error("Undo restoration could not be verified. History is retained; reopen and inspect the saved corrections before retrying.");
+      }
+      const acknowledged = acknowledgeCorrectionSnapshot(videoId, snapshot.token);
+      if (activeVideoId.current !== videoId) return;
+      surfaceCorrections(saved);
+      setWordMessage(acknowledged ? null : "Corrections restored, but history changed during the save and was retained.");
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      if (activeVideoId.current === videoId) setWordMessage(error instanceof Error ? error.message : "Undo failed; history is retained.");
+    } finally {
+      undoPending.current = false;
     }
-    const restored = undoLastCorrectionSnapshot(videoId);
-    if (restored === null && !analysisData?.annotationCorrections) {
-      return;
-    }
-    const nextCorrections =
-      restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
-    surfaceCorrections(savedCorrections);
-    setSelectedWord("");
-    setSelectedWordDraft("");
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
-
-  const canUndo = canUndoCorrectionSnapshot(videoId);
 
   return (
     <TooltipProvider delayDuration={200}>
-      <main className="h-full flex flex-col overflow-hidden">
+      <main ref={panelRootRef} className="h-full flex flex-col overflow-hidden">
         <LanguageParityMetaView data={analysisData?.rawJson?.language_analysis_parity} analysisData={analysisData} />
         <div className="text-xs text-slate-400 px-3 py-2 shrink-0 flex items-center justify-between gap-3">
           <span>video Id: {videoId}</span>
@@ -999,6 +1108,7 @@ export default function SpeechToTextPanel({
                   onClick={() => {
                     void undoLastCorrection();
                   }}
+                  aria-label="Undo last correction"
                   disabled={!canUndo}
                   className="p-1 hover:bg-[#2a2a2a] rounded disabled:opacity-40 disabled:hover:bg-transparent"
                 >
@@ -1046,6 +1156,17 @@ export default function SpeechToTextPanel({
           {/* Speech to text */}
           {/* Scrollable list container: flexible height with vertical scrolling */}
           <div className="min-h-0 px-3 flex flex-col">
+            <div
+              data-testid="transcript-source-clock-cursor"
+              className="mb-2 shrink-0 rounded border border-cyan-500/20 bg-cyan-950/10 px-3 py-2 text-[11px] text-cyan-100/85"
+            >
+              Source cursor {formatSpeechSeconds(videoTimeLine)}
+              {transcriptCursorMatch
+                ? transcriptCursorMatch.relation === "inside"
+                  ? ` · inside transcript interval ${formatSpeechSeconds(transcriptCursorMatch.row.start)}–${formatSpeechSeconds(transcriptCursorMatch.row.end)}`
+                  : ` · ${transcriptCursorMatch.relation} nearest transcript interval ${formatSpeechSeconds(transcriptCursorMatch.row.start)}–${formatSpeechSeconds(transcriptCursorMatch.row.end)} (${formatSpeechSeconds(transcriptCursorMatch.distance)} away)`
+                : " · no authoritative transcript interval available at this source"}
+            </div>
             <div className="mb-3 shrink-0 rounded border border-white/8 bg-[#151515] px-3 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1060,15 +1181,17 @@ export default function SpeechToTextPanel({
                     To correct drift, pause video at the spoken line and use Sync clock on that transcript row.
                   </div>
                   {transcriptSourceBlocked ? (
-                    <div className="mt-2 rounded border border-rose-500/30 bg-rose-950/20 px-2 py-1 text-[11px] text-rose-100">
-                      Scaffold transcript timing rejected: spoken rows at 0,2,4,6 seconds are not displayed.
+                    <div className="mt-2 rounded border border-amber-500/30 bg-amber-950/20 px-2 py-1 text-[11px] text-amber-100">
+                      {transcript.length} recovered transcript text spans are displayed. Legacy 0, 2, 4, 6-second scaffold timestamps are quarantined until their source times are confirmed.
                     </div>
                   ) : null}
                 </div>
                 <button
                   type="button"
                   onClick={openManualTranscriptEditor}
-                  className="rounded border border-white/10 bg-[#101010] px-2.5 py-1.5 text-[11px] text-slate-200 hover:bg-slate-800/40 hover:text-slate-50"
+                  disabled={!transcriptEditingReady}
+                  title={transcriptEditingReady ? "Add a revision-bound transcript marker" : "Waiting for the revision-bound correction bundle"}
+                  className="rounded border border-white/10 bg-[#101010] px-2.5 py-1.5 text-[11px] text-slate-200 hover:bg-slate-800/40 hover:text-slate-50 disabled:cursor-wait disabled:opacity-40"
                 >
                   Add marker
                 </button>
@@ -1401,6 +1524,7 @@ export default function SpeechToTextPanel({
             <div className="mb-2 shrink-0 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
               {isAudioMode ? "Transcript support" : "Speech to text"}
             </div>
+            {wordMessage ? <div role="alert" className="mb-2 text-xs text-amber-200">{wordMessage}</div> : null}
             {selectedWord ? (
               <div className="mb-2 shrink-0 rounded border border-white/8 bg-[#171717] px-3 py-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1413,7 +1537,10 @@ export default function SpeechToTextPanel({
                     </div>
                     <input
                       value={selectedWordDraft}
-                      onChange={(event) => setSelectedWordDraft(event.target.value)}
+                      onChange={(event) => {
+                        if (wordBinding.current) wordBinding.current = { ...wordBinding.current };
+                        setSelectedWordDraft(event.target.value);
+                      }}
                       placeholder="Correction inside panel, or leave blank for Unconfirmed"
                       className="mt-2 w-full rounded border border-white/10 bg-[#121212] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
                     />
@@ -1440,6 +1567,7 @@ export default function SpeechToTextPanel({
                     <button
                       type="button"
                       onClick={() => {
+                        wordBinding.current = null;
                         setSelectedWord("");
                         setSelectedWordDraft("");
                       }}
@@ -1545,7 +1673,10 @@ export default function SpeechToTextPanel({
                   )}
                 </div>
               ) : (
-                transcript.map((row: any) => {
+                transcript.map((row: any, rowIndex: number) => {
+                  const cursorMatch = transcriptCursorMatch?.index === rowIndex
+                    ? transcriptCursorMatch
+                    : null;
                   const isSynthetic = Boolean(row.synthetic);
                   const hasSourceTiming = rowHasTimingAuthority(row);
                   const transcriptMaturityLabel = !hasSourceTiming
@@ -1585,8 +1716,15 @@ export default function SpeechToTextPanel({
                   return (
                   <div
                     key={`${row.targetId || row.start}-${row.end}-${row.segmentType || "utterance"}`}
+                    ref={(element) => {
+                      if (element) transcriptRowRefs.current.set(rowIndex, element);
+                      else transcriptRowRefs.current.delete(rowIndex);
+                    }}
+                    data-source-clock-nearest={cursorMatch ? "true" : undefined}
                     className={`rounded border px-3 py-3 transition-colors ${
-                      isSynthetic
+                      cursorMatch
+                        ? "border-cyan-400/45 bg-cyan-950/20 text-slate-200"
+                        : isSynthetic
                         ? "border-amber-500/20 bg-amber-950/10 text-slate-300"
                         : "cursor-pointer border-white/8 bg-[#171717] hover:bg-slate-800/25"
                     }`}
@@ -1609,6 +1747,11 @@ export default function SpeechToTextPanel({
                             ? `duration ${formatSpeechSeconds(Number(row.end) - Number(row.start))}`
                             : "duration unresolved"}
                         </div>
+                        {cursorMatch ? (
+                          <div className="font-medium text-cyan-200">
+                            Cursor {cursorMatch.relation} this interval
+                          </div>
+                        ) : null}
                         <div>{row.speaker || "Speaker unconfirmed"}</div>
                         {linkedSpeakerTurn?.overlap > 0 ? (
                           <div
@@ -1618,6 +1761,19 @@ export default function SpeechToTextPanel({
                             Diarization:{" "}
                             {linkedSpeakerTurn.turn.speaker_label ||
                               "unresolved cluster"}
+                            {typeof linkedSpeakerTurn.turn.diarization_confidence === "number"
+                              ? ` · ${Math.round(linkedSpeakerTurn.turn.diarization_confidence * 100)}% confidence`
+                              : ""}
+                          </div>
+                        ) : null}
+                        {linkedSpeakerTurn?.overlap > 0 &&
+                        typeof linkedSpeakerTurn.turn.diarization_confidence === "number" &&
+                        linkedSpeakerTurn.turn.diarization_confidence < 0.65 ? (
+                          <div
+                            data-speaker-boundary-review="true"
+                            className="rounded border border-amber-500/20 bg-amber-950/15 px-2 py-1 text-amber-100/85"
+                          >
+                            Low-confidence speaker boundary: this interval may contain a speaker change. Review and split the span before confirming identity.
                           </div>
                         ) : null}
                       </div>
@@ -1680,6 +1836,8 @@ export default function SpeechToTextPanel({
                               event.stopPropagation();
                               openTranscriptRowAtSourceTime(row);
                               if (!isSynthetic && cleanedWord) {
+                                wordBinding.current = captureCorrectionDraftBinding(videoId, analysisData?.annotationCorrections);
+                                setWordMessage(null);
                                 setSelectedWord(cleanedWord);
                                 setSelectedWordDraft(cleanedWord);
                               }
@@ -1713,9 +1871,9 @@ export default function SpeechToTextPanel({
             </div>
             {transcriptQuality?.status === "degraded" ? (
               <div className="mt-3 rounded border border-amber-500/20 bg-amber-950/10 px-3 py-2 text-[11px] text-amber-100/85">
-                Transcript coverage is flagged for review. Last decoded speech ends at{" "}
+                Transcript source-time coverage is flagged for review; the recovered text remains available above. Last time-authoritative speech ends at{" "}
                 {formatSpeechSeconds(transcriptQuality.last_segment_end_seconds)} with about{" "}
-                {formatSpeechSeconds(transcriptQuality.trailing_uncovered_seconds)} still uncovered.
+                {formatSpeechSeconds(transcriptQuality.trailing_uncovered_seconds)} of media not covered by confirmed transcript timing.
               </div>
             ) : null}
           </div>

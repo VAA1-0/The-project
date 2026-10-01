@@ -1,3 +1,7 @@
+
+import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-events";
+
+import { sourceTimeBoundary } from "@/lib/source-clock";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
@@ -333,12 +337,17 @@ function labelsLikelySameNarrativeAgent(left: string, right: string): boolean {
   return shorter.every((token) => longer.includes(token));
 }
 
+function splitNarrativeAgentLabels(label: string): string[] {
+  const labels = label
+    .split(/[,;\n]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return labels.length > 0 ? uniqueStrings(labels) : [];
+}
+
 function secondsFromInstruction(instruction: SecondOrderLabelInstruction): number {
-  const raw = instruction.time_span?.start_ms ?? instruction.time_span?.start ?? 0;
-  const numeric = Number(raw || 0);
-  return instruction.time_span?.start_ms !== undefined || numeric > 1000
-    ? numeric / 1000
-    : numeric;
+  const span = instruction.time_span;
+  return sourceTimeBoundary(span, "start") ?? 0;
 }
 
 function instructionTouchesAgent(
@@ -527,7 +536,11 @@ function timeSupportsFromSourceItem(
 
 function upsertNarrativeAgentPathRow(
   rows: Map<string, NarrativeAgentPathRow>,
-  patch: Partial<NarrativeAgentPathRow> & { label: string; source: string },
+  patch: Partial<NarrativeAgentPathRow> & {
+    label: string;
+    source: string;
+    rowKey?: string;
+  },
 ) {
   const aliases = uniqueStrings([
     ...(patch.aliases || []),
@@ -537,7 +550,7 @@ function upsertNarrativeAgentPathRow(
     ...(patch.profileIds || []),
     ...narrativeAgentProfileIdsFromSource(patch.sourceItem),
   ]);
-  const key = findNarrativeAgentRowKey(rows, patch.label, aliases, profileIds);
+  const key = patch.rowKey || findNarrativeAgentRowKey(rows, patch.label, aliases, profileIds);
   if (!key) return;
   const existing = rows.get(key);
   const sourceLabels = uniqueStrings([
@@ -614,19 +627,21 @@ function buildNarrativeAgentPathRows(
       continue;
     }
     const metadata = asRecord(record.metadata);
-    const label = narrativeAgentLabelFromRecord(record);
-    upsertNarrativeAgentPathRow(rows, {
-      label,
-      source: record.category === "narrative_agent_profile"
-        ? "Master Schema Narrative Agent Profile"
-        : "Master Schema evidence",
-      role: stringFrom(metadata.role) || stringFrom(metadata.role_label),
-      start: record.start,
-      end: record.end,
-      sceneCount: Array.isArray(metadata.scene_refs) ? metadata.scene_refs.length : 0,
-      sceneRefs: sceneRefsFromUnknown(metadata.scene_refs),
-      evidenceChips: record.category === "identity" ? ["ID evidence"] : ["Master Schema"],
-      sourceItem: record as unknown as Record<string, unknown>,
+    const labels = splitNarrativeAgentLabels(narrativeAgentLabelFromRecord(record));
+    labels.forEach((label) => {
+      upsertNarrativeAgentPathRow(rows, {
+        label,
+        source: record.category === "narrative_agent_profile"
+          ? "Master Schema Narrative Agent Profile"
+          : "Master Schema evidence",
+        role: stringFrom(metadata.role) || stringFrom(metadata.role_label),
+        start: record.start,
+        end: record.end,
+        sceneCount: Array.isArray(metadata.scene_refs) ? metadata.scene_refs.length : 0,
+        sceneRefs: sceneRefsFromUnknown(metadata.scene_refs),
+        evidenceChips: record.category === "identity" ? ["Narrative Agent evidence"] : ["Master Schema"],
+        sourceItem: record as unknown as Record<string, unknown>,
+      });
     });
   }
 
@@ -655,7 +670,10 @@ function buildNarrativeAgentPathRows(
       annotation.custom_label ||
       annotation.label ||
       "Narrative Agent annotation";
+    const metadata = asRecord(annotation.metadata_correlation);
+    const occurrenceKey = stringFrom(metadata.geometry_track_id) || annotation.id;
     upsertNarrativeAgentPathRow(rows, {
+      rowKey: `confirmed-occurrence:${occurrenceKey}`,
       label,
       source: "Manual Narrative Agent annotation",
       role: annotation.role_affirmation,
@@ -723,16 +741,28 @@ function buildNarrativeAgentPathRows(
   }
 
   for (const label of governedNarrativeAgentLabels(analysisData)) {
-    upsertNarrativeAgentPathRow(rows, {
-      label,
+    splitNarrativeAgentLabels(label).forEach((individualLabel) => upsertNarrativeAgentPathRow(rows, {
+      label: individualLabel,
       source: "Shared Narrative Agent registry",
       sceneRefs: [],
       evidenceChips: ["governed registry"],
-      sourceItem: { label, category: "Identification", registry: "analysis-scoped" },
-    });
+      sourceItem: { label: individualLabel, category: "Identification", registry: "analysis-scoped" },
+    }));
   }
 
-  const nextRows = [...rows.values()].map((row) => {
+  const rowValues = [...rows.values()];
+  const manuallyConfirmedLabels = new Set(
+    rowValues
+      .filter((row) => row.manualCount > 0)
+      .map((row) => normalizeAgentKey(row.label)),
+  );
+  const nextRows = rowValues
+    .filter(
+      (row) =>
+        row.manualCount > 0 ||
+        !manuallyConfirmedLabels.has(normalizeAgentKey(row.label)),
+    )
+    .map((row) => {
     const cues = instructions.filter((instruction) => instructionTouchesAgent(instruction, row.label));
     const cueStart = cues
       .map(secondsFromInstruction)
@@ -1219,7 +1249,7 @@ function narrativeAgentGraphNodeHandleLabel(node: NarrativeAgentGraphNode): stri
 
 function seekNarrativeAgentGraphSource(videoId: string, time: number) {
   const timestamp = Math.max(0, Number(time || 0));
-  eventBus.emit("videoTimeLineChanged", timestamp);
+  publishSourceTime(videoId, timestamp);
   eventBus.emit("narrativeAgentGraphSourceSeekRequested", {
     videoId,
     timestamp,
@@ -1886,7 +1916,7 @@ function AutomaticEvidenceSection({
                 type="button"
                 className="block w-full rounded border border-slate-800 bg-[#111214] px-2 py-1.5 text-left text-[10px] text-slate-200 hover:bg-slate-900/60"
                 onClick={() =>
-                  eventBus.emit("videoTimeLineChanged", Number(cue.start || 0))
+                  publishSourceTime(videoId, Number(cue.start || 0))
                 }
               >
                 <div className="flex items-start justify-between gap-2">
@@ -2767,9 +2797,9 @@ function NarrativeAgentCharacterPathsHome({
         setVideoTimelineCursor(Math.max(0, next));
       }
     };
-    eventBus.on("videoTimeLineChanged", handler);
-    return () => eventBus.off("videoTimeLineChanged", handler);
-  }, []);
+    const unsubscribeClock = subscribeSourceTime(videoId, handler);
+    return () => unsubscribeClock();
+  }, [videoId]);
   useEffect(() => {
     if (!selectedGraphModel.nodes.length) {
       if (selectedGraphNodeId) setSelectedGraphNodeId("");
@@ -3037,12 +3067,19 @@ function NarrativeAgentCharacterPathsHome({
               {rows.length === 0 ? (
                 <option value="">No governed Narrative Agents</option>
               ) : (
-                rows.map((row) => (
+                rows.map((row) => {
+                  const duplicateLabelCount = rows.filter(
+                    (candidate) => normalizeAgentKey(candidate.label) === normalizeAgentKey(row.label),
+                  ).length;
+                  return (
                   <option key={`narrative-agent-option:${row.key}`} value={row.key}>
                     {row.label}
-                    {row.sourceLabels.length > 1 ? ` (${row.sourceLabels.length} labels combined)` : ""}
+                    {duplicateLabelCount > 1
+                      ? ` · confirmed occurrence ${formatSeconds(row.start)}`
+                      : ""}
                   </option>
-                ))
+                  );
+                })
               )}
             </select>
           </label>
@@ -3087,9 +3124,9 @@ function NarrativeAgentCharacterPathsHome({
           >
             <div className="mb-1 text-[9px] font-medium text-slate-400">Operational evidence</div>
             <div className="border-y border-white/8" data-vaa1-statskit-source-signals="true">
-              {selectedRelevanceSurface.statsSignals.map((signal) => (
+              {selectedRelevanceSurface.statsSignals.map((signal, signalIndex) => (
                 <NarrativeAgentReadingRow
-                  key={`statskit-signal:${signal.label}`}
+                  key={`statskit-signal:${signal.label}:${signalIndex}`}
                   label={signal.label}
                   detail={signal.detail}
                   value={signal.value}
@@ -3099,9 +3136,9 @@ function NarrativeAgentCharacterPathsHome({
 
             <div className="mt-3 text-[9px] font-medium text-slate-400">Relevance dimensions</div>
             <div className="mt-1 border-y border-white/8" data-vaa1-relevance-radar-dimensions="true">
-              {selectedRelevanceSurface.dimensions.map((dimension) => (
+              {selectedRelevanceSurface.dimensions.map((dimension, dimensionIndex) => (
                 <NarrativeAgentReadingRow
-                  key={`relevance-radar-dimension:${dimension.id}`}
+                  key={`relevance-radar-dimension:${dimension.id}:${dimensionIndex}`}
                   label={dimension.label}
                   detail={`${dimension.reason} · ${dimension.evidenceCount} evidence signal${dimension.evidenceCount === 1 ? "" : "s"}`}
                   value={formatNarrativeAgentScore(dimension.score)}
@@ -3112,9 +3149,9 @@ function NarrativeAgentCharacterPathsHome({
 
             <div className="mt-3 text-[9px] font-medium text-slate-400">Interpretive claims</div>
             <div className="mt-1 border-y border-white/8" data-vaa1-significancekit-claims="true">
-              {selectedRelevanceSurface.significanceClaims.map((claim) => (
+              {selectedRelevanceSurface.significanceClaims.map((claim, claimIndex) => (
                 <NarrativeAgentReadingRow
-                  key={`significance-claim:${claim.level}:${claim.title}`}
+                  key={`significance-claim:${claim.level}:${claim.title}:${claimIndex}`}
                   label={`${claim.level} · ${claim.title}`}
                   detail={claim.text}
                   value={`${claim.evidenceCount} linked`}
@@ -4239,7 +4276,6 @@ export default function MasterSchemaPanel({
     );
     setLeafActionMessage(`Saving ${manualCategoryDisplayLabel(draft.category)} / ${label}...`);
     try {
-      pushCorrectionSnapshot(videoId, existingCorrections);
       const savedCorrections = await VideoService.saveAnnotationCorrections(
         videoId,
         nextCorrections,
@@ -4309,13 +4345,12 @@ export default function MasterSchemaPanel({
     if (!videoId || !item.id) return;
     const existingCorrections = analysisData?.annotationCorrections;
     const nextCorrections = removeManualVisualAnnotation(existingCorrections, item.id);
-    pushCorrectionSnapshot(videoId, existingCorrections);
     await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
     setAnalysisData(await VideoService.getAnalysis(videoId));
     setSelectedAnnotationId(null);
     setLeafActionMessage("Deleted indication.");
     eventBus.emit("videoIdChanged", videoId);
-    eventBus.emit("videoTimeLineChanged", Number(item.start_seconds || item.timestamp_seconds || 0));
+    publishSourceTime(videoId, Number(item.start_seconds || item.timestamp_seconds || 0));
     broadcastAnalysisCorrectionRefresh(videoId);
   }
 
@@ -4338,7 +4373,6 @@ export default function MasterSchemaPanel({
     );
     setLeafActionMessage(`Saving Narrative Agent handle ${row.label} / ${formatSeconds(handle.time)}...`);
     try {
-      pushCorrectionSnapshot(videoId, existingCorrections);
       await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
       setAnalysisData((current: AnalysisData | null) =>
         current
@@ -4901,7 +4935,7 @@ export default function MasterSchemaPanel({
                                 className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
                                 onClick={() => {
                                   const start = Number(draft.start || 0);
-                                  eventBus.emit("videoTimeLineChanged", start);
+                                  publishSourceTime(videoId, start);
                                 }}
                               >
                                 Go start
@@ -4911,7 +4945,7 @@ export default function MasterSchemaPanel({
                                 className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800"
                                 onClick={() => {
                                   const end = Number(draft.end || 0);
-                                  eventBus.emit("videoTimeLineChanged", end);
+                                  publishSourceTime(videoId, end);
                                 }}
                               >
                                 Go end

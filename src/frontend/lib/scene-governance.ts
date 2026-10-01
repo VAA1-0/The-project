@@ -1,3 +1,4 @@
+import { sourceSeconds, sourceTimeBoundary } from "./source-clock";
 export type GovernedSceneSegment = {
   scene_index: number;
   start: number;
@@ -11,16 +12,7 @@ export type GovernedSceneSegment = {
 };
 
 function numberFrom(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function secondsFromMaybeMs(value: unknown): number | null {
-  const parsed = numberFrom(value);
-  if (parsed === null) {
-    return null;
-  }
-  return parsed > 1000 ? parsed / 1000 : parsed;
+  return sourceSeconds(value);
 }
 
 function normalizeSceneSegment(
@@ -34,26 +26,8 @@ function normalizeSceneSegment(
   const timeInterval = segment.time_interval && typeof segment.time_interval === "object"
     ? segment.time_interval
     : {};
-  const start =
-    secondsFromMaybeMs(segment.start) ??
-    secondsFromMaybeMs(segment.start_seconds) ??
-    secondsFromMaybeMs(segment.start_ms) ??
-    secondsFromMaybeMs(interval.start) ??
-    secondsFromMaybeMs(interval.start_seconds) ??
-    secondsFromMaybeMs(interval.start_ms) ??
-    secondsFromMaybeMs(timeInterval.start) ??
-    secondsFromMaybeMs(timeInterval.start_seconds) ??
-    secondsFromMaybeMs(timeInterval.start_ms);
-  const end =
-    secondsFromMaybeMs(segment.end) ??
-    secondsFromMaybeMs(segment.end_seconds) ??
-    secondsFromMaybeMs(segment.end_ms) ??
-    secondsFromMaybeMs(interval.end) ??
-    secondsFromMaybeMs(interval.end_seconds) ??
-    secondsFromMaybeMs(interval.end_ms) ??
-    secondsFromMaybeMs(timeInterval.end) ??
-    secondsFromMaybeMs(timeInterval.end_seconds) ??
-    secondsFromMaybeMs(timeInterval.end_ms);
+  const start = sourceTimeBoundary(segment, "start") ?? sourceTimeBoundary(interval, "start") ?? sourceTimeBoundary(timeInterval, "start");
+  const end = sourceTimeBoundary(segment, "end") ?? sourceTimeBoundary(interval, "end") ?? sourceTimeBoundary(timeInterval, "end");
   if (start === null || end === null) {
     return null;
   }

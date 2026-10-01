@@ -17,10 +17,44 @@
  */
 
 import { buildAnalysisSearchParams } from "./analysis-request";
-import type { CanonicalSourceClockScope } from "./source-clock";
+import type { CanonicalSourceClockScope, SourceClockContext } from "./source-clock";
+
+function activeProjectScope(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("activeProject")?.trim();
+  return requested || (params.has("catalogue") ? undefined : "bond-cop30-helsinki");
+}
+
+function unavailableStatusSummary(analysisId: string, reason: string) {
+  return {
+    schema: "vaa1.analysis_status_summary.v1",
+    analysis_id: analysisId,
+    status: "error",
+    progress: 0,
+    filename: "Unavailable analysis",
+    error: reason,
+    source_video_exists: false,
+    summary: {},
+    canonical_summary: {},
+  };
+}
+
+function projectBoundStatusSummary(analysisId: string, value: any) {
+  const activeProject = activeProjectScope();
+  if (activeProject && value?.project_id && value.project_id !== activeProject) {
+    return unavailableStatusSummary(
+      analysisId,
+      "This analysis belongs to a different research project.",
+    );
+  }
+  return value;
+}
 
 export type SourceClockResolution = {
   analysis_id: string;
+  clock_context: SourceClockContext;
+  binding_status: "content_bound" | "legacy_unversioned";
   selected_time_scope: CanonicalSourceClockScope & {
     authority_rank: number;
     candidate_count: number;
@@ -321,13 +355,16 @@ export type AnalysisCompletenessBranch = {
 
 export type AnalysisCompleteness = {
   schema: "vaa1.full_analysis_completeness.v1";
-  overall_state: "full" | "completed_with_gaps";
+  overall_state: "full" | "available_with_projection_gaps" | "completed_with_gaps";
   computed_count: number;
   required_count: number;
   missing_count: number;
+  unsurfaced_count?: number;
   branches: AnalysisCompletenessBranch[];
   missing_branch_ids: string[];
+  unsurfaced_branch_ids?: string[];
   can_repair: boolean;
+  can_refresh_projections?: boolean;
   verified_at: string;
 };
 
@@ -1529,6 +1566,12 @@ export interface ManualTranscriptEntry {
 }
 
 export interface AnnotationCorrections {
+  _word_undo?: any;
+  _correction_undo?: any;
+  correction_undo_history?: any[];
+  correction_generation?: string | null;
+  /** Read-time precondition, returned by the canonical sidecar route; never persisted. */
+  _clock_write_guard?: { correction_generation?: string | null; analysis_id: string; transcript_clock_offset_seconds: number; binding_status?: string; source_fingerprint?: string | null; clock_revision?: string | null };
   analysis_id?: string;
   version?: number;
   updated_at?: string;
@@ -1715,6 +1758,14 @@ class ApiService {
     const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
     const response = await fetch(`${this.baseURL}/api/observability/corpus${query}`);
     if (!response.ok) throw new Error((await response.text()) || "Corpus observability unavailable");
+    return response.json();
+  }
+
+  async getNarrativeAgentDigitalTwins(): Promise<any> {
+    const response = await fetch(`${this.baseURL}/api/narrative-agents/digital-twins`);
+    if (!response.ok) {
+      throw new Error((await response.text()) || "Narrative Agent Digital Twins unavailable");
+    }
     return response.json();
   }
 
@@ -2019,7 +2070,7 @@ class ApiService {
     })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Status summary unavailable (${response.status})`);
-        const value = await response.json();
+        const value = projectBoundStatusSummary(analysisId, await response.json());
         this.statusCache.set(cacheKey, { expiresAt: Date.now() + 15_000, value });
         return value;
       })
@@ -2029,10 +2080,18 @@ class ApiService {
         const response = await fetch(`/api/local-analysis/${analysisId}?summary=1`, {
           cache: "no-store",
         });
+        if (response.status === 404) {
+          const value = unavailableStatusSummary(
+            analysisId,
+            "This analysis is not available in the active research project.",
+          );
+          this.statusCache.set(cacheKey, { expiresAt: Date.now() + 5_000, value });
+          return value;
+        }
         if (!response.ok) {
           throw new Error(`Local status summary unavailable (${response.status})`);
         }
-        const value = await response.json();
+        const value = projectBoundStatusSummary(analysisId, await response.json());
         this.statusCache.set(cacheKey, { expiresAt: Date.now() + 15_000, value });
         return value;
       });
@@ -2389,42 +2448,29 @@ class ApiService {
     if (existingPromise) return existingPromise;
 
     const request = (async () => {
-    const noCacheToken = Date.now().toString(36);
-    let response: Response;
-    try {
-      response = await fetch(
-        `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
-        { cache: "no-store", signal: AbortSignal.timeout(2_000) },
-      );
-    } catch (error) {
-      console.warn("Backend download failed, trying local analysis artifact:", error);
-      response = await fetch(
-        `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`,
-        { cache: "no-store" },
-      );
-    }
-
-    if (!response.ok) {
-      const localResponse = response.url.includes("/api/local-analysis/")
-        ? response
-        : await fetch(
-            `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`,
-            { cache: "no-store" },
-          );
-      if (localResponse.ok) {
-        const value = await localResponse.blob();
-        if (cacheable) this.artifactCache.set(cacheKey, { expiresAt: Date.now() + 30_000, value });
-        return value;
+      const noCacheToken = Date.now().toString(36);
+      const localUrl = `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`;
+      let value: Blob | undefined;
+      try {
+        const response = await fetch(
+          `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`,
+          { cache: "no-store", signal: AbortSignal.timeout(2_000) },
+        );
+        // The timeout covers body consumption too. Retry locally if it expires
+        // after successful headers, before the complete artifact has arrived.
+        if (response.ok) value = await response.blob();
+      } catch (error) {
+        console.warn("Backend download failed, trying local analysis artifact:", error);
       }
-      const errorText = await localResponse.text();
-      throw new Error(
-        `Download failed: ${localResponse.status} ${localResponse.statusText} - ${errorText}`,
-      );
-    }
-
-    const value = await response.blob();
-    if (cacheable) this.artifactCache.set(cacheKey, { expiresAt: Date.now() + 30_000, value });
-    return value;
+      if (!value) {
+        const response = await fetch(localUrl, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Download failed: ${response.status} ${response.statusText} - ${await response.text()}`);
+        }
+        value = await response.blob();
+      }
+      if (cacheable) this.artifactCache.set(cacheKey, { expiresAt: Date.now() + 30_000, value });
+      return value;
     })();
     if (cacheable) this.artifactPromises.set(cacheKey, request);
     try {
@@ -2624,7 +2670,8 @@ class ApiService {
       body: JSON.stringify(corrections),
     });
     if (!response.ok) {
-      throw new Error(`Annotation correction commit failed (${response.status})`);
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.detail || `Annotation correction commit failed (${response.status})`);
     }
     const committed = await response.json();
     const expected = committed.annotation_corrections || corrections;
@@ -2640,6 +2687,17 @@ class ApiService {
       verified.updated_at !== expected.updated_at
     ) {
       throw new Error("Annotation correction readback did not match the committed version");
+    }
+    const expectedGuard = expected._clock_write_guard;
+    const verifiedGuard = verified._clock_write_guard;
+    if (expectedGuard?.correction_generation && expectedGuard.correction_generation !== verifiedGuard?.correction_generation) {
+      throw new Error("Corrections changed during readback. Reopen the analysis before further editing.");
+    }
+    if (expectedGuard?.source_fingerprint && (
+      expectedGuard.source_fingerprint !== verifiedGuard?.source_fingerprint ||
+      expectedGuard.clock_revision !== verifiedGuard?.clock_revision
+    )) {
+      throw new Error("Corrections were committed, but the source clock changed during readback. Reopen the analysis before further editing.");
     }
     this.invalidateReadCaches(analysisId);
     return verified;
@@ -3195,12 +3253,21 @@ class ApiService {
     return Array.isArray(data.labels) ? data.labels : [];
   }
 
+  async getSourceClockContext(analysisId: string): Promise<SourceClockContext> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Source-clock context failed: ${response.status} - ${await response.text()}`);
+    }
+    return response.json();
+  }
+
   async resolveSourceClock(
     analysisId: string,
     payload: {
       candidates: CanonicalSourceClockScope[];
       dependents?: Array<Record<string, unknown>>;
       apply_invalidation?: boolean;
+      change_scope?: "interval" | "source";
       authority?: string;
     },
   ): Promise<SourceClockResolution> {
@@ -3345,19 +3412,38 @@ class ApiService {
   /**
    * Get list of recent analyses (for admin/debugging)
    */
-  async listAnalyses(limit: number = 10): Promise<any> {
+  async listAnalyses(limit: number = 10, projectId?: string): Promise<any> {
     console.log("Fetching analyses with limit:", limit);
+    const localParams = new URLSearchParams({ limit: String(limit) });
+    if (projectId) localParams.set("project_id", projectId);
+    const localCatalogueUrl = `/api/local-analyses?${localParams.toString()}`;
 
     try {
+      // Populate the workspace from the bounded record catalogue first. Reading
+      // only the record prefixes is deterministic and keeps Search/Project from
+      // appearing empty while the Python service is hydrating large artifacts.
+      const localResponse = await fetch(localCatalogueUrl, {
+        cache: "no-store",
+      });
+      if (localResponse.ok) {
+        const localResult = await localResponse.json();
+        if (Object.keys(localResult.analyses || {}).length > 0) {
+          return localResult;
+        }
+      }
+
       const response = await fetch(
         `${this.baseURL}/api/analyses?limit=${limit}`,
-        { signal: AbortSignal.timeout(2_000), cache: "no-store" },
+        // A catalogue may span several project corpora and hydrate persisted
+        // records from disk. Two seconds forced a silent Marcella-only local
+        // fallback on the current workstation even while the backend was healthy.
+        { signal: AbortSignal.timeout(15_000), cache: "no-store" },
       );
 
       if (!response.ok) {
         const errorText = await response.text();
         console.warn("Failed to fetch analyses:", response.status, errorText);
-        const localResponse = await fetch(`/api/local-analyses?limit=${limit}`);
+        const localResponse = await fetch(localCatalogueUrl);
         if (localResponse.ok) {
           return localResponse.json();
         }
@@ -3369,11 +3455,18 @@ class ApiService {
       }
 
       const result = await response.json();
+      if (projectId) {
+        result.analyses = Object.fromEntries(
+          Object.entries(result.analyses || {}).filter(
+            ([, value]) => (value as { project_id?: string }).project_id === projectId,
+          ),
+        );
+      }
       console.log("Got analyses:", Object.keys(result.analyses || {}).length);
       return result;
     } catch (error) {
       console.warn("List analyses failed, using local fallback:", error);
-      const localResponse = await fetch(`/api/local-analyses?limit=${limit}`);
+      const localResponse = await fetch(localCatalogueUrl);
       if (localResponse.ok) {
         return localResponse.json();
       }

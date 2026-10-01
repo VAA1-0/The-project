@@ -90,6 +90,18 @@
         "reason_code": { "type": "string", "minLength": 1 },
         "reason": { "type": "string" },
         "dependency_ref": { "type": ["string", "null"] },
+        "source_clock_scope": {
+          "type": "object",
+          "required": ["clock_id", "analysis_id", "source_fingerprint", "clock_revision", "start_seconds", "end_seconds"],
+          "properties": {
+            "clock_id": { "const": "source_media.clock" },
+            "analysis_id": { "type": "string", "minLength": 1 },
+            "source_fingerprint": { "type": "string", "minLength": 1 },
+            "clock_revision": { "type": "string", "minLength": 1 },
+            "start_seconds": { "type": "number", "minimum": 0 },
+            "end_seconds": { "type": "number", "minimum": 0 }
+          }
+        },
         "validity_effect": { "enum": ["stale", "invalid"] },
         "authority": { "type": "string" },
         "validity": { "const": "current" },

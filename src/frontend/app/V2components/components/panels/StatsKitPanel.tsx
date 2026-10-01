@@ -1,3 +1,5 @@
+
+import { publishSourceTime } from "@/lib/source-clock-events";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   apiService,
@@ -5110,7 +5112,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                               <td className="px-2 py-1 font-mono text-cyan-100">{Number(pair.left_value || 0).toFixed(4)}</td>
                               <td className="px-2 py-1 font-mono text-violet-100">{Number(pair.right_value || 0).toFixed(4)}</td>
                               <td className="px-2 py-1">
-                                <button type="button" onClick={() => eventBus.emit("videoTimeLineChanged", Number(pair.start_seconds || 0))} className="rounded border border-slate-700 px-2 py-0.5 font-mono text-cyan-100 hover:border-cyan-600">{Number(pair.start_seconds || 0).toFixed(1)}s</button>
+                                <button type="button" onClick={() => publishSourceTime(videoId, Number(pair.start_seconds || 0))} className="rounded border border-slate-700 px-2 py-0.5 font-mono text-cyan-100 hover:border-cyan-600">{Number(pair.start_seconds || 0).toFixed(1)}s</button>
                               </td>
                             </tr>
                           ))}
@@ -5123,7 +5125,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                         <button
                           key={`${relationship.relationship_id}:source:${index}`}
                           type="button"
-                          onClick={() => eventBus.emit("videoTimeLineChanged", Number(interval.start_seconds || 0))}
+                          onClick={() => publishSourceTime(videoId, Number(interval.start_seconds || 0))}
                           className="rounded border border-slate-700 bg-[#101010] px-2 py-1 font-mono text-[9px] text-cyan-100 hover:border-cyan-600"
                           title={`Open ${Number(interval.start_seconds || 0).toFixed(3)}–${Number(interval.end_seconds || 0).toFixed(3)} seconds`}
                         >
@@ -5434,7 +5436,7 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
                                     key={record.id}
                                     type="button"
                                     disabled={!timed}
-                                    onClick={() => sourceStart !== null && eventBus.emit("videoTimeLineChanged", sourceStart)}
+                                    onClick={() => sourceStart !== null && publishSourceTime(videoId, sourceStart)}
                                     className="rounded border border-slate-800 bg-[#111111] px-2 py-1.5 text-left text-[9px] text-slate-300 enabled:hover:border-slate-600 disabled:cursor-default"
                                     title={timed ? "Seek the existing video to this source time" : "Untimed source record"}
                                   >

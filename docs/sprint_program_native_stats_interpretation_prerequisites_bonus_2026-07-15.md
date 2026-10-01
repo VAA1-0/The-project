@@ -1,5 +1,8 @@
 # Datascene/VAA1 Native Statistics-to-Interpretation Prerequisites — Intermediary Bonus Sprint
 
+> Scheduling update, 2026-09-22: remaining work follows the dependency-first stages in [General Sprint Regime](vaa1_general_sprint_regime_remaining_tasks.md#governing-delivery-sequence--2026-09-22). The bonus numbering below preserves historical scope and delivery records; it is not a competing current sprint order. Global source-clock closure precedes new dependent deliveries.
+
+
 Date: 2026-07-15
 Status: proposed intermediary delivery program
 Position: after the canonical architectural revamp and before the native multimodal statistics-to-interpretation implementation

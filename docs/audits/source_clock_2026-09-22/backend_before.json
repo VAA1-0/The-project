@@ -1,0 +1,6 @@
+{
+  "before_fix_foreign_source_affected": [
+    "foreign"
+  ],
+  "before_fix_nan_becomes": 0.0
+}

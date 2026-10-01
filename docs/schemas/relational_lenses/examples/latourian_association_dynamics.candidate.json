@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.1.0",
+  "reading_id": "synthetic-reading",
+  "framework": {
+    "framework_id": "latourian_association_dynamics",
+    "display_name": "Association Dynamics and Heterogeneous Agency",
+    "principal_attribution": "Bruno Latour and actor-network theory",
+    "reading_type": "interpretive_lens",
+    "concept_provenance": [
+      {
+        "concept": "Synthetic test concept",
+        "attribution": "Fixture only",
+        "source_reference": "Synthetic fixture; not a scholarly citation",
+        "relation_to_framework": "principal_concept"
+      }
+    ]
+  },
+  "governance": {
+    "record_status": "candidate",
+    "authority": "automated_candidate",
+    "created_at": "2026-09-16T09:00:00Z",
+    "created_by": "synthetic-unresolved-ref",
+    "dependency_ids": [
+      "synthetic-source-rev-1"
+    ],
+    "input_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "candidate_record_id": "candidate-1",
+    "provider": "synthetic-fixture",
+    "model_or_rule_version": "fixture-1",
+    "parameters": {}
+  },
+  "source_anchors": [
+    {
+      "source_id": "synthetic-source",
+      "anchor_type": "time_interval",
+      "clock_unit": "source_relative_seconds",
+      "time_start": 1,
+      "time_end": 2,
+      "clock_authority": "synthetic-unresolved-ref",
+      "precision_seconds": 0,
+      "anchor_id": "anchor-1",
+      "source_revision_id": "synthetic-source-rev-1"
+    }
+  ],
+  "associations": [
+    {
+      "association_id": "association-1",
+      "from_participant_id": "participant-1",
+      "to_participant_id": "participant-2",
+      "relation_type": "enables",
+      "directionality": "directed",
+      "evidence_anchor_ids": [
+        "anchor-1"
+      ],
+      "epistemic_status": "candidate_interpretation",
+      "rationale": "Synthetic warrant for validation only."
+    }
+  ],
+  "interpretive_summary": {
+    "claim_text": "Synthetic proposal for contract testing; not an empirical research claim.",
+    "epistemic_level": "candidate_interpretation",
+    "evidence_anchor_ids": [
+      "anchor-1"
+    ],
+    "inferential_distance": "proximal",
+    "uncertainty_note": "synthetic-unresolved-ref"
+  },
+  "project_id": "synthetic-project",
+  "analysis_id": "synthetic-analysis",
+  "participants": [
+    {
+      "participant_id": "participant-1",
+      "participant_kind": "human",
+      "designation": "Synthetic participant 1",
+      "evidence_anchor_ids": [
+        "anchor-1"
+      ]
+    },
+    {
+      "participant_id": "participant-2",
+      "participant_kind": "artifact",
+      "designation": "Synthetic participant 2",
+      "evidence_anchor_ids": [
+        "anchor-1"
+      ]
+    }
+  ]
+}

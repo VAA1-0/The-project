@@ -1,0 +1,146 @@
+{
+  "goffmanian_situated_conduct": {
+    "sha256": "3679e83398d9db6883094f89b1be5cef1408bec8f17a8ac09e4a8a22588f5c38",
+    "meta_schema_valid": true,
+    "synthetic_baseline_valid": true,
+    "baseline_note": "All reference strings are deliberately unresolved; structural acceptance is not referential validity.",
+    "probes": {
+      "add_addressable_anchor_id": {
+        "accepted_by_schema": false,
+        "errors": [
+          "Additional properties are not allowed ('anchor_id' was unexpected)"
+        ]
+      },
+      "reversed_interval": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "normalized_roi_outside_frame": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "automated_claims_confirmed": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "invalid_datetime": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'not-a-date' is not a 'date-time'"
+        ]
+      },
+      "candidate_without_analyst_ledger_reference": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'ledger_event_id' is a required property"
+        ]
+      },
+      "duplicate_anchor_objects": {
+        "accepted_by_schema": true,
+        "errors": []
+      }
+    }
+  },
+  "morenoan_relational_configuration": {
+    "sha256": "40ebb8582486754c52d2d417e70eb0b4f87f333e271fb16870c905d5e27cecad",
+    "meta_schema_valid": true,
+    "synthetic_baseline_valid": true,
+    "baseline_note": "All reference strings are deliberately unresolved; structural acceptance is not referential validity.",
+    "probes": {
+      "add_addressable_anchor_id": {
+        "accepted_by_schema": false,
+        "errors": [
+          "Additional properties are not allowed ('anchor_id' was unexpected)"
+        ]
+      },
+      "reversed_interval": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "normalized_roi_outside_frame": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "automated_claims_confirmed": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "invalid_datetime": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'not-a-date' is not a 'date-time'"
+        ]
+      },
+      "candidate_without_analyst_ledger_reference": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'ledger_event_id' is a required property"
+        ]
+      },
+      "duplicate_anchor_objects": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "ethics_omitted": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "sociometry_only_no_role_reading": {
+        "accepted_by_schema": false,
+        "errors": [
+          "[] should be non-empty"
+        ]
+      }
+    }
+  },
+  "latourian_association_dynamics": {
+    "sha256": "e558bd470c2771c24e2396dc3adf670f1969d39116a14134a83e5771bc722158",
+    "meta_schema_valid": true,
+    "synthetic_baseline_valid": true,
+    "baseline_note": "All reference strings are deliberately unresolved; structural acceptance is not referential validity.",
+    "probes": {
+      "add_addressable_anchor_id": {
+        "accepted_by_schema": false,
+        "errors": [
+          "Additional properties are not allowed ('anchor_id' was unexpected)"
+        ]
+      },
+      "reversed_interval": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "normalized_roi_outside_frame": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "automated_claims_confirmed": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "invalid_datetime": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'not-a-date' is not a 'date-time'"
+        ]
+      },
+      "candidate_without_analyst_ledger_reference": {
+        "accepted_by_schema": false,
+        "errors": [
+          "'ledger_event_id' is a required property"
+        ]
+      },
+      "duplicate_anchor_objects": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "participants_omitted": {
+        "accepted_by_schema": true,
+        "errors": []
+      },
+      "unsupported_stabilization": {
+        "accepted_by_schema": true,
+        "errors": []
+      }
+    }
+  }
+}

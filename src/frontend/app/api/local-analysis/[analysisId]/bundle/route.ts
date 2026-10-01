@@ -5,13 +5,15 @@ import {
   readAnalysisRecord,
   slugifyName,
 } from "../../../local-bundle-utils";
+import { assertLocalAnalysisBoundary, projectBoundaryErrorResponse } from "../../project-boundary";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ analysisId: string }> },
 ) {
   const { analysisId } = await params;
   try {
+    await assertLocalAnalysisBoundary(request, analysisId);
     const record = await readAnalysisRecord(analysisId);
     if (record.status !== "completed") {
       return NextResponse.json({ detail: "Analysis not completed" }, { status: 400 });
@@ -28,6 +30,8 @@ export async function GET(
       },
     });
   } catch (error) {
+    const boundaryResponse = projectBoundaryErrorResponse(error);
+    if (boundaryResponse) return boundaryResponse;
     return NextResponse.json(
       { detail: error instanceof Error ? error.message : "Local analysis bundle unavailable" },
       { status: 404 },

@@ -24,18 +24,43 @@ const addValues = (labels: Set<string>, value: unknown): void => {
   addLabel(labels, value);
 };
 
+const addRoleValues = (labels: Set<string>, value: unknown): void => {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => addRoleValues(labels, entry));
+    return;
+  }
+  if (typeof value === "string") {
+    value
+      .split(/[,;\n]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .forEach((entry) => addLabel(labels, entry));
+    return;
+  }
+  addValues(labels, value);
+};
+
 /** One analysis-scoped governed Narrative Agent list for every authoring surface. */
 export function governedNarrativeAgentLabels(analysisData?: AnalysisData | null): string[] {
   const labels = new Set<string>();
+  const annotations = analysisData?.metadata?.sourceMediaMetadata?.user_annotations;
+  const knownPersons = Array.isArray(annotations?.persons)
+    ? annotations.persons.filter((value) => String(value || "").trim())
+    : [];
   (analysisData?.masterSchemaResolvedEvidence?.records || []).forEach((record: MasterSchemaResolvedEvidenceRecord) => {
-    if (["narrative_agent_profile", "character_role", "identity"].includes(record.category) && record.authority !== "raw_detection") {
+    if (["narrative_agent_profile", "identity"].includes(record.category) && record.authority !== "raw_detection") {
       addLabel(labels, record.label);
+    } else if (record.category === "character_role" && knownPersons.length === 0 && record.authority !== "raw_detection") {
+      addRoleValues(labels, record.label);
     }
   });
-  const annotations = analysisData?.metadata?.sourceMediaMetadata?.user_annotations;
   addValues(labels, annotations?.narrative_agent_profiles);
   addValues(labels, annotations?.character_definitions);
-  addValues(labels, annotations?.character_roles);
+  if (knownPersons.length > 0) {
+    addValues(labels, knownPersons);
+  } else {
+    addRoleValues(labels, annotations?.character_roles);
+  }
   (annotations?.web_metadata_sources || []).forEach((source) => {
     addValues(labels, source.fields?.character_roles);
     addValues(labels, source.fields?.persons);

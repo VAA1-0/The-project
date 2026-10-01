@@ -1,0 +1,206 @@
+[
+  {
+    "file": "rollout-2026-09-07T13-16-14-01a07b5e-52a1-7971-9542-9767196d7df3.jsonl",
+    "day": "2026-09-22",
+    "requests": 120,
+    "tokens": {
+      "input_tokens": 15399987,
+      "cached_input_tokens": 15038592,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 62836,
+      "reasoning_output_tokens": 12325,
+      "total_tokens": 15462823
+    },
+    "task_starts": 8,
+    "task_completes": 8,
+    "first_start": "2026-09-22T12:00:09.806Z",
+    "last_complete": "2026-09-22T13:09:28.607Z",
+    "summed_task_seconds": 2781.3329999999996,
+    "first_quota": {
+      "time": "2026-09-22T12:00:24.045Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 3.0,
+          "window_minutes": 300,
+          "resets_at": 1790094946
+        },
+        "secondary": {
+          "used_percent": 2.0,
+          "window_minutes": 10080,
+          "resets_at": 1790455150
+        },
+        "plan_type": "plus"
+      }
+    },
+    "last_quota": {
+      "time": "2026-09-22T13:09:28.603Z",
+      "limits": {
+        "limit_id": "premium",
+        "primary": null,
+        "secondary": null,
+        "plan_type": "plus"
+      }
+    },
+    "models": [
+      "gpt-6-astra"
+    ]
+  },
+  {
+    "file": "rollout-2026-09-07T13-16-14-01a07b5e-52a1-7971-9542-9767196d7df3.jsonl",
+    "day": "2026-09-23",
+    "requests": 124,
+    "tokens": {
+      "input_tokens": 14453236,
+      "cached_input_tokens": 13916288,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 84527,
+      "reasoning_output_tokens": 19489,
+      "total_tokens": 14537763
+    },
+    "task_starts": 11,
+    "task_completes": 11,
+    "first_start": "2026-09-23T12:21:19.932Z",
+    "last_complete": "2026-09-23T15:24:40.598Z",
+    "summed_task_seconds": 3324.328,
+    "first_quota": {
+      "time": "2026-09-23T12:21:38.085Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 1.0,
+          "window_minutes": 300,
+          "resets_at": 1790173902
+        },
+        "secondary": {
+          "used_percent": 16.0,
+          "window_minutes": 10080,
+          "resets_at": 1790685147
+        },
+        "plan_type": "plus"
+      }
+    },
+    "last_quota": {
+      "time": "2026-09-23T15:24:40.594Z",
+      "limits": {
+        "limit_id": "premium",
+        "primary": null,
+        "secondary": null,
+        "plan_type": "plus"
+      }
+    },
+    "models": [
+      "gpt-6-astra"
+    ]
+  },
+  {
+    "file": "rollout-2026-09-07T14-02-37-01a07b88-ca17-7c20-b858-a703f0b19633.jsonl",
+    "day": "2026-09-22",
+    "requests": 21,
+    "tokens": {
+      "input_tokens": 3523840,
+      "cached_input_tokens": 2383616,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 3893,
+      "reasoning_output_tokens": 1322,
+      "total_tokens": 3527733
+    },
+    "task_starts": 19,
+    "task_completes": 19,
+    "first_start": "2026-09-22T12:00:33.636Z",
+    "last_complete": "2026-09-22T12:58:04.830Z",
+    "summed_task_seconds": 203.05900000000003,
+    "first_quota": {
+      "time": "2026-09-22T12:00:42.524Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 7.0,
+          "window_minutes": 300,
+          "resets_at": 1790094946
+        },
+        "secondary": {
+          "used_percent": 2.0,
+          "window_minutes": 10080,
+          "resets_at": 1790455150
+        },
+        "plan_type": "plus"
+      }
+    },
+    "last_quota": {
+      "time": "2026-09-22T12:58:04.819Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 81.0,
+          "window_minutes": 300,
+          "resets_at": 1790098347
+        },
+        "secondary": {
+          "used_percent": 13.0,
+          "window_minutes": 10080,
+          "resets_at": 1790685147
+        },
+        "plan_type": "plus"
+      }
+    },
+    "models": [
+      "codex-auto-review"
+    ]
+  },
+  {
+    "file": "rollout-2026-09-07T14-02-37-01a07b88-ca17-7c20-b858-a703f0b19633.jsonl",
+    "day": "2026-09-23",
+    "requests": 25,
+    "tokens": {
+      "input_tokens": 4403620,
+      "cached_input_tokens": 3316480,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 3214,
+      "reasoning_output_tokens": 1105,
+      "total_tokens": 4406834
+    },
+    "task_starts": 23,
+    "task_completes": 23,
+    "first_start": "2026-09-23T12:24:37.807Z",
+    "last_complete": "2026-09-23T15:20:08.402Z",
+    "summed_task_seconds": 131.66400000000002,
+    "first_quota": {
+      "time": "2026-09-23T12:24:43.351Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 16.0,
+          "window_minutes": 300,
+          "resets_at": 1790173902
+        },
+        "secondary": {
+          "used_percent": 19.0,
+          "window_minutes": 10080,
+          "resets_at": 1790685147
+        },
+        "plan_type": "plus"
+      }
+    },
+    "last_quota": {
+      "time": "2026-09-23T15:20:08.395Z",
+      "limits": {
+        "limit_id": "codex",
+        "primary": {
+          "used_percent": 88.0,
+          "window_minutes": 300,
+          "resets_at": 1790192120
+        },
+        "secondary": {
+          "used_percent": 46.0,
+          "window_minutes": 10080,
+          "resets_at": 1790685147
+        },
+        "plan_type": "plus"
+      }
+    },
+    "models": [
+      "codex-auto-review"
+    ]
+  }
+]

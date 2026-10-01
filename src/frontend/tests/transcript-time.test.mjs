@@ -12,10 +12,26 @@ test("transcript clock keeps second-based times as seconds", () => {
   assert.equal(normalizeTranscriptTimeSeconds("12.5s"), 12.5);
 });
 
-test("transcript clock converts millisecond-shaped values to seconds", () => {
-  assert.equal(normalizeTranscriptTimeSeconds(12500), 12.5);
+test("transcript clock converts explicitly named millisecond fields to seconds", () => {
+  assert.equal(normalizeTranscriptTimeSeconds(12500), 12500);
   assert.equal(normalizeTranscriptSegmentTiming({ start_ms: 12500, end_ms: 14800 }).start, 12.5);
   assert.equal(normalizeTranscriptSegmentTiming({ start_ms: 12500, end_ms: 14800 }).end, 14.8);
+});
+
+test("long-source seconds and clock strings never trigger unit guessing", () => {
+  for (const value of [1000, 1001, 12500]) {
+    assert.equal(normalizeTranscriptTimeSeconds(value), value);
+    assert.equal(normalizeTranscriptSegmentTiming({ start_seconds: value, end_seconds: value + 2 }).start, value);
+    assert.equal(normalizeTranscriptSegmentTiming({ start: value, end: value + 2 }).end, value + 2);
+  }
+  assert.equal(normalizeTranscriptTimeSeconds("00:20:00.250"), 1200.25);
+  assert.equal(normalizeTranscriptTimeSeconds("1200.25s"), 1200.25);
+});
+
+test("explicit long-source seconds outrank conflicting milliseconds", () => {
+  assert.deepEqual(normalizeTranscriptSegmentTiming({ start_seconds: 1200, end_seconds: 1202, start_ms: 5000, end_ms: 6000 }), {
+    t: "1200.0s", start: 1200, end: 1202,
+  });
 });
 
 test("transcript clock prefers explicit seconds over millisecond fallback", () => {

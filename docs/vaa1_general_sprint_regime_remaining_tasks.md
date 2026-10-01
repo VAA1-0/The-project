@@ -1,7 +1,8 @@
 # VAA1 General Sprint Regime: Operational Evidence and Analysis Core
 
 Date: 2026-05-25
-Current period definition updated: 2026-07-12
+Current delivery sequence updated: 2026-09-22
+Embedded-contract activation register updated: 2026-09-29
 
 This is the consolidated remaining sprint map. It keeps the interpretive features, maturity regime, governance, packaging, and release-readiness work in one place so no major track quietly falls off the board.
 
@@ -9,18 +10,178 @@ This is the consolidated remaining sprint map. It keeps the interpretive feature
 
 The next development period is **Operational Evidence and Analysis Core**.
 
-This period begins with a mandatory **Empirical Taxonomy Discovery and Delivery Sprint**. This foundational audit ensures that all subsequent work is grounded in a precise, machine-actionable understanding of the system's data attributes and their dependencies.
+The empirical taxonomy audit and canonical architecture are existing foundations. Begin with a bounded inventory delta and verification of the dependencies needed by the next delivery; do not restart completed foundational sprints. The stepwise sequence below governs remaining delivery.
 
 **Governing Document:**
 -   `docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md`
 
-Current gate status (2026-07-15): **Canonical architecture `GO — OPERATIONAL`**. The registry is schema-validated; governed compatibility writes synchronize atomically into an append-only decision ledger; candidate writers are proposal-only; dependency invalidation and shared projection are operational; Video, Meaning Network, and Master Schema consume canonical projections; and a validation copy of real saved work proves persistence and traceback. See `docs/vaa1_canonical_architectural_revamp_delivery_2026-07-15.md` and `docs/inventory/pass_1_gate.json`.
+Historical gate status (2026-07-15; not a blanket certification of the current worktree): **Canonical architecture `GO — OPERATIONAL`**. The registry is schema-validated; governed compatibility writes synchronize atomically into an append-only decision ledger; candidate writers are proposal-only; dependency invalidation and shared projection are operational; Video, Meaning Network, and Master Schema consume canonical projections; and a validation copy of real saved work proves persistence and traceback. See `docs/vaa1_canonical_architectural_revamp_delivery_2026-07-15.md` and `docs/inventory/pass_1_gate.json`.
+
+## Governing delivery sequence — 2026-09-22
+
+Deliver foundations before the capabilities that consume them. Each stage must produce a reusable operational benefit and evidence that its downstream contract works. A schema, an endpoint, or a successful isolated unit test alone does not close a stage. Existing delivered work is reused and verified; only its missing contracts and regressions are scheduled.
+
+The stages below are the delivery order. The numbered domain sections later in this document remain the detailed requirements catalogue and retain their stable numbers for existing references. Their numerical order is no longer the sprint order. The prerequisite bonus program is subordinate to this schedule for remaining work. No stage is declared complete by this planning revision.
+
+| Stage | Delivery and immediate benefit | Depends on | Unlocks |
+|---|---|---|---|
+| 0 | Establish the current baseline, stable source identity, and minimum safeguards; preserve saved work and know what actually needs repair. | Existing startup, inventory and saved evidence | A bounded and testable foundation pass |
+| 1 | Make the global source-clock contract work across all active temporal features; one source selection means the same instant everywhere. | 0 | Reliable alignment, scoped corrections and temporal dependencies |
+| 2 | Close canonical decisions, invalidation, persistence and shared retrieval; a correction survives and has one accepted meaning everywhere. | 1 | Safe evidence refresh and synchronized consumer projections |
+| 3 | Stabilize versioned evidence layers, vocabulary and quality contracts; consumers receive real, traceable inputs. | 2 | Dependable navigation, measurements and candidate generation |
+| 4 | Complete hydration and bidirectional evidence navigation; the analyst can inspect and correct what has been computed. | 3 | Trustworthy workbenches and end-to-end analytical review |
+| 5 | Deliver reproducible StatsKit measurements and comparisons; analytical results have defined populations and methods. | 4 | Findings, diagnostic coverage and supported propositions |
+| 6 | Calibrate Narrative Agent continuity and governed graph assembly; already-recognized agents gain defensible trajectories. | 4, relevant measurements from 5 | Source-supported paths and cross-agent narrative interpretation |
+| 7 | Complete interpretation and candidate-consumer workflows; automated deductions are visible and reviewable before maturity. | Relevant evidence, measurement and agent/graph gates from 3–6 | Governed analytical assertions and report-ready selections |
+| 8 | Complete publication and portable project round trips; accepted work travels with its evidence and history. | 2–7 for each included feature | Reproducible per-video and project editions |
+| 9 | Complete release qualification and packaging; the tested product works outside the development workspace. | All included stages, or explicit optional-feature deferrals | Release candidate and #0.1 packaging |
+
+### Current execution checkpoint — 2026-09-22
+
+Baseline captured for the first source-clock increment, with saved correction/decision/metadata snapshots and current test results. Stage 1 is in progress: shared transcript normalization no longer guesses milliseconds from values above 1,000 seconds; precise formatting/parsing and timing-status preservation now have behavioral regression tests. Fifteen focused tests, TypeScript and two rendered hydration checks pass. The broader frontend suite still has ten unresolved failures. Full source isolation, revision/invalidation, long-source navigation and consumer coverage gates remain open; no dependent stage is declared unlocked. Evidence: [source-clock sprint audit](audits/source_clock_2026-09-22/README.md).
+
+Backend follow-up: numeric validation and analysis/source isolation are now implemented and live-probed after a documented restart. Forty-four focused behavioral/ledger/timing tests pass; two additional legacy API source-inspection checks remain unresolved. Clock revision/fingerprint binding and the full restoration/consumer matrix remain open. See the same sprint audit for scope and compatibility limits.
+
+The remaining frontend/backend clock delivery and sequential manual acceptance gates are maintained in [Source-clock delivery and manual gates](source_clock_delivery_and_manual_gates_2026-09-22.md). Expressions now shares precise clock formatting. The legacy API contract checks have been repaired to inspect the actual handler and its durable Master Schema refresh; their previous discovery errors are resolved. Stage 1 remains open.
+
+Further clock delivery: explicit units now replace magnitude guessing in scene/interpretive consumers, precise display consumers share formatting, and production timeline publishers enforce active-analysis ownership through a scoped envelope and numeric compatibility bridge. Backend explicit corrections reject invalid bounds and invalidation flags require booleans. Source revision/fingerprint binding and manual acceptance remain open; see the linked clock checklist for the exact boundary.
+
+Revision-binding checkpoint (2026-09-23): source-clock resolution now uses actual content fingerprints and deterministic timebase revisions; stale bindings are rejected, legacy scopes stay explicitly unversioned, and invalidation events preserve the bound scope. Isolated handler/writer/loader tests prove append-only invalidation and ledger reopening. General correction-save concurrency, consumer revision adoption and project restoration remain open. See the [revision-binding audit](audits/source_clock_2026-09-23/README.md).
+
+Correction-save robustness (2026-09-23): canonical sidecar clock reads and read-time offset guards now protect both correction-save routes, with queued dashboard conflict tests and corrupt-file refusal. This advances C3 without claiming cross-process atomicity or full source-revision adoption by editors. [Evidence and remaining limits](audits/source_clock_2026-09-23/correction-save-robustness.md).
+
+Shared writer checkpoint (2026-09-23): dashboard/backend correction saves and export refreshes use one per-analysis lock before checking and committing. Read isolation prevents correction GET from replacing in-flight writer memory. Node/Python contention, exception release and crash-abandonment tests pass; all other write domains and full editor revision binding remain open. [Coordination and recovery](audits/source_clock_2026-09-23/shared-write-coordination.md).
+
+### Stage 0 — Verify the baseline without restarting completed work
+
+Record the current branch/worktree, dependency environment, representative saved analyses and known failing checks. Distinguish delivered, operational-but-unverified, partial, dormant and deferred features. Use the August completeness/parity delivery and September hydration fixes as historical evidence, then verify the relevant current behavior. Preserve unrelated local work and analyst corrections.
+
+Resolve stable project, source, analysis-run and artifact-version identities before changing clock references. Reuse the existing ledger's minimum write, revision and rollback mechanisms for clock corrections; do not defer safe clock persistence until stage 2. Identify missing foundational protections and fix those within this bounded prerequisite. Establish a regression fixture set and recovery snapshot, not another exhaustive ontology exercise.
+
+Gate: the selected baseline is reproducible, source identity is unambiguous, existing corrections are recoverable, and the next stage's exact failing cases and acceptance checks are recorded.
+
+### Stage 1 — Global clock first
+
+“Global clock” means one program-wide source-time contract and authority resolver, not one wall-clock timestamp shared by unrelated videos. Each source retains its own `source_media.clock`, origin, duration, precision and revision. Cross-source alignment is an explicit mapping. Seconds are the interchange unit; `m:ss.mmm` is the precise analyst display. Frames, sample offsets and milliseconds convert through explicit adapters using the actual source metadata.
+
+Apply this contract to every active temporal producer, stored anchor, consumer and navigation event: Video, Transcript, Audio, Objects, OCR, Expressions, POS, Quant, Scene Cards, Narrative Agent, Meaning Network/Plot, Master Schema, Data Maturation, Search, StatsKit, Traceback and report/export adapters. Non-temporal records are explicitly not applicable. Dormant/future features cannot activate until their clock adapter passes the same contract. Do not replace source-relative time with playback position or a panel-local offset.
+
+Preserve the timing-authority hierarchy and distinguish measured, verified, corrected, candidate, inherited and degraded timing. Verify the canonical decision and targeted invalidation path for a clock correction now. Local interval corrections affect overlapping/dependent evidence; source replacement, a changed timebase or a global mapping change must invalidate every affected dependency, even outside the originally selected interval. Preserve unaffected records and historical evidence.
+
+Gate: a coverage matrix has no unclassified active temporal consumer; round-trip seek and display agree within declared source precision; frame/sample conversions and edited intervals pass; clock revision survives restart and export/reimport; stale dependents are identified; unrelated source clocks remain isolated. Existing consumers are fixed to meet this contract before new clock-dependent capabilities are delivered.
+
+### Stage 2 — One accepted state, durable decisions and shared retrieval
+
+Extend the verified clock-decision path into consistent authority, identity, evidence-version and dependency handling for other corrections. Close append-only confirmation/correction/rejection, explicit supersession, alternatives, idempotent retries and concurrent-edit behavior. A trusted analyst command establishes authority; candidate payloads cannot declare themselves mature.
+
+Expose one versioned accepted-state projection coordinated through Master Schema, alongside clearly identified candidate and historical views. Consumers may cache these views but cannot create independent authority stores. Persist before broadcasting changes. Rebuild projections after interruption or restart and prevent stale responses from replacing newer selections. Register dependency edges and versioned vocabulary contracts before downstream consumers rely on them.
+
+Gate: a real correction propagates to all applicable existing consumers, survives reopen, invalidates affected derived records and preserves alternatives and unrelated annotations. Verify a minimal export/import fixture here rather than postponing data-loss detection to stage 8. No feature may require a second local confirmation of an already-valid canonical decision.
+
+### Stage 3 — Reliable evidence and explicit capability boundaries
+
+Consolidate persisted transcript, shot, VAD, diarization, audio-event/prosody/sample-cloud, object/OCR/expression, scene, visual-measurement and SFL/dependency layers under the shared contracts. Reuse valid artifacts before computing replacements. Register method/provider versions, effective settings, quality, missingness and artifact dependencies. Keep scene and shot boundaries distinct, VAD separate from transcript timing authority, and speaker-turn candidates separate from confirmed agent attribution.
+
+Finish provider selection and disabled/fallback behavior before adding any new detector, licensed tool or remote dependency. Optional music, lyrics and acquisition features remain explicitly deferred unless necessary for the agreed evidence-core use case. Existing observations must remain usable when an optional provider is unavailable.
+
+Gate: included layers have canonical artifacts, versioned lineage, matching hydrated counts, known consumer routes and correct invalidation behavior. Missing or degraded inputs are typed states, never fabricated measurements. The existing completeness manifest is reused and strengthened where needed, not rebuilt as a new parallel registry.
+
+### Stage 4 — Inspectable evidence and reciprocal navigation
+
+Finish the shared loading and selection behavior across existing panels before adding more analytical surfaces. Opening a panel late must recover the current analysis. Saved evidence loads independently of video-blob availability, stale requests cannot overwrite current work, and errors differ from legitimate empty results.
+
+Prove “raised here, navigable here”: a leaf keeps its active record, expansion, filter and scroll context while Video seeks or highlights the same source anchor in support. Reverse selection recovers that record without loops, duplicate leaves or unsolicited focus transfer. Correction and review remain local through Datascene controls. Traceback and quality review expose actionable evidence rather than empty destinations.
+
+Gate: rendered tests exercise the named consumer matrix, including load/reopen, seek/highlight, correction, missing media and failed retrieval. Extend the September regression fixtures. Use focused manual testing only for gestures or research interpretation that automation does not establish, and record it as a gate rather than assuming it passed.
+
+### Stage 5 — Reproducible measurements before stronger interpretation
+
+Complete StatsKit and comparison workflows using versioned real layers. Every run records input snapshots, unit of analysis, population, inclusion/exclusion, missingness, nesting, method, parameters, uncertainty and output lineage. Vocabulary and execution-graph dependencies must already be operational for the variables being delivered.
+
+Separate exploratory candidate measures from accepted-evidence measures and label their denominators. Feed findings, significance/relevance diagnostics and subsequent propositions with explicit scope and quality. A missing layer remains not computed; a proxy is identified as a proxy.
+
+Gate: the same input versions reproduce results, a correction triggers only the necessary recomputation, and results navigate to their source population. Save/reopen and a minimal export fixture preserve method and input versions.
+
+### Stage 6 — Agent continuity and graph assembly
+
+Build on already-governed agent references; tracking does not decide who a person is. Record effective tracker settings, calibrate false joins, fragmentation and boundary leakage, and present proposed collection membership and gaps. Membership edits preserve each source occurrence. Confirmed collections project through the same canonical path.
+
+Complete graph editing, presence timelines, focused agent-storyline navigation and source-linked forensic renders. Coverage diagnostics depend on the valid denominators and quality rules from stage 5; where no defensible external benchmark exists, use explicitly scoped within-source diagnostics.
+
+Gate: accepted continuity survives scene boundaries, correction, reopen and export; unsupported joins remain candidates; graph and agent projections agree with their member evidence. Navigation widgets can be repaired earlier in stage 4, but semantic continuity cannot be claimed before this gate.
+
+### Stage 7 — Reviewable deductions, then accepted interpretation
+
+Connect eligible findings, propositions, relations, scene/agent paths, SFL and existing plot/Boje 5B readings. Automated deductions must be available for analyst inspection before confirmation, with evidence, theoretical warrant, alternatives, uncertainty and producer provenance. Candidate graph edges, profile suggestions and exploratory consumers retain their status through reuse. Confirmation does not automatically confirm a downstream deduction.
+
+Enable only the consumers whose prerequisites are satisfied. Qualitative analyst-led readings need valid evidence and navigation; they do not need an unrelated statistical metric or an irrelevant agent track. If a reading depends on a measurement or continuity claim, its specific stage 5 or 6 gate is mandatory. Preserve that distinction in the execution graph rather than imposing artificial dependencies.
+
+The Goffmanian, Morenoan and Latourian package remains an offline draft-contract delivery, not a runtime feature. Its integration is a separately selected future scope at this stage and must pass the reader's outstanding authorization, assertion-identity, invalidation and UI gates before activation.
+
+Gate: candidate surfacing, independent alternatives, explicit analyst decision, corrected projection and dependency invalidation work across the selected consumers. No theoretical assertion matures through confidence, repetition or visualization alone.
+
+### Stage 8 — Publication and portability as a complete workflow
+
+Complete per-video and whole-project Data Books, report claims, useful download groupings and source-chain manifests. Recheck eligibility and freshness at export time. Preserve clock/source identity, analysis versions, accepted decisions, candidate/history distinctions, restrictions and checksums. A project edition declares aggregation rules and never flattens incompatible clocks or versions.
+
+Gate: export a representative project, restore it into an isolated workspace, recover evidence and decisions, and reproduce the included analytical outputs. Current mature claims exclude stale or unaccepted assertions; clearly provisional audit material remains distinguishable. Earlier stages already exercise basic round trips; this stage closes the integrated publication experience.
+
+### Stage 9 — Release qualification and scoped Git delivery
+
+Complete capability activation, data-location/consent disclosure, dependency parity, resource/performance budgets, recovery and installation behavior in the packaged environment. Test core local operation with optional APIs disabled. Review local changes by coherent scope and deliver verified software with truthful limitations; do not bulk-stage unrelated presentation material or experiments.
+
+Gate: required automated suites and representative packaged workflows pass, outstanding manual acceptance is recorded, and optional deferrals are explicit. A missing foundational clock, decision or persistence gate cannot be waived while dependent features are presented as operational.
+
+### Continuous obligations and bounded side work
+
+Observability and maturation economics begin at stage 0 and accompany every stage: execution time, responsiveness, storage, cache/reuse, candidate/review/confirmed yield and analyst effort. They are not postponed to release. Stage 9 verifies accumulated coverage and budgets rather than installing instrumentation for the first time.
+
+Source ownership, consent/data location and optional-provider activation are enforced before the relevant import, provider execution, transfer or export. Packaging can refine their UX later; it cannot retroactively supply a missing permission boundary. The Quality Agent audits throughout without overwriting accepted data.
+
+CVAT round-trip work may proceed as an optional branch after stages 1–3 and the transfer-policy gate, using stage 4 navigation and canonical import decisions. It must pass isolated source/time/geometry/task-identity and duplicate-import tests before activation. It need not block unrelated core analysis if explicitly deferred. New web/disc/stream acquisition and dormant music/lyrics capabilities follow the same rule: contract work may occur independently, but operational delivery waits for the dependencies it actually consumes.
+
+### Embedded-contract activation register — 2026-09-29
+
+This register is an activation notice, not an activation claim. A design document,
+JSON Schema, validator, API preflight, isolated backend service or contract test is
+an embedded foundation. A capability becomes operational only after its producer,
+durable storage, canonical authority/invalidation path, consumer UI, source
+navigation, save/reopen behavior, export behavior and applicable manual acceptance
+have passed the stage gates above. Activation must be explicit, bounded by source
+policy and optional-provider controls, and recorded in this register with evidence.
+
+| Embedded contract or documentation family | Embedded state on 2026-09-29 | Operationalization still required | Governing stage / activation evidence |
+|---|---|---|---|
+| **Golden Retriever acquisition service 1.0** — [schema and boundary](schemas/golden_retriever/README.md), [assessment](audits/golden_retriever_2026-09-29/assessment.md) | The supplied design and schema are preserved; Draft 2020-12 plus cross-record semantic validation and a non-persisting validation endpoint are embedded. **Validation boundary active; acquisition service not activated.** | Implement only selected connectors; bind source policy, consent, secrets, quarantine, budgets and checkpoints; persist envelopes; expose review/navigation; prove canonical admission and reproducible export. Authenticated access, crawling, databases and remote transfer remain off until separately authorized and tested. | Optional 10A branch after stages 1–3 and the transfer-policy gate; stages 4 and 8 for workbench and publication. Activation evidence must include a local/upload vertical slice before any network connector. |
+| **Goffmanian, Morenoan and Latourian relational lenses 1.1** — [package](schemas/relational_lenses/README.md), [design reader](datascene_relational_lenses_design_reader_2026-09-16.md) | Corrected schemas, shared definitions, examples, offline semantic checks and contract tests are embedded. **Offline draft; no application runtime producer or authority.** | Bind assertion identity and producer provenance to the canonical decision ledger; implement invalidation, source navigation, review UI, persistence and export; complete the reader's authorization and ethics gates. | Stage 7 after the evidence dependencies each reading actually uses; stage 8 for publication. |
+| **Narrative, Meaning/Plot, Boje 5B, character-path and SFL interpretation designs** — `docs/vaa1_interpretive_lens_schema_and_sprint_v1.json`, `docs/VAA1_Bojean_Antenarrative_5B_Genre_Traceability_Schema.json`, [Narrative Agent contract](vaa1_narrative_agent_characteristics_schema_and_proliferation_contract_2026-06-11.md), and domain sections 2–6 | Schemas, lexicons, candidate builders and selected projections are embedded. **Mixed partial/nominal state; schema coverage is broader than validated interpretation workflows.** | Establish eligible evidence inputs and theoretical warrants per construct; calibrate candidate generation; preserve alternatives; bind analyst decisions and invalidation; prove source navigation, correction, reopen and report eligibility without promoting computational labels as validated measurements. | Stages 3, 4, 6 and 7 according to each interpretation's actual dependencies; stage 8 for publication. Activate construct by construct, not as one lens bundle. |
+| **StatsKit, research-question and statistical-interpretation contracts** — [StatsKit status](vaa1_statskit_1_0_delivery_2026-07-16.md), [operationalization plan](vaa1_statskit_governed_interpretation_operationalization_plan_2026-08-01.md) | Schemas and bounded native measurement/interpretation services exist, but taxonomy visibility exceeds demonstrated runtime coverage. **Partial; only individually evidenced motors and artifacts are operational.** | Complete real-layer loading, missingness and population contracts, source-linked persisted results, correction-triggered recomputation, workbench review, visualization, save/reopen and governed report selection. Keep unsupported rows `not computed`. | Stage 5, then stage 7 for propositions and stage 8 for publication. Evidence is motor-specific, not a blanket StatsKit activation. |
+| **Data Book, governed-report and portable-publication contracts** — [publication operation](data_book_publication_operation_2026-08-02.md) and `docs/schemas/Datascene Data Book Publication Schema v1.0.0.json` | Backend publication builders, schemas and focused tests are embedded. **Partial workflow; not a complete analyst-facing publication activation.** | Prove selection through report review, source return, privacy/rights revalidation, edition integrity, project export, isolated restore and reproducibility across representative analyses. | Stage 8; release claims require the complete export/restore gate rather than builder tests alone. |
+| **Mature-data proliferation and economics/observability contracts** — [delivery readout](vaa1_mature_data_proliferation_delivery_readout_2026-06-10.md), schemas under `docs/schemas/vaa1_mature_data_proliferation_*`, `vaa1.data_maturation_economics.schema.json` and `vaa1.performance_observability_layer.schema.json` | Decision-ledger, matcher, live-bus and selected observability/economics slices exist. **Partial; the full cross-modal cultivation and cost/yield regime is not operational.** | Complete source-sample creation, calibrated review queues, rejected/deferred/orphan accounting, cross-consumer invalidation, analyst-time and resource capture, diminishing-return rules, UI visibility and export. | Continuous stages 0–9 and domain sections 1/8A; activation is surface- and metric-specific. |
+| **Datascene Search and entity-registry contracts** — `docs/schemas/vaa1.datascene_content_search.schema.json` and `vaa1.datascene_entity_registry.schema.json` | Schemas and partial frontend/backend search surfaces are embedded. **Partial; active route, index/version and complete result-to-source behavior are not certified.** | Establish canonical index identity and freshness, entity/source authority, active backend routing, stable hydration, reciprocal navigation, access filtering and export behavior. | Stages 3–4; stage 8 for portable indexes/results where included. |
+| **Annotation Master Schema and CVAT/native annotation protocols** — [exchange protocol](vaa1_cvat_annotation_exchange_protocol_2026-04-11.md), `docs/schemas/vaa1_annotation_master_schema_v1.schema.json` | Schema, examples, native correction paths and portions of CVAT integration are embedded. **Native governed slices are operational; full external round trip remains partial.** | Prove task identity, geometry/time/source isolation, duplicate-safe import, analyst authority, correction history, policy-controlled transfer, navigation, reopen and export. | Optional domain 11 after stages 1–3; stage 4 interaction gate and stage 8 round trip. |
+| **Audio/visual sample-cloud and dormant media-analysis contracts** — `docs/schemas/vaa1.audio_sample_data_cloud.schema.json`, `vaa1.visual_sample_data_cloud.schema.json`, and domain 7C | Audio sample-cloud and selected audio-analysis slices have implementations/tests; visual sample and music/lyrics breadth remains uneven. **Mixed partial/dormant state.** | Register providers and clocks, persist source-linked samples, demonstrate consumer use, corrections/invalidation, missing-provider behavior and reporting. Activate each modality independently. | Stages 3–5 and sections 7A–7C; no family-wide activation from one passing provider. |
+
+The register covers the known embedded-but-incomplete contract families that can
+otherwise be mistaken for product capabilities. Lower-level schemas supporting an
+already active service remain governed by that service's own tests and gate record;
+their mere presence is not listed again. Any newly embedded schema or design must be
+added here, linked to an owner and stage, and default to `draft`, `validation-only`,
+`partial` or `dormant` until operational evidence changes its state.
+
+### Repeatable delivery rhythm
+
+For each stage or bounded increment: state the reusable benefit and prerequisites; inspect the existing implementation; close the smallest complete cross-consumer gap; run focused contracts and rendered tests; exercise correction/reopen/invalidation and relevant export fixtures; record evidence, costs and limitations; then update the gate and make the scoped change ready for delivery. Manual acceptance remains explicit where required. Do not substitute a list of new interfaces for a demonstrated workflow.
+
+Maintain a gate record with scope, prerequisite versions, test evidence, unresolved failures, optional deferrals and newly unlocked consumers. Regression of a prerequisite blocks further delivery of its dependents until repaired. Independent documentation, contract tests and diagnostics may proceed without claiming those dependents operational.
+
+Requirement mapping: stage 1 covers the linked-time invariant; stage 2 covers domain 1 and canonical parts of 8; stage 3 covers domain 7/7A/7B, prerequisites of 6, and provider gates of 9/10/10A; stage 4 covers navigation/hydration in 1–8 and 12; stage 5 covers native-statistics prerequisites and evidence-backed diagnostics; stage 6 covers domains 2/2.1 and graph continuity/rendering in 4; stage 7 covers interpretation in 3/5/6; stage 8 covers 10B and governed publication; stage 9 covers 13/14/14A. Domain 8A and testing in 12 apply throughout. CVAT (11), music/lyrics (7C) and acquisition expansion (10A) remain bounded optional branches unless explicitly selected as release requirements.
 
 ## Intermediary Bonus Sprint: Native Statistics-to-Interpretation Prerequisites
 
 Before implementing the full native multimodal statistics-to-interpretation engine, complete the gated intermediary program in `docs/sprint_program_native_stats_interpretation_prerequisites_bonus_2026-07-15.md`.
 
-The bonus sprint closes the remaining gap between the operational canonical architecture and scientifically reproducible interpretation. Its mandatory order is:
+The bonus sprint defines the following prerequisite families. Their remaining work is scheduled by the 2026-09-22 dependency sequence below; this older enumeration is not a competing delivery order:
 
 1. Post-revamp inventory delta and a bounded interpretation-ready attribute profile.
 2. Versioned vocabulary service and a scientific execution graph distinct from runtime/idle scheduling.
@@ -100,6 +261,8 @@ Relevant contracts:
 - Prevent raw or unknown detections from overriding mature Narrative Agent, object, scene, or report claims.
 - Add governance objects with source anchors, evidence refs, maturity state, authority level, projection targets, and audit status.
 - Add regression coverage proving confirmation-only propagation, source-linked traceback, projection targets, and canonical-save persistence.
+- Operationalize the **saloon doors swing both ways principle** between Video correction/evidence entries and every source-linked leaf panel. Either entrance must promptly focus, select, seek and highlight the same canonical record in the other surface. Use canonical evidence/decision ids, source-tagged correlation ids and retained current-analysis state; prevent event loops, duplicate Video leaves, duplicate saves and panel-local navigation truth.
+- Enforce **raised here, navigable here** for every leaf indication. Reciprocal synchronization may prepare or update Video and other consumers, but the originating leaf retains focus, selection, scroll, filters, queue position, disclosures and drafts until the analyst explicitly chooses a named cross-panel transfer. Every indication must remain locally understandable and actionable; automatic panel jumping is not an acceptable substitute for leaf functionality.
 
 Acceptance:
 
@@ -108,6 +271,8 @@ Acceptance:
 - Raw substrate remains inspectable but cannot become active semantic truth.
 - Every mature claim can explain source, time, maturity, authority, projection target, and traceback.
 - The UI does not install local mature projections until the backend has returned a saved proliferation decision.
+- Video-to-leaf and leaf-to-Video navigation both surface the same saved correction and source context after reload and project reopen.
+- Leaf-raised indications remain navigable in their originating panel while reciprocal surfaces synchronize without stealing focus or resetting local work.
 
 ## 2. Narrative Agent and character-path operationalization
 
@@ -332,6 +497,16 @@ Acceptance:
 
 ## 10A. Media import expansion and source acquisition governance
 
+Activation notice (2026-09-29): Golden Retriever 1.0 is now embedded as a
+versioned acquisition-envelope schema, semantic validator and read-only package
+validation endpoint. This activates contract validation only. It does **not**
+activate connectors, crawling, authenticated retrieval, database access, secret
+resolution, remote transfer, package persistence or corpus admission. The first
+eligible operational increment is a local-file/analyst-upload vertical slice with
+source-policy evaluation, bounded storage, evidence navigation, canonical admission
+review and export/restore proof. Networked connector classes require a later,
+connector-specific activation record and cannot inherit authority from the schema.
+
 - Decide which media-acquisition paths belong in VAA1 before release and which are post-`#0.1` deferrals:
   - normal local upload/import;
   - saved analysis/project bundle import;
@@ -387,6 +562,9 @@ Acceptance:
 ## 12. Playwright / DOM testing
 
 - Add Playwright checks for dashboard load, project reopen, video rendering, overlay rendering, Master Schema governance surfaces, traceback navigation, GoldenLayout reload, and source-jump navigation.
+- Add a rendered bidirectional navigation matrix for Transcript, Audio, Objects, OCR, Expressions, POS, Quant, Scene Cards, Narrative Agent, Meaning Network/Plot, Master Schema, Data Maturation, Search, StatsKit and Traceback. For each leaf, prove Video entry activation opens/selects the leaf record and leaf activation focuses/seeks/highlights the same record in the existing Video panel without loops or duplicate leaves.
+- In the same matrix, prove **raised here, navigable here**: activating a leaf indication preserves the originating tab, active row, expansion, scroll/filter state and next/previous navigation while Video synchronizes in support. Foreground transfer occurs only after an explicit analyst action.
+- Measure prompt surfacing: the destination must acknowledge selection immediately and complete navigation within the panel-hydration performance budget, or render a typed unavailability state in the correct context.
 - Add focused BBox/ROI DOM fixtures proving candidate surfacing, confirm/cancel controls, mature-label priority, and traceback visibility.
 - Keep manual tests until the full app shell is stable enough for reliable automation.
 
@@ -520,3 +698,23 @@ Running environment refresh note (2026-07-19):
 - The clean functional-branch validation found stale Python environments missing `nltk` and `scenedetect`; these prevented full backend collection/execution even though the available backend set reached 88 passing tests.
 - Frontend contract validation passed 74/74 and TypeScript validation passed after using the repository's installed frontend dependencies.
 - Re-run the complete backend suite after the environment refresh and treat dependency parity across local startup, test, and deployed runtimes as a release gate.
+
+### Backend correction revision checkpoint — 2026-09-23
+
+The version-aware backend save precondition is delivered and automatically tested (72 tests, 25 subtests). Next: coherent read-time binding, dashboard writer enforcement, then editor adoption and staged manual acceptance. Legacy clients remain offset-only. [Scope and ordered dependencies](audits/source_clock_2026-09-23/backend-revision-precondition.md).
+
+### Dashboard correction binding checkpoint — 2026-09-23
+
+Coherent dashboard correction reads and full binding validation on dashboard saves are delivered (51 focused frontend tests, TypeScript, two browser hydration checks). Next audit draft/refresh/undo binding retention per editor, then staged navigation and manual acceptance. [Delivery boundaries](audits/source_clock_2026-09-23/dashboard-revision-binding.md).
+
+### Transcript draft checkpoint — 2026-09-23
+
+Span/manual-marker drafts now preserve their opening source-clock binding and retain drafts on save conflicts. 55 focused frontend tests, TypeScript and language hydration pass. Next: transcript word drafts/undo, then remaining editors and navigation. [Audit](audits/source_clock_2026-09-23/transcript-draft-binding.md).
+
+### Transcript word and undo-safety checkpoint — 2026-09-23
+
+Word drafts preserve their captured binding; transcript undo retains history on failed or unverified restoration. 59 frontend tests, TypeScript and language hydration pass. Full canonical undo restoration remains a dependency before claiming M3 readiness. [Audit](audits/source_clock_2026-09-23/transcript-word-undo.md).
+
+### Correction-generation checkpoint — 2026-09-23
+
+Canonical generation guards now reject same-clock stale saves in both save routes. Existing analyses adopt generations on their next save; older open editors then require reload. Safe inverse-operation undo remains next, with deletion/supersession and before/after provenance still required. [Audit](audits/source_clock_2026-09-23/correction-generation.md).

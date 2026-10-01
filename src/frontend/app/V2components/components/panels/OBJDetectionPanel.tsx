@@ -1,3 +1,8 @@
+import { prepareCorrectionUndo, correctionUndoVerified } from "@/lib/correction-word-undo";
+
+import { parsePreciseSourceTime } from "@/lib/source-clock";
+
+import { formatPreciseSourceTime } from "@/lib/source-clock";
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
@@ -13,7 +18,8 @@ import {
   pushCorrectionSnapshot,
   requireSavedManualVisualAnnotation,
   removeCorrectionRule,
-  undoLastCorrectionSnapshot,
+  peekCorrectionSnapshot,
+  acknowledgeCorrectionSnapshot,
   upsertManualVisualAnnotation,
 } from "@/lib/annotation-corrections";
 import type { AnnotationCorrections, ManualVisualAnnotation } from "@/lib/api-service";
@@ -98,32 +104,11 @@ function firstSubcategory(category: ManualVisualAnnotation["category"]): string 
 }
 
 function formatPreciseTime(value?: number): string {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "time n/a";
-  }
-  const safeValue = Math.max(0, value);
-  const minutes = Math.floor(safeValue / 60);
-  const seconds = Math.floor(safeValue % 60);
-  const milliseconds = Math.floor((safeValue - Math.floor(safeValue)) * 1000);
-  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+  return typeof value === "number" && Number.isFinite(value) ? formatPreciseSourceTime(value) : "time n/a";
 }
 
 function parsePreciseTimeInput(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (!trimmed.includes(":")) {
-    const seconds = Number(trimmed);
-    return Number.isFinite(seconds) ? seconds : null;
-  }
-  const [minutesPart, secondsPart] = trimmed.split(":");
-  const minutes = Number(minutesPart);
-  const seconds = Number(secondsPart);
-  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
-    return null;
-  }
-  return minutes * 60 + seconds;
+  return parsePreciseSourceTime(value);
 }
 
 function resolveManualVisualDisplayLabel(item: ManualVisualAnnotation): string {
@@ -570,7 +555,6 @@ export default function OBJDetectionPanel() {
       existingCorrections,
       annotation,
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     let refreshed;
     try {
       const savedCorrections = await VideoService.saveAnnotationCorrections(
@@ -673,7 +657,6 @@ export default function OBJDetectionPanel() {
         targetTrackId: obj.trackId,
       }),
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
@@ -710,7 +693,6 @@ export default function OBJDetectionPanel() {
         nextCorrections = removeCorrectionRule(nextCorrections, rule.id);
       }
     }
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
@@ -735,7 +717,6 @@ export default function OBJDetectionPanel() {
         targetTrackId: obj.trackId,
       }),
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
@@ -747,23 +728,23 @@ export default function OBJDetectionPanel() {
   };
 
   const undoLastCorrection = async () => {
-    if (!videoId) {
-      return;
+    if (!videoId) return;
+    const snapshot = peekCorrectionSnapshot(videoId);
+    if (!snapshot) return;
+    try {
+      const request = prepareCorrectionUndo(snapshot.corrections, analysisData?.annotationCorrections);
+      const saved = await VideoService.saveAnnotationCorrections(videoId, request);
+      if (!correctionUndoVerified(snapshot.corrections, saved)) throw new Error("Undo could not be verified. History is retained.");
+      acknowledgeCorrectionSnapshot(videoId, snapshot.token);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+      applySavedAnnotationCorrections(saved);
+      const refreshed = await VideoService.refreshAnalysis(videoId);
+      if (eventBus.getLast<string>("videoIdChanged") !== videoId) return;
+      setAnalysisData(refreshed);
+      broadcastAnalysisCorrectionRefresh(videoId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Undo failed; history is retained.");
     }
-    const restored = undoLastCorrectionSnapshot(videoId);
-    if (restored === null && !analysisData?.annotationCorrections) {
-      return;
-    }
-    const nextCorrections =
-      restored || createEmptyCorrections(analysisData?.annotationCorrections);
-    const savedCorrections = await VideoService.saveAnnotationCorrections(
-      videoId,
-      nextCorrections,
-    );
-    applySavedAnnotationCorrections(savedCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
-    broadcastAnalysisCorrectionRefresh(videoId);
   };
 
   const canUndo = canUndoCorrectionSnapshot(videoId);

@@ -1,0 +1,13 @@
+{
+  "dashboard_guard": {
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "transcript_clock_offset_seconds": 0
+  },
+  "backend_guard": {
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "transcript_clock_offset_seconds": 0.0
+  },
+  "clock_context_agrees": true,
+  "protected_files_unchanged": 32,
+  "live_write_requests": 0
+}

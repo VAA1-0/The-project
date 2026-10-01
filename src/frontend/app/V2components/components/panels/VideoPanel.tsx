@@ -1,5 +1,8 @@
-// src/frontend/app/V2components/components/panels/VideoPanel.tsx
 "use client";
+
+import { useSourceClockTicket } from "@/lib/use-source-clock-ticket";
+import { publishSourceTime, subscribeSourceTime, isCurrentSourceClockNavigation, isCurrentSourceTime, getActiveSourceClockContext, type SourceClockTimeEvent } from "@/lib/source-clock-events";
+// src/frontend/app/V2components/components/panels/VideoPanel.tsx
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -34,6 +37,7 @@ import {
   type VideoMetadata,
   groupDetectedObjectsForDisplay,
 } from "@/lib/video-service";
+import type { SourceMediaMetadata } from "@/lib/api-service";
 import {
   buildEvidenceNavigationState,
   resolveManualVisualEvidence,
@@ -126,8 +130,8 @@ const CROSS_SOURCE_COMPARE_KEY = "vaa1.video.compare-anchor";
 const EXPRESSION_IDENTITY_ANCHOR_WINDOW_SECONDS = 1.5;
 const SELECTED_OVERLAY_STACK_RANK = 50000;
 const VIDEO_CONTROL_CLEARANCE_PX = 52;
-const ANALYSIS_FRAME_STEP_SECONDS = 1 / 25;
-const BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = ANALYSIS_FRAME_STEP_SECONDS * 6;
+const BBOX_MINIMUM_WINDOW_SECONDS = 0.04;
+const BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = 0.24;
 
 type OverlayToggleKey = "objects" | "ocr" | "expressions" | "manual";
 
@@ -1953,6 +1957,10 @@ function formatCompareSourceLabel(
 export default function VideoPanel() {
   const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState("");
+  const mediaClockTicket = useSourceClockTicket(videoId);
+  const sourceTimebase = getActiveSourceClockContext()?.timebase;
+  const nominalFrameStep = sourceTimebase?.fps && sourceTimebase.fps > 0 ? 1 / sourceTimebase.fps : null;
+  const frameStepLabel = sourceTimebase?.frame_rate_mode === "constant" ? "frame" : "nominal frame";
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
   const [mediaRefreshNonce, setMediaRefreshNonce] = useState(0);
@@ -2321,7 +2329,7 @@ export default function VideoPanel() {
       videoRef.current.currentTime = safeTime;
     }
     lastBroadcastTimeRef.current = safeTime;
-    eventBus.emit("videoTimeLineChanged", safeTime);
+    publishSourceTime(videoId, safeTime);
   }, [duration]);
 
   const holdVideoPausedForBBoxNavigation = React.useCallback(() => {
@@ -2607,7 +2615,7 @@ export default function VideoPanel() {
       return;
     }
     eventBus.emit("videoIdChanged", compareAnchor.videoId);
-    eventBus.emit("videoTimeLineChanged", compareAnchor.time);
+    publishSourceTime(compareAnchor.videoId, compareAnchor.time);
   }, [compareAnchor]);
 
   const openCompareView = React.useCallback(() => {
@@ -2631,14 +2639,35 @@ export default function VideoPanel() {
         eventBus.emit("activeAnalysisContext", videoId);
       }
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId: string; corrections?: AnnotationCorrections }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === videoId) {
-        setCorrectionRefreshNonce((value) => value + 1);
+        if (typeof payload !== "string" && payload.corrections) {
+          setAnalysisData((current) => current ? { ...current, annotationCorrections: payload.corrections } : current);
+        } else {
+          setCorrectionRefreshNonce((value) => value + 1);
+        }
       }
+    };
+    const sourceMetadataHandler = (
+      payload: string | { analysisId?: string; videoId?: string; metadata?: SourceMediaMetadata },
+    ) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId || payload.videoId;
+      if (id !== videoId || typeof payload === "string" || !payload.metadata) return;
+      setAnalysisData((current) => current ? {
+        ...current,
+        metadata: {
+          ...current.metadata,
+          yoloDetections: current.metadata?.yoloDetections || 0,
+          ocrDetections: current.metadata?.ocrDetections || 0,
+          sourceMediaMetadata: payload.metadata,
+        },
+      } : current);
     };
     eventBus.on("videoIdChanged", handler);
     eventBus.on("activeAnalysisContextRequest", contextRequestHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
+    eventBus.on("sourceMediaMetadataChanged", sourceMetadataHandler);
     if (videoId) {
       eventBus.emit("activeAnalysisContext", videoId);
     }
@@ -2646,6 +2675,7 @@ export default function VideoPanel() {
       eventBus.off("videoIdChanged", handler);
       eventBus.off("activeAnalysisContextRequest", contextRequestHandler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
+      eventBus.off("sourceMediaMetadataChanged", sourceMetadataHandler);
     };
   }, [videoId]);
 
@@ -2661,11 +2691,11 @@ export default function VideoPanel() {
       navigationRequestedAtRef.current = Date.now();
       setVideoTimeLine(nextVideoTimeLine);
     };
-    eventBus.on("videoTimeLineChanged", handler);
+    const unsubscribeClock = subscribeSourceTime(videoId, handler);
     return () => {
-      eventBus.off("videoTimeLineChanged", handler);
+      unsubscribeClock();
     };
-  }, []);
+  }, [videoId]);
 
   useEffect(() => {
     const handler = (payload?: {
@@ -3097,10 +3127,12 @@ export default function VideoPanel() {
     const loadToken = ++activeLoadTokenRef.current;
     let cancelled = false;
     const sourceChanged = loadedVideoIdRef.current !== videoId;
-    if (sourceChanged && Date.now() - navigationRequestedAtRef.current > 250) {
-      pendingSourceTimeRef.current = 0;
-      setVideoTimeLine(0);
-      setCurrentTime(0);
+    if (sourceChanged) {
+      const cue = eventBus.getLast<SourceClockTimeEvent>("sourceClockTimeChanged");
+      const time = cue && isCurrentSourceTime(cue, videoId) ? cue.timestamp_seconds : 0;
+      pendingSourceTimeRef.current = time;
+      setVideoTimeLine(time);
+      setCurrentTime(time);
     } else if (!sourceChanged) {
       pendingSourceTimeRef.current = currentTime;
     }
@@ -3125,12 +3157,11 @@ export default function VideoPanel() {
       setBlobMissing(false);
 
       try {
-        const mediaSourcePromise = loadVideoSource(videoId);
+        // The source shell is foreground navigation. Do not hold it behind
+        // analytical artifact hydration, which can be substantial for mature
+        // records such as Marcella 1.
         const analysisPromise = VideoService.getAnalysis(videoId);
-        const [mediaSource, nextAnalysis] = await Promise.all([
-          mediaSourcePromise,
-          analysisPromise,
-        ]);
+        const mediaSource = await loadVideoSource(videoId);
         if (cancelled || activeLoadTokenRef.current !== loadToken) {
           if (mediaSource.videoUrl) {
             URL.revokeObjectURL(mediaSource.videoUrl);
@@ -3138,7 +3169,6 @@ export default function VideoPanel() {
           return;
         }
         setMetadata(mediaSource.metadata);
-        setAnalysisData(nextAnalysis);
         setCurrentTime(pendingSourceTimeRef.current);
         setVideoTimeLine(pendingSourceTimeRef.current);
         loadedVideoIdRef.current = videoId;
@@ -3162,6 +3192,13 @@ export default function VideoPanel() {
           setBlobMissing(true);
           setVideoUrl(null);
         }
+        // The video shell is now usable; hydrate analytical data independently.
+        setIsLoading(false);
+        const nextAnalysis = await analysisPromise;
+        if (cancelled || activeLoadTokenRef.current !== loadToken) {
+          return;
+        }
+        setAnalysisData(nextAnalysis);
       } catch (err) {
         if (cancelled || activeLoadTokenRef.current !== loadToken) {
           return;
@@ -3372,7 +3409,7 @@ export default function VideoPanel() {
     let cancelled = false;
 
     const pumpFrame = (_now: number, metadata: VideoFrameMetadata) => {
-      if (cancelled) {
+      if (cancelled || !isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) {
         return;
       }
 
@@ -3387,7 +3424,7 @@ export default function VideoPanel() {
       }
       if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.1) {
         lastBroadcastTimeRef.current = nextTime;
-        eventBus.emit("videoTimeLineChanged", nextTime);
+        publishSourceTime(videoId, nextTime, mediaClockTicket);
       }
 
       videoFrameCallbackIdRef.current = videoElement.requestVideoFrameCallback!(pumpFrame);
@@ -3406,7 +3443,7 @@ export default function VideoPanel() {
       }
       videoFrameCallbackIdRef.current = null;
     };
-  }, [videoUrl]);
+  }, [videoUrl, videoId, mediaClockTicket.selection_epoch, mediaClockTicket.clock_revision]);
 
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
@@ -4969,7 +5006,6 @@ export default function VideoPanel() {
         annotation,
         { sourcePanel: "RestoreToAnalysis" },
       );
-      pushCorrectionSnapshot(targetVideoId, existingCorrections);
       try {
         const savedCorrections = await VideoService.saveAnnotationCorrections(
           targetVideoId,
@@ -4981,8 +5017,6 @@ export default function VideoPanel() {
           "Restore to analysis",
         );
         applySavedAnnotationCorrections(savedCorrections);
-        const refreshed = await VideoService.refreshAnalysis(targetVideoId);
-        setAnalysisData(refreshed);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setNativeSaveMessage(`Could not restore detection: ${message}`);
@@ -5824,7 +5858,7 @@ export default function VideoPanel() {
       if (focus.clockId !== CANONICAL_SOURCE_CLOCK_ID) return;
       if (focus.videoId && videoId && focus.videoId !== videoId) return;
       setPendingGovernedBBoxFocus(focus);
-      eventBus.emit("videoTimeLineChanged", focus.timestamp);
+      publishSourceTime(videoId, focus.timestamp);
     };
     eventBus.on<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
     return () => eventBus.off<GovernedBBoxFocus>("governedBBoxFocusChanged", handler);
@@ -5945,7 +5979,7 @@ export default function VideoPanel() {
       // with an implicit Objects or leaf-panel route.
       if (eventBus.getLast<boolean>("maturationWorkbenchActive")) {
         eventBus.emit("videoIdChanged", videoId);
-        eventBus.emit("videoTimeLineChanged", timestamp);
+        publishSourceTime(videoId, timestamp);
         return;
       }
 
@@ -5968,7 +6002,7 @@ export default function VideoPanel() {
         timestamp,
       });
       eventBus.emit("videoIdChanged", videoId);
-      eventBus.emit("videoTimeLineChanged", timestamp);
+      publishSourceTime(videoId, timestamp);
       eventBus.emit("videoEvidenceSelected", {
         videoId,
         panelType,
@@ -6271,7 +6305,6 @@ export default function VideoPanel() {
       annotation,
       { sourcePanel: "BBox/ROI" },
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     try {
       const savedCorrections = await VideoService.saveAnnotationCorrections(
         videoId,
@@ -6283,8 +6316,6 @@ export default function VideoPanel() {
         "Native BBox/ROI annotation",
       );
       applySavedAnnotationCorrections(savedCorrections);
-      const refreshed = await VideoService.refreshAnalysis(videoId);
-      setAnalysisData(refreshed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setNativeSaveMessage(`Could not save native annotation: ${message}`);
@@ -6340,14 +6371,11 @@ export default function VideoPanel() {
       existingCorrections,
       annotation.id,
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
     );
     applySavedAnnotationCorrections(savedCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
     setActiveOverlayEditorKey(null);
     setNativeSaveMessage("Removed native annotation.");
@@ -6593,7 +6621,6 @@ export default function VideoPanel() {
         annotation,
         { sourcePanel: "BBox/ROI" },
       );
-      pushCorrectionSnapshot(videoId, existingCorrections);
       try {
         const savedCorrections = await VideoService.saveAnnotationCorrections(
           videoId,
@@ -6605,8 +6632,6 @@ export default function VideoPanel() {
           "BBox/ROI indication",
         );
         applySavedAnnotationCorrections(savedCorrections);
-        const refreshed = await VideoService.refreshAnalysis(videoId);
-        setAnalysisData(refreshed);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setNativeSaveMessage(`Could not save BBox/ROI indication: ${message}`);
@@ -6722,7 +6747,7 @@ export default function VideoPanel() {
       Math.max(
         edit.end,
         pendingOverlayGeometryAutoSave.time + BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS / 2,
-        autoSaveStart + ANALYSIS_FRAME_STEP_SECONDS,
+        autoSaveStart + BBOX_MINIMUM_WINDOW_SECONDS,
       ),
       0,
       duration || Number.MAX_SAFE_INTEGER,
@@ -7017,14 +7042,11 @@ export default function VideoPanel() {
         targetTrackId: obj.trackId,
       }),
     );
-    pushCorrectionSnapshot(videoId, existingCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
     );
     applySavedAnnotationCorrections(savedCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
     setActiveOverlayEditorKey(null);
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -7048,14 +7070,11 @@ export default function VideoPanel() {
         targetTrackId: obj.trackId,
       }),
     );
-    pushCorrectionSnapshot(videoId, analysisData?.annotationCorrections);
     const savedCorrections = await VideoService.saveAnnotationCorrections(
       videoId,
       nextCorrections,
     );
     applySavedAnnotationCorrections(savedCorrections);
-    const refreshed = await VideoService.refreshAnalysis(videoId);
-    setAnalysisData(refreshed);
     setSelectedOverlayKey(null);
     setActiveOverlayEditorKey(null);
     broadcastAnalysisCorrectionRefresh(videoId);
@@ -7175,7 +7194,6 @@ export default function VideoPanel() {
         );
       }
 
-      pushCorrectionSnapshot(videoId, existingCorrections);
       const savedCorrections = await VideoService.saveAnnotationCorrections(
         videoId,
         nextCorrections,
@@ -7186,8 +7204,6 @@ export default function VideoPanel() {
         "proliferation candidate decision",
       );
       applySavedAnnotationCorrections(savedCorrections);
-      const refreshed = await VideoService.refreshAnalysis(videoId);
-      setAnalysisData(refreshed);
       broadcastAnalysisCorrectionRefresh(videoId);
       setSelectedOverlayProliferation((current) => {
         const next = { ...current };
@@ -8214,8 +8230,8 @@ export default function VideoPanel() {
           (metadata?.sourceVideoExists === false &&
             metadata?.sourceVideoMessage)) && (
           <div className="mt-1 text-[11px] text-[var(--ui-passive-text)]">
-            {blobMissing &&
-              "Preview not stored in this browser. Reopen from saved outputs if needed."}
+            {blobMissing && metadata?.sourceVideoExists !== false &&
+              "Saved source preview could not be loaded. Reopen the source or retry this saved project."}
             {blobMissing &&
               metadata?.sourceVideoExists === false &&
               metadata?.sourceVideoMessage &&
@@ -8255,6 +8271,7 @@ export default function VideoPanel() {
                   controlsList="nofullscreen"
                   className="h-full w-full object-contain"
                   onLoadedMetadata={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                     if (!videoRef.current) {
                       return;
                     }
@@ -8272,6 +8289,7 @@ export default function VideoPanel() {
                     updateRenderedVideoRect();
                   }}
                   onTimeUpdate={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                     if (!videoRef.current) {
                       return;
                     }
@@ -8286,10 +8304,11 @@ export default function VideoPanel() {
                     }
                     if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
                       lastBroadcastTimeRef.current = nextTime;
-                      eventBus.emit("videoTimeLineChanged", nextTime);
+                      publishSourceTime(videoId, nextTime, mediaClockTicket);
                     }
                   }}
                   onSeeked={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                     if (!videoRef.current) {
                       return;
                     }
@@ -8302,7 +8321,7 @@ export default function VideoPanel() {
                     setCurrentTime(nextTime);
                     overlayArmedRef.current = true;
                     setFrameReadyTime(nextTime);
-                    eventBus.emit("videoTimeLineChanged", nextTime);
+                    publishSourceTime(videoId, nextTime, mediaClockTicket);
                   }}
                   onPlay={() => {
                     if (bboxNavigationPauseLockRef.current) {
@@ -9877,6 +9896,7 @@ export default function VideoPanel() {
                       controls={false}
                       className="h-full w-full object-contain"
                       onLoadedMetadata={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                         if (!videoRef.current) {
                           return;
                         }
@@ -9891,6 +9911,7 @@ export default function VideoPanel() {
                         setCurrentTime(pendingTime);
                       }}
                       onTimeUpdate={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                         if (!videoRef.current) {
                           return;
                         }
@@ -9898,10 +9919,11 @@ export default function VideoPanel() {
                         setCurrentTime(nextTime);
                         if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
                           lastBroadcastTimeRef.current = nextTime;
-                          eventBus.emit("videoTimeLineChanged", nextTime);
+                          publishSourceTime(videoId, nextTime, mediaClockTicket);
                         }
                       }}
                       onSeeked={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                         if (!videoRef.current) {
                           return;
                         }
@@ -9912,7 +9934,7 @@ export default function VideoPanel() {
                         }
                         setCurrentTime(nextTime);
                         lastBroadcastTimeRef.current = nextTime;
-                        eventBus.emit("videoTimeLineChanged", nextTime);
+                        publishSourceTime(videoId, nextTime, mediaClockTicket);
                         syncCompareSide("main");
                       }}
                       onPlay={() => {
@@ -9970,6 +9992,7 @@ export default function VideoPanel() {
                         controls={false}
                         className="h-full w-full object-contain"
                         onLoadedMetadata={() => {
+                    if (!isCurrentSourceClockNavigation(mediaClockTicket) || loadedVideoIdRef.current !== videoId) return;
                           if (!compareVideoRef.current) {
                             return;
                           }
@@ -10976,11 +10999,13 @@ export default function VideoPanel() {
 
                   <div className="flex flex-wrap items-center gap-1 text-[10px] text-[var(--ui-passive-text)]">
                     {[
-                      { label: "-fr", delta: -ANALYSIS_FRAME_STEP_SECONDS },
-                      { label: "+fr", delta: ANALYSIS_FRAME_STEP_SECONDS },
+                      { label: `−${frameStepLabel}`, delta: -(nominalFrameStep ?? 0) },
+                      { label: `+${frameStepLabel}`, delta: nominalFrameStep ?? 0 },
                     ].map((step) => (
                       <button
                         key={step.label}
+                        disabled={nominalFrameStep === null}
+                        title={nominalFrameStep === null ? "Frame rate unavailable" : `${nominalFrameStep.toFixed(6)} seconds; variable-rate sources require measured frame timestamps for exact stepping`}
                         type="button"
                         className="h-7 rounded border border-slate-800 px-2 hover:border-cyan-500/60 hover:text-cyan-100"
                         onClick={() => seekByAnalysisStep(step.delta)}

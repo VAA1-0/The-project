@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -405,7 +406,9 @@ def analyze_face_images_batch(
                 source_timestamp=source_timestamp,
                 style_mode=style_mode,
             )
-            temporary = frame_checkpoint_path.with_name(f".{frame_checkpoint_path.name}.tmp")
+            temporary = frame_checkpoint_path.with_name(
+                f".{frame_checkpoint_path.name}.{uuid.uuid4().hex}.tmp"
+            )
             try:
                 with temporary.open("w", encoding="utf-8") as handle:
                     json.dump(result, handle, indent=2, ensure_ascii=False, default=str)

@@ -25,7 +25,9 @@ export function normalizeTranscriptTimeSeconds(value) {
   if (parsed === null) {
     return null;
   }
-  return parsed > 1000 ? parsed / 1000 : parsed;
+  // Magnitude is not a unit: long recordings legitimately exceed 1,000 seconds.
+  // Milliseconds are converted only at explicitly named *_ms field boundaries.
+  return parsed;
 }
 
 function transcriptTimeFromFields(segment, secondsKeys, millisecondsKeys) {

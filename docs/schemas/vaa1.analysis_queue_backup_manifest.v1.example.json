@@ -1,0 +1,18 @@
+{
+  "schema": "vaa1.analysis_queue_backup_manifest.v1",
+  "api_root": "http://127.0.0.1:8000",
+  "analysis_ids": [
+    "ANALYSIS_ID_SHORTEST_FIRST",
+    "ANALYSIS_ID_NEXT"
+  ],
+  "profile": {
+    "pipeline_type": "full",
+    "analysis_tier": "science_scan",
+    "modality_focus": "multimodal",
+    "morphology_pack_policy": "core_only",
+    "allow_rough_interpretation": true
+  },
+  "poll_seconds": 30,
+  "cooling_seconds": 600,
+  "state_path": "outputs/runtime/analysis_queue_backup_state.json"
+}

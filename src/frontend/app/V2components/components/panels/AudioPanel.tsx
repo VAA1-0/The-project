@@ -1,5 +1,9 @@
 "use client";
 
+import { publishSourceTime } from "@/lib/source-clock-events";
+
+import { formatPreciseSourceTime } from "@/lib/source-clock";
+
 import React, { useEffect, useMemo, useState } from "react";
 import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
@@ -15,6 +19,7 @@ import type {
 
 const GOVERNED_AUDIO_PAGE_SIZE = 25;
 import { VideoService, type AnalysisData } from "@/lib/video-service";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 
 type AudioPanelProps = {
   analysis?: {
@@ -161,11 +166,7 @@ type TranscriptTimingAudit = {
 };
 
 function formatTime(seconds: unknown): string {
-  const safeSeconds = typeof seconds === "number" && Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  const minutes = Math.floor(safeSeconds / 60);
-  const wholeSeconds = Math.floor(safeSeconds % 60);
-  const millis = Math.round((safeSeconds - Math.floor(safeSeconds)) * 1000);
-  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+  return formatPreciseSourceTime(typeof seconds === "number" ? seconds : 0);
 }
 
 function formatValue(value: unknown): string {
@@ -293,6 +294,10 @@ function knownNarrativeAgentOptions(analysisData: AnalysisData | null): Narrativ
   const options: NarrativeAgentOption[] = [];
   const annotations = analysisData?.metadata?.sourceMediaMetadata?.user_annotations;
 
+  governedNarrativeAgentLabels(analysisData).forEach((label, index) => {
+    addNarrativeAgentOption(options, label, "governed_narrative_agent_registry", `governed-agent:${index}`);
+  });
+
   asArray<Record<string, any>>(annotations?.narrative_agent_profiles).forEach((profile, index) => {
     addNarrativeAgentOption(
       options,
@@ -313,10 +318,14 @@ function knownNarrativeAgentOptions(analysisData: AnalysisData | null): Narrativ
     asArray(definition.aliases).forEach((alias) => addNarrativeAgentOption(options, alias, "source_media_metadata.character_alias"));
   });
 
-  asArray<string>(annotations?.character_roles).forEach((roleLine, index) => {
-    const character = String(roleLine || "").split(/\s+[-–—]\s+|\s+\(|,/)[0]?.trim();
-    addNarrativeAgentOption(options, character || roleLine, "source_media_metadata.character_roles", `character-role:${index}`);
-  });
+  if (asArray<string>(annotations?.persons).length === 0) {
+    asArray<string>(annotations?.character_roles).forEach((roleLine, index) => {
+      String(roleLine || "").split(/[,;\n]+/).forEach((role, roleIndex) => {
+        const character = role.split(/\s+[-–—]\s+|\s+\(/)[0]?.trim();
+        addNarrativeAgentOption(options, character || role, "source_media_metadata.character_roles", `character-role:${index}:${roleIndex}`);
+      });
+    });
+  }
 
   asArray<Record<string, any>>(annotations?.web_metadata_sources).forEach((source, sourceIndex) => {
     asArray<Record<string, any>>(source.fields?.character_roles).forEach((role, roleIndex) => {
@@ -1091,7 +1100,7 @@ function jumpTo(
       });
       eventBus.emit("videoIdChanged", context.analysisId);
     }
-    eventBus.emit("videoTimeLineChanged", safeTime);
+    publishSourceTime(context?.analysisId, safeTime);
     eventBus.emit("audioEvidenceFocus", {
       videoId: context?.analysisId,
       evidenceId: context?.evidenceId,

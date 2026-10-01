@@ -12,6 +12,50 @@ The Meaning Network Graph is the operational workspace where those constellation
 
 Narrative Agent presence handles are an important part of this, but they are only one feature inside the larger Meaning Network regime.
 
+## Narrative Agents, not identities
+
+Datascene does not use **identity** as its analyst-facing concept. It works with
+**Narrative Agents** and source-linked Narrative Agent recognitions. This terminology is
+methodological, not cosmetic: Datascene governs what the represented agent does in the
+material and how that occurrence is evidenced, rather than claiming to resolve a natural
+person's identity.
+
+Legacy `identity_*` fields may be read at compatibility boundaries, but new canonical
+objects, interfaces, reports, and documentation use `narrative_agent_*` terminology. A
+detector track, face observation, voice cluster, transcript speaker, name mention, role,
+or relation can support a Narrative Agent recognition, but none can define the Narrative
+Agent alone.
+
+An explicit analyst-confirmed Narrative Agent recognition is the authority anchor for
+recognition extension. The system should seek every further possible occurrence within
+the analysis and across the governed data array. It may automatically extend the
+recognition only when the occurrence is source timed, the configured multimodal and
+contextual gates pass, no competing Narrative Agent falls within the ambiguity margin,
+no negative evidence applies, and the result is written as a reversible, traceable
+proliferation event. Otherwise it remains a calm review candidate.
+
+The recognition memory is a **Narrative Agent Digital Twin sample** composed of Visual,
+Audio, Transcript, OCR, Music theme, Source Media Data, Scene Cards, and
+manual-confirmation evidence.
+It remains a constellation of governed source records rather than a flattened profile.
+An accepted match creates one canonical Narrative Agent recognition decision; the
+Master Schema then proliferates its projection to every eligible consumer. Automatic
+recognition and downstream proliferation are therefore separate, auditable stages.
+
+Automatic Narrative Agent recognition must not be promoted from a single first-occurring
+frame. A Digital Twin must have independent temporal or shot support, and its visual
+evidence must be checked for transitions, cross-dissolves, dominant colour treatments,
+filters, and other editorial contamination. The Data Maturation surface must give the
+analyst one prominent **Confirm Digital Twin 100%** action. That explicit act is manual
+authority; it does not erase the evidence record or misrepresent a one-sample twin as
+automatically recognition-ready.
+
+Scene Cards are both governed evidence producers and projection consumers. Their
+source-linked participation, speaking/listening, action, relation, setting, object, and
+meaning records can support recognition; accepted recognition decisions then refresh
+only overlapping Scene Cards through the Master Schema. Scene Card prose alone is never
+recognition authority, and regeneration preserves manual evidence and traceback.
+
 ## Meaning Network Graph as a whole
 
 The Meaning Network Graph should function as a governed multimodal workspace, not merely as a visualization.
@@ -166,6 +210,86 @@ Click node -> open abstract Master Schema view while source evidence exists
 Master Schema inspection is important, but source verification should be the first operational gesture when source evidence exists.
 
 Double-clicking a Meaning Network node or edge should not open the general Narrative Agent(s) overview. It should open a navigation field for the selected node or edge. If the selected object is tied to a Narrative Agent or character path, that navigation field can include an explicit action to open the specific Narrative Agent storyline. That storyline may be hosted inside the general Narrative Agent surface, but it should open as a focused panel or leaf of its own rather than dropping the analyst into a broad agent list.
+
+## Interactive annotation practice
+
+Panel confirmations, transcript corrections, and BBox/ROI annotations are
+foreground analyst work. Their canonical commit must remain available while an
+analysis is running. The save transaction writes the small governed correction
+artifact first and acknowledges that durable commit without waiting for Master
+Schema proliferation, Scene Card regeneration, Meaning Network refresh, or any
+other derived view.
+
+Heavy analysis and proliferation are lower-priority consumers. They may finish
+later, but they may not require the interactive save path to read, copy, or
+rewrite the full analysis result. If the analysis runtime cannot answer within
+the bounded interactive window, the isolated dashboard runtime commits the
+same correction artifact atomically and marks downstream projection as queued.
+Reopening the analysis hydrates this canonical artifact before derived data.
+
+Operational invariant:
+
+```text
+analyst action -> immediate small atomic commit -> saved acknowledgement
+-> queued/deferred proliferation -> governed panel refresh
+```
+
+The dashboard must remain usable during background analysis. Analysis admission
+and implementation must retain sufficient CPU, memory, and I/O headroom for
+selection, editing, source navigation, and these small commits. A feature is not
+operational if the analyst must wait for analysis or proliferation to release
+the interface before saving work.
+
+The required operating sequence is:
+
+1. Update the panel optimistically so the analyst can continue working.
+2. Commit only the small canonical correction payload.
+3. Replace the sidecar atomically and acknowledge the durable commit.
+4. Mark Master Schema and consumer proliferation as queued or deferred.
+5. Perform heavyweight proliferation when capacity is available.
+6. Refresh consumers from the canonical artifact without overriding the
+   analyst.
+
+The commit path must not serialize the full analysis result, wait for the
+analysis execution lock, load detector arrays, or synchronously regenerate
+Scene Cards, Meaning Network, StatsKit, reports, or maturity projections.
+Python handlers run outside the asynchronous API event loop. If that service
+cannot commit within the bounded interactive window, the isolated dashboard
+writer performs the same atomic correction-sidecar commit. Both routes must
+share concurrency guards, and hydration must treat the sidecar as canonical.
+
+## Checkpoint surfacing and continuation practice
+
+An interrupted or active analysis may already contain governed measurements.
+Those durable measurements remain usable evidence and must surface in their
+panels with an explicit checkpoint or processing state. They must not be
+hidden merely because the complete analysis has not reported in, and they must
+not be presented as final branch output.
+
+Continuation reopens the same source, verifies its source signature and the
+checkpoint's referenced artifacts, hydrates the durable arrays, and resumes at
+the recorded next position. Completed stages in the analysis checkpoint are
+reused rather than recomputed. A missing artifact, changed source, corrupt
+checkpoint, or incompatible version invalidates the affected checkpoint and
+must produce an explicit recovery state rather than silent reuse.
+
+For a visual sweep, the durable checkpoint governs the next frame/sample
+index, scan mode, source signature, measured object and OCR records, selected
+face-frame references, spatial-tone samples, and completion state. Interim
+records remain labelled as checkpoint evidence until the branch completes and
+writes its canonical outputs.
+
+Operational invariant:
+
+```text
+durable checkpoint -> verify source and artifacts -> hydrate measured evidence
+-> skip completed work -> resume at next_index -> publish canonical outputs
+```
+
+Checkpoint continuation preserves original evidence and analyst corrections.
+It may append or complete results, but it must not erase durable work, replay a
+completed branch without cause, or allow partial status to masquerade as
+completed analysis.
 
 ## Master Schema feedback loop
 

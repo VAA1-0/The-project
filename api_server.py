@@ -156,6 +156,9 @@ from src.backend.analysis.saved_analysis_hydration_loader import (
 from src.backend.analysis.live_mature_data_proliferation_bus import (
     write_live_mature_data_proliferation_audit,
 )
+from src.backend.analysis.narrative_agent_digital_twin import (
+    write_array_digital_twin_report,
+)
 from src.backend.analysis.mise_en_scene_scene_card import (
     write_mise_en_scene_scene_cards,
     write_source_extraction_metadata_summary,
@@ -175,7 +178,13 @@ from src.backend.analysis.decision_ledger import (
 )
 from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
 from src.backend.analysis.claim_projection import project_canonical_claims
+from src.backend.analysis.correction_write_lock import correction_write_lock, CorrectionWriteBusy
+from src.backend.analysis.source_clock_context import (
+    build_source_clock_context, validate_clock_binding, ClockRevisionConflict,
+    canonical_clock_corrections, validate_correction_clock_guard, correction_clock_read_payload,
+)
 from src.backend.analysis.source_clock_authority import (
+    bind_analysis_scope,
     clock_affected_decision_refs,
     overlapping_dependents,
     select_authoritative_time_scope,
@@ -202,6 +211,7 @@ from src.backend.analysis.research_corpus_ingestion import (
     assess_corpus_capacity,
     copy_upload_bounded,
 )
+from src.backend.analysis.golden_retriever_validation import validate_package as validate_acquisition_package
 from src.backend.analysis.analysis_recovery import (
     atomic_write_json,
     load_analysis_checkpoint,
@@ -459,6 +469,26 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
     record_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(json.dumps(status, default=str))
     atomic_write_json(record_path, payload)
+
+    # Keep catalogue-critical ownership outside the potentially very large
+    # analysis record. Browser startup can then restore project boundaries
+    # without parsing detector arrays or hydrating panel artifacts.
+    catalogue_path = RESULTS_DIR / "catalogue_index.json"
+    catalogue: Dict[str, Any] = {"schema": "vaa1.catalogue_index.v1", "analyses": {}}
+    if catalogue_path.exists():
+        try:
+            loaded = json.loads(catalogue_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                catalogue.update(loaded)
+        except Exception:
+            pass
+    analyses = catalogue.setdefault("analyses", {})
+    analyses[str(analysis_id)] = {
+        "project_id": status.get("project_id", "local-research-project"),
+        "filename": status.get("original_filename") or status.get("filename"),
+        "updated_at": utc_now_iso(),
+    }
+    atomic_write_json(catalogue_path, catalogue)
 
 
 def csv_escape(value: Any) -> str:
@@ -3216,6 +3246,8 @@ def build_annotation_corrections_payload(status: Dict[str, Any]) -> Dict[str, An
     corrections = status.get("annotation_corrections") or {}
     return {
         "analysis_id": status.get("analysis_id"),
+        "correction_undo_history": corrections.get("correction_undo_history", []),
+        "correction_generation": corrections.get("correction_generation"),
         "version": corrections.get("version", 1),
         "updated_at": corrections.get("updated_at"),
         "updated_by": corrections.get("updated_by", "analyst"),
@@ -3262,19 +3294,27 @@ def hydrate_richer_persisted_annotation_corrections(status: Dict[str, Any]) -> N
     analysis_id = str(status.get("analysis_id") or status.get("id") or "").strip()
     if not analysis_id:
         return
-    correction_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
-    if not correction_path.exists():
-        return
-    try:
-        persisted = json.loads(correction_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return
-    if not isinstance(persisted, dict):
-        return
     current = status.get("annotation_corrections")
-    if annotation_correction_maturity_score(persisted) >= annotation_correction_maturity_score(current):
-        status["annotation_corrections"] = persisted
-        status.setdefault("output_files", {})["annotation_corrections"] = str(correction_path)
+    output_files = status.setdefault("output_files", {})
+    canonical_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
+    recorded_path = output_files.get("annotation_corrections")
+    candidates = [(current, recorded_path)]
+    for correction_path in (canonical_path, Path(str(recorded_path)) if recorded_path else None):
+        if correction_path is None or not correction_path.exists():
+            continue
+        try:
+            persisted = json.loads(correction_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        candidates.append((persisted, str(correction_path)))
+    richest, richest_path = max(
+        candidates,
+        key=lambda candidate: annotation_correction_maturity_score(candidate[0]),
+    )
+    if isinstance(richest, dict):
+        status["annotation_corrections"] = richest
+        if richest_path:
+            output_files["annotation_corrections"] = str(richest_path)
 
 
 def tracked_objects_for_projection(status: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3525,6 +3565,21 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
 
     output_files = status.setdefault("output_files", {})
     current_transcript = output_files.get("transcript")
+    current_payload = read_json_artifact_if_available(current_transcript)
+
+    def transcript_text_fingerprint(payload: Any) -> tuple[str, ...]:
+        if not isinstance(payload, dict):
+            return ()
+        rows = payload.get("segments")
+        if not isinstance(rows, list):
+            return ()
+        return tuple(
+            " ".join(str(row.get("text") or "").lower().split())
+            for row in rows[:5]
+            if isinstance(row, dict) and str(row.get("text") or "").strip()
+        )
+
+    current_text_fingerprint = transcript_text_fingerprint(current_payload)
 
     candidates: List[Any] = []
     record = read_json_artifact_if_available(get_analysis_record_path(analysis_id))
@@ -3577,6 +3632,43 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         if imported_root:
             candidates.append(imported_root / f"{Path(original_filename).stem}_transcript.json")
 
+    # Restored bundles may preserve the authoritative raw Whisper clock in a
+    # nested transcripts/ directory while an older scaffold transcript sits at
+    # bundle root. Import/restart must rediscover that mature clock rather than
+    # allowing directory layout to decide authority.
+    search_roots: List[Path] = []
+    if current_transcript:
+        search_roots.append(Path(str(current_transcript)).parent)
+    if source_video_path:
+        search_roots.append(Path(str(source_video_path)).parent)
+    discovered: List[Path] = []
+    for search_root in search_roots:
+        if not search_root.exists() or not search_root.is_dir():
+            continue
+        for pattern in (
+            "*transcript_raw_whisper.json",
+            "*raw_whisper_transcript.json",
+            "*extracted_audio_transcript.json",
+        ):
+            discovered.extend(search_root.rglob(pattern))
+    # Duplicate/restored bundle roots are permitted only when their transcript
+    # text fingerprint proves that they belong to the same source media.
+    if IMPORTED_WORK_DIR.exists() and current_text_fingerprint:
+        for pattern in ("*transcript_raw_whisper.json", "*raw_whisper_transcript.json"):
+            for candidate_path in IMPORTED_WORK_DIR.rglob(pattern):
+                candidate_payload = read_json_artifact_if_available(candidate_path)
+                if transcript_text_fingerprint(candidate_payload) == current_text_fingerprint:
+                    discovered.append(candidate_path)
+    # Explicit raw-Whisper artifacts outrank generic full-pass artifacts.
+    discovered.sort(
+        key=lambda path: (
+            0 if "raw_whisper" in path.name.lower() else 1,
+            len(path.parts),
+            str(path),
+        )
+    )
+    candidates = discovered + candidates
+
     for candidate in candidates:
         if not candidate:
             continue
@@ -3590,7 +3682,8 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
             return False
         output_files["transcript"] = str(candidate_path)
         if candidate_payload.get("transcription_strategy") == "original_whisper_timecode":
-            output_files.setdefault("raw_whisper_transcript", str(candidate_path))
+            output_files["raw_whisper_transcript"] = str(candidate_path)
+        output_files["operational_transcript"] = str(candidate_path)
         audio_analysis["transcript"] = candidate_payload
         status["output_files"] = output_files
         status["transcript_timing_repair"] = candidate_payload.get(
@@ -7131,6 +7224,8 @@ def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
         )
         persist_analysis_record_for_status(status)
     hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+    hydrate_imported_output_files(status)
+    hydrate_richer_persisted_annotation_corrections(status)
     ensure_live_mature_data_proliferation_audit_for_status(status)
     analysis_status[analysis_id] = status
     return status
@@ -7140,6 +7235,8 @@ def get_analysis_entry(analysis_id: str) -> Optional[Dict[str, Any]]:
     status = analysis_status.get(analysis_id)
     if status is not None:
         hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+        hydrate_imported_output_files(status)
+        hydrate_richer_persisted_annotation_corrections(status)
         ensure_live_mature_data_proliferation_audit_for_status(status)
         return status
     return load_persisted_analysis(analysis_id)
@@ -7535,6 +7632,106 @@ def rebuild_audio_diarization_after_timing_change(
 
     status["output_files"] = output_files
     return rewritten
+
+
+def rebuild_transcript_dependents_for_operational_clock(
+    status: Dict[str, Any],
+) -> List[str]:
+    """Rebuild first-order transcript consumers after a clock relink."""
+    output_files = status.setdefault("output_files", {})
+    transcript_path = Path(str(output_files.get("transcript") or ""))
+    audio_path = Path(str(output_files.get("audio") or ""))
+    if not transcript_path.is_file() or not audio_path.is_file():
+        return []
+    transcript = read_json_artifact_if_available(transcript_path)
+    if not isinstance(transcript, dict) or not transcript.get("segments"):
+        return []
+
+    rewritten: List[str] = []
+    write_linked_transcript_artifact(status, transcript, output_files)
+    rewritten.append("linked_transcript")
+    timed_segments = source_timed_transcript_segments(transcript)
+    audio_prosody = analyze_audio_prosody(audio_path, timed_segments)
+    prosody_path = (
+        Path(output_files["audio_prosody"])
+        if output_files.get("audio_prosody")
+        else transcript_path.with_name(
+            f"{transcript_path.stem.replace('_transcript', '')}_audio_prosody.json"
+        )
+    )
+    prosody_path.parent.mkdir(parents=True, exist_ok=True)
+    prosody_path.write_text(
+        json.dumps(normalize_analysis_json_for_write(audio_prosody), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_files["audio_prosody"] = str(prosody_path)
+    rewritten.append("audio_prosody")
+
+    audio_events = audio_prosody.get("audio_event_intervals") if isinstance(audio_prosody, dict) else None
+    if isinstance(audio_events, dict):
+        audio_events_path = (
+            Path(output_files["audio_event_intervals"])
+            if output_files.get("audio_event_intervals")
+            else prosody_path.with_name(
+                f"{prosody_path.stem.replace('_audio_prosody', '')}_audio_event_intervals.json"
+            )
+        )
+        audio_events_path.write_text(
+            json.dumps(normalize_analysis_json_for_write(audio_events), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        output_files["audio_event_intervals"] = str(audio_events_path)
+        rewritten.append("audio_event_intervals")
+
+    rewritten.extend(
+        rebuild_audio_diarization_after_timing_change(
+            status,
+            {"segments": timed_segments, **{key: value for key, value in transcript.items() if key != "segments"}},
+            audio_path,
+            audio_prosody,
+        )
+    )
+    write_time_bank_artifact(
+        status,
+        output_files,
+        source_key="audio_prosody",
+        artifact_key="time_bank_audio",
+        suffix="time_bank_audio",
+        linker=link_audio_prosody_json_to_trace,
+    )
+    rewritten.append("time_bank_audio")
+    rewritten.extend(rewrite_pos_quant_from_transcript(status, transcript, transcript_path))
+    status.setdefault("results", {}).setdefault("audio_analysis", {}).update(
+        {"transcript": transcript, "audio_prosody": audio_prosody}
+    )
+    status["output_files"] = output_files
+    append_analysis_event(
+        status,
+        "transcript_clock_dependents_rebuilt",
+        details={
+            "authority": "original_whisper_or_manual_operational_clock",
+            "rewritten_artifacts": list(dict.fromkeys(rewritten)),
+        },
+    )
+    return list(dict.fromkeys(rewritten))
+
+
+def transcript_dependents_use_operational_clock(status: Dict[str, Any]) -> bool:
+    """Return false when a persisted prosody clock disagrees with transcript."""
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    transcript = read_json_artifact_if_available(output_files.get("transcript")) or {}
+    prosody = read_json_artifact_if_available(output_files.get("audio_prosody")) or {}
+    transcript_rows = source_timed_transcript_segments(transcript)
+    prosody_rows = prosody.get("cues") if isinstance(prosody, dict) else None
+    if not transcript_rows or not isinstance(prosody_rows, list) or not prosody_rows:
+        return False
+    transcript_start = safe_float(transcript_rows[0].get("start"))
+    prosody_start = safe_float(prosody_rows[0].get("start"))
+    return (
+        transcript_start is not None
+        and prosody_start is not None
+        and abs(transcript_start - prosody_start) <= 0.001
+    )
 
 
 def refresh_visual_analysis_parity(status: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -7995,9 +8192,12 @@ def add_available_output_files_to_archive(
 
 def refresh_mutable_saved_outputs(status: Dict[str, Any]) -> None:
     """Ensure analyst-editable outputs are written before export bundling."""
-    write_source_media_metadata_files(status)
-    write_annotation_corrections_file(status)
-    persist_analysis_record_for_status(status)
+    with correction_write_lock(RESULTS_DIR.parent.parent, str(status.get("analysis_id") or "")):
+        # Export must not rewrite newer dashboard corrections from cached status.
+        status["annotation_corrections"] = canonical_clock_corrections(str(status.get("analysis_id") or ""), status)
+        write_source_media_metadata_files(status)
+        write_annotation_corrections_file(status)
+        persist_analysis_record_for_status(status)
 
 
 def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[str, str]:
@@ -8032,6 +8232,20 @@ def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[
         "pos_matrix.json": "pos_matrix",
         "quant_matrix.json": "quant_matrix",
         "face_anonymization_manifest.json": "face_anonymization_manifest",
+        "audio_diarization_scaffold.json": "audio_diarization",
+        "audio_diarization.json": "audio_diarization",
+        "audio_sample_clouds.json": "audio_sample_clouds",
+        "identity_triangulation_bundle.json": "identity_triangulation",
+        "dependency_sfl_stage1.json": "dependency_sfl_stage1",
+        "multimodal_meaning_stage1.json": "multimodal_meaning_stage1",
+        "second_order_label_proliferation.json": "second_order_label_proliferation",
+        "narrative_lens_reading.json": "narrative_lens_reading",
+        "character_path_reading.json": "character_path_reading",
+        "datascene_meaning_network.json": "datascene_meaning_network",
+        "mise_en_scene_scene_card_report.json": "mise_en_scene_scene_cards",
+        "scene_card_source_extraction_metadata_summary.json": "source_extraction_metadata_summary",
+        "live_mature_data_proliferation_audit.json": "live_mature_data_proliferation_audit",
+        "vaa1_annotation_master_schema.json": "vaa1_annotation_master_schema",
     }
 
     output_files: Dict[str, str] = {}
@@ -8051,6 +8265,26 @@ def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[
                 break
 
     return output_files
+
+
+def hydrate_imported_output_files(status: Dict[str, Any]) -> None:
+    """Recover bundle artifacts omitted by an older importer without replacing files."""
+    output_files = status.setdefault("output_files", {})
+    imported_directory = None
+    for raw_path in output_files.values():
+        if not raw_path:
+            continue
+        candidate = Path(str(raw_path)).parent
+        if candidate.parent == IMPORTED_WORK_DIR and candidate.exists():
+            imported_directory = candidate
+            break
+    if imported_directory is None:
+        return
+    recovered = infer_output_files_from_bundle(imported_directory, "")
+    for file_type, recovered_path in recovered.items():
+        current_path = output_files.get(file_type)
+        if not current_path or not Path(str(current_path)).exists():
+            output_files[file_type] = recovered_path
 
 
 def read_saved_work_manifest(extract_dir: Path, bundle_stem: str) -> Dict[str, Any]:
@@ -8077,6 +8311,7 @@ def register_imported_analysis(
     output_files: Dict[str, str],
     manifest: Dict[str, Any],
     original_filename_override: Optional[str] = None,
+    project_id: str = "imported-saved-work",
 ) -> Dict[str, Any]:
     analysis_id = str(uuid.uuid4())
 
@@ -8126,6 +8361,11 @@ def register_imported_analysis(
         "analysis_completed_at": utc_now_iso(),
         "output_files": output_files,
         "pipeline_type": manifest.get("pipeline_type", "full"),
+        "project_id": (
+            manifest.get("project_id")
+            or manifest.get("research_project_id")
+            or project_id
+        ),
         "cvatID": 0,
         "event_log": [],
         "source_media_metadata": manifest.get("source_media_metadata", {}),
@@ -8163,6 +8403,12 @@ async def upload_preflight(payload: Dict[str, Any] = Body(...)) -> dict:
         "schema": "vaa1.research_corpus_upload_preflight.v1",
         **assessment,
     }
+
+
+@app.post("/api/acquisition/packages/validate", response_model=dict)
+async def validate_golden_retriever_package(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Validate an acquisition envelope without fetching, persisting, or admitting it."""
+    return validate_acquisition_package(payload)
 
 
 @app.post("/api/upload", response_model=dict)
@@ -10024,17 +10270,38 @@ def build_analysis_completeness(status: Dict[str, Any]) -> Dict[str, Any]:
     """Build a bounded, UI-safe view of required full-profile deliverables."""
     manifest = evaluate_full_analysis_manifest(status)
     required_branches = [item for item in manifest["branches"] if item.get("required")]
-    missing = [item for item in required_branches if item.get("state") != "computed"]
+    # A persisted canonical artifact is available data even when an imported
+    # record does not yet carry the parity/projection receipts introduced by a
+    # newer Datascene version. Do not tell the analyst that such data is
+    # missing. Keep projection gaps explicit and independently actionable.
+    missing = [
+        item for item in required_branches
+        if not item.get("artifact_checksum") or item.get("state") in {"artifact_missing", "failed"}
+    ]
+    unsurfaced = [
+        item for item in required_branches
+        if item not in missing and item.get("state") != "computed"
+    ]
+    available_count = len(required_branches) - len(missing)
+    if missing:
+        overall_state = "completed_with_gaps"
+    elif unsurfaced:
+        overall_state = "available_with_projection_gaps"
+    else:
+        overall_state = "full"
     return {
         "schema": "vaa1.full_analysis_completeness.v1",
-        "overall_state": "full" if not missing else "completed_with_gaps",
-        "delivery_percentage": manifest["delivery_percentage"],
-        "computed_count": manifest["delivered_count"],
+        "overall_state": overall_state,
+        "delivery_percentage": round(100 * available_count / len(required_branches), 1) if required_branches else 100.0,
+        "computed_count": available_count,
         "required_count": manifest["required_count"],
         "missing_count": len(missing),
+        "unsurfaced_count": len(unsurfaced),
         "branches": required_branches,
         "missing_branch_ids": [item["branch_id"] for item in missing],
+        "unsurfaced_branch_ids": [item["branch_id"] for item in unsurfaced],
         "can_repair": any(item.get("retryable") for item in missing),
+        "can_refresh_projections": bool(unsurfaced),
         "verified_at": manifest["verified_at"],
     }
 
@@ -10117,6 +10384,36 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
     audio = results.get("audio_analysis") if isinstance(results.get("audio_analysis"), dict) else {}
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    manifest = evaluate_full_analysis_manifest(status)
+    manifest_by_id = {
+        str(item.get("branch_id")): item
+        for item in manifest.get("branches", [])
+        if isinstance(item, dict)
+    }
+
+    def persisted_row_count(branch_id: str, inline_rows: Any) -> int:
+        if isinstance(inline_rows, list) and inline_rows:
+            return len(inline_rows)
+        value = manifest_by_id.get(branch_id, {}).get("row_count")
+        return int(value) if isinstance(value, (int, float)) else len(inline_rows or [])
+
+    transcript_payload = artifact_payload_from_status_any(status, "transcript")
+    if not isinstance(transcript_payload, dict):
+        transcript_payload = audio.get("transcript") if isinstance(audio.get("transcript"), dict) else {}
+    transcript_segments = transcript_payload.get("segments") if isinstance(transcript_payload.get("segments"), list) else []
+    expression_results = visual.get("expression_results")
+    expression_artifact = None
+    if not isinstance(expression_results, list):
+        expression_artifact = read_json_any_artifact(output_files.get("expression_json"))
+        if isinstance(expression_artifact, list):
+            expression_results = expression_artifact
+    if not isinstance(expression_results, list):
+        expression_results = []
+    expression_status = visual.get("expression_status")
+    if not expression_status and expression_artifact is not None:
+        expression_status = "completed"
+    expression_status = expression_status or "not_run"
     source_video_path = status.get("source_video_path")
     return make_json_safe({
         "schema": "vaa1.analysis_status_summary.v1",
@@ -10143,24 +10440,36 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
         "source_media_metadata": status.get("source_media_metadata"),
         "transcript_timing_repair": status.get("transcript_timing_repair"),
         "analysis_completeness": build_analysis_completeness(status),
-        "full_analysis_manifest": evaluate_full_analysis_manifest(status),
+        "full_analysis_manifest": manifest,
+        "artifact_inventory": {
+            branch_id: {
+                "state": item.get("state"),
+                "available": bool(item.get("artifact_checksum")),
+                "row_count": item.get("row_count"),
+                "projection_state": item.get("projection_state"),
+                "hydration_state": item.get("hydration_state"),
+                "consumer_state": item.get("consumer_state"),
+                "recovery_action": item.get("recovery_action"),
+            }
+            for branch_id, item in manifest_by_id.items()
+        },
         "summary": {
             "yolo_detections": len(visual.get("yolo_results") or []),
-            "tracked_objects": len(visual.get("tracked_objects") or []),
-            "ocr_detections": len(visual.get("ocr_results") or []),
-            "expression_samples": len(visual.get("expression_results") or []),
-            "expression_status": visual.get("expression_status", "not_run"),
+            "tracked_objects": persisted_row_count("tracked_objects", visual.get("tracked_objects")),
+            "ocr_detections": persisted_row_count("ocr", visual.get("ocr_results")),
+            "expression_samples": persisted_row_count("expressions", expression_results),
+            "expression_status": expression_status,
             "motion_evidence": visual.get("motion_evidence", {}),
             "adaptive_visual_scan": visual.get("adaptive_visual_scan", {}),
             "scene_segments": visual.get("scene_segments", {}),
-            "audio_segments": len((audio.get("transcript") or {}).get("segments") or []),
-            "audio_language": (audio.get("transcript") or {}).get("language", "unknown"),
+            "audio_segments": len(transcript_segments),
+            "audio_language": transcript_payload.get("language", "unknown"),
         },
         "canonical_summary": {
             "decision_count": len((status.get("canonical_decision_ledger") or {}).get("decisions") or []),
             "corrections_updated_at": (status.get("annotation_corrections") or {}).get("updated_at"),
         },
-        "download_links": build_download_links(analysis_id, status.get("output_files") or {}),
+        "download_links": build_download_links(analysis_id, output_files),
     })
 
 
@@ -10297,6 +10606,28 @@ async def get_corpus_observability(project_id: Optional[str] = None) -> dict:
     })
 
 
+@app.get("/api/narrative-agents/digital-twins", response_model=dict)
+async def get_narrative_agent_digital_twins() -> dict:
+    """Return the governed seven-video Digital Twin navigation artifact."""
+    artifact_path = RESULTS_DIR / "narrative_agent_digital_twin_array.json"
+    correction_paths = list(RESULTS_DIR.glob("*/annotation_corrections.json"))
+    corrections_are_newer = artifact_path.exists() and any(
+        path.stat().st_mtime_ns > artifact_path.stat().st_mtime_ns
+        for path in correction_paths
+    )
+    if not artifact_path.exists() or corrections_are_newer:
+        records = list(collect_saved_analysis_records().values())
+        if not records:
+            raise HTTPException(status_code=404, detail="No saved analyses are available")
+        for status in records:
+            hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+            hydrate_richer_persisted_annotation_corrections(status)
+        payload = write_array_digital_twin_report(records, artifact_path)
+    else:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    return make_json_safe(payload)
+
+
 @app.get("/api/status/{analysis_id}", response_model=dict)
 async def get_analysis_status(analysis_id: str) -> dict:
     """
@@ -10390,6 +10721,12 @@ async def get_analysis_status(analysis_id: str) -> dict:
         output_files = status.get("output_files", {})
         transcript_timing_repair_before = status.get("transcript_timing_repair")
         authoritative_transcript_selected = prefer_authoritative_transcript_artifact(status)
+        transcript_dependents_rebuilt = (
+            rebuild_transcript_dependents_for_operational_clock(status)
+            if authoritative_transcript_selected
+            or not transcript_dependents_use_operational_clock(status)
+            else []
+        )
         transcript_timing_repaired = repair_transcript_timing_if_needed(status)
         transcript_timing_repair_state = status.get("transcript_timing_repair")
         transcript_timing_repair_changed = (
@@ -10403,6 +10740,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         iterative_artifacts_created = write_iterative_derived_artifacts_for_status(status)
         if (
             authoritative_transcript_selected
+            or transcript_dependents_rebuilt
             or
             transcript_timing_repaired
             or transcript_timing_repair_changed
@@ -10999,6 +11337,17 @@ async def download_file(analysis_id: str, file_type: str):
             "face_anonymization_manifest.json",
             "application/json",
         ),
+        "shot_boundaries": ("shot_boundaries.json", "application/json"),
+        "spatial_tone_scan": ("spatial_tone_scan.json", "application/json"),
+        "adaptive_visual_scan": ("adaptive_visual_scan.json", "application/json"),
+        "native_statistical_interpretation": (
+            "native_statistical_interpretation.json",
+            "application/json",
+        ),
+        "live_mature_data_proliferation_audit": (
+            "live_mature_data_proliferation_audit.json",
+            "application/json",
+        ),
     }
     
     if file_type not in file_mapping:
@@ -11012,6 +11361,21 @@ async def download_file(analysis_id: str, file_type: str):
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
+
+    if file_type == "vaa1_annotation_master_schema":
+        payload = read_json_any_artifact(file_path)
+        if isinstance(payload, dict):
+            source_analysis_id = payload.get("analysis_id")
+            payload["analysis_id"] = analysis_id
+            if source_analysis_id and source_analysis_id != analysis_id:
+                payload["imported_source_analysis_id"] = source_analysis_id
+            review_layer = payload.setdefault("review_layer", {})
+            if isinstance(review_layer, dict):
+                review_layer["annotation_corrections"] = build_annotation_corrections_payload(status)
+            return JSONResponse(
+                content=make_json_safe(payload),
+                headers={"Cache-Control": "no-store"},
+            )
     
     # Create a nice download filename
     original_name = status["original_filename"]
@@ -11080,6 +11444,11 @@ async def download_bundle(analysis_id: str):
         "pos_matrix": "pos_matrix.json",
         "quant_matrix": "quant_matrix.json",
         "face_anonymization_manifest": "face_anonymization_manifest.json",
+        "shot_boundaries": "shot_boundaries.json",
+        "spatial_tone_scan": "spatial_tone_scan.json",
+        "adaptive_visual_scan": "adaptive_visual_scan.json",
+        "native_statistical_interpretation": "native_statistical_interpretation.json",
+        "live_mature_data_proliferation_audit": "live_mature_data_proliferation_audit.json",
     }
 
     original_name = status["original_filename"]
@@ -11995,67 +12364,105 @@ async def evaluate_source_media_policy(
     return {"analysis_id": analysis_id, "policy_decision": decision}
 
 
-@app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
-async def resolve_analysis_source_clock(
-    analysis_id: str, payload: Dict[str, Any] = Body(...)
-) -> dict:
-    """Resolve timing authority and identify only overlapping dependents."""
+@app.get("/api/analysis/{analysis_id}/source-clock", response_model=dict)
+async def get_analysis_source_clock(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
-    candidates = payload.get("candidates")
-    if not isinstance(candidates, list):
-        raise HTTPException(status_code=400, detail="candidates must be a list")
     metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
-    duration = safe_float(metadata.get("duration_seconds"))
     try:
-        selected = select_authoritative_time_scope(candidates, duration_seconds=duration)
-        affected = overlapping_dependents(
-            selected,
-            payload.get("dependents") if isinstance(payload.get("dependents"), list) else [],
-        )
+        return await asyncio.to_thread(build_source_clock_context, analysis_id, status, metadata)
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    invalidation = None
-    if bool(payload.get("apply_invalidation")):
-        ledger = decision_ledger_for_status(status)
-        target_decision_refs = clock_affected_decision_refs(ledger, selected)
-        if target_decision_refs:
+
+
+@app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
+def resolve_analysis_source_clock(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Resolve timing authority and identify only overlapping dependents."""
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, analysis_id):
+            status = get_analysis_entry(analysis_id)
+            if status is None:
+                raise HTTPException(status_code=404, detail="Analysis ID not found")
+            if "apply_invalidation" in payload and not isinstance(payload["apply_invalidation"], bool):
+                raise HTTPException(status_code=400, detail="apply_invalidation must be a boolean")
+            change_scope = payload.get("change_scope", "interval")
+            if change_scope not in ("interval", "source"):
+                raise HTTPException(status_code=400, detail="change_scope must be interval or source")
+            candidates = payload.get("candidates")
+            if not isinstance(candidates, list):
+                raise HTTPException(status_code=400, detail="candidates must be a list")
+            metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+            duration = safe_float(metadata.get("duration_seconds"))
             try:
-                ledger, invalidation, appended = append_dependency_invalidation(
-                    ledger,
-                    {
-                        "dependency_ref": "source_media.clock",
-                        "target_decision_refs": target_decision_refs,
-                        "reason_code": "source_clock_changed",
-                        "reason": "The canonical source timing changed within this decision scope.",
-                        "validity_effect": "stale",
-                        "authority": str(payload.get("authority") or "explicit_user_correction"),
-                        "created_by": str(payload.get("created_by") or "analyst"),
-                    },
-                    analysis_id=analysis_id,
+                candidates = [bind_analysis_scope(item, analysis_id) for item in candidates]
+                dependents = payload.get("dependents", [])
+                if not isinstance(dependents, list):
+                    raise ValueError("dependents must be a list")
+                dependents = [bind_analysis_scope(item, analysis_id) for item in dependents]
+                selected = select_authoritative_time_scope(candidates, duration_seconds=duration)
+                context = build_source_clock_context(analysis_id, status, metadata)
+                binding_statuses = [validate_clock_binding(item, context, required=bool(payload.get("apply_invalidation"))) for item in candidates]
+                for dependent in dependents:
+                    if change_scope == "interval":
+                        validate_clock_binding(dependent, context)
+                affected = overlapping_dependents(
+                    selected,
+                    dependents, whole_source=change_scope == "source",
                 )
+            except ClockRevisionConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            status["canonical_decision_ledger"] = ledger
-            write_decision_ledger_file(status)
-            if appended:
-                append_analysis_event(
-                    status,
-                    "source_clock_dependency_invalidation",
-                    details={
-                        "target_decision_refs": target_decision_refs,
-                        "changed_scope": selected,
-                    },
-                )
-            persist_analysis_record_for_status(status)
-    return {
-        "analysis_id": analysis_id,
-        "selected_time_scope": selected,
-        "affected_dependent_refs": affected,
-        "invalidation": invalidation,
-    }
-
+            invalidation = None
+            if bool(payload.get("apply_invalidation")):
+                ledger = decision_ledger_for_status(status)
+                target_decision_refs = clock_affected_decision_refs(ledger, selected, whole_source=change_scope == "source")
+                if target_decision_refs:
+                    try:
+                        ledger, invalidation, appended = append_dependency_invalidation(
+                            ledger,
+                            {
+                                "dependency_ref": "source_media.clock",
+                                "source_clock_scope": {**selected, "change_scope": change_scope},
+                                "target_decision_refs": target_decision_refs,
+                                "reason_code": "source_timebase_changed" if change_scope == "source" else "source_clock_changed",
+                                "reason": "The source timebase changed; all temporal decisions require review." if change_scope == "source" else "The canonical source timing changed within this decision scope.",
+                                "validity_effect": "stale",
+                                "authority": str(payload.get("authority") or "explicit_user_correction"),
+                                "created_by": str(payload.get("created_by") or "analyst"),
+                            },
+                            analysis_id=analysis_id,
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                    status["canonical_decision_ledger"] = ledger
+                    write_decision_ledger_file(status)
+                    if appended:
+                        append_analysis_event(
+                            status,
+                            "source_clock_dependency_invalidation",
+                            details={
+                                "target_decision_refs": target_decision_refs,
+                                "changed_scope": selected,
+                            },
+                        )
+                    persist_analysis_record_for_status(status)
+            return {
+                "analysis_id": analysis_id,
+                "selected_time_scope": selected,
+                "clock_context": context,
+                "binding_status": "content_bound" if all(value == "content_bound" for value in binding_statuses) else "legacy_unversioned",
+                "affected_dependent_refs": affected,
+                "change_scope": change_scope,
+                "invalidation": invalidation,
+            }
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
 
 @app.post("/api/evidence-quality/assess", response_model=dict)
 async def assess_evidence_quality_route(payload: Dict[str, Any] = Body(...)) -> dict:
@@ -13120,6 +13527,9 @@ def get_annotation_corrections(analysis_id: str) -> dict:
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
+    # Readers must not replace a writer's in-flight correction snapshot.
+    status = {**status, "output_files": dict(status.get("output_files") or {})}
+
     # The correction sidecar is the interactive source of truth. Read it
     # directly so a dashboard-side emergency commit is visible immediately;
     # never rewrite the full analysis record merely to open an editor.
@@ -13141,7 +13551,7 @@ def get_annotation_corrections(analysis_id: str) -> dict:
     return {
         "status": "ok",
         "analysis_id": analysis_id,
-        "annotation_corrections": build_annotation_corrections_payload(status),
+        "annotation_corrections": correction_clock_read_payload(analysis_id, build_annotation_corrections_payload(status)),
     }
 
 
@@ -13423,162 +13833,185 @@ def update_annotation_corrections(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
 ) -> dict:
-    status = get_analysis_entry(analysis_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, analysis_id):
+            status = get_analysis_entry(analysis_id)
+            if status is None:
+                raise HTTPException(status_code=404, detail="Analysis ID not found")
 
-    corrections = status.setdefault("annotation_corrections", {})
-    previous_corrections = json.loads(json.dumps(corrections, default=str))
-    corrections["version"] = 1
-    corrections["updated_at"] = utc_now_iso()
-    corrections["updated_by"] = payload.get("updated_by") or "analyst"
+            try:
+                if "_word_undo" in payload or "_correction_undo" in payload:
+                    raise ClockRevisionConflict("Correction undo must use the canonical dashboard correction route")
+                current_corrections = canonical_clock_corrections(analysis_id, status)
+                validate_correction_clock_guard(analysis_id, current_corrections, payload)
+                # Version-aware clients carry the binding captured when their
+                # editing evidence was loaded, not a fresh binding at save time.
+                guard = payload.get("_clock_write_guard") or {}
+                if "source_fingerprint" in guard or "clock_revision" in guard:
+                    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+                    context = build_source_clock_context(analysis_id, status, metadata)
+                    validate_clock_binding(guard, context, required=True)
+            except ClockRevisionConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # Install the canonical snapshot only after preconditions pass.
+            status["annotation_corrections"] = json.loads(json.dumps(current_corrections))
+            corrections = status.setdefault("annotation_corrections", {})
+            previous_corrections = json.loads(json.dumps(corrections, default=str))
+            corrections["version"] = 1
+            corrections["updated_at"] = utc_now_iso()
+            corrections["updated_by"] = payload.get("updated_by") or "analyst"
 
-    if "text_substitutions" in payload:
-        corrections["text_substitutions"] = payload.get("text_substitutions") or []
-    else:
-        corrections.setdefault("text_substitutions", [])
+            if "text_substitutions" in payload:
+                corrections["text_substitutions"] = payload.get("text_substitutions") or []
+            else:
+                corrections.setdefault("text_substitutions", [])
 
-    if "label_overrides" in payload:
-        corrections["label_overrides"] = payload.get("label_overrides") or []
-    else:
-        corrections.setdefault("label_overrides", [])
+            if "label_overrides" in payload:
+                corrections["label_overrides"] = payload.get("label_overrides") or []
+            else:
+                corrections.setdefault("label_overrides", [])
 
-    if "manual_transcript_entries" in payload:
-        corrections["manual_transcript_entries"] = (
-            payload.get("manual_transcript_entries") or []
-        )
-    else:
-        corrections.setdefault("manual_transcript_entries", [])
+            if "manual_transcript_entries" in payload:
+                corrections["manual_transcript_entries"] = (
+                    payload.get("manual_transcript_entries") or []
+                )
+            else:
+                corrections.setdefault("manual_transcript_entries", [])
 
-    if "manual_visual_annotations" in payload:
-        corrections["manual_visual_annotations"] = (
-            payload.get("manual_visual_annotations") or []
-        )
-    else:
-        corrections.setdefault("manual_visual_annotations", [])
+            if "manual_visual_annotations" in payload:
+                corrections["manual_visual_annotations"] = (
+                    payload.get("manual_visual_annotations") or []
+                )
+            else:
+                corrections.setdefault("manual_visual_annotations", [])
 
-    if "proliferation_decisions" in payload:
-        corrections["proliferation_decisions"] = (
-            payload.get("proliferation_decisions") or []
-        )
-    else:
-        corrections.setdefault("proliferation_decisions", [])
+            if "proliferation_decisions" in payload:
+                corrections["proliferation_decisions"] = (
+                    payload.get("proliferation_decisions") or []
+                )
+            else:
+                corrections.setdefault("proliferation_decisions", [])
 
-    if "master_schema_presence_intervals" in payload:
-        corrections["master_schema_presence_intervals"] = (
-            payload.get("master_schema_presence_intervals") or []
-        )
-    else:
-        corrections.setdefault("master_schema_presence_intervals", [])
+            if "master_schema_presence_intervals" in payload:
+                corrections["master_schema_presence_intervals"] = (
+                    payload.get("master_schema_presence_intervals") or []
+                )
+            else:
+                corrections.setdefault("master_schema_presence_intervals", [])
 
-    if "meaning_network_custom_lanes" in payload:
-        corrections["meaning_network_custom_lanes"] = (
-            payload.get("meaning_network_custom_lanes") or []
-        )
-    else:
-        corrections.setdefault("meaning_network_custom_lanes", [])
+            if "meaning_network_custom_lanes" in payload:
+                corrections["meaning_network_custom_lanes"] = (
+                    payload.get("meaning_network_custom_lanes") or []
+                )
+            else:
+                corrections.setdefault("meaning_network_custom_lanes", [])
 
-    if "transcript_clock_offset_seconds" in payload:
-        corrections["transcript_clock_offset_seconds"] = payload.get(
-            "transcript_clock_offset_seconds"
-        )
-    else:
-        corrections.setdefault("transcript_clock_offset_seconds", None)
+            if "transcript_clock_offset_seconds" in payload:
+                corrections["transcript_clock_offset_seconds"] = payload.get(
+                    "transcript_clock_offset_seconds"
+                )
+            else:
+                corrections.setdefault("transcript_clock_offset_seconds", None)
 
-    ledger, canonical_events = sync_corrections_to_ledger(
-        decision_ledger_for_status(status),
-        previous_corrections,
-        corrections,
-        analysis_id=analysis_id,
-        created_at=corrections["updated_at"],
-        created_by=corrections["updated_by"],
-    )
-    status["canonical_decision_ledger"] = ledger
-    previous_clock_offset = previous_corrections.get("transcript_clock_offset_seconds")
-    current_clock_offset = corrections.get("transcript_clock_offset_seconds")
-    if previous_clock_offset != current_clock_offset:
-        try:
-            ledger, clock_event, clock_appended = append_dependency_invalidation(
-                ledger,
-                {
-                    "dependency_ref": "source_media.clock",
-                    "reason_code": "transcript_clock_offset_changed",
-                    "reason": "The operational media clock changed; time-scoped decisions require review.",
-                    "validity_effect": "stale",
-                    "require_temporal_scope": True,
-                    "created_at": corrections["updated_at"],
-                    "created_by": corrections["updated_by"],
-                },
+            ledger, canonical_events = sync_corrections_to_ledger(
+                decision_ledger_for_status(status),
+                previous_corrections,
+                corrections,
                 analysis_id=analysis_id,
+                created_at=corrections["updated_at"],
+                created_by=corrections["updated_by"],
             )
-        except ValueError:
-            clock_event = None
-            clock_appended = False
-        if clock_appended and clock_event:
-            canonical_events.append(clock_event)
             status["canonical_decision_ledger"] = ledger
-    if canonical_events:
-        write_decision_ledger_file(status)
-        append_analysis_event(
-            status,
-            "canonical_correction_sync",
-            details={
-                "event_count": len(canonical_events),
-                "decision_refs": [event["decision_id"] for event in canonical_events],
-                "actions": [event["decision_action"] for event in canonical_events],
-            },
-        )
+            previous_clock_offset = previous_corrections.get("transcript_clock_offset_seconds")
+            current_clock_offset = corrections.get("transcript_clock_offset_seconds")
+            if previous_clock_offset != current_clock_offset:
+                try:
+                    ledger, clock_event, clock_appended = append_dependency_invalidation(
+                        ledger,
+                        {
+                            "dependency_ref": "source_media.clock",
+                            "reason_code": "transcript_clock_offset_changed",
+                            "reason": "The operational media clock changed; time-scoped decisions require review.",
+                            "validity_effect": "stale",
+                            "require_temporal_scope": True,
+                            "created_at": corrections["updated_at"],
+                            "created_by": corrections["updated_by"],
+                        },
+                        analysis_id=analysis_id,
+                    )
+                except ValueError:
+                    clock_event = None
+                    clock_appended = False
+                if clock_appended and clock_event:
+                    canonical_events.append(clock_event)
+                    status["canonical_decision_ledger"] = ledger
+            if canonical_events:
+                write_decision_ledger_file(status)
+                append_analysis_event(
+                    status,
+                    "canonical_correction_sync",
+                    details={
+                        "event_count": len(canonical_events),
+                        "decision_refs": [event["decision_id"] for event in canonical_events],
+                        "actions": [event["decision_action"] for event in canonical_events],
+                    },
+                )
 
-    # The correction sidecar and Master Schema review layer are the durable
-    # acknowledgement boundary. Heavy dependent projections may still run
-    # later, but a saved analyst confirmation must be visible through Master
-    # Schema immediately.
-    write_annotation_corrections_file(status, refresh_master_schema=True)
-    projection_state = "queued"
-    if status.get("status") == "processing":
-        # Do not make a transcript or BBox save compete with the admitted heavy
-        # analysis. Completion already rebuilds Scene Cards and Meaning/Plot;
-        # this marker adds the remaining correction consumers to that pass.
-        projection_state = "deferred_until_analysis_completion"
-        status["deferred_annotation_projection"] = {
-            "requested_at": corrections["updated_at"],
-            "reason": "analysis_processing",
-        }
-    else:
-        threading.Thread(
-            target=refresh_annotation_dependent_surfaces_when_idle,
-            args=(status,),
-            daemon=True,
-            name=f"annotation-projection-{analysis_id[:8]}",
-        ).start()
-    append_analysis_event(
-        status,
-        "annotation_corrections_updated",
-        details={
-            "text_substitutions": len(corrections.get("text_substitutions", [])),
-            "label_overrides": len(corrections.get("label_overrides", [])),
-            "manual_transcript_entries": len(
-                corrections.get("manual_transcript_entries", [])
-            ),
-            "manual_visual_annotations": len(
-                corrections.get("manual_visual_annotations", [])
-            ),
-            "master_schema_presence_intervals": len(
-                corrections.get("master_schema_presence_intervals", [])
-            ),
-            "meaning_network_custom_lanes": len(
-                corrections.get("meaning_network_custom_lanes", [])
-            ),
-            "dependent_projection": projection_state,
-        },
-    )
+            # The correction sidecar and Master Schema review layer are the durable
+            # acknowledgement boundary. Heavy dependent projections may still run
+            # later, but a saved analyst confirmation must be visible through Master
+            # Schema immediately.
+            corrections["correction_generation"] = uuid.uuid4().hex
+            write_annotation_corrections_file(status, refresh_master_schema=True)
+            projection_state = "queued"
+            if status.get("status") == "processing":
+                # Do not make a transcript or BBox save compete with the admitted heavy
+                # analysis. Completion already rebuilds Scene Cards and Meaning/Plot;
+                # this marker adds the remaining correction consumers to that pass.
+                projection_state = "deferred_until_analysis_completion"
+                status["deferred_annotation_projection"] = {
+                    "requested_at": corrections["updated_at"],
+                    "reason": "analysis_processing",
+                }
+            else:
+                threading.Thread(
+                    target=refresh_annotation_dependent_surfaces_when_idle,
+                    args=(status,),
+                    daemon=True,
+                    name=f"annotation-projection-{analysis_id[:8]}",
+                ).start()
+            append_analysis_event(
+                status,
+                "annotation_corrections_updated",
+                details={
+                    "text_substitutions": len(corrections.get("text_substitutions", [])),
+                    "label_overrides": len(corrections.get("label_overrides", [])),
+                    "manual_transcript_entries": len(
+                        corrections.get("manual_transcript_entries", [])
+                    ),
+                    "manual_visual_annotations": len(
+                        corrections.get("manual_visual_annotations", [])
+                    ),
+                    "master_schema_presence_intervals": len(
+                        corrections.get("master_schema_presence_intervals", [])
+                    ),
+                    "meaning_network_custom_lanes": len(
+                        corrections.get("meaning_network_custom_lanes", [])
+                    ),
+                    "dependent_projection": projection_state,
+                },
+            )
 
-    return {
-        "status": "saved",
-        "analysis_id": analysis_id,
-        "dependent_projection": projection_state,
-        "annotation_corrections": build_annotation_corrections_payload(status),
-    }
+            return {
+                "status": "saved",
+                "analysis_id": analysis_id,
+                "dependent_projection": projection_state,
+                "annotation_corrections": correction_clock_read_payload(analysis_id, build_annotation_corrections_payload(status)),
+            }
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
 
 
 @app.post("/api/reveal-workspace-path/{path_type}", response_model=dict)
@@ -13759,7 +14192,10 @@ async def clear_session() -> dict:
 
 
 @app.post("/api/import-bundle", response_model=dict)
-async def import_saved_work(file: UploadFile = File(...)) -> dict:
+async def import_saved_work(
+    file: UploadFile = File(...),
+    project_id: str = Form("imported-saved-work"),
+) -> dict:
     """
     Import a saved VAA1 analysis bundle (.zip) from disk into the local backend
     workspace so it appears in Saved Work and can be reopened.
@@ -13816,6 +14252,11 @@ async def import_saved_work(file: UploadFile = File(...)) -> dict:
                     output_files=output_files,
                     manifest=manifest,
                     original_filename_override=manifest.get("original_filename"),
+                    project_id=(
+                        project_manifest.get("project_id")
+                        or project_manifest.get("project_name")
+                        or project_id
+                    ),
                 )
             )
 
@@ -13856,6 +14297,7 @@ async def import_saved_work(file: UploadFile = File(...)) -> dict:
         original_filename_override=manifest.get("original_filename") or (
             f"{bundle_stem}.mp4" if "video" in output_files else None
         ),
+        project_id=project_id,
     )
 
     return {

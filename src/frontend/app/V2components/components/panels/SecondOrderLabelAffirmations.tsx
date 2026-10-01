@@ -1,5 +1,7 @@
 "use client";
 
+import { sourceTimeBoundary } from "@/lib/source-clock";
+
 import React from "react";
 import type {
   AgentPersistenceLabel,
@@ -52,19 +54,13 @@ const PERSISTENCE_STATUS_CLASSES: Record<string, string> = {
 
 const GOVERNANCE_NOTE = "analyst_confirmation_is_not_required_for_every_candidate";
 
-function normalizeSeconds(value?: number): number | null {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return null;
-  }
-  return value > 1000 ? value / 1000 : value;
-}
 
 function instructionStart(instruction: SecondOrderLabelInstruction): number | null {
-  return normalizeSeconds(instruction.time_span?.start ?? instruction.time_span?.start_ms);
+  return sourceTimeBoundary(instruction.time_span, "start");
 }
 
 function instructionEnd(instruction: SecondOrderLabelInstruction): number | null {
-  return normalizeSeconds(instruction.time_span?.end ?? instruction.time_span?.end_ms);
+  return sourceTimeBoundary(instruction.time_span, "end");
 }
 
 function overlaps(instruction: SecondOrderLabelInstruction, span?: TimeSpanSeconds | null): boolean {

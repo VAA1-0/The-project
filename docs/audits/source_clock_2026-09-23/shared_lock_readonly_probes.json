@@ -1,0 +1,37 @@
+{
+  "checked_at": "2026-09-23T14:41:23.423796+00:00",
+  "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+  "http_status": {
+    "health": 200,
+    "backend_corrections": 200,
+    "frontend_corrections": 200,
+    "source_clock": 200
+  },
+  "backend_guard": {
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "transcript_clock_offset_seconds": 0.0
+  },
+  "frontend_guard": {
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "transcript_clock_offset_seconds": 0
+  },
+  "guards_match": true,
+  "protected_artifacts_checked": 32,
+  "changed_protected_artifacts": [],
+  "remaining_lock_directories": [],
+  "source_clock": {
+    "clock_id": "source_media.clock",
+    "analysis_id": "8183c1fd-7cb9-49d0-b20c-378399e9c41f",
+    "binding_status": "content_bound",
+    "source_fingerprint": "sha256:9b025baee45f793dee3b25bfb440233c8b216fef1e06cfce3951b93d6cf39c2f",
+    "clock_revision": "clock-v1:090136e316575f653476b21e6baf01178e5bcd9a1b19d7e56bfe228c2d2e9e66",
+    "timebase": {
+      "contract": "source-clock-context.v1",
+      "source_fingerprint": "sha256:9b025baee45f793dee3b25bfb440233c8b216fef1e06cfce3951b93d6cf39c2f",
+      "duration_seconds": 155.104535,
+      "fps": 24.0,
+      "audio_sample_rate": 44100.0,
+      "transcript_clock_offset_seconds": 0.0
+    }
+  }
+}

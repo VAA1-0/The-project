@@ -6,10 +6,17 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("source media URLs remain stable for browser range reuse", () => {
   const source = read("lib/api-service.ts");
+  const localDownload = read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts");
   assert.match(
     source,
-    /if \(fileType === "source_video"\)[\s\S]*?api\/download\/\$\{analysisId\}\/\$\{fileType\}`/,
+    /if \(fileType === "source_video"\)[\s\S]*?local-analysis\/\$\{analysisId\}\/download\/\$\{fileType\}`/,
   );
+  assert.match(localDownload, /request\.headers\.get\("range"\)/);
+  assert.match(localDownload, /"accept-ranges": "bytes"/);
+  assert.match(localDownload, /status: 206/);
+  assert.match(localDownload, /createCancelableFileStream\(filePath, start, end\)/);
+  assert.match(localDownload, /async cancel\(\)[\s\S]*?cancelled = true[\s\S]*?await close\(\)/);
+  assert.doesNotMatch(localDownload, /Readable\.toWeb|createReadStream/);
 });
 
 test("status and reusable artifacts coalesce concurrent reads", () => {
@@ -17,6 +24,48 @@ test("status and reusable artifacts coalesce concurrent reads", () => {
   assert.match(source, /statusPromises\.get\(analysisId\)/);
   assert.match(source, /artifactPromises\.get\(cacheKey\)/);
   assert.match(source, /getStatusSummary\(analysisId/);
+});
+
+test("analysis opening stays on bounded metadata and releases the video shell first", () => {
+  const api = read("lib/api-service.ts");
+  const service = read("lib/video-service.ts");
+  const videoPanel = read("app/V2components/components/panels/VideoPanel.tsx");
+  const localRoute = read("app/api/local-analysis/[analysisId]/route.ts");
+
+  assert.match(api, /AbortSignal\.timeout\(2_000\)/);
+  assert.match(api, /local-analysis\/\$\{analysisId\}\?summary=1/);
+  assert.doesNotMatch(
+    api.match(/async getStatusSummary[\s\S]*?async listForensicRenderJobs/)?.[0] || "",
+    /this\.getStatus\(analysisId\)/,
+  );
+  assert.match(service, /getAnalysis[\s\S]*?getStatusSummary\(id\)/);
+  assert.match(localRoute, /BOUNDED_RECORD_PREFIX_BYTES = 64 \* 1024/);
+  const localDownloadRoute = read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts");
+  assert.match(localDownloadRoute, /const directPaths: Record<string, string>/);
+  assert.match(localDownloadRoute, /vaa1_annotation_master_schema/);
+  assert.match(api, /api\/download\/\$\{analysisId\}\/\$\{fileType\}[\s\S]*?AbortSignal\.timeout\(2_000\)/);
+  assert.match(service, /loadJsonArtifact\(id, "datascene_meaning_network"\)/);
+  assert.match(
+    videoPanel,
+    /const mediaSource = await loadVideoSource\(videoId\)[\s\S]*?setVideoUrl\([\s\S]*?const nextAnalysis = await analysisPromise/,
+  );
+});
+
+test("saved-analysis catalogue uses bounded local recovery and self-heals", () => {
+  const api = read("lib/api-service.ts");
+  const catalogueRoute = read("app/api/local-analyses/route.ts");
+  const projectPanel = read("app/V2components/components/panels/ProjectPanel.tsx");
+
+  assert.match(api, /api\/analyses\?limit=\$\{limit\}[\s\S]*?AbortSignal\.timeout\(15_000\)/);
+  assert.match(catalogueRoute, /BOUNDED_RECORD_PREFIX_BYTES = 64 \* 1024/);
+  assert.match(catalogueRoute, /readBoundedRecord\(recordPath\)/);
+  assert.doesNotMatch(catalogueRoute, /JSON\.parse\(await fs\.readFile\(recordPath/);
+  assert.match(catalogueRoute, /Visual analysis incomplete/);
+  assert.match(catalogueRoute, /info\.status === "completed" && requiredBranchError \? "error"/);
+  assert.match(projectPanel, /if \(list\.length === 0\)[\s\S]*?setTimeout\(\(\) => void loadListSafe\(\), 10_000\)/);
+  assert.match(projectPanel, /Bond, COP30 and Helsinki project/);
+  assert.match(projectPanel, /Marcella project/);
+  assert.match(projectPanel, /projectGroups\.map/);
 });
 
 test("hidden GoldenLayout tabs defer analytical panel initialization", () => {

@@ -1,0 +1,93 @@
+ M api_server.py
+ M app/pipeline/face_analysis.py
+ M docs/bug_report_analysis_interruption_checkpoint_loss_2026-08-03.md
+ M docs/investor_deck/datascene_investor_deck_editable_2026-06-06.pptx
+ M docs/sprint_program_native_stats_interpretation_prerequisites_bonus_2026-07-15.md
+ M docs/vaa1_core_ui_workflow_design_review_2026-06-30.md
+ M docs/vaa1_general_sprint_regime_remaining_tasks.md
+ M docs/vaa1_operating_principles_constellational_meaning_network_2026-05-26.md
+ M docs/vaa1_program_map_current_2026-04-19.md
+ M node_modules/.package-lock.json
+ D "run_vaa1_lite.sh\""
+ M scripts/generate_datascene_investor_deck.js
+ M src/backend/analysis/analysis_recovery.py
+ M src/backend/analysis/data_book_publication.py
+ M src/backend/analysis/pipeline_video_frames.py
+ M src/frontend/app/V2components/components/LayoutHost.tsx
+ M src/frontend/app/V2components/components/panels/AudioPanel.tsx
+ M src/frontend/app/V2components/components/panels/DataMaturationPanel.tsx
+ M src/frontend/app/V2components/components/panels/DownloadPanel.tsx
+ M src/frontend/app/V2components/components/panels/ExpressionPanel.tsx
+ M src/frontend/app/V2components/components/panels/MasterSchemaPanel.tsx
+ M src/frontend/app/V2components/components/panels/MeaningPlotPanel.tsx
+ M src/frontend/app/V2components/components/panels/OCRPanel.tsx
+ M src/frontend/app/V2components/components/panels/POSAnalyzePanel.tsx
+ M src/frontend/app/V2components/components/panels/POSMatrixPanel.tsx
+ M src/frontend/app/V2components/components/panels/ProjectPanel.tsx
+ M src/frontend/app/V2components/components/panels/QuantitativeAnalysisPanel.tsx
+ M src/frontend/app/V2components/components/panels/SourceMediaMetadataPanel.tsx
+ M src/frontend/app/V2components/components/panels/SpeechToTextPanel.tsx
+ M src/frontend/app/V2components/components/panels/VideoPanel.tsx
+ M src/frontend/app/api/local-analyses/route.ts
+ M src/frontend/app/api/local-analysis/[analysisId]/download/[fileType]/route.ts
+ M src/frontend/app/api/local-analysis/[analysisId]/route.ts
+ M src/frontend/app/api/local-bundle-utils.ts
+ M src/frontend/app/api/local-project-bundle/route.ts
+ M src/frontend/e2e/datascene-search-rendered.spec.ts
+ M src/frontend/lib/annotation-corrections.ts
+ M src/frontend/lib/api-service.ts
+ M src/frontend/lib/narrative-agent-registry.ts
+ M src/frontend/lib/video-service.ts
+ M src/frontend/tests/manual-annotation-governance.test.mjs
+ M src/frontend/tests/runtime-load-governance.test.mjs
+ M src/frontend/tests/transcript-span-edit-contract.test.mjs
+ M tests/test_data_book_publication.py
+?? AudioPanel.tsx
+?? backups/
+?? docs/.Rhistory
+?? docs/audits/
+?? docs/board_meeting/
+?? docs/bug_report_2026-08-05_coupled_service_outage.md
+?? docs/bug_report_2026-08-05_source_media_user_data_overwrite_without_traceback.md
+?? docs/bug_report_2026-08-05_stale_visual_error_retry_loop.md
+?? docs/bug_report_2026-08-06_annotation_ledgers_hidden_by_stale_status_records.md
+?? docs/datascene_full_project_integrity_scan_2026-08-31.md
+?? docs/datascene_major_changes_since_may_2026_report_2026-08-30.md
+?? docs/datascene_relational_lenses_design_reader_2026-09-16.md
+?? docs/figures/
+?? docs/schemas/relational_lenses/
+?? docs/schemas/vaa1.analysis_queue_backup_manifest.v1.example.json
+?? docs/vaa1_analysis_queue_backup_launcher_2026-08-04.md
+?? docs/vaa1_bug_report_mature_annotations_hidden_during_interrupted_analysis_2026-08-06.md
+?? docs/vaa1_checkpoint_surface_and_resume_practice_2026-08-05.md
+?? docs/vaa1_interactive_annotation_operating_practice_2026-08-05.md
+?? docs/vaa1_marcella_runtime_governance_report_2026-08-06.md
+?? docs/vaa1_program_map_current_2026-08-30.md
+?? docs/working_handover_handout_2026-08-05_E_delivery_lockdown_annotation_source_media_watchdog.md
+?? docs/working_handover_handout_2026-08-05_analysis_recovery_interactive_commits.md
+?? docs/working_handover_handout_2026-08-28_full_analysis_robustness.md
+?? scripts/audit_seven_video_publication.py
+?? scripts/build_relational_lens_schemas.py
+?? scripts/com.datascene.delivery-watchdog.plist
+?? scripts/generate_kansalliskirjasto_board_slides.js
+?? scripts/generate_yle_archive_datascene_slides.js
+?? scripts/run_remaining_science_queue_macos.sh
+?? scripts/vaa1_delivery_checkpoint_watchdog.py
+?? scripts/vaa1_queue_backup_launcher.py
+?? scripts/validate_relational_lens_record.py
+?? src/backend/analysis/narrative_agent_digital_twin.py
+?? src/backend/analysis/narrative_agent_recognition_array.py
+?? src/frontend/app/api/local-analysis/[analysisId]/source-media/
+?? src/frontend/e2e/restored-ocr-panel.spec.ts
+?? src/frontend/e2e/restored-project-data-surface.spec.ts
+?? src/frontend/e2e/saved-expression-hydration.spec.ts
+?? src/frontend/e2e/saved-language-hydration.spec.ts
+?? src/frontend/lib/annotation-correction-merge.ts
+?? src/frontend/tests/annotation-correction-concurrency.test.mjs
+?? src/frontend/tests/data-maturation-digital-twin-navigation.test.mjs
+?? src/frontend/tests/pos-leaf-refresh-contract.test.mjs
+?? tests/test_interactive_annotation_commit_contract.py
+?? tests/test_narrative_agent_digital_twin.py
+?? tests/test_narrative_agent_recognition_array.py
+?? tests/test_queue_backup_launcher.py
+?? tests/test_relational_lens_draft_contracts.py

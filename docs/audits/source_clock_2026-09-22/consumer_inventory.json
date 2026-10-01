@@ -1,0 +1,130 @@
+[
+  {
+    "consumer": "VideoPanel",
+    "file": "src/frontend/app/V2components/components/panels/VideoPanel.tsx",
+    "direct_shared_clock_import": true,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "SpeechToTextPanel",
+    "file": "src/frontend/app/V2components/components/panels/SpeechToTextPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": true,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "AudioPanel",
+    "file": "src/frontend/app/V2components/components/panels/AudioPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "OBJDetectionPanel",
+    "file": "src/frontend/app/V2components/components/panels/OBJDetectionPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "OCRPanel",
+    "file": "src/frontend/app/V2components/components/panels/OCRPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "ExpressionPanel",
+    "file": "src/frontend/app/V2components/components/panels/ExpressionPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "POSAnalyzePanel",
+    "file": "src/frontend/app/V2components/components/panels/POSAnalyzePanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "QuantitativeAnalysisPanel",
+    "file": "src/frontend/app/V2components/components/panels/QuantitativeAnalysisPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": true,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "SceneCardsPanel",
+    "file": "src/frontend/app/V2components/components/panels/SceneCardPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "NarrativeAgentPanel",
+    "file": "src/frontend/app/V2components/components/panels/MasterSchemaPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist. Narrative Agent is the ManualIdentification category of the shared Master Schema leaf."
+  },
+  {
+    "consumer": "MeaningPlotPanel",
+    "file": "src/frontend/app/V2components/components/panels/MeaningPlotPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "MasterSchemaPanel",
+    "file": "src/frontend/app/V2components/components/panels/MasterSchemaPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "DataMaturationPanel",
+    "file": "src/frontend/app/V2components/components/panels/DataMaturationPanel.tsx",
+    "direct_shared_clock_import": true,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "SearchPanel",
+    "file": "src/frontend/app/V2components/components/panels/SearchPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "StatsKitPanel",
+    "file": "src/frontend/app/V2components/components/panels/StatsKitPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  },
+  {
+    "consumer": "TracebackPanel",
+    "file": "src/frontend/app/V2components/components/panels/TracebackDrawerPanel.tsx",
+    "direct_shared_clock_import": false,
+    "shared_transcript_normalizer": false,
+    "verification_status": "requires_full_clock_acceptance",
+    "note": "Static usage inventory, not runtime conformance; indirect helper use may exist."
+  }
+]
