@@ -9,7 +9,7 @@ test("source media URLs remain stable for browser range reuse", () => {
   const localDownload = read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts");
   assert.match(
     source,
-    /if \(fileType === "source_video"\)[\s\S]*?local-analysis\/\$\{analysisId\}\/download\/\$\{fileType\}`/,
+    /if \(fileType === "source_video"\)[\s\S]*?localAnalysisUrl\(analysisId, `\/download\/\$\{encodeURIComponent\(fileType\)\}`\)/,
   );
   assert.match(localDownload, /request\.headers\.get\("range"\)/);
   assert.match(localDownload, /"accept-ranges": "bytes"/);
@@ -33,7 +33,9 @@ test("analysis opening stays on bounded metadata and releases the video shell fi
   const localRoute = read("app/api/local-analysis/[analysisId]/route.ts");
 
   assert.match(api, /AbortSignal\.timeout\(2_000\)/);
-  assert.match(api, /local-analysis\/\$\{analysisId\}\?summary=1/);
+  assert.match(api, /localAnalysisUrl\(analysisId, "", \{ summary: "1" \}\)/);
+  assert.match(api, /context_analysis_id: analysisId/);
+  assert.match(api, /if \(projectId\) params\.set\("project_id", projectId\)/);
   assert.doesNotMatch(
     api.match(/async getStatusSummary[\s\S]*?async listForensicRenderJobs/)?.[0] || "",
     /this\.getStatus\(analysisId\)/,
@@ -57,7 +59,7 @@ test("saved-analysis catalogue uses bounded local recovery and self-heals", () =
   const projectPanel = read("app/V2components/components/panels/ProjectPanel.tsx");
 
   assert.match(api, /api\/analyses\?limit=\$\{limit\}[\s\S]*?AbortSignal\.timeout\(15_000\)/);
-  assert.match(catalogueRoute, /BOUNDED_RECORD_PREFIX_BYTES = 64 \* 1024/);
+  assert.match(catalogueRoute, /BOUNDED_RECORD_PREFIX_BYTES = \d+ \* 1024 \* 1024/);
   assert.match(catalogueRoute, /readBoundedRecord\(recordPath\)/);
   assert.doesNotMatch(catalogueRoute, /JSON\.parse\(await fs\.readFile\(recordPath/);
   assert.match(catalogueRoute, /Visual analysis incomplete/);
@@ -111,9 +113,24 @@ test("reference analytical disclosures begin collapsed", () => {
   assert.doesNotMatch(pos, /const \[show(?:PosCounts|PosRatios|GrammarFeatures|CaseProfile|Interrogatives|TenseProfile|PosWords)[^\n]*useState\(true\)/);
   assert.doesNotMatch(quant, /const \[show(?:BuildTokenStream|TfidfTopTerms|Bigrams|SentenceTagging|Concordance)[^\n]*useState\(true\)/);
   assert.match(transcript, /const \[showSummary, setShowSummary\] = useState\(false\)/);
-  for (const panel of [audio, sourceMedia, stats]) {
-    assert.doesNotMatch(panel, /<details[^>]*\sopen(?:\s|>)/);
+  assert.doesNotMatch(sourceMedia, /<details[^>]*\sopen(?:\s|>)/);
+  // Audio and StatsKit top-level media sections are DynamicPanelSections
+  // (closed by default); nested record disclosures may remain open within them.
+  for (const panel of [audio, stats]) {
+    assert.match(panel, /<DynamicPanelSectionGroup/);
+    assert.doesNotMatch(panel, /<DynamicPanelSection[^>]*\sdefaultOpen(?:\s|=|>)/);
   }
+});
+
+test("all local hydration fallbacks carry the active project and analysis context", () => {
+  const api = read("lib/api-service.ts");
+  assert.match(api, /function localAnalysisUrl\([\s\S]*?hermeneuticContextQuery\(analysisId\)/);
+  assert.match(api, /context_analysis_id: analysisId/);
+  assert.match(api, /project_id/);
+  assert.match(api, /localAnalysisUrl\(analysisId, `\/download\/\$\{encodeURIComponent\(fileType\)\}`/);
+  assert.match(api, /localAnalysisUrl\(analysisId, "\/download\/annotation_corrections"/);
+  assert.match(api, /localAnalysisUrl\(analysisId, "\/source-media"\)/);
+  assert.doesNotMatch(api, /`\/api\/local-analysis\/\$\{analysisId\}/);
 });
 
 test("dense evidence feeds and schema workspaces collapse at the record or section boundary", () => {

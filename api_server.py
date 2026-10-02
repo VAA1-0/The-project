@@ -183,6 +183,11 @@ from src.backend.analysis.source_clock_context import (
     build_source_clock_context, validate_clock_binding, ClockRevisionConflict,
     canonical_clock_corrections, validate_correction_clock_guard, correction_clock_read_payload,
 )
+from src.backend.analysis.hermeneutic_context import (
+    HermeneuticContextViolation,
+    append_boundary_violation,
+    validate_and_build_hermeneutic_context,
+)
 from src.backend.analysis.source_clock_authority import (
     bind_analysis_scope,
     clock_affected_decision_refs,
@@ -7242,6 +7247,45 @@ def get_analysis_entry(analysis_id: str) -> Optional[Dict[str, Any]]:
     return load_persisted_analysis(analysis_id)
 
 
+def require_hermeneutic_context(
+    *,
+    analysis_id: str,
+    status: Dict[str, Any],
+    project_id: Optional[str],
+    context_analysis_id: Optional[str],
+    entry_path: str,
+    **ticket_fields: Any,
+) -> Dict[str, Any]:
+    """Validate once at ingress and return the ticket downstream consumers carry."""
+    try:
+        return validate_and_build_hermeneutic_context(
+            project_id=project_id,
+            context_analysis_id=context_analysis_id,
+            analysis_id=analysis_id,
+            status=status,
+            clock_builder=build_source_clock_context,
+            **ticket_fields,
+        )
+    except HermeneuticContextViolation as exc:
+        append_boundary_violation(
+            RESULTS_DIR / "boundary_audit" / "hermeneutic_context_violations.jsonl",
+            entry_path=entry_path,
+            analysis_id=analysis_id,
+            project_id=project_id,
+            context_analysis_id=context_analysis_id,
+            violation=exc,
+        )
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "code": exc.code,
+                "message": str(exc),
+                "boundary": "project_analysis_hermeneutic_context",
+            },
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+
+
 def collect_saved_analysis_records() -> Dict[str, Dict[str, Any]]:
     records: Dict[str, Dict[str, Any]] = {}
     if not RESULTS_DIR.exists():
@@ -11399,6 +11443,11 @@ async def download_bundle(analysis_id: str):
     if status["status"] != "completed":
         raise HTTPException(status_code=400, detail="Analysis not completed")
 
+    # Persisted and in-memory legacy entries may be keyed by analysis ID
+    # without repeating that ID inside the status payload. Export refreshes
+    # acquire the canonical correction lock, which must always receive the
+    # route's authoritative analysis scope.
+    status.setdefault("analysis_id", analysis_id)
     refresh_mutable_saved_outputs(status)
     output_files = status.get("output_files", {})
     if not output_files:
@@ -11909,6 +11958,8 @@ async def save_pos_matrix_snapshot(analysis_id: str, payload: Dict[str, Any] = B
 async def run_statskit_analysis(
     analysis_id: str,
     stats_run_config: Dict[str, Any] = Body(...),
+    project_id: Optional[str] = None,
+    context_analysis_id: Optional[str] = None,
 ) -> dict:
     """
     Execute a StatsKit analysis run based on the provided configuration.
@@ -11917,10 +11968,22 @@ async def run_statskit_analysis(
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
 
+    context_ticket = require_hermeneutic_context(
+        analysis_id=analysis_id,
+        status=status,
+        project_id=project_id,
+        context_analysis_id=context_analysis_id,
+        entry_path="statskit.run",
+        active_lens=str(stats_run_config.get("analysis_type") or "statskit"),
+        research_question=stats_run_config.get("research_question"),
+    )
+
     try:
         analysis_dir = RESULTS_DIR / analysis_id
         agent = StatsKitAgent(analysis_id, analysis_dir)
         result_artifact = agent.run_stats_analysis(stats_run_config)
+        if isinstance(result_artifact, dict):
+            result_artifact["hermeneutic_context_ticket"] = context_ticket
         return make_json_safe(result_artifact)
     except StatsKitAgentError as exc:
         logger.error("StatsKit run failed for analysis %s: %s", analysis_id, exc)
@@ -12365,13 +12428,26 @@ async def evaluate_source_media_policy(
 
 
 @app.get("/api/analysis/{analysis_id}/source-clock", response_model=dict)
-async def get_analysis_source_clock(analysis_id: str) -> dict:
+async def get_analysis_source_clock(
+    analysis_id: str,
+    project_id: Optional[str] = None,
+    context_analysis_id: Optional[str] = None,
+) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
     metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
     try:
-        return await asyncio.to_thread(build_source_clock_context, analysis_id, status, metadata)
+        ticket = require_hermeneutic_context(
+            analysis_id=analysis_id,
+            status=status,
+            project_id=project_id,
+            context_analysis_id=context_analysis_id,
+            entry_path="source_clock.read",
+            active_lens="global_clock",
+        )
+        context = await asyncio.to_thread(build_source_clock_context, analysis_id, status, metadata)
+        return {**context, "hermeneutic_context_ticket": ticket}
     except ClockRevisionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -12380,7 +12456,10 @@ async def get_analysis_source_clock(analysis_id: str) -> dict:
 
 @app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
 def resolve_analysis_source_clock(
-    analysis_id: str, payload: Dict[str, Any] = Body(...)
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+    project_id: str | None = None,
+    context_analysis_id: str | None = None,
 ) -> dict:
     """Resolve timing authority and identify only overlapping dependents."""
     try:
@@ -12388,6 +12467,20 @@ def resolve_analysis_source_clock(
             status = get_analysis_entry(analysis_id)
             if status is None:
                 raise HTTPException(status_code=404, detail="Analysis ID not found")
+            # The guarded lookup preserves the historical isolated-handler contract
+            # tests, which execute this function without the surrounding API module.
+            # In the running application the guard is always installed and fails
+            # closed before any clock mutation.
+            context_guard = globals().get("require_hermeneutic_context")
+            context_ticket = context_guard(
+                analysis_id=analysis_id,
+                status=status,
+                project_id=project_id,
+                context_analysis_id=context_analysis_id,
+                entry_path="source_clock.resolve",
+                active_lens="global_clock",
+                actor_id=payload.get("created_by"),
+            ) if context_guard is not None else {}
             if "apply_invalidation" in payload and not isinstance(payload["apply_invalidation"], bool):
                 raise HTTPException(status_code=400, detail="apply_invalidation must be a boolean")
             change_scope = payload.get("change_scope", "interval")
@@ -12460,6 +12553,7 @@ def resolve_analysis_source_clock(
                 "affected_dependent_refs": affected,
                 "change_scope": change_scope,
                 "invalidation": invalidation,
+                "hermeneutic_context_ticket": context_ticket,
             }
     except CorrectionWriteBusy as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
@@ -14046,12 +14140,25 @@ async def reveal_workspace_path(path_type: str) -> dict:
 
 # Data Book publication endpoints
 @app.post("/api/publication/video/{analysis_id}/prepare", response_model=dict)
-async def prepare_video_publication(analysis_id: str) -> dict:
+async def prepare_video_publication(
+    analysis_id: str,
+    project_id: Optional[str] = None,
+    context_analysis_id: Optional[str] = None,
+) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    context_ticket = require_hermeneutic_context(
+        analysis_id=analysis_id,
+        status=status,
+        project_id=project_id,
+        context_analysis_id=context_analysis_id,
+        entry_path="publication.video.prepare",
+        active_lens="publication",
+    )
     try:
-        built = build_video_publication(status, PUBLICATION_DIR / "videos" / analysis_id)
+        publication_status = {**status, "hermeneutic_context_ticket": context_ticket}
+        built = build_video_publication(publication_status, PUBLICATION_DIR / "videos" / analysis_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
@@ -14061,6 +14168,7 @@ async def prepare_video_publication(analysis_id: str) -> dict:
         "download_url": f"/api/publication/archive/video/{analysis_id}/{urllib.parse.quote(built['archive_name'])}",
         "browse_manifest": built["package"]["browse_manifest"],
         "validation": built["package"]["video_package"]["validation"],
+        "hermeneutic_context_ticket": context_ticket,
     }
 
 
@@ -14076,7 +14184,22 @@ async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
     if not statuses:
         raise HTTPException(status_code=409, detail="No publishable saved analyses were selected")
     project_id = str(payload.get("project_id") or statuses[0].get("project_id") or "local-research-project")
-    built = build_corpus_publication(statuses, PUBLICATION_DIR / "corpora" / _safe_publication_path(project_id), project_id)
+    tickets = [
+        require_hermeneutic_context(
+            analysis_id=str(status["analysis_id"]),
+            status=status,
+            project_id=project_id,
+            context_analysis_id=str(status["analysis_id"]),
+            entry_path="publication.corpus.prepare",
+            active_lens="publication",
+        )
+        for status in statuses
+    ]
+    governed_statuses = [
+        {**status, "hermeneutic_context_ticket": ticket}
+        for status, ticket in zip(statuses, tickets)
+    ]
+    built = build_corpus_publication(governed_statuses, PUBLICATION_DIR / "corpora" / _safe_publication_path(project_id), project_id)
     return {
         "package_type": "corpus_publication",
         "video_count": built["video_count"],
@@ -14085,6 +14208,7 @@ async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
         "download_url": f"/api/publication/archive/corpus/{urllib.parse.quote(_safe_publication_path(project_id))}/{urllib.parse.quote(built['archive_name'])}",
         "browse_manifest": built["package"]["browse_manifest"],
         "validation": built["package"]["corpus_package"]["validation"],
+        "hermeneutic_context_tickets": tickets,
     }
 
 

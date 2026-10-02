@@ -69,7 +69,7 @@ test("transcript saves require canonical sidecar readback before acknowledgement
   const panel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
   const api = read("lib/api-service.ts");
 
-  assert.match(api, /const artifactUrl = `\/api\/local-analysis\/\$\{analysisId\}\/download\/annotation_corrections`/);
+  assert.match(api, /const artifactUrl = localAnalysisUrl\(analysisId, "\/download\/annotation_corrections"\)/);
   assert.match(api, /method: "POST"[\s\S]*?verificationResponse[\s\S]*?cache: "no-store"/);
   assert.match(api, /verified\.updated_at !== expected\.updated_at/);
   assert.match(panel, /Saved and verified \$\{normalizedStatus\} transcript correction/);

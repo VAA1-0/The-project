@@ -19,6 +19,7 @@ import {
 import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { DynamicPanelSection, DynamicPanelSectionGroup } from "../DynamicPanelSection";
 
 type StatsKitPanelProps = {
   analysisId?: string;
@@ -4327,9 +4328,15 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </div>
 
+      <DynamicPanelSectionGroup panelId="statskit" className="order-4 mt-2 grid gap-2">
       {analysisCompleteness ? (
+        <DynamicPanelSection
+          sectionId="analysis-completeness"
+          title="Analysis completeness"
+          summary={`${analysisCompleteness.computed_count}/${analysisCompleteness.required_count} computed · ${analysisCompleteness.missing_count} missing`}
+        >
         <details
-          open={analysisCompleteness.missing_count > 0}
+          open
           className={`order-2 mt-2 rounded border ${analysisCompleteness.missing_count > 0 ? "border-amber-900/70 bg-amber-950/10" : "border-emerald-900/60 bg-emerald-950/10"}`}
           data-vaa1-analysis-completeness="true"
         >
@@ -4362,8 +4369,10 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             </div>
           </div>
         </details>
+        </DynamicPanelSection>
       ) : null}
 
+      <DynamicPanelSection sectionId="analysis-setup" title="Analysis setup" summary={`${statFamily.replaceAll("_", " ")} · ${scope} · ${runStatus}`}>
       <details open className="order-3 mt-2 rounded border border-slate-800 bg-[#101010]" data-vaa1-statskit-box-collapsible="true">
         <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-200 marker:hidden">Analysis setup</summary>
         <div className="grid gap-2 border-t border-slate-800 p-2 xl:grid-cols-4">
@@ -4436,18 +4445,24 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         <button type="button" onClick={clearStatsKitInquiry} className="rounded border border-slate-700 px-2 py-2 text-[10px] text-slate-300 hover:bg-white/5">Clear</button>
         </div>
       </details>
+      </DynamicPanelSection>
 
-      {statisticalOverviewVisible && (interpretationResult || analysisData?.nativeStatisticalInterpretation) ? <div className="order-3 mt-2">
+      {statisticalOverviewVisible && (interpretationResult || analysisData?.nativeStatisticalInterpretation) ? <DynamicPanelSection
+        sectionId="statistical-overview"
+        title="Statistical overview"
+        summary={`${(interpretationResult || analysisData?.nativeStatisticalInterpretation)?.relationships?.length || 0} relationships · ${(interpretationResult || analysisData?.nativeStatisticalInterpretation)?.finding ? 1 : 0} finding`}
+      ><div className="order-3 mt-2">
         <NativeStatisticalInterpretationStrip
           run={interpretationResult || analysisData?.nativeStatisticalInterpretation}
           panel="statskit"
           onOpenStatistic={openPatternAttributeInWorkbench}
           defaultOpen={false}
         />
-      </div> : null}
+      </div></DynamicPanelSection> : null}
 
       {researchWorkflow?.run?.results?.length ? (
-        <details className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-research-question-results="true">
+        <DynamicPanelSection sectionId="research-question" title="Research question view" summary={`${researchWorkflow.run.results.length} computed`}>
+        <details open className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-research-question-results="true">
           <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200 marker:hidden">
             Research question view
             <span className="ml-2 font-mono text-[9px] text-slate-500">{researchWorkflow.run.results.length} computed</span>
@@ -4478,11 +4493,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             ))}
           </div>
         </details>
+        </DynamicPanelSection>
       ) : null}
 
+      {activeAnalysisId ? <DynamicPanelSection sectionId="language-analysis" title="Language analysis by scene" summary="scene language · SFL">
       <div className="order-4 mt-2">
         {activeAnalysisId && <SceneLanguageSFLView analysisId={activeAnalysisId} perspective="scene" />}
       </div>
+      </DynamicPanelSection> : null}
 
       {(isLoading || loadError) && (
         <div className="order-3 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2 text-[10px] text-slate-300">
@@ -4491,10 +4509,15 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       )}
 
+      <DynamicPanelSection
+        sectionId="comparison-studio"
+        title="StatsKit comparison studio"
+        summary={`${comparisonStatus} · ${comparisonCorpus.length} videos`}
+        onOpenChange={setComparisonStudioOpen}
+      >
       <details
         ref={comparisonStudioRef}
-        open={comparisonStudioOpen}
-        onToggle={(event) => setComparisonStudioOpen(event.currentTarget.open)}
+        open
         className="order-7 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2"
         data-vaa1-statskit-cross-video-comparison="true"
         data-vaa1-statskit-local-offline-policy="true"
@@ -5046,12 +5069,17 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           </div>
         </div>
       </details>
+      </DynamicPanelSection>
 
-      <div className="order-4 mt-2 grid gap-2" data-vaa1-statskit-ordered-workbench-layout="true" data-vaa1-statskit-layout-priority="workbench-visualization-support">
+        <DynamicPanelSection
+          sectionId="stats-workbench"
+          title="Stats workbench table"
+          summary={`${visibleStatsRows.length} rows · ${selectedStatIds.length || (selectedStat ? 1 : 0)} selected`}
+          onOpenChange={setWorkbenchOpen}
+        >
         <details
           ref={workbenchRef}
-          open={workbenchOpen}
-          onToggle={(event) => setWorkbenchOpen(event.currentTarget.open)}
+          open
           className="order-1 overflow-hidden rounded border border-slate-800 bg-[#101010]"
           data-vaa1-statskit-source-signals="true"
           data-vaa1-statskit-workbench-collapsible="true"
@@ -5487,8 +5515,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             </table>
           </div>
         </details>
+        </DynamicPanelSection>
 
-        <details className="order-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="B">
+        <DynamicPanelSection
+          sectionId="visualization"
+          title="Visualization"
+          summary={`${visualizationTarget} · ${plottedData.length} numeric row${plottedData.length === 1 ? "" : "s"}`}
+        >
+        <details open className="order-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-statskit-visualization="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="B">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Visualization</div>
@@ -5592,8 +5626,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
               : <VisualizationRenderer mode={visualization} data={plottedData} target={visualizationTarget} />}
           </div>
         </details>
+        </DynamicPanelSection>
 
-        <details className="order-3 overflow-hidden rounded border border-slate-800 bg-[#101010]" data-vaa1-relevance-scanner="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-relevance-scanner-default-collapsed="true" data-vaa1-statskit-layout-slot="C">
+        <DynamicPanelSection
+          sectionId="relevance-scanner"
+          title="Relevance scanner"
+          summary={`${scannerRows.length} dimensions · ${pct(overall)} mean · ${selectedScannerRowIds.length} selected`}
+        >
+        <details open className="order-3 overflow-hidden rounded border border-slate-800 bg-[#101010]" data-vaa1-relevance-scanner="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-relevance-scanner-default-collapsed="true" data-vaa1-statskit-layout-slot="C">
           <summary className="flex cursor-pointer list-none items-center justify-between border-b border-slate-800 px-3 py-2">
             <div>
               <div className="text-[11px] font-semibold text-slate-200">Relevance scanner</div>
@@ -5676,8 +5716,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
             )}
           </div>
         </details>
+        </DynamicPanelSection>
 
-      <details className="order-8 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-stats-metadata-view="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="F">
+      <DynamicPanelSection
+        sectionId="stats-metadata"
+        title="Stats metadata view"
+        summary={`${masterAuditRows.length} categories · ${sourceLayerDeliverables.length} source layers`}
+      >
+      <details open className="order-8 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-stats-metadata-view="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="F">
         <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Stats metadata view
           <span className="sr-only">schema coverage, audits, source-layer plan, and JSON contracts</span>
@@ -5901,8 +5947,14 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
         </div>
       </details>
       </details>
+      </DynamicPanelSection>
 
-      <details className="order-6 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-significancekit-claims="true" data-vaa1-statskit-significance-relevance-surface="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="D">
+      <DynamicPanelSection
+        sectionId="significance-workbench"
+        title="Significance workbench"
+        summary={`${filteredSignificanceRows.length} rows · ${selectedSignificanceRowIds.length} selected`}
+      >
+      <details open className="order-6 mt-2 rounded border border-slate-800 bg-[#101010] px-3 py-2" data-vaa1-significancekit-claims="true" data-vaa1-statskit-significance-relevance-surface="true" data-vaa1-statskit-box-collapsible="true" data-vaa1-statskit-layout-slot="D">
         <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-200">
           Significance workbench
           <span className="ml-2 font-mono text-[9px] text-slate-500">{filteredSignificanceRows.length} schema row(s)</span>
@@ -6081,7 +6133,8 @@ function StatsKitPanel({ analysisId, videoId }: StatsKitPanelProps) {
           )}
         </div>
       </details>
-      </div>
+      </DynamicPanelSection>
+      </DynamicPanelSectionGroup>
     </section>
   );
 }

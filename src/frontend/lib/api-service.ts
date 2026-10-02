@@ -26,6 +26,23 @@ function activeProjectScope(): string | undefined {
   return requested || (params.has("catalogue") ? undefined : "bond-cop30-helsinki");
 }
 
+function hermeneuticContextQuery(analysisId: string): string {
+  const projectId = activeProjectScope();
+  const params = new URLSearchParams({ context_analysis_id: analysisId });
+  if (projectId) params.set("project_id", projectId);
+  return params.toString();
+}
+
+function localAnalysisUrl(
+  analysisId: string,
+  suffix = "",
+  extra?: Record<string, string>,
+): string {
+  const params = new URLSearchParams(hermeneuticContextQuery(analysisId));
+  for (const [key, value] of Object.entries(extra || {})) params.set(key, value);
+  return `/api/local-analysis/${encodeURIComponent(analysisId)}${suffix}?${params.toString()}`;
+}
+
 function unavailableStatusSummary(analysisId: string, reason: string) {
   return {
     schema: "vaa1.analysis_status_summary.v1",
@@ -1743,7 +1760,8 @@ class ApiService {
   }
 
   async prepareVideoPublication(analysisId: string): Promise<any> {
-    const response = await fetch(`${this.baseURL}/api/publication/video/${encodeURIComponent(analysisId)}/prepare`, { method: "POST" });
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/publication/video/${encodeURIComponent(analysisId)}/prepare?${context}`, { method: "POST" });
     if (!response.ok) throw new Error((await response.text()) || "Video publication failed");
     return response.json();
   }
@@ -2041,7 +2059,7 @@ class ApiService {
       if (this.useMock) {
         return this.getMockStatus(analysisId);
       }
-      const localResponse = await fetch(`/api/local-analysis/${analysisId}`);
+      const localResponse = await fetch(localAnalysisUrl(analysisId));
       if (localResponse.ok) {
         const value = await localResponse.json();
         this.statusCache.set(analysisId, { expiresAt: Date.now() + 5_000, value });
@@ -2077,7 +2095,7 @@ class ApiService {
       .catch(async () => {
         // Never fall back to the heavyweight full-record status route during
         // shell/bootstrap. The local route reads a bounded record prefix only.
-        const response = await fetch(`/api/local-analysis/${analysisId}?summary=1`, {
+        const response = await fetch(localAnalysisUrl(analysisId, "", { summary: "1" }), {
           cache: "no-store",
         });
         if (response.status === 404) {
@@ -2449,7 +2467,7 @@ class ApiService {
 
     const request = (async () => {
       const noCacheToken = Date.now().toString(36);
-      const localUrl = `/api/local-analysis/${analysisId}/download/${fileType}?_=${noCacheToken}`;
+      const localUrl = localAnalysisUrl(analysisId, `/download/${encodeURIComponent(fileType)}`, { _: noCacheToken });
       let value: Blob | undefined;
       try {
         const response = await fetch(
@@ -2485,7 +2503,7 @@ class ApiService {
       // Native <video> requests cannot participate in fetch timeout/fallback.
       // Keep playback on the range-capable dashboard route so analysis load
       // cannot starve source navigation.
-      return `/api/local-analysis/${analysisId}/download/${fileType}`;
+      return localAnalysisUrl(analysisId, `/download/${encodeURIComponent(fileType)}`);
     }
     const noCacheToken = Date.now().toString(36);
     return `${this.baseURL}/api/download/${analysisId}/${fileType}?_=${noCacheToken}`;
@@ -2503,13 +2521,13 @@ class ApiService {
       response = await fetch(`${this.baseURL}/api/download-bundle/${analysisId}`);
     } catch (error) {
       console.warn("Backend bundle download failed, trying local analysis bundle:", error);
-      response = await fetch(`/api/local-analysis/${analysisId}/bundle`);
+      response = await fetch(localAnalysisUrl(analysisId, "/bundle"));
     }
 
     if (!response.ok) {
       const localResponse = response.url.includes("/api/local-analysis/")
         ? response
-        : await fetch(`/api/local-analysis/${analysisId}/bundle`);
+        : await fetch(localAnalysisUrl(analysisId, "/bundle"));
       if (localResponse.ok) {
         return localResponse.blob();
       }
@@ -2627,7 +2645,7 @@ class ApiService {
     // bundle embedded in analysis_record.json and must not replace foreground
     // analyst work during refresh hydration.
     const response = await fetch(
-      `/api/local-analysis/${analysisId}/download/annotation_corrections?_=${Date.now().toString(36)}`,
+      localAnalysisUrl(analysisId, "/download/annotation_corrections", { _: Date.now().toString(36) }),
       { cache: "no-store" },
     );
     if (!response.ok) {
@@ -2643,7 +2661,7 @@ class ApiService {
   async getVisualFrameCheckpoint(analysisId: string): Promise<Record<string, any> | null> {
     try {
       const response = await fetch(
-        `/api/local-analysis/${analysisId}/download/visual_frame_scan_checkpoint`,
+        localAnalysisUrl(analysisId, "/download/visual_frame_scan_checkpoint"),
         { cache: "no-store" },
       );
       if (!response.ok) {
@@ -2663,7 +2681,7 @@ class ApiService {
     // The sidecar is the canonical foreground commit. Write it through the
     // isolated dashboard process, then read the same file back before telling
     // the analyst that the correction was saved.
-    const artifactUrl = `/api/local-analysis/${analysisId}/download/annotation_corrections`;
+    const artifactUrl = localAnalysisUrl(analysisId, "/download/annotation_corrections");
     const response = await fetch(artifactUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2675,7 +2693,11 @@ class ApiService {
     }
     const committed = await response.json();
     const expected = committed.annotation_corrections || corrections;
-    const verificationResponse = await fetch(`${artifactUrl}?verify=${Date.now().toString(36)}`, {
+    const verificationResponse = await fetch(localAnalysisUrl(
+      analysisId,
+      "/download/annotation_corrections",
+      { verify: Date.now().toString(36) },
+    ), {
       cache: "no-store",
     });
     if (!verificationResponse.ok) {
@@ -2970,11 +2992,11 @@ class ApiService {
   }
 
   async getSourceMediaMetadata(analysisId: string): Promise<SourceMediaMetadata> {
-    let response = await fetch(`/api/local-analysis/${analysisId}/source-media`, { cache: "no-store" });
+    let response = await fetch(localAnalysisUrl(analysisId, "/source-media"), { cache: "no-store" });
     if (!response.ok) {
       const localResponse = response.url.includes("/api/local-analysis/")
         ? response
-        : await fetch(`/api/local-analysis/${analysisId}/download/source_media_metadata_json`);
+        : await fetch(localAnalysisUrl(analysisId, "/download/source_media_metadata_json"));
       if (!localResponse.ok) {
         const errorText = await localResponse.text();
         throw new Error(
@@ -2991,7 +3013,8 @@ class ApiService {
     analysisId: string,
     payload: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/statskit/run`, {
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/statskit/run?${context}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -3056,7 +3079,7 @@ class ApiService {
       notes?: string;
     },
   ): Promise<SourceMediaMetadata> {
-    const response = await fetch(`/api/local-analysis/${analysisId}/source-media`, {
+    const response = await fetch(localAnalysisUrl(analysisId, "/source-media"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -3254,7 +3277,8 @@ class ApiService {
   }
 
   async getSourceClockContext(analysisId: string): Promise<SourceClockContext> {
-    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock`, { cache: "no-store" });
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock?${context}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`Source-clock context failed: ${response.status} - ${await response.text()}`);
     }
@@ -3271,7 +3295,8 @@ class ApiService {
       authority?: string;
     },
   ): Promise<SourceClockResolution> {
-    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock/resolve`, {
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock/resolve?${context}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

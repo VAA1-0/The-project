@@ -4,6 +4,15 @@ Date: 2026-05-25
 Current delivery sequence updated: 2026-09-22
 Embedded-contract activation register updated: 2026-09-29
 
+Hermeneutic-context propagation checkpoint (2026-10-02): the first operational
+cross-consumer slice now validates and carries one governed project/analysis
+ticket through direct Global Clock reads/mutations, StatsKit runs, and Data Book
+video/corpus publication manifests. Missing or mismatched context fails closed
+and appends an immutable JSONL boundary record. Search, Meaning/Plot, Narrative
+Agents, governed report/Traceback, the complete background-job lifecycle,
+archive download authorization, and remaining direct FastAPI routes remain open.
+See [the focused delivery evidence](audits/hermeneutic_context_2026-10-02/README.md).
+
 This is the consolidated remaining sprint map. It keeps the interpretive features, maturity regime, governance, packaging, and release-readiness work in one place so no major track quietly falls off the board.
 
 ## Current Development Period: Operational Evidence and Analysis Core

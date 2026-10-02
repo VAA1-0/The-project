@@ -39,6 +39,7 @@ import { apiService } from "@/lib/api-service";
 import { installIdlePrecompute } from "@/lib/idle-precompute";
 import SourceClockBrowser from "./SourceClockBrowser";
 import PanelSourceClockConcordance from "./PanelSourceClockConcordance";
+import { useUniversalPanelDisclosures } from "./useUniversalPanelDisclosures";
 import { activeProjectScopeId, type ProjectScopeViolation } from "@/lib/active-project-scope";
 
 // --- Context Setup ---
@@ -604,7 +605,10 @@ export default function LayoutHost({
     // Create a wrapper component that provides the context
     const ContextWrapper: React.FC<{ children: React.ReactNode; componentName?: string; category?: string }> = ({
       children, componentName = "", category,
-    }) => (
+    }) => {
+      const disclosureScopeRef = useRef<HTMLDivElement>(null);
+      useUniversalPanelDisclosures(disclosureScopeRef, componentName);
+      return (
       <LayoutHostContext.Provider value={{ openPanel }}>
         {projectScopeIncident && <div role="alert" className="fixed left-4 top-4 z-[10001] max-w-xl rounded border-2 border-red-500 bg-red-950 p-3 text-sm text-red-50 shadow-xl">
           <strong>PROJECT BOUNDARY VIOLATION — foreign analysis blocked.</strong>
@@ -617,10 +621,11 @@ export default function LayoutHost({
       <div className="flex h-full min-h-0 flex-col">
         <SourceClockBrowser />
         <PanelSourceClockConcordance componentName={componentName} category={category} />
-        <div className="min-h-0 flex-1">{children}</div>
+        <div ref={disclosureScopeRef} className="min-h-0 flex-1">{children}</div>
       </div>
       </LayoutHostContext.Provider>
-    );
+      );
+    };
 
     // Register the component factories
     layout.registerComponentFactoryFunction(
