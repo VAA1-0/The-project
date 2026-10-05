@@ -4,12 +4,45 @@ const ID = "clock-acceptance-5324d4dd643a453bb188c33657a6b227";
 const OTHER = "clock-acceptance-bdf5e416bdd54be4be30454aea9f6b09";
 const A_REVISION = "clock-v1:090136e316575f653476b21e6baf01178e5bcd9a1b19d7e56bfe228c2d2e9e66";
 const B_REVISION = "clock-v1:e20598f9dc29a2c1dc6ce51d791fe9c79193883e11af2dfb2e2fadc638f7aac1";
-const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections`;
+const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections?project_id=source-clock-acceptance&context_analysis_id=${ID}`;
 const MARKER = "M3 interval continuity marker";
 
 test("M3 interval correction saves, verifies, and survives close/reopen", async ({ page, request }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
+
+  // Make this acceptance protocol repeatable: its undo baseline must not
+  // contain the marker left by an earlier interrupted or successful run.
+  const existingResponse = await request.get(CORRECTIONS);
+  expect(existingResponse.ok()).toBeTruthy();
+  const existing = await existingResponse.json();
+  const staleMarker = (existing.manual_transcript_entries || []).find(
+    (entry: any) => entry.text === MARKER,
+  );
+  if (staleMarker) {
+    const cleanupResponse = await request.post(CORRECTIONS, {
+      data: {
+        _clock_write_guard: existing._clock_write_guard,
+        _correction_undo: {
+          operation_id: crypto.randomUUID(),
+          changes: [{
+            collection: "manual_transcript_entries",
+            id: staleMarker.id,
+            before: null,
+            after: staleMarker,
+          }],
+          binding: existing._clock_write_guard,
+        },
+      },
+    });
+    expect(cleanupResponse.ok()).toBeTruthy();
+    const cleaned = (await cleanupResponse.json()).annotation_corrections;
+    expect(cleaned.manual_transcript_entries?.some((entry: any) => entry.text === MARKER) ?? false).toBe(false);
+  }
+  await page.addInitScript(({ key }) => localStorage.removeItem(key), {
+    key: `vaa1.annotation.corrections.history.${ID}`,
+  });
+
   await page.goto("/dashboard?activeProject=source-clock-acceptance");
   await page.locator(`[role="button"][data-analysis-id="${ID}"]`).click();
   await page.locator(".lm_tab").filter({ hasText: /^Transcript$/ }).evaluate((tab: HTMLElement) => tab.click());

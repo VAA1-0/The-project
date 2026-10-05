@@ -5,10 +5,11 @@ export class CorrectionBindingUnavailable extends Error {}
 /** Called only while the caller owns the shared correction lock.
  * The backend context GET does not reacquire that lock.
  */
-export async function readCorrectionSourceBinding(analysisId: string): Promise<CorrectionSourceBinding> {
+export async function readCorrectionSourceBinding(analysisId: string, projectId: string): Promise<CorrectionSourceBinding> {
   const base = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const contextQuery = new URLSearchParams({ project_id: projectId, context_analysis_id: analysisId });
   try {
-    const response = await fetch(`${base}/api/analysis/${encodeURIComponent(analysisId)}/source-clock`, {
+    const response = await fetch(`${base}/api/analysis/${encodeURIComponent(analysisId)}/source-clock?${contextQuery.toString()}`, {
       cache: "no-store", signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) throw new Error(`Clock service returned ${response.status}`);

@@ -15,17 +15,17 @@ test('clock transport validates identity, availability and numeric timebase with
       assert.ok(options.signal);
       return { ok: true, json: async () => payload };
     };
-    assert.deepEqual(await readCorrectionSourceBinding('a'), valid);
+    assert.deepEqual(await readCorrectionSourceBinding('a', 'project-a'), valid);
     for (const invalid of [{ ...valid, analysis_id: 'b' }, { ...valid, clock_revision: '' }, { ...valid, timebase: {} }, { ...valid, binding_status: 'unknown' }]) {
       payload = invalid;
-      await assert.rejects(readCorrectionSourceBinding('a'), CorrectionBindingUnavailable);
+      await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), CorrectionBindingUnavailable);
     }
     payload = { analysis_id: 'a', binding_status: 'source_unavailable', source_fingerprint: null, clock_revision: null };
-    assert.equal((await readCorrectionSourceBinding('a')).binding_status, 'source_unavailable');
+    assert.equal((await readCorrectionSourceBinding('a', 'project-a')).binding_status, 'source_unavailable');
     globalThis.fetch = async () => ({ ok: false, status: 503 });
-    await assert.rejects(readCorrectionSourceBinding('a'), CorrectionBindingUnavailable);
+    await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), CorrectionBindingUnavailable);
     globalThis.fetch = async () => { throw new Error('timeout'); };
-    await assert.rejects(readCorrectionSourceBinding('a'), /timeout/);
+    await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), /timeout/);
   } finally { globalThis.fetch = original; }
 });
 
@@ -39,13 +39,20 @@ test('actual API save carries the loaded guard and refuses a changed readback bi
   };
   visit(ast);
   assert.ok(method);
-  const compiled = ts.transpileModule(`export class Service { invalidateReadCaches() {} ${method.getText(ast)} }`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const compiled = ts.transpileModule(`
+    const localAnalysisUrl = (analysisId, suffix = "", extra = {}) => {
+      const params = new URLSearchParams({ context_analysis_id: analysisId, project_id: "bond-cop30-helsinki", ...extra });
+      return \`/api/local-analysis/\${encodeURIComponent(analysisId)}\${suffix}?\${params.toString()}\`;
+    };
+    export class Service { invalidateReadCaches() {} ${method.getText(ast)} }
+  `, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
   const { Service } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
   const original = globalThis.fetch;
   const loaded = { updated_at: 'fixture', _clock_write_guard: { analysis_id: 'a', transcript_clock_offset_seconds: 0, source_fingerprint: 'hash', clock_revision: 'old' } };
   try {
     let replace = false;
-    globalThis.fetch = async (_url, options) => {
+    globalThis.fetch = async (url, options) => {
+      assert.match(String(url), /^\/api\/local-analysis\/a\/download\/annotation_corrections\?/);
       if (options.method === 'POST') {
         assert.deepEqual(JSON.parse(options.body)._clock_write_guard, loaded._clock_write_guard);
         return { ok: true, json: async () => ({ annotation_corrections: loaded }) };

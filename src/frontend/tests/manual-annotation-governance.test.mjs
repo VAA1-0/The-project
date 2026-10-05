@@ -528,7 +528,7 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = ANALYSIS_FRAME_STEP_SECONDS \* 6/,
+    /BBOX_GEOMETRY_AUTO_SAVE_WINDOW_SECONDS = 0\.24/,
     "automatic bbox geometry saves need a small frame window so scrub/playback quantization does not drop the correction",
   );
 
@@ -804,8 +804,8 @@ test("manual bbox geometry stays timestamp scoped", () => {
 
   assert.match(
     videoPanel,
-    /const ANALYSIS_FRAME_STEP_SECONDS = 1 \/ 25/,
-    "analysis transport should expose a stable frame-step unit outside the native player controls",
+    /nominalFrameStep[\s\S]*sourceTimebase\?\.frame_rate_mode[\s\S]*frameStepLabel/,
+    "analysis transport should derive its frame-step unit from the governed source timebase",
   );
 
   assert.match(
@@ -1057,8 +1057,8 @@ test("bbox save paths install backend canonical corrections immediately", () => 
 
   assert.match(
     videoPanel,
-    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);[\s\S]*?const refreshed = await VideoService\.refreshAnalysis/,
-    "VideoPanel saves must install returned backend corrections before broad analysis refresh",
+    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);/,
+    "VideoPanel saves must immediately install returned backend corrections",
   );
 
   assert.match(
@@ -1069,8 +1069,8 @@ test("bbox save paths install backend canonical corrections immediately", () => 
 
   assert.match(
     objPanel,
-    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);[\s\S]*?const refreshed = await VideoService\.refreshAnalysis/,
-    "Objects panel saves must install returned backend corrections before broad analysis refresh",
+    /const savedCorrections = await VideoService\.saveAnnotationCorrections\([\s\S]*?applySavedAnnotationCorrections\(savedCorrections\);/,
+    "Objects panel saves must immediately install returned backend corrections",
   );
 
   assert.match(

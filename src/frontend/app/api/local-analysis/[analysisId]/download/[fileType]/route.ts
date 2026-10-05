@@ -419,14 +419,14 @@ export async function GET(
 ) {
   const { analysisId, fileType } = await params;
   try {
-    await assertLocalAnalysisBoundary(request, analysisId);
+    const governedContext = await assertLocalAnalysisBoundary(request, analysisId);
     if (fileType === "annotation_corrections") {
       return await withCorrectionWriteLock(analysisId, async () => {
         const corrections = await readRichestAnnotationCorrections(analysisId);
         let context;
         let bindingDetail: string | undefined;
         try {
-          context = await readCorrectionSourceBinding(analysisId);
+          context = await readCorrectionSourceBinding(analysisId, governedContext.project_id);
         } catch (error) {
           if (!(error instanceof CorrectionBindingUnavailable)) throw error;
           // Clock binding governs writes, not evidence visibility. Restored or
@@ -628,7 +628,7 @@ export async function POST(
 
   let canonicalCommitted = false;
   try {
-    await assertLocalAnalysisBoundary(request, analysisId);
+    const governedContext = await assertLocalAnalysisBoundary(request, analysisId);
     const incoming = await request.json();
     // Whole-source clock changes must also append canonical dependency invalidation.
     // The backend owns that transaction and acquires the shared lock itself.
@@ -654,7 +654,7 @@ export async function POST(
       const existing = await readRichestAnnotationCorrections(analysisId);
 
       validateCorrectionClockGuard(analysisId, existing, incoming);
-      const context = await readCorrectionSourceBinding(analysisId);
+      const context = await readCorrectionSourceBinding(analysisId, governedContext.project_id);
       validateCorrectionSourceBinding(analysisId, incoming, context);
       const generation = globalThis.crypto.randomUUID();
       const corrections = incoming._word_undo
@@ -674,7 +674,7 @@ export async function POST(
 
       return NextResponse.json({
         analysis_id: analysisId,
-        annotation_corrections: { ...corrections, _clock_write_guard: correctionClockGuard(analysisId, corrections, await readCorrectionSourceBinding(analysisId)) },
+        annotation_corrections: { ...corrections, _clock_write_guard: correctionClockGuard(analysisId, corrections, await readCorrectionSourceBinding(analysisId, governedContext.project_id)) },
         local_fallback: true,
         concurrent_merge: Boolean(existing),
         dependent_projection: "master_schema_refreshed",

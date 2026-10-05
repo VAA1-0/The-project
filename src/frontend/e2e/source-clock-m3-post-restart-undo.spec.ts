@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const ID = "clock-acceptance-5324d4dd643a453bb188c33657a6b227";
-const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections`;
+const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections?project_id=source-clock-acceptance&context_analysis_id=${ID}`;
 const MARKER = "M3 interval continuity marker";
 
 test.use({ storageState: "/tmp/datascene-m3-storage-state.json" });

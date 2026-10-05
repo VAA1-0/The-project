@@ -2,14 +2,18 @@ import { expect, test } from "@playwright/test";
 
 const A = process.env.VAA1_CLOCK_A_ID || "clock-acceptance-db1f40f585954e1bbd0885c52bbfdfd1";
 const B = process.env.VAA1_CLOCK_B_ID || "clock-acceptance-bdf5e416bdd54be4be30454aea9f6b09";
+const PROJECT = "source-clock-acceptance";
+
+const sourceClockUrl = (analysisId: string) =>
+  `http://127.0.0.1:8000/api/analysis/${analysisId}/source-clock?project_id=${PROJECT}&context_analysis_id=${analysisId}`;
 
 test("delayed A context cannot replace B during rendered A to B to A switching", async ({ page, request }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
 
   const [aResponse, bResponse] = await Promise.all([
-    request.get(`http://127.0.0.1:8000/api/analysis/${A}/source-clock`),
-    request.get(`http://127.0.0.1:8000/api/analysis/${B}/source-clock`),
+    request.get(sourceClockUrl(A)),
+    request.get(sourceClockUrl(B)),
   ]);
   expect(aResponse.ok()).toBeTruthy();
   expect(bResponse.ok()).toBeTruthy();
@@ -19,7 +23,7 @@ test("delayed A context cannot replace B during rendered A to B to A switching",
   expect(aClock.clock_revision).not.toBe(bClock.clock_revision);
 
   let delayed = false;
-  await page.route(`**/api/analysis/${A}/source-clock`, async (route) => {
+  await page.route(`**/api/analysis/${A}/source-clock?*`, async (route) => {
     if (!delayed) {
       delayed = true;
       await new Promise((resolve) => setTimeout(resolve, 2_500));
@@ -27,7 +31,7 @@ test("delayed A context cannot replace B during rendered A to B to A switching",
     await route.continue();
   });
 
-  await page.goto("/dashboard?activeProject=source-clock-acceptance");
+  await page.goto(`/dashboard?activeProject=${PROJECT}`);
   const cardA = page.locator(`[role="button"][data-analysis-id="${A}"]`);
   const cardB = page.locator(`[role="button"][data-analysis-id="${B}"]`);
   await expect(cardA).toBeVisible({ timeout: 90_000 });

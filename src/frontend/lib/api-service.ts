@@ -1801,6 +1801,11 @@ class ApiService {
     this.downloadUrl(url.startsWith("http") ? url : `${this.baseURL}${url}`, filename);
   }
 
+  openPublication(url: string): void {
+    if (typeof window === "undefined") return;
+    window.open(url.startsWith("http") ? url : `${this.baseURL}${url}`, "_blank", "noopener,noreferrer");
+  }
+
   invalidateReadCaches(analysisId?: string) {
     if (!analysisId) {
       this.statusCache.clear();

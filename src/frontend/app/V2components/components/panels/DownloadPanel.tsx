@@ -900,7 +900,7 @@ export default function DownloadPanel() {
                       {publicationBusy === "video" ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <BookOpen className="mr-1 inline size-3" />}Generate video publication
                     </button>
                     <button onClick={() => preparePublication("corpus")} disabled={publicationBusy !== null || projectAnalysisCount === 0} className="rounded bg-slate-900 px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:opacity-50">
-                      {publicationBusy === "corpus" ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <Archive className="mr-1 inline size-3" />}Generate corpus publication
+                      {publicationBusy === "corpus" ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <Archive className="mr-1 inline size-3" />}Generate corpus + Chapter 5 report
                     </button>
                   </div>
                   {publication && (
@@ -908,6 +908,7 @@ export default function DownloadPanel() {
                       <div className="flex items-center justify-between gap-3 text-[11px]">
                         <span className="truncate text-slate-300">{publication.archive_name}</span>
                         <button onClick={() => apiService.downloadPublication(publication.download_url, publication.archive_name)} className="shrink-0 rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700"><Download className="mr-1 inline size-3" />Download ZIP</button>
+                        {publication.print_report_url ? <button onClick={() => apiService.openPublication(publication.print_report_url)} className="shrink-0 rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700"><BookOpen className="mr-1 inline size-3" />Open printable report</button> : null}
                       </div>
                       <div className="font-mono text-[9px] text-[var(--ui-passive-text)]">{publication.archive_checksum}</div>
                       {(publication.browse_manifest?.root_nodes || []).map((root: any) => (

@@ -62,6 +62,8 @@ test('actual route persists inverse and provenance, survives cached reload and r
       const safeProjectPath = p => path.join(projectRoot(),p);
       const correctionWriteQueues = new Map();
       const NextResponse = { json:(body,init={})=>({body,status:init.status||200}) };
+      const assertLocalAnalysisBoundary = async () => ({ project_id: "fixture", analysis_id: "a" });
+      const projectBoundaryErrorResponse = () => null;
       const readCorrectionSourceBinding = async () => ({analysis_id:'a',binding_status:'content_bound',source_fingerprint:'hash',clock_revision:'clock',timebase:{transcript_clock_offset_seconds:0}});
     `;
     const moduleCode = lib('correction-write-lock') + lib('annotation-correction-merge') + lib('correction-clock-guard') + undoCode + fixture + compile(functions.join('\n'));

@@ -46,7 +46,8 @@ def test_annotation_hydration_cannot_fall_back_to_stale_analysis_record_bundle()
     read_source = source.split("async getAnnotationCorrections", 1)[1].split(
         "async saveAnnotationCorrections", 1
     )[0]
-    assert "/api/local-analysis/" in read_source
+    assert "localAnalysisUrl(" in read_source
+    assert '"/download/annotation_corrections"' in read_source
     assert "/api/annotation-corrections/" not in read_source
     assert 'cache: "no-store"' in read_source
 

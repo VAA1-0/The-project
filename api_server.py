@@ -14213,6 +14213,7 @@ async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
         "archive_name": built["archive_name"],
         "archive_checksum": built["archive_checksum"],
         "download_url": f"/api/publication/archive/corpus/{urllib.parse.quote(_safe_publication_path(project_id))}/{urllib.parse.quote(built['archive_name'])}",
+        "print_report_url": f"/api/publication/report/corpus/{urllib.parse.quote(_safe_publication_path(project_id))}/{urllib.parse.quote(built['report_name'])}",
         "browse_manifest": built["package"]["browse_manifest"],
         "validation": built["package"]["corpus_package"]["validation"],
         "hermeneutic_context_tickets": tickets,
@@ -14230,6 +14231,15 @@ async def download_publication_archive(scope: str, owner: str, filename: str):
     if root.name == "invalid" or root.resolve() not in candidate.parents or candidate.suffix.lower() != ".zip" or not candidate.is_file():
         raise HTTPException(status_code=404, detail="Publication archive not found")
     return FileResponse(candidate, media_type="application/zip", filename=candidate.name)
+
+
+@app.get("/api/publication/report/corpus/{owner}/{filename}")
+async def open_corpus_publication_report(owner: str, filename: str):
+    root = PUBLICATION_DIR / "corpora" / owner
+    candidate = (root / Path(filename).name).resolve()
+    if root.resolve() not in candidate.parents or candidate.suffix.lower() != ".html" or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Printable corpus report not found")
+    return FileResponse(candidate, media_type="text/html; charset=utf-8", filename=candidate.name)
 
 
 # Keep your existing endpoints (they work well)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import mimetypes
 import os
@@ -191,12 +192,146 @@ def _overlay_canonical_artifact_paths(status: dict[str, Any]) -> dict[str, str]:
         "annotation_corrections": "annotation_corrections.json",
         "vaa1_annotation_master_schema": "vaa1_annotation_master_schema.json",
         "live_mature_data_proliferation_audit": "live_mature_data_proliferation_audit.json",
+        "decision_ledger": "decision_ledger.json",
+        "interpretation_registry": "interpretation_registry.json",
+        "framework_projections": "framework_projections.json",
     }
     for artifact_key, filename in canonical_files.items():
         canonical_path = analysis_dir / filename
         if canonical_path.is_file():
             merged[artifact_key] = str(canonical_path)
     return merged
+
+
+CHAPTER_FIVE_RESEARCH_QUESTION = (
+    "How can the Datascene method operationalize and compare prospective narrative "
+    "constructions across a small, heterogeneous corpus of multimodal broadcast news reports?"
+)
+
+
+def _read_json_artifact(path_value: Any) -> Any:
+    try:
+        path = Path(str(path_value))
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _list_at(payload: Any, *keys: str) -> list[Any]:
+    if not isinstance(payload, dict):
+        return payload if isinstance(payload, list) else []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _chapter_five_case(status: dict[str, Any], video_package: dict[str, Any]) -> dict[str, Any]:
+    files = _overlay_canonical_artifact_paths(status)
+    decisions = _list_at(_read_json_artifact(files.get("decision_ledger")), "decisions")
+    interpretations = _list_at(_read_json_artifact(files.get("interpretation_registry")), "records")
+    current_decisions = [item for item in decisions if isinstance(item, dict) and item.get("validity", "current") == "current"]
+    decision_states: dict[str, int] = {}
+    for item in current_decisions:
+        state = str(item.get("review_status") or "unresolved")
+        decision_states[state] = decision_states.get(state, 0) + 1
+    interpretation_states: dict[str, int] = {}
+    for item in interpretations:
+        if not isinstance(item, dict) or item.get("validity", "current") != "current":
+            continue
+        state = str(item.get("status") or item.get("maturity") or "unresolved")
+        interpretation_states[state] = interpretation_states.get(state, 0) + 1
+    chapters = video_package["data_book"]["chapters"]
+    feature_counts = {
+        chapter["feature_id"]: sum(
+            int(record.get("value", {}).get("record_count") or 0)
+            for record in chapter.get("content", {}).get("records", [])
+        )
+        for chapter in chapters
+    }
+    identity = video_package["video_identity"]
+    return {
+        "analysis_id": identity["video_id"],
+        "title": identity["title"],
+        "source_identity": identity["source_identity"],
+        "source_checksum": identity["media_checksum"],
+        "duration_ms": identity["duration_ms"],
+        "clock_id": video_package["source_clock"]["clock_id"],
+        "feature_record_counts": feature_counts,
+        "decision_summary": {"total_current": len(current_decisions), "states": decision_states},
+        "interpretation_summary": {"total": len(interpretations), "states": interpretation_states},
+        "confirmed_decisions": [
+            {
+                "decision_id": item.get("decision_id"),
+                "property": item.get("property"),
+                "value": item.get("value"),
+                "scope": item.get("scope"),
+                "evidence_refs": item.get("evidence_refs") or [],
+                "created_by": item.get("created_by"),
+            }
+            for item in current_decisions
+            if item.get("review_status") == "accepted"
+        ],
+        "candidate_notice": "Candidate interpretations require analyst review and are not reported as findings.",
+    }
+
+
+def _chapter_five_report(statuses: list[dict[str, Any]], built: list[dict[str, Any]], project_id: str, generated_at: str) -> tuple[dict[str, Any], str, str]:
+    cases = [
+        _chapter_five_case(status, item["package"]["video_package"])
+        for status, item in zip(statuses, built)
+    ]
+    feature_ids = [feature_id for feature_id, *_ in FEATURES]
+    report = {
+        "schema": "datascene.chapter_five_research_report.v1",
+        "title": "Chapter 5 research report — anticipatory narrative corpus",
+        "project_id": project_id,
+        "generated_at": generated_at,
+        "research_question": CHAPTER_FIVE_RESEARCH_QUESTION,
+        "methodological_answer": (
+            "Datascene operationalizes prospective narrative comparison by binding each case to a "
+            "versioned source and Global Clock, surfacing multimodal evidence as candidate material, "
+            "preserving analyst decisions separately from candidates, and retaining source traceback "
+            "for cross-case inspection and recovery."
+        ),
+        "scope_boundary": (
+            "This is a small heterogeneous case corpus. Counts describe available governed records; "
+            "they are not substantive findings or representative claims."
+        ),
+        "cases": cases,
+        "comparison_matrix": [
+            {"feature_id": feature_id, **{case["analysis_id"]: case["feature_record_counts"].get(feature_id, 0) for case in cases}}
+            for feature_id in feature_ids
+        ],
+        "analyst_completion": {
+            "corpus_matching": "requires_analyst_statement",
+            "anticipatory_configuration": "report_confirmed_decisions_only",
+            "cross_case_synthesis": "requires_analyst_statement",
+            "limitations": "requires_analyst_review",
+        },
+        "verification": {
+            "case_count": len(cases),
+            "source_checksums_present": all(bool(case["source_checksum"]) for case in cases),
+            "clock_ids_present": all(bool(case["clock_id"]) for case in cases),
+            "restart_basis": "published from persisted saved analyses and canonical sidecars",
+        },
+    }
+    lines = [
+        f"# {report['title']}", "", f"**Research question:** {CHAPTER_FIVE_RESEARCH_QUESTION}", "",
+        "## Methodological answer", "", report["methodological_answer"], "", report["scope_boundary"], "",
+        "## Case readiness", "", "| Case | Duration | Current decisions | Candidate/interpretive records | Source checksum |", "|---|---:|---:|---:|---|",
+    ]
+    for case in cases:
+        lines.append(f"| {case['title']} | {case['duration_ms'] / 1000:.3f}s | {case['decision_summary']['total_current']} | {case['interpretation_summary']['total']} | `{case['source_checksum']}` |")
+    lines += ["", "## Cross-case evidence matrix", "", "| Feature | " + " | ".join(case["title"] for case in cases) + " |", "|---|" + "---:|" * len(cases)]
+    for row in report["comparison_matrix"]:
+        lines.append("| " + row["feature_id"] + " | " + " | ".join(str(row[case["analysis_id"]]) for case in cases) + " |")
+    lines += ["", "## Analyst completion", "", "The analyst must add the corpus-matching rationale, confirmed anticipatory configurations, cross-case synthesis, and limitations. Candidate records are not automatically promoted to findings.", ""]
+    markdown = "\n".join(lines)
+    html_body = "<br>".join(html.escape(line) for line in lines)
+    printable = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>{html.escape(report['title'])}</title><style>@page{{size:A4;margin:16mm}}body{{font:11pt/1.45 system-ui,sans-serif;color:#111}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #bbb;padding:5px;text-align:left}}code{{font-size:8pt;overflow-wrap:anywhere}}@media print{{button{{display:none}}}}</style></head><body><button onclick=\"print()\">Print report</button><pre style=\"white-space:pre-wrap;font:inherit\">{html.escape(markdown)}</pre></body></html>"""
+    return report, markdown, printable
 
 
 def _write_deterministic_zip(path: Path, files: dict[str, bytes | Path]) -> None:
@@ -215,6 +350,16 @@ def _write_deterministic_zip(path: Path, files: dict[str, bytes | Path]) -> None
                             target.write(chunk)
                 else:
                     archive.writestr(info, value)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_atomic_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_bytes(content)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -356,7 +501,8 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
 
 
 def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Path, project_id: str) -> dict[str, Any]:
-    built = [build_video_publication(status, output_dir / "Video Publications") for status in statuses]
+    status_list = list(statuses)
+    built = [build_video_publication(status, output_dir / "Video Publications") for status in status_list]
     if not built: raise ValueError("Corpus publication requires completed videos")
     video_refs = []
     archive_files: dict[str, bytes | Path] = {}
@@ -376,16 +522,28 @@ def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Pat
     edition_id = _id("corpus-edition", [item["package"]["edition_id"] for item in built])
     package_id = _id("corpus-publication", edition_id)
     generated_at = max(str(item["package"]["created_at"]) for item in built)
+    chapter_five_report, chapter_five_markdown, chapter_five_html = _chapter_five_report(
+        status_list, built, project_id, generated_at
+    )
+    archive_files["Chapter 5 Research Report/Chapter 5 Research Report.json"] = json.dumps(
+        chapter_five_report, indent=2, ensure_ascii=False
+    ).encode("utf-8")
+    archive_files["Chapter 5 Research Report/Chapter 5 Research Report.md"] = chapter_five_markdown.encode("utf-8")
+    archive_files["Chapter 5 Research Report/Chapter 5 Research Report.html"] = chapter_five_html.encode("utf-8")
     entries = [{"archive_path": path, "media_type": "application/zip", "checksum": _sha_file(value) if isinstance(value, Path) else _sha_bytes(value), "byte_length": value.stat().st_size if isinstance(value, Path) else len(value)} for path, value in sorted(archive_files.items())]
     identity = _sha_bytes(_canonical(entries))
     archive_name = f"{_safe_name(project_id)} - Corpus Data Book Publication - {edition_id.split(':')[-1][:8]}.zip"
     archive_descriptor = {"archive_id": _id("archive", edition_id), "archive_name": archive_name, "archive_format": "zip", "media_type": "application/zip", "canonical_layout_version": "1.0.0", "root_manifest_path": "Corpus Publication Manifest.json", "deterministic": True, "canonical_file_order": "lexicographic_utf8", "canonical_json_profile": "datascene-canonical-json-v1", "content_identity": identity, "archive_checksum": None}
     checks = [_check("PUB-006", "Every selected video is preserved as an independent video publication."), _check("PUB-007", "Included video publications have deterministic checksums.")]
     validation = {"validation_id": _id("validation", edition_id), "status": "complete", "executed_at": generated_at, "validator_version": ENGINE_VERSION, "checks": checks, "issues": []}
-    package = {"schema_version": SCHEMA_VERSION, "package_type": "corpus_publication", "package_id": package_id, "edition_id": edition_id, "project_id": project_id, "created_at": generated_at, "hermeneutic_context_tickets": [item["package"].get("hermeneutic_context_ticket") for item in built], "created_by": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "publication_state": "validated", "registry_snapshot": _registry_snapshot(), "software_context": {"datascene_version": "VAA1", "publication_engine_version": ENGINE_VERSION, "master_schema_version": "1.0", "canonicalization_profile": "datascene-canonical-json-v1"}, "browse_manifest": {"panel_id": "download_panel", "default_view": "overview", "available_views": ["overview", "data_book", "report", "files", "matrices", "validation", "integrity", "history"], "root_nodes": [{"node_id": package_id, "label": f"Corpus Publication - {project_id}", "node_type": "package", "state": "ready", "actions": ["open", "inspect", "export_item", "verify_checksum", "compare", "show_history"], "children": [{"node_id": ref["video_package_id"], "label": next(item["package"]["video_package"]["video_identity"]["title"] for item in built if item["package"]["package_id"] == ref["video_package_id"]), "node_type": "video", "state": "ready", "target": {"resource_type": "video", "resource_id": ref["video_id"], "archive_path": ref["manifest_path"]}, "actions": ["open", "inspect", "trace_to_source", "compare", "show_history"]} for ref in video_refs]}]}, "corpus_package": {"corpus_identity": {"corpus_id": _id("corpus", video_ids), "title": project_id, "description": "Datascene/VAA1 governed research corpus publication.", "video_ids": video_ids, "selection_definition": {"analysis_ids": video_ids, "selection_method": "explicit completed project analyses"}, "grouping_variables": []}, "archive": archive_descriptor, "video_publications": video_refs, "corpus_report": None, "associated_files": [], "matrix_comparisons": [], "validation": validation, "history": [{"event_id": _id("history", edition_id), "event_type": "generated", "occurred_at": generated_at, "actor": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "edition_id": edition_id}]}, "integrity": {"algorithm": "sha256", "canonicalization_profile": "datascene-canonical-json-v1", "content_identity": identity, "archive_checksum": None, "entries": entries, "verified_at": _now(), "verification_status": "passed"}}
+    report_node = {"node_id": _id("chapter-five-report", edition_id), "label": "Chapter 5 Research Report", "node_type": "report", "state": "ready", "target": {"resource_type": "report", "archive_path": "Chapter 5 Research Report/Chapter 5 Research Report.html"}, "actions": ["open", "inspect", "print", "export_item", "trace_to_source"]}
+    package = {"schema_version": SCHEMA_VERSION, "package_type": "corpus_publication", "package_id": package_id, "edition_id": edition_id, "project_id": project_id, "created_at": generated_at, "hermeneutic_context_tickets": [item["package"].get("hermeneutic_context_ticket") for item in built], "created_by": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "publication_state": "validated", "registry_snapshot": _registry_snapshot(), "software_context": {"datascene_version": "VAA1", "publication_engine_version": ENGINE_VERSION, "master_schema_version": "1.0", "canonicalization_profile": "datascene-canonical-json-v1"}, "browse_manifest": {"panel_id": "download_panel", "default_view": "overview", "available_views": ["overview", "data_book", "report", "files", "matrices", "validation", "integrity", "history"], "root_nodes": [{"node_id": package_id, "label": f"Corpus Publication - {project_id}", "node_type": "package", "state": "ready", "actions": ["open", "inspect", "export_item", "verify_checksum", "compare", "show_history"], "children": [report_node, *[{"node_id": ref["video_package_id"], "label": next(item["package"]["video_package"]["video_identity"]["title"] for item in built if item["package"]["package_id"] == ref["video_package_id"]), "node_type": "video", "state": "ready", "target": {"resource_type": "video", "resource_id": ref["video_id"], "archive_path": ref["manifest_path"]}, "actions": ["open", "inspect", "trace_to_source", "compare", "show_history"]} for ref in video_refs]]}]}, "corpus_package": {"corpus_identity": {"corpus_id": _id("corpus", video_ids), "title": project_id, "description": "Datascene/VAA1 governed research corpus publication.", "video_ids": video_ids, "selection_definition": {"analysis_ids": video_ids, "selection_method": "explicit completed project analyses"}, "grouping_variables": []}, "archive": archive_descriptor, "video_publications": video_refs, "corpus_report": chapter_five_report, "associated_files": [], "matrix_comparisons": chapter_five_report["comparison_matrix"], "validation": validation, "history": [{"event_id": _id("history", edition_id), "event_type": "generated", "occurred_at": generated_at, "actor": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "edition_id": edition_id}]}, "integrity": {"algorithm": "sha256", "canonicalization_profile": "datascene-canonical-json-v1", "content_identity": identity, "archive_checksum": None, "entries": entries, "verified_at": _now(), "verification_status": "passed"}}
     archive_files["Corpus Publication Manifest.json"] = json.dumps(package, indent=2, ensure_ascii=False).encode("utf-8")
     output_path = output_dir / archive_name
     _write_deterministic_zip(output_path, archive_files)
+    report_name = f"{_safe_name(project_id)} - Chapter 5 Research Report.html"
+    report_path = output_dir / report_name
+    _write_atomic_bytes(report_path, chapter_five_html.encode("utf-8"))
     manifest_path = output_dir / f"{output_path.stem} - Browse Manifest.json"
     atomic_write_json(manifest_path, package)
-    return {"package": package, "archive_path": str(output_path), "archive_name": archive_name, "archive_checksum": _sha_file(output_path), "manifest_path": str(manifest_path), "video_count": len(video_ids)}
+    return {"package": package, "archive_path": str(output_path), "archive_name": archive_name, "archive_checksum": _sha_file(output_path), "manifest_path": str(manifest_path), "video_count": len(video_ids), "report_path": str(report_path), "report_name": report_name}

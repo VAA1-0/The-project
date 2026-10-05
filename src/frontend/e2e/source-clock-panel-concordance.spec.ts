@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 async function openSurface(page: import("@playwright/test").Page, tabLabel: string, menu: "Lenses" | "Window", item: string) {
   let tab = page.locator(".lm_tab").filter({ hasText: new RegExp(`^${tabLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }).last();
-  if ((await tab.count()) === 0) {
+  if ((await tab.count()) === 0 || !(await tab.last().isVisible())) {
     await page.getByRole("button", { name: menu, exact: true }).click();
     await page.getByRole("button", { name: item, exact: true }).click();
     tab = page.locator(".lm_tab").filter({ hasText: new RegExp(`^${tabLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }).last();

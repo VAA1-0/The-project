@@ -79,4 +79,15 @@ def test_corpus_preserves_browsable_video_publications(tmp_path: Path):
         assert any(name.endswith("/Publication Manifest.json") for name in names)
         assert any(name.endswith("/Data Book/Data Book.json") for name in names)
         assert any(name.endswith("/Scientific Report/Scientific Report.json") for name in names)
+        assert "Chapter 5 Research Report/Chapter 5 Research Report.json" in names
+        assert "Chapter 5 Research Report/Chapter 5 Research Report.md" in names
+        assert "Chapter 5 Research Report/Chapter 5 Research Report.html" in names
+        report = json.loads(archive.read("Chapter 5 Research Report/Chapter 5 Research Report.json"))
+        assert report["schema"] == "datascene.chapter_five_research_report.v1"
+        assert report["research_question"].startswith("How can the Datascene method")
+        assert report["verification"]["case_count"] == 2
+        assert report["analyst_completion"]["cross_case_synthesis"] == "requires_analyst_statement"
+        assert len(report["comparison_matrix"]) == len(FEATURES)
+    assert built["package"]["corpus_package"]["corpus_report"]["scope_boundary"]
+    assert built["package"]["browse_manifest"]["root_nodes"][0]["children"][0]["node_type"] == "report"
     assert built["video_count"] == 2
