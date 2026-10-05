@@ -1,7 +1,7 @@
 "use client";
 
 import { useSourceClockTicket } from "@/lib/use-source-clock-ticket";
-import { publishSourceTime, subscribeSourceTime, isCurrentSourceClockNavigation, isCurrentSourceTime, getActiveSourceClockContext, type SourceClockTimeEvent } from "@/lib/source-clock-events";
+import { publishSourceTime, subscribeSourceTime, isCurrentSourceClockNavigation, getActiveSourceClockContext } from "@/lib/source-clock-events";
 // src/frontend/app/V2components/components/panels/VideoPanel.tsx
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -2175,6 +2175,7 @@ export default function VideoPanel() {
   const lastCompareObjectUrl = React.useRef<string | null>(null);
   const lastBroadcastTimeRef = React.useRef<number>(-1);
   const pendingSourceTimeRef = React.useRef(0);
+  const startupClockPinnedRef = React.useRef(true);
   const navigationRequestedAtRef = React.useRef(0);
   const loadedVideoIdRef = React.useRef("");
   const compareSyncLockRef = React.useRef(false);
@@ -2321,6 +2322,7 @@ export default function VideoPanel() {
 
   const jumpToTime = React.useCallback((nextTime: number) => {
     const safeTime = clamp(nextTime, 0, duration || Number.MAX_SAFE_INTEGER);
+    startupClockPinnedRef.current = false;
     pendingSourceTimeRef.current = safeTime;
     navigationRequestedAtRef.current = Date.now();
     setCurrentTime(safeTime);
@@ -2687,6 +2689,7 @@ export default function VideoPanel() {
       if (Math.abs(nextVideoTimeLine - lastBroadcastTimeRef.current) < 0.05) {
         return;
       }
+      if (nextVideoTimeLine !== 0) startupClockPinnedRef.current = false;
       pendingSourceTimeRef.current = nextVideoTimeLine;
       navigationRequestedAtRef.current = Date.now();
       setVideoTimeLine(nextVideoTimeLine);
@@ -3085,6 +3088,7 @@ export default function VideoPanel() {
       setDuration(0);
       setFrameReadyTime(null);
       lastBroadcastTimeRef.current = -1;
+      startupClockPinnedRef.current = true;
       overlayArmedRef.current = false;
       setIsLoading(true);
 
@@ -3128,11 +3132,13 @@ export default function VideoPanel() {
     let cancelled = false;
     const sourceChanged = loadedVideoIdRef.current !== videoId;
     if (sourceChanged) {
-      const cue = eventBus.getLast<SourceClockTimeEvent>("sourceClockTimeChanged");
-      const time = cue && isCurrentSourceTime(cue, videoId) ? cue.timestamp_seconds : 0;
-      pendingSourceTimeRef.current = time;
-      setVideoTimeLine(time);
-      setCurrentTime(time);
+      // Opening a source always begins at the head of its analysis array.
+      // A prior event for the same analysis belongs to the previous viewing
+      // session and must not become startup state.
+      pendingSourceTimeRef.current = 0;
+      startupClockPinnedRef.current = true;
+      setVideoTimeLine(0);
+      setCurrentTime(0);
     } else if (!sourceChanged) {
       pendingSourceTimeRef.current = currentTime;
     }
@@ -3169,8 +3175,8 @@ export default function VideoPanel() {
           return;
         }
         setMetadata(mediaSource.metadata);
-        setCurrentTime(pendingSourceTimeRef.current);
-        setVideoTimeLine(pendingSourceTimeRef.current);
+        setCurrentTime(sourceChanged ? 0 : pendingSourceTimeRef.current);
+        setVideoTimeLine(sourceChanged ? 0 : pendingSourceTimeRef.current);
         loadedVideoIdRef.current = videoId;
         setDuration(0);
         setFrameReadyTime(null);
@@ -3414,7 +3420,7 @@ export default function VideoPanel() {
       }
 
       const nextTime = metadata.mediaTime;
-      setCurrentTime(nextTime);
+      setCurrentTime(startupClockPinnedRef.current ? 0 : nextTime);
       if (
         !overlayArmedRef.current ||
         Math.abs((frameReadyTimeRef.current ?? -999) - nextTime) > 0.033
@@ -3422,7 +3428,7 @@ export default function VideoPanel() {
         overlayArmedRef.current = true;
         setFrameReadyTime(nextTime);
       }
-      if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.1) {
+      if (!startupClockPinnedRef.current && Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.1) {
         lastBroadcastTimeRef.current = nextTime;
         publishSourceTime(videoId, nextTime, mediaClockTicket);
       }
@@ -8297,12 +8303,12 @@ export default function VideoPanel() {
                       return;
                     }
                     const nextTime = videoRef.current.currentTime;
-                    setCurrentTime(nextTime);
+                    setCurrentTime(startupClockPinnedRef.current ? 0 : nextTime);
                     if (!overlayArmedRef.current || Math.abs((frameReadyTime ?? -999) - nextTime) > 0.2) {
                       overlayArmedRef.current = true;
                       setFrameReadyTime(nextTime);
                     }
-                    if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
+                    if (!startupClockPinnedRef.current && Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
                       lastBroadcastTimeRef.current = nextTime;
                       publishSourceTime(videoId, nextTime, mediaClockTicket);
                     }
@@ -8313,6 +8319,11 @@ export default function VideoPanel() {
                       return;
                     }
                     const nextTime = videoRef.current.currentTime;
+                    if (startupClockPinnedRef.current) {
+                      setCurrentTime(0);
+                      setFrameReadyTime(nextTime);
+                      return;
+                    }
                     if (bboxNavigationPauseLockRef.current) {
                       videoRef.current.pause();
                       compareVideoRef.current?.pause();
@@ -8330,6 +8341,7 @@ export default function VideoPanel() {
                       setPrimaryPlaying(false);
                       return;
                     }
+                    startupClockPinnedRef.current = false;
                     setPrimaryPlaying(true);
                   }}
                   onPause={() => {
@@ -9916,8 +9928,8 @@ export default function VideoPanel() {
                           return;
                         }
                         const nextTime = videoRef.current.currentTime;
-                        setCurrentTime(nextTime);
-                        if (Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
+                        setCurrentTime(startupClockPinnedRef.current ? 0 : nextTime);
+                        if (!startupClockPinnedRef.current && Math.abs(nextTime - lastBroadcastTimeRef.current) >= 0.25) {
                           lastBroadcastTimeRef.current = nextTime;
                           publishSourceTime(videoId, nextTime, mediaClockTicket);
                         }
@@ -9928,6 +9940,10 @@ export default function VideoPanel() {
                           return;
                         }
                         const nextTime = videoRef.current.currentTime;
+                        if (startupClockPinnedRef.current) {
+                          setCurrentTime(0);
+                          return;
+                        }
                         if (bboxNavigationPauseLockRef.current) {
                           videoRef.current.pause();
                           compareVideoRef.current?.pause();
@@ -9944,6 +9960,7 @@ export default function VideoPanel() {
                           setPrimaryPlaying(false);
                           return;
                         }
+                        startupClockPinnedRef.current = false;
                         setPrimaryPlaying(true);
                         if (
                           linkedComparePlayback &&

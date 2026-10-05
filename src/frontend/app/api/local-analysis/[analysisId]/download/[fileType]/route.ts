@@ -423,8 +423,34 @@ export async function GET(
     if (fileType === "annotation_corrections") {
       return await withCorrectionWriteLock(analysisId, async () => {
         const corrections = await readRichestAnnotationCorrections(analysisId);
-        const context = await readCorrectionSourceBinding(analysisId);
-        return NextResponse.json({ ...corrections, _clock_write_guard: correctionClockGuard(analysisId, corrections, context) }, {
+        let context;
+        let bindingDetail: string | undefined;
+        try {
+          context = await readCorrectionSourceBinding(analysisId);
+        } catch (error) {
+          if (!(error instanceof CorrectionBindingUnavailable)) throw error;
+          // Clock binding governs writes, not evidence visibility. Restored or
+          // temporarily offline sources must still hydrate their mature ledger.
+          context = {
+            analysis_id: analysisId,
+            binding_status: "source_unavailable",
+            source_fingerprint: null,
+            clock_revision: null,
+          };
+          bindingDetail = error.message;
+        }
+        return NextResponse.json({
+          ...corrections,
+          _clock_write_guard: correctionClockGuard(analysisId, corrections, context),
+          ...(bindingDetail ? {
+            _hydration_state: {
+              evidence: "available",
+              editing: "read_only",
+              reason: "source_clock_unavailable",
+              detail: bindingDetail,
+            },
+          } : {}),
+        }, {
           headers: { "cache-control": "no-store" },
         });
       });

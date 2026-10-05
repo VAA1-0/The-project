@@ -23,6 +23,20 @@ class CorrectionWriteLockTests(unittest.TestCase):
                 pass
             self.assertEqual(list((Path(folder) / '.cache/correction-write-locks').iterdir()), [])
 
+    def test_python_recovers_only_dead_expired_owner(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            key = __import__('hashlib').sha256(b'a').hexdigest()
+            lock = root / '.cache/correction-write-locks' / (key + '.lock')
+            lock.mkdir(parents=True)
+            (lock / 'owner.json').write_text(json.dumps({
+                'token': 'orphan', 'pid': 99999999, 'analysis_id': 'a',
+                'created_at': __import__('time').time() - 120,
+            }))
+            with correction_write_lock(root, 'a', .05):
+                pass
+            self.assertEqual(list((root / '.cache/correction-write-locks').iterdir()), [])
+
     def test_actual_save_route_returns_busy_before_read_or_mutation(self):
         class HTTPException(Exception):
             def __init__(self, status_code, detail, headers=None):
@@ -56,11 +70,61 @@ class CorrectionWriteLockTests(unittest.TestCase):
             status = {'annotation_corrections': {'transcript_clock_offset_seconds': 3}, 'output_files': {}}
             before = json.loads(json.dumps(status))
             env = dict(globals(), RESULTS_DIR=root, get_analysis_entry=lambda _: status,
+                       hydrate_richer_persisted_annotation_corrections=lambda item: item.update(annotation_corrections=json.loads((root / 'a/annotation_corrections.json').read_text())),
                        build_annotation_corrections_payload=lambda item: item['annotation_corrections'])
             exec(compile(ast.Module(body=[node], type_ignores=[]), '<actual-correction-read>', 'exec'), env)
             result = env['get_annotation_corrections']('a')
             self.assertEqual(result['annotation_corrections']['transcript_clock_offset_seconds'], 2)
             self.assertEqual(status, before)
+
+    def test_correction_get_hydrates_restored_mature_ledger(self):
+        tree = ast.parse((ROOT / 'api_server.py').read_text())
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'get_annotation_corrections')
+        node.decorator_list = []
+        status = {'analysis_id': 'a', 'annotation_corrections': {'manual_visual_annotations': []},
+                  'output_files': {'annotation_corrections': '/restored/corrections.json'}}
+        before = json.loads(json.dumps(status))
+        restored = {'manual_visual_annotations': [{'id': 'mature-bbox'}]}
+        def hydrate(item):
+            item['annotation_corrections'] = restored
+        env = dict(globals(), get_analysis_entry=lambda _: status,
+                   hydrate_richer_persisted_annotation_corrections=hydrate,
+                   build_annotation_corrections_payload=lambda item: item['annotation_corrections'])
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<mature-correction-read>', 'exec'), env)
+        result = env['get_annotation_corrections']('a')
+        self.assertEqual(result['annotation_corrections']['manual_visual_annotations'], [{'id': 'mature-bbox'}])
+        self.assertEqual(status, before)
+
+    def test_richer_imported_arrays_cannot_replace_canonical_global_clock(self):
+        tree = ast.parse((ROOT / 'api_server.py').read_text())
+        names = {'annotation_correction_maturity_score', 'hydrate_richer_persisted_annotation_corrections'}
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        with tempfile.TemporaryDirectory() as folder:
+            results = Path(folder)
+            analysis_id = 'clock-authority'
+            canonical_path = results / analysis_id / 'annotation_corrections.json'
+            imported_path = results / 'restored/annotation_corrections.json'
+            canonical_path.parent.mkdir(parents=True)
+            imported_path.parent.mkdir(parents=True)
+            canonical_path.write_text(json.dumps({
+                'transcript_clock_offset_seconds': 2.5,
+                'correction_generation': 'canonical-generation',
+                'manual_visual_annotations': [],
+            }))
+            imported_path.write_text(json.dumps({
+                'transcript_clock_offset_seconds': 99,
+                'correction_generation': 'imported-generation',
+                'manual_visual_annotations': [{'id': 'mature-bbox'}],
+            }))
+            status = {'analysis_id': analysis_id, 'annotation_corrections': {},
+                      'output_files': {'annotation_corrections': str(imported_path)}}
+            env = dict(globals(), RESULTS_DIR=results,
+                       ANNOTATION_CORRECTION_COLLECTIONS=('manual_visual_annotations',))
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), '<clock-authority-hydration>', 'exec'), env)
+            env['hydrate_richer_persisted_annotation_corrections'](status)
+            self.assertEqual(status['annotation_corrections']['manual_visual_annotations'], [{'id': 'mature-bbox'}])
+            self.assertEqual(status['annotation_corrections']['transcript_clock_offset_seconds'], 2.5)
+            self.assertEqual(status['annotation_corrections']['correction_generation'], 'canonical-generation')
 
     def test_export_refresh_reads_canonical_data_inside_shared_lock(self):
         tree = ast.parse((ROOT / 'api_server.py').read_text())

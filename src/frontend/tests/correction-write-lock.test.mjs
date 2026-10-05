@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
@@ -55,7 +55,7 @@ test("exceptions release dashboard ownership without leaking locks", async t => 
   assert.deepEqual(await readdir(path.join(root, ".cache/correction-write-locks")), []);
 });
 
-test("a crashed process leaves a diagnostic lock that is never silently stolen", { timeout: 5000 }, async t => {
+test("a crashed process lock is recovered only after its owner is dead and grace has elapsed", { timeout: 5000 }, async t => {
   const root = await fixture(t);
   const held = child(root, true);
   t.after(() => held.proc.kill());
@@ -64,9 +64,23 @@ test("a crashed process leaves a diagnostic lock that is never silently stolen",
   await held.done;
   const folder = path.join(root, ".cache/correction-write-locks");
   const [name] = await readdir(folder);
-  const before = await readFile(path.join(folder, name, "owner.json"), "utf8");
-  await assert.rejects(withSharedCorrectionLock(root, "analysis-a", async () => assert.fail("stole abandoned lock"), 100), /abandoned lock/);
-  assert.equal(await readFile(path.join(folder, name, "owner.json"), "utf8"), before);
+  const ownerPath = path.join(folder, name, "owner.json");
+  const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+  owner.created_at -= 120;
+  await writeFile(ownerPath, JSON.stringify(owner));
+  assert.equal(await withSharedCorrectionLock(root, "analysis-a", async () => "recovered", 100), "recovered");
+  assert.deepEqual(await readdir(folder), []);
+});
+
+test("an old lock owned by a live process is never recovered", async t => {
+  const root = await fixture(t);
+  const key = (await import("node:crypto")).createHash("sha256").update("analysis-a").digest("hex");
+  const lock = path.join(root, ".cache/correction-write-locks", `${key}.lock`);
+  await mkdir(lock, { recursive: true });
+  await writeFile(path.join(lock, "owner.json"), JSON.stringify({
+    token: "live", pid: process.pid, analysis_id: "analysis-a", created_at: Date.now() / 1000 - 3600,
+  }));
+  await assert.rejects(withSharedCorrectionLock(root, "analysis-a", async () => assert.fail("entered live lock"), 100), /locked/);
 });
 
 test("different analyses can save concurrently", async t => {

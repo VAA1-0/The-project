@@ -31,6 +31,8 @@ test("actual dashboard POST rejects a stale clock without touching either artifa
   const fixture = `class CorrectionBindingUnavailable extends Error {}
     class CorrectionWriteBusy extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
+    const assertLocalAnalysisBoundary = async () => {};
+    const projectBoundaryErrorResponse = () => null;
     const withCorrectionWriteLock = async (_id, work) => work();
     const projectRoot = () => '/unused';
     const path = { join: (...parts) => parts.join('/'), dirname: () => '/unused' };
@@ -51,6 +53,8 @@ test("queued dashboard saves check generation inside the write queue and strip t
   const fixture = `class CorrectionBindingUnavailable extends Error {}
     class CorrectionWriteBusy extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
+    const assertLocalAnalysisBoundary = async () => {};
+    const projectBoundaryErrorResponse = () => null;
     const correctionWriteQueues = new Map();
     const withSharedCorrectionLock = async (_root, _id, work) => work();
     const projectRoot = () => '/unused';
@@ -133,13 +137,15 @@ test("actual dashboard locks snapshot reads and rejects replaced source before w
   const fixture = `class CorrectionWriteBusy extends Error {}
     class CorrectionBindingUnavailable extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
+    const assertLocalAnalysisBoundary = async () => {};
+    const projectBoundaryErrorResponse = () => null;
     let locked = false;
     const withCorrectionWriteLock = async (_id, work) => { locked = true; try { return await work(); } finally { locked = false; } };
     const projectRoot = () => '/unused';
     const path = { join: (...parts) => parts.join('/'), dirname: () => '/unused' };
     const process = { pid: 1 };
-    const readRichestAnnotationCorrections = async () => { if (!locked) throw new Error('Unlocked correction read'); return {}; };
-    export let context = { analysis_id: 'a', binding_status: 'content_bound', source_fingerprint: 'sha256:one', clock_revision: 'clock-v1:one', timebase: { transcript_clock_offset_seconds: 0 } };
+    const readRichestAnnotationCorrections = async () => { if (!locked) throw new Error('Unlocked correction read'); return { transcript_clock_offset_seconds: 2 }; };
+    export let context = { analysis_id: 'a', binding_status: 'content_bound', source_fingerprint: 'sha256:one', clock_revision: 'clock-v1:one', timebase: { transcript_clock_offset_seconds: 2 } };
     export const replaceContext = value => { context = value; };
     const readCorrectionSourceBinding = async () => { if (!locked) throw new Error('Unlocked binding read'); if (!context) throw new CorrectionBindingUnavailable('offline'); return context; };
     const fs = new Proxy({}, { get: () => () => { throw new Error('Unexpected artifact write'); } });`;
@@ -152,8 +158,15 @@ test("actual dashboard locks snapshot reads and rejects replaced source before w
   const rejected = await mod.POST({ json: async () => loaded.body }, params);
   assert.equal(rejected.status, 409);
   mod.replaceContext(null);
-  assert.equal((await mod.GET({}, params)).status, 503);
-  assert.equal((await mod.POST({ json: async () => loaded.body }, params)).status, 503);
+  const readOnly = await mod.GET({}, params);
+  assert.equal(readOnly.status, 200);
+  assert.equal(readOnly.body._hydration_state.evidence, 'available');
+  assert.equal(readOnly.body._hydration_state.editing, 'read_only');
+  assert.equal(readOnly.body._clock_write_guard.binding_status, 'source_unavailable');
+  assert.equal(readOnly.body._clock_write_guard.source_fingerprint, null);
+  assert.equal(readOnly.body.transcript_clock_offset_seconds, 2);
+  assert.equal(readOnly.body._clock_write_guard.transcript_clock_offset_seconds, 2);
+  assert.equal((await mod.POST({ json: async () => readOnly.body }, params)).status, 503);
 });
 
 test('correction generation rejects stale same-clock saves and downgrade attempts', () => {
@@ -172,6 +185,8 @@ test('dashboard delegates global offset changes without holding its lock and pre
   const fixture=`
     const process={env:{}};
     const NextResponse={json:(body,init={})=>({body,status:init.status||200})};
+    const assertLocalAnalysisBoundary=async()=>{};
+    const projectBoundaryErrorResponse=()=>null;
     const withCorrectionWriteLock=()=>{throw new Error('Dashboard must not acquire the backend lock');};
     export let calls=[];
     const fetch=async(url,options)=>{calls.push([url,JSON.parse(options.body)]);return {status:409,json:async()=>({detail:'stale clock'})};};

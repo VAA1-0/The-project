@@ -1,6 +1,8 @@
 import unittest
 
 from src.backend.analysis.narrative_agent_digital_twin import (
+    SCHEMA,
+    build_array_digital_twin_report,
     build_digital_twins,
     build_occurrence_signatures,
     build_proliferation_event,
@@ -30,8 +32,21 @@ def status_fixture():
             ]
         },
         "tracked_objects": [
-            {"id": "visual-1", "class_name": "person", "start_seconds": 10, "end_seconds": 12}
+            {
+                "id": "visual-1", "class_name": "person", "start_seconds": 10,
+                "end_seconds": 12, "movement_type": "turning", "motion_score": 0.72,
+                "pose_ref": "pose:visual-1",
+            }
         ],
+        "audio_diarization": {
+            "speaker_turns": [
+                {
+                    "turn_id": "turn-1", "speaker_label": "SPEAKER_00", "start": 10,
+                    "end": 11.5, "turn_transition": "speaker_change",
+                    "overlap_seconds": 0.2, "embedding_ref": "voice:turn-1",
+                }
+            ]
+        },
         "transcript": [
             {"id": "speech-1", "text": "Agent A speaks", "start_seconds": 10, "end_seconds": 11}
         ],
@@ -48,6 +63,12 @@ def status_fixture():
 
 
 class NarrativeAgentDigitalTwinTests(unittest.TestCase):
+    def test_v2_report_registers_speaker_turn_and_body_movement_modalities(self):
+        report = build_array_digital_twin_report([status_fixture()])
+        self.assertEqual(SCHEMA, "vaa1.narrative_agent_digital_twin_array.v2")
+        self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["speaker_turn"], 1)
+        self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["body_movement"], 1)
+
     def test_occurrence_signature_collects_source_timed_support(self):
         signature = build_occurrence_signatures([status_fixture()])[0]
         self.assertEqual(signature["source_interval"], {"start": 10.0, "end": 12.0})
@@ -59,6 +80,8 @@ class NarrativeAgentDigitalTwinTests(unittest.TestCase):
         twin = build_digital_twins([status_fixture()])[0]
         self.assertEqual(twin["narrative_agent_label"], "Agent A")
         self.assertTrue(twin["evidence"]["visual"])
+        self.assertTrue(twin["evidence"]["speaker_turn"])
+        self.assertTrue(twin["evidence"]["body_movement"])
         self.assertTrue(twin["evidence"]["transcript"])
         self.assertTrue(twin["evidence"]["ocr"])
         self.assertTrue(twin["evidence"]["source_media_data"])
@@ -69,6 +92,12 @@ class NarrativeAgentDigitalTwinTests(unittest.TestCase):
         )
         self.assertFalse(twin["visual_quality_guard"]["automatic_recognition_ready"])
         self.assertTrue(twin["visual_quality_guard"]["single_first_frame_cannot_auto_confirm"])
+        turn = twin["evidence"]["speaker_turn"][0]["speaker_turn"]
+        self.assertEqual(turn["turn_transition"], "speaker_change")
+        self.assertTrue(turn["identity_is_candidate_only"])
+        movement = twin["evidence"]["body_movement"][0]["body_movement"]
+        self.assertEqual(movement["movement_type"], "turning")
+        self.assertTrue(movement["interpretation_is_candidate_only"])
 
     def test_multimodal_match_can_confirm_and_project_to_consumers(self):
         twin = build_digital_twins([status_fixture()])[0]

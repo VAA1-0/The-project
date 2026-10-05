@@ -30,7 +30,7 @@ test('events carry source revision, preserve zero and long seconds, and reject u
   m.eventBus.emit('videoIdChanged','b'); await settle();
   assert.equal(m.publishSourceTime('a',71),false);
   m.publishSourceTime('b',72);
-  assert.deepEqual(times,[[12500,'r1'],[0,'r1']]); stop();
+  assert.deepEqual(times,[[0,'r1'],[12500,'r1'],[0,'r1']]); stop();
 });
 
 test('late lookup and queued seeks cannot cross A → B → A selection boundaries', async () => {
@@ -42,8 +42,8 @@ test('late lookup and queued seeks cannot cross A → B → A selection boundari
   assert.equal(m.publishSourceTime('a',72,old),false);
   requests.at(-1).resolve(context('a','new')); await settle();
   const times=[]; m.subscribeSourceTime('a',(t)=>times.push(t));
-  assert.deepEqual(times,[]);
-  assert.equal(m.publishSourceTime('a',73),true); assert.deepEqual(times,[73]);
+  assert.deepEqual(times,[0]);
+  assert.equal(m.publishSourceTime('a',73),true); assert.deepEqual(times,[0,73]);
 });
 
 test('a source-clock revision refresh rejects old callbacks and replay while allowing current navigation', async () => {
@@ -69,7 +69,7 @@ test('synchronous switching during dispatch prevents later consumers accepting t
   const m=await fixture(); m.eventBus.emit('videoIdChanged','a'); await settle();
   m.eventBus.on('sourceClockTimeChanged',()=>m.eventBus.emit('videoIdChanged','b'));
   const times=[]; m.subscribeSourceTime('a',t=>times.push(t));
-  assert.equal(m.publishSourceTime('a',99),false); assert.deepEqual(times,[]);
+  assert.equal(m.publishSourceTime('a',99),false); assert.deepEqual(times,[0]);
 });
 
 test('an empty video selection falls back to the active analysis context', async () => {

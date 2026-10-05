@@ -52,8 +52,10 @@ const LayoutHostContext = createContext<LayoutHostContextType | undefined>(
 );
 
 const SAVED_LAYOUT_STORAGE_KEY = "vaa1.workspace.layout";
+const SAVED_LAYOUT_VERSION = "2026-10-05-video-center-v1";
 const projectLayoutStorageKey = () =>
   `${SAVED_LAYOUT_STORAGE_KEY}.${encodeURIComponent(activeProjectScopeId() || "catalogue")}`;
+const projectLayoutVersionStorageKey = () => `${projectLayoutStorageKey()}.version`;
 
 const RIGHT_STACK_ANCHOR_TYPES = [
   "TracebackDrawer",
@@ -203,56 +205,42 @@ const buildDefaultLayoutConfig = (): import("golden-layout").LayoutConfig => ({
     type: "row",
     content: [
       {
-        type: "column",
+        type: "stack",
         width: 16,
         content: [
           {
             type: "component",
             componentType: "ProjectPanel",
             title: "Project",
-            height: 28,
           },
           {
             type: "component",
             componentType: "DownloadPanel",
             title: "Downloads",
-            height: 72,
           },
         ],
       },
       {
-        type: "column",
+        type: "component",
         width: 56,
-        content: [
-          {
-            type: "component",
-            componentType: "VideoPanel",
-            title: "Video",
-            height: 64,
-          },
-          {
-            type: "row",
-            content: [
-              {
-                type: "component",
-                width: 32,
-                componentType: "ToolsPanel",
-                title: "Tools",
-              },
-              {
-                type: "component",
-                componentType: "Transcript",
-                title: "Transcript",
-              },
-            ],
-          },
-        ],
+        componentType: "VideoPanel",
+        title: "Video",
       },
       {
         type: "stack",
         id: "rightStack",
         width: 28,
         content: [
+          {
+            type: "component",
+            componentType: "ToolsPanel",
+            title: "Tools",
+          },
+          {
+            type: "component",
+            componentType: "Transcript",
+            title: "Transcript",
+          },
           {
             type: "component",
             componentType: "OBJDetection",
@@ -957,6 +945,10 @@ export default function LayoutHost({
             projectLayoutStorageKey(),
             JSON.stringify(restorableConfig),
           );
+          window.localStorage.setItem(
+            projectLayoutVersionStorageKey(),
+            SAVED_LAYOUT_VERSION,
+          );
         } catch (error) {
           console.warn("Failed to persist workspace layout:", error);
         }
@@ -968,13 +960,18 @@ export default function LayoutHost({
     let requestedWorkspace = "";
     try {
       const stored = window.localStorage.getItem(projectLayoutStorageKey());
-      if (stored) {
+      const storedVersion = window.localStorage.getItem(projectLayoutVersionStorageKey());
+      if (stored && storedVersion === SAVED_LAYOUT_VERSION) {
         const restoredLayout = normalizeLegacyLayoutLabels(
           JSON.parse(stored),
         ) as import("golden-layout").LayoutConfig;
         initialLayout = layoutContainsComponent(restoredLayout, "VideoPanel")
           ? restoredLayout
           : buildDefaultLayoutConfig();
+      } else if (stored) {
+        // Migrate the prior multi-panel centre once. Subsequent analyst
+        // rearrangements remain project-scoped and restorable.
+        initialLayout = buildDefaultLayoutConfig();
       }
       const params = new URLSearchParams(window.location.search);
       requestedAnalysisId = params.get("analysis_id") || "";

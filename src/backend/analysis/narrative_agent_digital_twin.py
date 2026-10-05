@@ -13,10 +13,12 @@ from src.backend.analysis.narrative_agent_recognition_array import (
 )
 
 
-SCHEMA = "vaa1.narrative_agent_digital_twin_array.v1"
+SCHEMA = "vaa1.narrative_agent_digital_twin_array.v2"
 MODALITIES = (
     "visual",
     "audio",
+    "speaker_turn",
+    "body_movement",
     "transcript",
     "ocr",
     "music_theme",
@@ -25,8 +27,10 @@ MODALITIES = (
     "manual_confirmation",
 )
 WEIGHTS = {
-    "visual": 0.30,
-    "audio": 0.20,
+    "visual": 0.24,
+    "audio": 0.16,
+    "speaker_turn": 0.10,
+    "body_movement": 0.10,
     "transcript": 0.14,
     "ocr": 0.08,
     "music_theme": 0.08,
@@ -76,7 +80,7 @@ def _list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ("items", "segments", "turns", "results", "events", "intervals", "cues", "rows", "clouds", "scene_cards"):
+        for key in ("items", "segments", "turns", "speaker_turns", "results", "events", "intervals", "cues", "rows", "clouds", "scene_cards"):
             if isinstance(value.get(key), list):
                 return value[key]
     return []
@@ -200,7 +204,7 @@ def _evidence_record(
         or item.get("speaker_label")
         or item.get("event_type")
     )
-    return {
+    record = {
         "evidence_id": evidence_id,
         "analysis_id": analysis_id,
         "modality": modality,
@@ -211,19 +215,52 @@ def _evidence_record(
         "method": _text(item.get("method") or item.get("provider")) or "registered_artifact",
         "traceback_refs": [evidence_id],
     }
+    if modality == "speaker_turn":
+        record["speaker_turn"] = {
+            "speaker_label": _text(item.get("speaker_label") or item.get("speaker")),
+            "turn_transition": _text(item.get("turn_transition") or item.get("transition")),
+            "overlap_seconds": _number(item.get("overlap_seconds")),
+            "interruption": bool(item.get("interruption") or item.get("is_interruption")),
+            "embedding_ref": _text(item.get("embedding_ref")) or None,
+            "reference_match": _text(item.get("reference_match")) or None,
+            "identity_is_candidate_only": True,
+        }
+    if modality == "body_movement":
+        record["body_movement"] = {
+            "movement_type": _text(item.get("movement_type") or item.get("action") or item.get("motion_label")),
+            "movement_intensity": _number(item.get("movement_intensity") or item.get("motion_score")),
+            "pose_ref": _text(item.get("pose_ref") or item.get("skeleton_ref")) or None,
+            "track_id": item.get("track_id"),
+            "occlusion_state": _text(item.get("occlusion_state")) or None,
+            "interpretation_is_candidate_only": True,
+        }
+    return record
 
 
 def _modality_rows(status: Mapping[str, Any], modality: str) -> List[Dict[str, Any]]:
     analysis_id = _analysis_id(status)
     key_map = {
         "visual": ("tracked_objects", "visual_detections", "face_results"),
-        "audio": ("audio_sample_clouds", "speaker_diarization", "audio_prosody"),
+        "audio": ("audio_sample_clouds", "audio_prosody"),
+        "speaker_turn": ("audio_diarization", "speaker_diarization"),
+        "body_movement": ("body_movement_detections", "pose_detections", "tracked_objects"),
         "transcript": ("linked_transcript", "transcript", "transcript_segments"),
         "ocr": ("ocr_results", "ocr", "text_detections"),
         "music_theme": ("music_theme", "music_intervals", "audio_event_intervals"),
         "scene_card": ("scene_cards", "mise_en_scene_scene_cards"),
     }
     rows = _artifact_rows(status, *key_map.get(modality, ()))
+    if modality == "body_movement":
+        rows = [
+            row for row in rows
+            if any(
+                row.get(key) not in (None, "", [], {})
+                for key in (
+                    "movement_type", "action", "motion_label", "movement_intensity",
+                    "motion_score", "pose_ref", "skeleton_ref", "pose_landmarks",
+                )
+            )
+        ]
     if modality == "music_theme":
         rows = [
             row
@@ -285,7 +322,10 @@ def build_digital_twins(statuses: Iterable[Mapping[str, Any]]) -> List[Dict[str,
                     "traceback_refs": anchor.get("traceback_refs") or [],
                 }
             )
-            for modality in ("visual", "audio", "transcript", "ocr", "music_theme", "scene_card"):
+            for modality in (
+                "visual", "audio", "speaker_turn", "body_movement", "transcript",
+                "ocr", "music_theme", "scene_card",
+            ):
                 evidence[modality].extend(
                     record
                     for record in _modality_rows(status, modality)
@@ -344,7 +384,10 @@ def build_occurrence_signatures(statuses: Iterable[Mapping[str, Any]]) -> List[D
         visual_rows = _artifact_rows(status, "tracked_objects")
         supporting = {
             modality: _modality_rows(status, modality)
-            for modality in ("audio", "transcript", "ocr", "music_theme", "scene_card")
+            for modality in (
+                "audio", "speaker_turn", "body_movement", "transcript", "ocr",
+                "music_theme", "scene_card",
+            )
         }
         source_media = _source_media_record(status)
         for index, row in enumerate(visual_rows):

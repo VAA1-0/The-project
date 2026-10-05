@@ -34,7 +34,15 @@ function selectionChanged() {
   selected = id;
   epoch += 1;
   context = null;
-  pending = null;
+  pending = id ? {
+    ticket: {
+      analysis_id: id,
+      selection_epoch: epoch,
+      clock_revision: null,
+      source_fingerprint: null,
+    },
+    time: 0,
+  } : null;
   request += 1;
   eventBus.emit("sourceClockContextChanged", null);
   void refreshSourceClock();

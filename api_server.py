@@ -157,6 +157,7 @@ from src.backend.analysis.live_mature_data_proliferation_bus import (
     write_live_mature_data_proliferation_audit,
 )
 from src.backend.analysis.narrative_agent_digital_twin import (
+    SCHEMA as NARRATIVE_AGENT_DIGITAL_TWIN_SCHEMA,
     write_array_digital_twin_report,
 )
 from src.backend.analysis.mise_en_scene_scene_card import (
@@ -3304,6 +3305,7 @@ def hydrate_richer_persisted_annotation_corrections(status: Dict[str, Any]) -> N
     canonical_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
     recorded_path = output_files.get("annotation_corrections")
     candidates = [(current, recorded_path)]
+    canonical_corrections = None
     for correction_path in (canonical_path, Path(str(recorded_path)) if recorded_path else None):
         if correction_path is None or not correction_path.exists():
             continue
@@ -3312,11 +3314,24 @@ def hydrate_richer_persisted_annotation_corrections(status: Dict[str, Any]) -> N
         except (OSError, ValueError, TypeError):
             continue
         candidates.append((persisted, str(correction_path)))
+        if correction_path == canonical_path and isinstance(persisted, dict):
+            canonical_corrections = persisted
     richest, richest_path = max(
         candidates,
         key=lambda candidate: annotation_correction_maturity_score(candidate[0]),
     )
     if isinstance(richest, dict):
+        richest = dict(richest)
+        if canonical_corrections is not None:
+            # Mature imported arrays may supplement a restored analysis, but a
+            # current canonical sidecar remains authoritative for global-clock
+            # and optimistic-concurrency state.
+            richest["transcript_clock_offset_seconds"] = canonical_corrections.get(
+                "transcript_clock_offset_seconds"
+            )
+            richest["correction_generation"] = canonical_corrections.get(
+                "correction_generation"
+            )
         status["annotation_corrections"] = richest
         if richest_path:
             output_files["annotation_corrections"] = str(richest_path)
@@ -10659,7 +10674,15 @@ async def get_narrative_agent_digital_twins() -> dict:
         path.stat().st_mtime_ns > artifact_path.stat().st_mtime_ns
         for path in correction_paths
     )
-    if not artifact_path.exists() or corrections_are_newer:
+    payload = None
+    if artifact_path.exists() and not corrections_are_newer:
+        try:
+            cached_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+            if cached_payload.get("schema") == NARRATIVE_AGENT_DIGITAL_TWIN_SCHEMA:
+                payload = cached_payload
+        except (OSError, json.JSONDecodeError):
+            payload = None
+    if payload is None:
         records = list(collect_saved_analysis_records().values())
         if not records:
             raise HTTPException(status_code=404, detail="No saved analyses are available")
@@ -10667,8 +10690,6 @@ async def get_narrative_agent_digital_twins() -> dict:
             hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
             hydrate_richer_persisted_annotation_corrections(status)
         payload = write_array_digital_twin_report(records, artifact_path)
-    else:
-        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     return make_json_safe(payload)
 
 
@@ -13623,24 +13644,10 @@ def get_annotation_corrections(analysis_id: str) -> dict:
 
     # Readers must not replace a writer's in-flight correction snapshot.
     status = {**status, "output_files": dict(status.get("output_files") or {})}
-
-    # The correction sidecar is the interactive source of truth. Read it
-    # directly so a dashboard-side emergency commit is visible immediately;
-    # never rewrite the full analysis record merely to open an editor.
-    correction_path = RESULTS_DIR / analysis_id / "annotation_corrections.json"
-    if correction_path.exists():
-        try:
-            persisted = json.loads(correction_path.read_text(encoding="utf-8"))
-            if isinstance(persisted, dict):
-                status["annotation_corrections"] = persisted
-                status.setdefault("output_files", {})[
-                    "annotation_corrections"
-                ] = str(correction_path)
-        except (OSError, ValueError, TypeError):
-            logger.exception(
-                "Could not reopen annotation correction sidecar for %s",
-                analysis_id,
-            )
+    # Select the most mature available ledger across the in-memory snapshot,
+    # canonical sidecar and a restored/imported path. This is read-only: never
+    # rewrite the analysis record merely to open an editor.
+    hydrate_richer_persisted_annotation_corrections(status)
 
     return {
         "status": "ok",

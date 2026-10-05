@@ -2050,6 +2050,12 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
                   decision.decision === "confirmed" &&
                   decision.proliferation_allowed === true,
               );
+              const modalityCounts = [
+                ["Visual", twin.evidence?.visual?.length || 0],
+                ["Audio samples", twin.evidence?.audio?.length || 0],
+                ["Speaker turns", twin.evidence?.speaker_turn?.length || 0],
+                ["Body movement", twin.evidence?.body_movement?.length || 0],
+              ] as const;
               return (
                 <details open key={twin.twin_id} className="border border-white/8 bg-[#1b1b1b]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-2 py-1.5 marker:hidden">
@@ -2059,6 +2065,13 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
                     </span>
                   </summary>
                   <div className="border-t border-white/8 px-2 py-2 text-[10px] text-slate-400">
+                    <div className="mb-2 flex flex-wrap gap-1" data-vaa1-digital-twin-evidence-counts="true">
+                      {modalityCounts.map(([label, count]) => (
+                        <span key={label} className={`border px-1.5 py-0.5 ${count ? "border-cyan-400/20 text-cyan-100/80" : "border-white/8 text-slate-600"}`}>
+                          {label} {count}
+                        </span>
+                      ))}
+                    </div>
                     <div>Present: {twin.modality_coverage.present.join(", ") || "none"}</div>
                     <div className="mt-1">Missing: {twin.modality_coverage.missing.join(", ") || "none"}</div>
                     <div className="mt-2 flex flex-wrap gap-1">
@@ -2172,9 +2185,14 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
                           Open Transcript
                         </button>
                       ) : null}
-                      {twin.evidence?.audio?.length ? (
+                      {twin.evidence?.audio?.length || twin.evidence?.speaker_turn?.length ? (
                         <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("Audio", { videoId })}>
-                          Open Audio
+                          Open Audio / speaker turns
+                        </button>
+                      ) : null}
+                      {twin.evidence?.body_movement?.length ? (
+                        <button type="button" className="border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5" onClick={() => openPanel("Video", { videoId })}>
+                          Open body movement
                         </button>
                       ) : null}
                       {twin.evidence?.ocr?.length ? (

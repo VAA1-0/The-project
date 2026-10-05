@@ -37,6 +37,8 @@ export default function SourceClockBrowser() {
       const id = activeAnalysisId();
       setAnalysisId(id);
       setContext(getActiveSourceClockContext());
+      setCursor(0);
+      if (!editing.current) setDraft(formatPreciseSourceTime(0));
       setMessage("");
     };
     const contextChanged = (next: SourceClockContext | null) => {
