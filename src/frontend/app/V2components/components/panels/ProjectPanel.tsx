@@ -21,6 +21,7 @@ import {
 } from "@/lib/api-service";
 import VideoItem from "@/components/VideoItem";
 import { deleteVideoBlob } from "@/lib/blob-store";
+import { readMorphologyConfiguration } from "@/lib/morphology-configuration";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -247,6 +248,9 @@ export default function ProjectPanel() {
       return "Bond, COP30 and Helsinki project";
     }
     if (projectId === "research-test-2026") return "Marcella project";
+    if (projectId === "research-test-2-20226-cop30-vids") {
+      return "Research test 2 20226 - COP30 vids";
+    }
     if (projectId === "unassigned-saved-work") return "Unassigned saved work";
     return projectId.replaceAll("-", " ");
   };
@@ -520,6 +524,7 @@ export default function ProjectPanel() {
   const startAnalysisForVideo = async (id: string, notify = true) => {
     selectVideo(id);
     const current = await VideoService.get(id);
+    const morphologyConfiguration = readMorphologyConfiguration();
     await VideoService.startAnalysis(id, "full", {
       analysisTier: (current.analysisTier as
         | "quick_sweep"
@@ -532,19 +537,22 @@ export default function ProjectPanel() {
         | "images"
         | "text") || "multimodal",
       morphologyPackPolicy:
-        (current.languagePackPolicy?.policy as
+        morphologyConfiguration?.policy || (current.languagePackPolicy?.policy as
           | "core_only"
           | "plus_1"
-          | "plus_2") || "core_only",
+          | "plus_2"
+          | "plus_3") || "core_only",
       morphologyLanguages:
-        current.languagePackPolicy?.selected_languages
+        morphologyConfiguration?.languages || current.languagePackPolicy?.selected_languages
           ?.map((item) => item.code || "")
           .filter(Boolean) || [],
       specialUseMorphologyLanguage:
+        morphologyConfiguration?.specialUseLanguage ||
         current.languagePackPolicy?.special_use_language?.code ||
         current.languagePackPolicy?.special_use_language?.name ||
         "",
       allowRoughInterpretation:
+        morphologyConfiguration?.allowRoughInterpretation ??
         current.languagePackPolicy?.allow_rough_interpretation ?? true,
       applyFaceAnonymization: Boolean(current.applyFaceAnonymization),
       faceMessageStyle: current.faceMessageStyle || "plain",

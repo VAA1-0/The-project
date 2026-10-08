@@ -94,8 +94,9 @@ export function MenuBar() {
   const [showUploadMetadataDialog, setShowUploadMetadataDialog] =
     useState(false);
   const [isSubmittingUpload, setIsSubmittingUpload] = useState(false);
-  const [researchProjectId, setResearchProjectId] = useState("research-test-2026");
+  const [researchProjectId, setResearchProjectId] = useState("bond-cop30-helsinki");
   const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
+  const [uploadedAnalysisResults, setUploadedAnalysisResults] = useState<Record<number, Awaited<ReturnType<typeof VideoService.upload>>>>({});
   const [uploadCapacity, setUploadCapacity] = useState<{
     totalBytes: number;
     remainingBytes: number;
@@ -108,6 +109,11 @@ export function MenuBar() {
   >([]);
 
   useEffect(() => {
+    const activeProjectId = activeProjectScopeId();
+    if (activeProjectId) {
+      setResearchProjectId(activeProjectId);
+      return;
+    }
     const savedProjectId = window.localStorage.getItem(RESEARCH_PROJECT_STORAGE_KEY);
     if (savedProjectId) setResearchProjectId(savedProjectId);
   }, []);
@@ -373,6 +379,9 @@ export function MenuBar() {
     drafts: UploadMetadataDraft[],
   ) => {
     try {
+      const activeProjectId = activeProjectScopeId();
+      const targetProjectId = researchProjectId.trim();
+      if (!targetProjectId) throw new Error("Choose a research project before uploading.");
       const preflight = await apiService.preflightResearchCorpus(files);
       if (!preflight.accepted) {
         throw new Error(preflight.reasons.join(" ") || "Corpus capacity check failed.");
@@ -381,16 +390,24 @@ export function MenuBar() {
         totalBytes: preflight.total_bytes,
         remainingBytes: preflight.remaining_after_upload_bytes,
       });
-      window.localStorage.setItem(RESEARCH_PROJECT_STORAGE_KEY, researchProjectId);
+      window.localStorage.setItem(RESEARCH_PROJECT_STORAGE_KEY, targetProjectId);
       for (let index = 0; index < files.length; index += 1) {
         const f = files[index];
         const draft = drafts[index] || buildUploadDraft(f);
         const length = await getVideoDuration(f);
-        const res = await VideoService.upload(f, 0, length, {
-          projectId: researchProjectId,
-          onProgress: (progress) =>
-            setUploadProgress((previous) => ({ ...previous, [index]: progress })),
-        });
+        const res = uploadedAnalysisResults[index] || await VideoService.upload(f, 0, length, {
+            projectId: targetProjectId,
+            onProgress: (progress) =>
+              setUploadProgress((previous) => ({ ...previous, [index]: progress })),
+          });
+        if (!uploadedAnalysisResults[index]) {
+          setUploadedAnalysisResults((previous) => ({ ...previous, [index]: res }));
+        }
+        if (res.project_id !== targetProjectId) {
+          throw new Error(
+            `Upload project mismatch: expected ${targetProjectId}, received ${res.project_id || "no project"}. Metadata was not discarded.`,
+          );
+        }
 
         await apiService.updateSourceMediaMetadata(res.analysis_id, {
           title: draft.title.trim(),
@@ -430,7 +447,7 @@ export function MenuBar() {
           reference_source: draft.reference_source.trim(),
           confidence: draft.confidence.trim(),
           notes: draft.notes.trim(),
-        });
+        }, targetProjectId);
 
         if (draft.reference_files.length > 0) {
           await apiService.uploadSourceMediaReferences(
@@ -442,12 +459,17 @@ export function MenuBar() {
 
       await VideoService.list();
       window.dispatchEvent(new CustomEvent("video-uploaded"));
-      alert(`${files.length} videos secured in project ${researchProjectId}.`);
+      alert(`${files.length} videos secured in project ${targetProjectId}.`);
+      if (activeProjectId !== targetProjectId) {
+        window.location.assign(`/dashboard?activeProject=${encodeURIComponent(targetProjectId)}`);
+      }
+      return true;
     } catch (err) {
       console.error(err);
       alert(
         "Upload failed: " + (err instanceof Error ? err.message : String(err)),
       );
+      return false;
     }
   };
 
@@ -470,6 +492,7 @@ export function MenuBar() {
       setUploadMetadataDrafts(selectedFiles.map((file) => buildUploadDraft(file)));
       setShowUploadMetadataDialog(true);
       setUploadProgress({});
+      setUploadedAnalysisResults({});
       setUploadCapacity(null);
     };
 
@@ -1290,6 +1313,7 @@ export function MenuBar() {
                   setShowUploadMetadataDialog(false);
                   setPendingUploadFiles([]);
                   setUploadMetadataDrafts([]);
+                  setUploadedAnalysisResults({});
                   setShowAdvancedUploadFields(false);
                 }}
               >
@@ -2052,6 +2076,7 @@ export function MenuBar() {
                   setShowUploadMetadataDialog(false);
                   setPendingUploadFiles([]);
                   setUploadMetadataDrafts([]);
+                  setUploadedAnalysisResults({});
                   setShowAdvancedUploadFields(false);
                 }}
               >
@@ -2061,18 +2086,20 @@ export function MenuBar() {
                 type="button"
                 className="rounded border border-slate-600 bg-slate-800/70 px-3 py-1.5 text-xs text-slate-200 transition hover:bg-slate-700/70 disabled:opacity-50"
                 disabled={isSubmittingUpload || pendingUploadFiles.length === 0}
-                onClick={() => {
+                onClick={async () => {
                   setIsSubmittingUpload(true);
-                  void runUploadWithMetadata(
+                  const uploaded = await runUploadWithMetadata(
                     pendingUploadFiles,
                     uploadMetadataDrafts,
-                  ).finally(() => {
-                    setIsSubmittingUpload(false);
+                  );
+                  setIsSubmittingUpload(false);
+                  if (uploaded) {
                     setShowUploadMetadataDialog(false);
                     setPendingUploadFiles([]);
                     setUploadMetadataDrafts([]);
+                    setUploadedAnalysisResults({});
                     setShowAdvancedUploadFields(false);
-                  });
+                  }
                 }}
               >
                 {isSubmittingUpload ? "Uploading..." : "Upload"}

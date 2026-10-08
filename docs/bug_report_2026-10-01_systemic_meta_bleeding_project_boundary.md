@@ -161,3 +161,82 @@ The immediate UI penetration is contained and reproducibly blocked, but the inci
 > No analysis, source, artifact, cache entry, clock ticket, panel state, or user mutation may become active unless its project membership matches the governed active project.
 
 M5 Global Clock delivery should resume only with this invariant continuously checked. Any disagreement must clear the affected surface, stop mutations, and raise a visible alarm rather than attempting to reconcile projects silently.
+
+## 2026-10-07–08 recurrence: upload membership, transcript identity, and panel disparity
+
+The COP30 workshop project exposed three related boundary defects after six new
+videos were uploaded and analysed. These were not treated as cosmetic display
+problems because each could change the evidence attributed to a source.
+
+### Surfaced bugs
+
+1. **Upload/project bleeding.** New uploads were initially persisted under
+   `bond-cop30-helsinki` even though the visible project was
+   `research-test-2-20226-cop30-vids`. The metadata save then returned a 403
+   `PROJECT_MEMBERSHIP_MISMATCH`, leaving the analyst with an empty slate while
+   the files had entered the wrong catalogue.
+2. **Cross-analysis transcript association.** The authoritative-transcript
+   recovery routine recursively searched the shared transcript directory. It
+   ranked timing authority and filename order without first proving ownership.
+   Five records therefore pointed `transcript`, `raw_whisper_transcript`, and
+   `operational_transcript` at Finnish YLE1. The same defect allowed unrelated
+   persisted sources, including the Bond transcript, to surface during mixed
+   runtime hydration.
+3. **Wrong language profile.** Svenska YLE's own automatic transcript was
+   classified/transcribed as Finnish. Language selection relied too heavily on
+   the whole-file Whisper hint and undifferentiated transcript text; it did not
+   inspect representative locations across the source timeline. This also left
+   no governed route for materially present secondary or tertiary languages.
+4. **Source/panel disparity.** `SpeechToTextPanel` allowed an earlier asynchronous
+   request to complete after a later video selection. A slow BBC or Bond response
+   could overwrite the transcript state for a newly selected German or Swedish
+   video even when the backend record was correct.
+5. **Projection disparity after correction.** Svenska's regenerated audio-event
+   artifact contained 15 intervals while the embedded panel projection retained
+   the previous 13. The artifact existed, but completeness correctly remained
+   `available_with_projection_gaps` until both representations agreed.
+
+### Mitigation delivered
+
+- Upload creation and metadata persistence now carry the visible project ID as
+  one atomic membership context. The six affected records were reassigned only
+  after backups were written; Bond retained none of them.
+- Authoritative transcript candidates must now prove the analysis UUID in their
+  path or payload. A timing-authoritative file owned by another analysis is
+  rejected and logged rather than promoted.
+- The five contaminated records were rebound to their own raw Whisper artifacts.
+  Svenska was retranscribed from its own audio with Swedish constrained, then
+  transcript-linked prosody, event intervals, diarization, sample clouds,
+  POS/Quant, SFL/meaning, metadata, and manifests were regenerated.
+- Transcript-panel loads now carry a cancellation guard. Results belonging to a
+  superseded video selection cannot update the active panel.
+- Transcript-dependent rebuilding now updates the persisted artifact and the
+  hydrated `audio_analysis.audio_event_intervals` projection together.
+- All six project analyses were passed through scoped completeness recovery.
+  Live summaries subsequently reported `full`, zero missing branches, and zero
+  unsurfaced branches. A search of their analysis directories found no Bond
+  analysis UUID or title.
+
+### Language/morphology correction added after the incident
+
+Primary morphology selection now uses a deterministic, timeline-distributed
+median sample: the transcript array is divided into up to nine even buckets and
+the median segment plus its immediate neighbours are inspected in every bucket.
+An opening greeting or first-news sentence can no longer decide the language of
+the whole video by itself. A strong distributed result may override a conflicting
+whole-file Whisper hint, and the disagreement remains recorded in provenance.
+
+The same profile records language volumes across the sampled timeline. Up to
+three significant volumes are routed inside the analysis as primary, secondary,
+and tertiary associated morphologies. Existing analyst-selected morphology slots
+remain explicit and are never silently reordered; detected languages use those
+slots when configured and otherwise receive an analysis-associated route for
+downstream handling.
+
+### Residual limitation
+
+Distributed detection and morphology routing are now implemented, but code-
+switch boundaries remain bucket-level evidence rather than word-level language
+identification. Short utterances below the significance threshold may remain in
+the primary morphology. Word- or utterance-level multilingual tagging is a
+separate accuracy enhancement and must not be represented as already delivered.

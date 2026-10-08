@@ -1,4 +1,4 @@
-export type MorphologyPackPolicy = "core_only" | "plus_1" | "plus_2";
+export type MorphologyPackPolicy = "core_only" | "plus_1" | "plus_2" | "plus_3";
 
 export const MORPHOLOGY_PACK_POLICY_OPTIONS: Array<{
   value: MorphologyPackPolicy;
@@ -8,6 +8,7 @@ export const MORPHOLOGY_PACK_POLICY_OPTIONS: Array<{
   { value: "core_only", label: "English core", slots: 0 },
   { value: "plus_1", label: "English +1", slots: 1 },
   { value: "plus_2", label: "English +2", slots: 2 },
+  { value: "plus_3", label: "English +3", slots: 3 },
 ];
 
 export const MORPHOLOGY_LANGUAGE_OPTIONS: Array<{ code: string; label: string }> = [

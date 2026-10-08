@@ -152,6 +152,42 @@ test("dense evidence feeds and schema workspaces collapse at the record or secti
   assert.match(tools, /Analysis and morphology setup/);
 });
 
+test("pre-analysis morphology configuration supports three durable language slots", () => {
+  const packs = read("lib/morphology-language-packs.ts");
+  const configuration = read("lib/morphology-configuration.ts");
+  const tools = read("app/V2components/components/panels/ToolsPanel.tsx");
+  const project = read("app/V2components/components/panels/ProjectPanel.tsx");
+
+  assert.match(packs, /plus_3[\s\S]*English \+3[\s\S]*slots: 3/);
+  assert.match(packs, /code: "fi", label: "Finnish"/);
+  assert.match(packs, /code: "de", label: "German"/);
+  assert.match(packs, /code: "sv", label: "Swedish"/);
+  assert.match(configuration, /vaa1\.analysis\.morphology-configuration\.v1/);
+  assert.match(configuration, /activeProjectScopeId\(\) \|\| "catalogue"/);
+  assert.match(tools, /\[0, 1, 2\]\.map/);
+  assert.match(tools, /placeMorphologyLanguage\(item\.code, "slot_3"\)/);
+  assert.match(tools, /useState<MorphologyPackPolicy>\("plus_3"\)/);
+  assert.match(tools, /filteredMorphologyCatalog\.map/);
+  assert.doesNotMatch(tools, /filteredMorphologyCatalog\.slice/);
+  assert.match(tools, /morphologyCatalog\.forEach[\s\S]*localeCompare/);
+  assert.match(project, /readMorphologyConfiguration\(\)/);
+  assert.match(project, /morphologyConfiguration\?\.languages/);
+});
+
+test("upload creation and metadata remain atomically bound to the visible project", () => {
+  const menu = read("app/V2components/components/MenuBar.tsx");
+
+  assert.match(menu, /const activeProjectId = activeProjectScopeId\(\);[\s\S]*const targetProjectId = researchProjectId\.trim\(\)/);
+  assert.match(menu, /projectId: targetProjectId/);
+  assert.match(menu, /res\.project_id !== targetProjectId/);
+  assert.match(menu, /Upload project mismatch:[\s\S]*Metadata was not discarded/);
+  assert.match(menu, /catch \(err\)[\s\S]*return false/);
+  assert.match(menu, /const uploaded = await runUploadWithMetadata[\s\S]*if \(uploaded\)[\s\S]*setUploadMetadataDrafts\(\[\]\)/);
+  assert.match(menu, /uploadedAnalysisResults\[index\] \|\| await VideoService\.upload/);
+  assert.match(menu, /updateSourceMediaMetadata\(res\.analysis_id,[\s\S]*targetProjectId\)/);
+  assert.match(menu, /activeProjectId !== targetProjectId[\s\S]*window\.location\.assign/);
+});
+
 test("lazy Audio selection and final support panels follow the disclosure contract", () => {
   const eventBus = read("lib/golden-layout-lib/eventBus.ts");
   const audio = read("app/V2components/components/panels/AudioPanel.tsx");

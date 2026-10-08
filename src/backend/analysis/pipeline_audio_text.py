@@ -34,9 +34,15 @@ SUPPORTED_AUDIO_FORMATS = [".wav", ".mp3", ".m4a"]
 
 
 class AudioTranscriptionPipeline:
-    def __init__(self, audio_path: str, model_name: str = "base"):
+    def __init__(
+        self,
+        audio_path: str,
+        model_name: str = "base",
+        language_hint: Optional[str] = None,
+    ):
         self.audio_path = Path(audio_path)
         self.model_name = model_name
+        self.language_hint = language_hint.strip().lower() if language_hint else None
 
         if not self.audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {self.audio_path}")
@@ -161,7 +167,10 @@ class AudioTranscriptionPipeline:
         return transcript
 
     def _transcribe_with_model(self, model: Any, audio_path: Path | str, diarization: Optional[Any] = None) -> dict[str, Any]:
-        result = model.transcribe(str(audio_path), fp16=False, word_timestamps=True)
+        options: dict[str, Any] = {"fp16": False, "word_timestamps": True}
+        if self.language_hint:
+            options["language"] = self.language_hint
+        result = model.transcribe(str(audio_path), **options)
         transcript = self._build_transcript_data(result, diarization=diarization)
         # Align speakers even if diarization is from a separate step
         if diarization is not None:

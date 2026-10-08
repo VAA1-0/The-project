@@ -1044,7 +1044,7 @@ export interface AnalysisStartResponse {
 export interface AnalysisStartOptions {
   analysisTier?: "quick_sweep" | "science_scan" | "forensic_sensor";
   modalityFocus?: "multimodal" | "graphics" | "audio" | "images" | "text";
-  morphologyPackPolicy?: "core_only" | "plus_1" | "plus_2";
+  morphologyPackPolicy?: "core_only" | "plus_1" | "plus_2" | "plus_3";
   morphologyLanguages?: string[];
   specialUseMorphologyLanguage?: string;
   allowRoughInterpretation?: boolean;
@@ -3083,8 +3083,13 @@ class ApiService {
       confidence?: string;
       notes?: string;
     },
+    projectId?: string,
   ): Promise<SourceMediaMetadata> {
-    const response = await fetch(localAnalysisUrl(analysisId, "/source-media"), {
+    const response = await fetch(localAnalysisUrl(
+      analysisId,
+      "/source-media",
+      projectId ? { project_id: projectId } : undefined,
+    ), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

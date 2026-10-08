@@ -390,6 +390,8 @@ export default function SpeechToTextPanel({
   }, [videoId]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
       if (!videoId) {
         setIsLoading(false);
@@ -402,6 +404,8 @@ export default function SpeechToTextPanel({
         // Load metadata
         const m = await VideoService.get(videoId);
 
+        if (cancelled) return;
+
         console.log("Loaded metadata:", m);
 
         setMetadata(m);
@@ -412,6 +416,7 @@ export default function SpeechToTextPanel({
         if (!blob) {
           blob = await getVideoBlob(videoId);
         }
+        if (cancelled) return;
         if (blob) {
           if (lastObjectUrl.current) {
             URL.revokeObjectURL(lastObjectUrl.current);
@@ -427,6 +432,7 @@ export default function SpeechToTextPanel({
 
         // Load analysis data and hard-stop stale scaffold transcript clocks before rendering.
         const analysis = await VideoService.getAnalysis(videoId);
+        if (cancelled) return;
         let displayAnalysis = analysis;
         const analysisRows = analysis.transcript ?? analysis.transcriptTimeline ?? [];
         if (transcriptRowsLookLikeScaffold(analysisRows)) {
@@ -434,6 +440,7 @@ export default function SpeechToTextPanel({
             videoId,
             analysis.annotationCorrections,
           );
+          if (cancelled) return;
           if (authoritativeRows) {
             displayAnalysis = {
               ...analysis,
@@ -450,17 +457,22 @@ export default function SpeechToTextPanel({
           }
         }
 
+        if (cancelled) return;
         setAnalysisData(displayAnalysis);
         setRawCsv(displayAnalysis.rawCsv || null);
       } catch (err) {
+        if (cancelled) return;
         console.error("Failed to load data:", err);
         setBlobMissing(true);
         setVideoUrl(null);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [videoId, refreshNonce]);
 
   // Use analysisData (fallback to empty arrays if not available)

@@ -8,6 +8,7 @@ from src.backend.analysis.language_capability_registry import (
 )
 from src.backend.analysis.language_utils import (
     SPACY_MODEL_ALIASES,
+    WHISPER_CODE_TO_NAME,
     is_spacy_model_available,
     language_display_name,
     normalize_language_code,
@@ -89,6 +90,7 @@ def list_morphology_catalog(query: Optional[str] = None) -> list[dict[str, Any]]
     registry_codes = set(list_language_capabilities().keys())
     all_codes = sorted(
         registry_codes
+        | set(WHISPER_CODE_TO_NAME.keys())
         | set(SPACY_MODEL_ALIASES.keys())
         | EU_OFFICIAL_LANGUAGE_CODES
         | UN_OFFICIAL_LANGUAGE_CODES
@@ -108,12 +110,4 @@ def list_morphology_catalog(query: Optional[str] = None) -> list[dict[str, Any]]
                 or needle in (entry.get("spacy_model") or "").lower()
             ]
 
-    return sorted(
-        entries,
-        key=lambda entry: (
-            0 if entry["installed"] else 1,
-            0 if entry["is_eu_official"] else 1,
-            0 if entry["is_un_official"] else 1,
-            entry["name"].lower(),
-        ),
-    )
+    return sorted(entries, key=lambda entry: (entry["name"].lower(), entry["code"]))

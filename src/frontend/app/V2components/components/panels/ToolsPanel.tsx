@@ -46,6 +46,7 @@ import {
   morphologySlotCount,
   type MorphologyPackPolicy,
 } from "@/lib/morphology-language-packs";
+import { readMorphologyConfiguration, writeMorphologyConfiguration } from "@/lib/morphology-configuration";
 import type {
   AnalysisData,
   ExpressionSample,
@@ -550,8 +551,9 @@ export default function ToolsPanel() {
     "multimodal" | "graphics" | "audio" | "images" | "text"
   >("multimodal");
   const [morphologyPackPolicy, setMorphologyPackPolicy] =
-    useState<MorphologyPackPolicy>("core_only");
+    useState<MorphologyPackPolicy>("plus_3");
   const [morphologyLanguages, setMorphologyLanguages] = useState<string[]>([
+    "",
     "",
     "",
   ]);
@@ -681,6 +683,15 @@ export default function ToolsPanel() {
     useState<ToolsWorkspace>("analysis");
   const [activeAnnotationPlugin, setActiveAnnotationPlugin] =
     useState<AnnotationPluginView>("menu");
+
+  useEffect(() => {
+    const saved = readMorphologyConfiguration();
+    if (!saved) return;
+    setMorphologyPackPolicy(saved.policy);
+    setMorphologyLanguages([...saved.languages, "", ""].slice(0, 3));
+    setSpecialUseMorphologyLanguage(saved.specialUseLanguage);
+    setAllowRoughInterpretation(saved.allowRoughInterpretation);
+  }, []);
 
   const workspaceOptions: Array<{ key: ToolsWorkspace; label: string }> = [
     { key: "ai_agent", label: "AI Agent processes" },
@@ -1159,6 +1170,16 @@ export default function ToolsPanel() {
       return haystacks.some((value) => value.toLowerCase().includes(needle));
     });
   }, [morphologyCatalog, morphologySearch]);
+
+  const morphologyLanguageOptions = React.useMemo(() => {
+    const options = new Map(
+      MORPHOLOGY_LANGUAGE_OPTIONS.map((item) => [item.code, item.label]),
+    );
+    morphologyCatalog.forEach((item) => options.set(item.code, item.name));
+    return [...options.entries()]
+      .map(([code, label]) => ({ code, label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [morphologyCatalog]);
 
   const stageLabel = React.useMemo(() => {
     const stage = metadata?.missionStage;
@@ -2707,19 +2728,29 @@ export default function ToolsPanel() {
             | "images"
             | "text") || "multimodal",
         );
+        const savedMorphology = readMorphologyConfiguration();
         setMorphologyPackPolicy(
-          (m.languagePackPolicy?.policy as MorphologyPackPolicy) || "core_only",
+          savedMorphology?.policy ||
+          (m.languagePackPolicy?.policy as MorphologyPackPolicy) ||
+          "core_only",
         );
-        setMorphologyLanguages([
-          m.languagePackPolicy?.selected_languages?.[0]?.code || "",
-          m.languagePackPolicy?.selected_languages?.[1]?.code || "",
-        ]);
+        setMorphologyLanguages(
+          savedMorphology
+            ? [...savedMorphology.languages, "", ""].slice(0, 3)
+            : [
+                m.languagePackPolicy?.selected_languages?.[0]?.code || "",
+                m.languagePackPolicy?.selected_languages?.[1]?.code || "",
+                m.languagePackPolicy?.selected_languages?.[2]?.code || "",
+              ],
+        );
         setSpecialUseMorphologyLanguage(
+          savedMorphology?.specialUseLanguage ||
           m.languagePackPolicy?.special_use_language?.code ||
-            m.languagePackPolicy?.special_use_language?.name ||
-            "",
+          m.languagePackPolicy?.special_use_language?.name ||
+          "",
         );
         setAllowRoughInterpretation(
+          savedMorphology?.allowRoughInterpretation ??
           m.languagePackPolicy?.allow_rough_interpretation ?? true,
         );
         setApplyFaceAnonymization(Boolean(m.applyFaceAnonymization));
@@ -2854,20 +2885,56 @@ export default function ToolsPanel() {
     setMorphologyLanguages((current) => {
       const next = [...current];
       next[index] = value;
+      writeMorphologyConfiguration({
+        policy: morphologyPackPolicy,
+        languages: next.filter(Boolean),
+        specialUseLanguage: specialUseMorphologyLanguage,
+        allowRoughInterpretation,
+      });
       return next;
+    });
+  }
+
+  function updateMorphologyPolicy(value: MorphologyPackPolicy) {
+    setMorphologyPackPolicy(value);
+    writeMorphologyConfiguration({
+      policy: value,
+      languages: morphologyLanguages.filter(Boolean),
+      specialUseLanguage: specialUseMorphologyLanguage,
+      allowRoughInterpretation,
+    });
+  }
+
+  function updateSpecialUseMorphologyLanguage(value: string) {
+    setSpecialUseMorphologyLanguage(value);
+    writeMorphologyConfiguration({
+      policy: morphologyPackPolicy,
+      languages: morphologyLanguages.filter(Boolean),
+      specialUseLanguage: value,
+      allowRoughInterpretation,
+    });
+  }
+
+  function updateRoughInterpretation(value: boolean) {
+    setAllowRoughInterpretation(value);
+    writeMorphologyConfiguration({
+      policy: morphologyPackPolicy,
+      languages: morphologyLanguages.filter(Boolean),
+      specialUseLanguage: specialUseMorphologyLanguage,
+      allowRoughInterpretation: value,
     });
   }
 
   function placeMorphologyLanguage(
     value: string,
-    target: "slot_1" | "slot_2" | "special" = "slot_1",
+    target: "slot_1" | "slot_2" | "slot_3" | "special" = "slot_1",
   ) {
     if (target === "special") {
       setSpecialUseMorphologyLanguage(value);
       return;
     }
 
-    const slotIndex = target === "slot_1" ? 0 : 1;
+    const slotIndex = target === "slot_1" ? 0 : target === "slot_2" ? 1 : 2;
     updateMorphologyLanguage(slotIndex, value);
   }
 
@@ -5212,10 +5279,8 @@ export default function ToolsPanel() {
                   </Label>
                   <Select
                     value={morphologyPackPolicy}
-                    onValueChange={(value: MorphologyPackPolicy) =>
-                      setMorphologyPackPolicy(value)
-                    }
-                    disabled={isAnalyzing || !videoId}
+                    onValueChange={updateMorphologyPolicy}
+                    disabled={isAnalyzing}
                   >
                     <SelectTrigger
                       id="morphology-pack-policy"
@@ -5237,8 +5302,8 @@ export default function ToolsPanel() {
                   </p>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  {[0, 1].map((index) => (
+                <div className="grid gap-3 md:grid-cols-3">
+                  {[0, 1, 2].map((index) => (
                     <div key={index} className="space-y-1">
                       <Label htmlFor={`morphology-language-${index}`}>
                         Morphology slot {index + 1}
@@ -5250,7 +5315,6 @@ export default function ToolsPanel() {
                         }
                         disabled={
                           isAnalyzing ||
-                          !videoId ||
                           index >= morphologySlotLimit
                         }
                       >
@@ -5267,7 +5331,7 @@ export default function ToolsPanel() {
                           />
                         </SelectTrigger>
                         <SelectContent className={selectContentClassName}>
-                          {MORPHOLOGY_LANGUAGE_OPTIONS.map((option) => (
+                          {morphologyLanguageOptions.map((option) => (
                             <SelectItem key={option.code} value={option.code}>
                               {option.label}
                             </SelectItem>
@@ -5286,9 +5350,9 @@ export default function ToolsPanel() {
                     id="special-use-morphology-language"
                     value={specialUseMorphologyLanguage}
                     onChange={(event) =>
-                      setSpecialUseMorphologyLanguage(event.target.value)
+                      updateSpecialUseMorphologyLanguage(event.target.value)
                     }
-                    disabled={isAnalyzing || !videoId}
+                    disabled={isAnalyzing}
                     className="w-full max-w-[260px] border-white/12 bg-[#202020] text-slate-200 placeholder:text-slate-500"
                     placeholder="e.g. Ukrainian, Arabic, Hindi"
                   />
@@ -5311,8 +5375,8 @@ export default function ToolsPanel() {
                   <Switch
                     id="rough-interpretation-switch"
                     checked={allowRoughInterpretation}
-                    onCheckedChange={setAllowRoughInterpretation}
-                    disabled={isAnalyzing || !videoId}
+                    onCheckedChange={updateRoughInterpretation}
+                    disabled={isAnalyzing}
                     aria-label="Allow rough interpretation fallback"
                   />
                 </div>
@@ -5356,7 +5420,7 @@ export default function ToolsPanel() {
                       )}
 
                       <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-                        {filteredMorphologyCatalog.slice(0, 12).map((item) => (
+                        {filteredMorphologyCatalog.map((item) => (
                           <div
                             key={item.code}
                             className="rounded border border-white/8 bg-[#141414] px-3 py-2"
@@ -5386,7 +5450,7 @@ export default function ToolsPanel() {
                                   type="button"
                                   className="transition-colors hover:text-slate-200"
                                   onClick={() => placeMorphologyLanguage(item.code, "slot_1")}
-                                  disabled={isAnalyzing || !videoId || morphologySlotLimit < 1}
+                                  disabled={isAnalyzing || morphologySlotLimit < 1}
                                 >
                                   slot 1
                                 </button>
@@ -5394,15 +5458,23 @@ export default function ToolsPanel() {
                                   type="button"
                                   className="transition-colors hover:text-slate-200"
                                   onClick={() => placeMorphologyLanguage(item.code, "slot_2")}
-                                  disabled={isAnalyzing || !videoId || morphologySlotLimit < 2}
+                                  disabled={isAnalyzing || morphologySlotLimit < 2}
                                 >
                                   slot 2
                                 </button>
                                 <button
                                   type="button"
                                   className="transition-colors hover:text-slate-200"
+                                  onClick={() => placeMorphologyLanguage(item.code, "slot_3")}
+                                  disabled={isAnalyzing || morphologySlotLimit < 3}
+                                >
+                                  slot 3
+                                </button>
+                                <button
+                                  type="button"
+                                  className="transition-colors hover:text-slate-200"
                                   onClick={() => placeMorphologyLanguage(item.code, "special")}
-                                  disabled={isAnalyzing || !videoId}
+                                  disabled={isAnalyzing}
                                 >
                                   special
                                 </button>

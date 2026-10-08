@@ -12,6 +12,7 @@ MORPHOLOGY_PACK_LIMITS = {
     "core_only": 0,
     "plus_1": 1,
     "plus_2": 2,
+    "plus_3": 3,
 }
 
 PRIMARY_LANGUAGE_CODE = "en"
@@ -80,6 +81,7 @@ def build_language_pack_policy(
             "core_only": "English core",
             "plus_1": "English + 1 morphology language",
             "plus_2": "English + 2 morphology languages",
+            "plus_3": "English + 3 morphology languages",
         }[policy_key],
         "slot_limit": slot_limit,
         "selected_languages": [
@@ -124,3 +126,61 @@ def build_language_pack_policy(
             ),
         ],
     }
+
+
+def associate_detected_language_morphologies(
+    policy: dict[str, Any],
+    language_profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach significant per-video language volumes to morphology routing."""
+    updated = dict(policy or {})
+    configured = {
+        str(item.get("code") or "")
+        for item in updated.get("selected_languages", [])
+        if isinstance(item, dict)
+    }
+    distribution = language_profile.get("timeline_distribution") or {}
+    significant = distribution.get("significant_languages") or []
+    if not significant:
+        fallback_code = normalize_language_code(language_profile.get("code"))
+        if fallback_code:
+            significant = [
+                {
+                    "code": fallback_code,
+                    "share": None,
+                    "sample_count": 0,
+                    "association_source": "whole_file_language_fallback",
+                }
+            ]
+    associations: list[dict[str, Any]] = []
+    for rank, volume in enumerate(significant[:3], start=1):
+        code = normalize_language_code(volume.get("code"))
+        if not code:
+            continue
+        associations.append(
+            {
+                "code": code,
+                "name": language_display_name(code),
+                "volume_rank": rank,
+                "share": volume.get("share"),
+                "sample_count": volume.get("sample_count"),
+                "role": ("primary" if rank == 1 else "secondary" if rank == 2 else "tertiary"),
+                "routing": (
+                    "english_core"
+                    if code == PRIMARY_LANGUAGE_CODE
+                    else "configured_slot"
+                    if code in configured
+                    else "analysis_associated_morphology"
+                ),
+                "source": volume.get("association_source")
+                or "timeline_median_distributed_detection",
+            }
+        )
+    updated["detected_language_volumes"] = distribution.get("language_volumes", [])
+    updated["associated_morphologies"] = associations
+    updated["video_primary_morphology"] = associations[0] if associations else None
+    updated["association_policy"] = (
+        "Primary, secondary, and tertiary significant language volumes are routed "
+        "within the same analysis; analyst configuration remains explicit and preserved."
+    )
+    return updated

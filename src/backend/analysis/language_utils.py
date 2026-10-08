@@ -330,22 +330,37 @@ def language_support_profile(language_hint: Optional[str]) -> dict[str, Any]:
 def build_language_profile(
     language_hint: Optional[str] = None,
     text: str = "",
+    segments: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     normalized_hint = normalize_language_code(language_hint)
-    text_guess = infer_text_language(text)
+    timeline_profile = infer_timeline_language_distribution(segments or [])
+    text_guess = (
+        timeline_profile.get("primary_guess")
+        if timeline_profile.get("recognized_sample_count")
+        else infer_text_language(text)
+    )
     text_guess_code = normalize_language_code(text_guess.get("code"))
+
+    timeline_is_authoritative = bool(
+        timeline_profile.get("recognized_sample_count", 0) >= 2
+        and float(text_guess.get("confidence") or 0.0) >= 0.5
+    )
 
     if normalized_hint and text_guess_code == normalized_hint:
         selected_code = normalized_hint
-        source = "whisper+text"
+        source = "whisper+timeline" if timeline_profile.get("sample_count") else "whisper+text"
         confidence = max(0.95, text_guess.get("confidence", 0.0))
+    elif timeline_is_authoritative and text_guess_code:
+        selected_code = text_guess_code
+        source = "timeline_over_whisper"
+        confidence = text_guess.get("confidence", 0.0)
     elif normalized_hint:
         selected_code = normalized_hint
         source = "whisper"
         confidence = 0.95
     elif text_guess_code:
         selected_code = text_guess_code
-        source = "text"
+        source = "timeline" if timeline_profile.get("sample_count") else "text"
         confidence = text_guess.get("confidence", 0.0)
     else:
         selected_code = None
@@ -360,5 +375,97 @@ def build_language_profile(
         "confidence": round(float(confidence), 4),
         "hint": language_hint,
         "text_guess": text_guess,
+        "timeline_distribution": timeline_profile,
         "support": language_support_profile(selected_code),
+    }
+
+
+def infer_timeline_language_distribution(
+    segments: list[dict[str, Any]],
+    *,
+    maximum_samples: int = 9,
+    significant_share: float = 0.12,
+) -> dict[str, Any]:
+    """Infer language volumes from representative samples across the timeline.
+
+    The transcript is divided into evenly distributed buckets and each bucket's
+    median segment plus its immediate neighbours are inspected.  This prevents
+    an opening greeting or lead-in from deciding morphology for the whole file.
+    """
+    rows = [
+        row for row in segments
+        if isinstance(row, dict) and str(row.get("text") or "").strip()
+    ]
+    if not rows:
+        return {
+            "method": "timeline_median_distributed_stopword_overlap",
+            "sample_count": 0,
+            "recognized_sample_count": 0,
+            "primary_guess": infer_text_language(""),
+            "language_volumes": [],
+            "significant_languages": [],
+        }
+
+    sample_count = min(maximum_samples, len(rows))
+    samples: list[dict[str, Any]] = []
+    totals: dict[str, dict[str, Any]] = {}
+    for bucket_index in range(sample_count):
+        start = (bucket_index * len(rows)) // sample_count
+        stop = ((bucket_index + 1) * len(rows)) // sample_count
+        median_index = start + max(0, (stop - start - 1) // 2)
+        window_start = max(start, median_index - 1)
+        window_stop = min(stop, median_index + 2)
+        window = rows[window_start:window_stop]
+        sample_text = " ".join(str(row.get("text") or "").strip() for row in window)
+        guess = infer_text_language(sample_text)
+        code = normalize_language_code(guess.get("code"))
+        sample = {
+            "sample_index": bucket_index,
+            "segment_start_index": window_start,
+            "segment_end_index": max(window_start, window_stop - 1),
+            "source_start": window[0].get("start") if window else None,
+            "source_end": window[-1].get("end") if window else None,
+            "language": code or "unknown",
+            "confidence": guess.get("confidence", 0.0),
+            "token_count": guess.get("token_count", 0),
+        }
+        samples.append(sample)
+        if not code:
+            continue
+        volume = totals.setdefault(code, {"code": code, "token_count": 0, "sample_count": 0})
+        volume["token_count"] += int(guess.get("token_count") or 0)
+        volume["sample_count"] += 1
+
+    recognized_tokens = sum(item["token_count"] for item in totals.values())
+    volumes = sorted(
+        (
+            {
+                **item,
+                "name": language_display_name(code),
+                "share": round(item["token_count"] / max(recognized_tokens, 1), 4),
+            }
+            for code, item in totals.items()
+        ),
+        key=lambda item: (-item["token_count"], item["code"]),
+    )
+    significant = [
+        item for index, item in enumerate(volumes)
+        if index == 0 or (item["share"] >= significant_share and item["sample_count"] >= 2)
+    ][:3]
+    primary = volumes[0] if volumes else None
+    return {
+        "method": "timeline_median_distributed_stopword_overlap",
+        "sample_count": len(samples),
+        "recognized_sample_count": sum(item["sample_count"] for item in volumes),
+        "samples": samples,
+        "primary_guess": {
+            "code": primary.get("code") if primary else None,
+            "name": primary.get("name") if primary else "Unknown",
+            "confidence": primary.get("share") if primary else 0.0,
+            "method": "timeline_median_distributed_stopword_overlap",
+            "token_count": primary.get("token_count") if primary else 0,
+        },
+        "language_volumes": volumes,
+        "significant_languages": significant,
+        "significant_share_threshold": significant_share,
     }

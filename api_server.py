@@ -69,6 +69,7 @@ from src.backend.analysis.source_sampler import (
 )
 from src.backend.analysis.language_pack_policy import (
     MORPHOLOGY_PACK_LIMITS,
+    associate_detected_language_morphologies,
     build_language_pack_policy,
 )
 from src.backend.analysis.morphology_catalog import list_morphology_catalog
@@ -3601,6 +3602,22 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
 
     current_text_fingerprint = transcript_text_fingerprint(current_payload)
 
+    def candidate_is_bound_to_analysis(path: Path, payload: Any) -> bool:
+        """Reject runtime transcript artifacts owned by another analysis.
+
+        Transcript outputs share one directory, so timing authority alone is
+        not an identity boundary.  The analysis UUID must be present either in
+        the artifact path or explicitly in its payload before it can replace
+        the operational transcript.
+        """
+        if analysis_id in str(path):
+            return True
+        if isinstance(payload, dict):
+            payload_analysis_id = str(payload.get("analysis_id") or "").strip()
+            if payload_analysis_id == analysis_id:
+                return True
+        return False
+
     candidates: List[Any] = []
     record = read_json_artifact_if_available(get_analysis_record_path(analysis_id))
     if isinstance(record, dict):
@@ -3696,6 +3713,13 @@ def prefer_authoritative_transcript_artifact(status: Dict[str, Any]) -> bool:
         if not candidate_path.exists():
             continue
         candidate_payload = read_json_artifact_if_available(candidate_path)
+        if not candidate_is_bound_to_analysis(candidate_path, candidate_payload):
+            logger.warning(
+                "Rejected cross-analysis transcript candidate for %s: %s",
+                analysis_id,
+                candidate_path,
+            )
+            continue
         if not transcript_payload_has_timing_authority(candidate_payload):
             continue
         if str(candidate_path) == str(current_transcript):
@@ -7760,8 +7784,14 @@ def rebuild_transcript_dependents_for_operational_clock(
     )
     rewritten.append("time_bank_audio")
     rewritten.extend(rewrite_pos_quant_from_transcript(status, transcript, transcript_path))
+    audio_projection = {
+        "transcript": transcript,
+        "audio_prosody": audio_prosody,
+    }
+    if isinstance(audio_events, dict):
+        audio_projection["audio_event_intervals"] = audio_events
     status.setdefault("results", {}).setdefault("audio_analysis", {}).update(
-        {"transcript": transcript, "audio_prosody": audio_prosody}
+        audio_projection
     )
     status["output_files"] = output_files
     append_analysis_event(
@@ -9333,10 +9363,15 @@ def _run_complete_analysis_unlocked(
                 language_info = build_language_profile(
                     transcript.get("language"),
                     transcript_text,
+                    segments=transcript.get("segments", []),
                 )
                 transcript["language"] = language_info["code"]
                 transcript["language_name"] = language_info["name"]
                 transcript["language_info"] = language_info
+                status["language_pack_policy"] = associate_detected_language_morphologies(
+                    status.get("language_pack_policy") or build_language_pack_policy(),
+                    language_info,
+                )
                 transcript["quality"] = transcript_quality
                 transcript["timeline_segments"] = build_transcript_timeline_segments(
                     transcript,
@@ -10580,6 +10615,14 @@ async def refresh_analysis_completeness(
                 repaired.extend(item for item in rewritten if item in branch_ids)
             except Exception as exc:
                 failures.append({"branch_id": "pos_quant", "error": str(exc)})
+
+    if "audio_event_intervals" in branch_ids:
+        try:
+            rewritten = rebuild_transcript_dependents_for_operational_clock(status)
+            if "audio_event_intervals" in rewritten:
+                repaired.append("audio_event_intervals")
+        except Exception as exc:
+            failures.append({"branch_id": "audio_event_intervals", "error": str(exc)})
 
     measurement_actions = (
         ("shot_boundaries", measure_analysis_shot_boundaries),
@@ -14244,12 +14287,19 @@ async def open_corpus_publication_report(owner: str, filename: str):
 
 # Keep your existing endpoints (they work well)
 @app.get("/api/analyses", response_model=dict)
-async def list_analyses(limit: int = 10) -> dict:
+async def list_analyses(limit: int = 10, project_id: Optional[str] = None) -> dict:
     """
     List recent analyses (for admin/debugging)
     """
     # Fix: Handle None values in sorting
     all_records = collect_saved_analysis_records()
+    if project_id:
+        requested_project = normalize_taxonomy_label(project_id)
+        all_records = {
+            analysis_id: record
+            for analysis_id, record in all_records.items()
+            if normalize_taxonomy_label(record.get("project_id")) == requested_project
+        }
     recent_analyses = dict(sorted(
         all_records.items(),
         key=lambda x: (
@@ -14275,6 +14325,7 @@ async def list_analyses(limit: int = 10) -> dict:
                 "analysis_completed_at": info.get("analysis_completed_at"),
                 "cvatID": info.get("cvatID"),
                 "project_id": info.get("project_id", "local-research-project"),
+                "project_name": info.get("project_name"),
                 "source_size_bytes": info.get("source_size_bytes"),
             }
             for aid, info in recent_analyses.items()
