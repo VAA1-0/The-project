@@ -421,24 +421,29 @@ export async function GET(
   try {
     const governedContext = await assertLocalAnalysisBoundary(request, analysisId);
     if (fileType === "annotation_corrections") {
+      // Source fingerprinting may need to read a large video on a cold cache.
+      // It must not hold the exclusive correction lock: mounted panels can
+      // hydrate concurrently and would otherwise starve foreground BBox saves.
+      // POST resolves the binding again while holding the lock, so a source
+      // replacement between this read and a later write still fails closed.
+      let context;
+      let bindingDetail: string | undefined;
+      try {
+        context = await readCorrectionSourceBinding(analysisId, governedContext.project_id);
+      } catch (error) {
+        if (!(error instanceof CorrectionBindingUnavailable)) throw error;
+        // Clock binding governs writes, not evidence visibility. Restored or
+        // temporarily offline sources must still hydrate their mature ledger.
+        context = {
+          analysis_id: analysisId,
+          binding_status: "source_unavailable",
+          source_fingerprint: null,
+          clock_revision: null,
+        };
+        bindingDetail = error.message;
+      }
       return await withCorrectionWriteLock(analysisId, async () => {
         const corrections = await readRichestAnnotationCorrections(analysisId);
-        let context;
-        let bindingDetail: string | undefined;
-        try {
-          context = await readCorrectionSourceBinding(analysisId, governedContext.project_id);
-        } catch (error) {
-          if (!(error instanceof CorrectionBindingUnavailable)) throw error;
-          // Clock binding governs writes, not evidence visibility. Restored or
-          // temporarily offline sources must still hydrate their mature ledger.
-          context = {
-            analysis_id: analysisId,
-            binding_status: "source_unavailable",
-            source_fingerprint: null,
-            clock_revision: null,
-          };
-          bindingDetail = error.message;
-        }
         return NextResponse.json({
           ...corrections,
           _clock_write_guard: correctionClockGuard(analysisId, corrections, context),

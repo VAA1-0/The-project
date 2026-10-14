@@ -4043,7 +4043,8 @@ export default function MasterSchemaPanel({
 
   useEffect(() => {
     const videoHandler = (id: string) => setVideoId(id);
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === videoId) {
         if (suppressNextLocalCorrectionRefreshRef.current) {
           suppressNextLocalCorrectionRefreshRef.current = false;

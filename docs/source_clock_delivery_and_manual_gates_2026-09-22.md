@@ -1,6 +1,19 @@
 # Source-clock delivery and staged acceptance — 2026-09-22
 
-This checklist expands Stage 1 of the General Sprint Regime. “Global” means a common source-relative contract throughout Datascene, with separate clocks for separate sources. Stage 1 remains open. Automated checks do not substitute for the analyst acceptance steps below.
+This checklist expands Stage 1 of the General Sprint Regime. “Global” means a common source-relative contract throughout Datascene, with separate clocks for separate sources.
+
+> **Status reconciliation — 2026-10-14:** this is the historical delivery
+> checklist, not the current stage-status authority. Subsequent analyst review
+> accepted M1–M5 and the Global Clock was recorded as delivered on 1 October;
+> the 5 October acceptance reran the consumer matrix and correction lifecycle.
+> The M6 core round trip is delivered. The real-source >1,000-second check,
+> selected-project M6 landmark/history recheck, 1 ms normalization
+> classification and checksum-stability check remain residual qualification,
+> not grounds to restart Stage 1. Current status is maintained in
+> [the General Sprint Regime](vaa1_general_sprint_regime_remaining_tasks.md#current-status-quo--2026-10-14).
+
+Automated checks do not substitute for the analyst acceptance steps recorded
+below.
 
 ## Delivered and automatically checked
 

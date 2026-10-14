@@ -2133,6 +2133,7 @@ export default function VideoPanel() {
       openNote: "",
     });
   const [nativeSaveMessage, setNativeSaveMessage] = useState<string | null>(null);
+  const indicationSaveInFlightRef = React.useRef<Set<string>>(new Set());
   const [droppedEvidencePickerOpen, setDroppedEvidencePickerOpen] = useState(false);
   const [selectedDroppedEvidenceId, setSelectedDroppedEvidenceId] = useState<string>("");
 
@@ -3131,10 +3132,14 @@ export default function VideoPanel() {
     const loadToken = ++activeLoadTokenRef.current;
     let cancelled = false;
     const sourceChanged = loadedVideoIdRef.current !== videoId;
-    if (sourceChanged) {
+    const navigationSuppliedSourceTime =
+      navigationRequestedAtRef.current > 0 &&
+      Date.now() - navigationRequestedAtRef.current < 5000;
+    if (sourceChanged && !navigationSuppliedSourceTime) {
       // Opening a source always begins at the head of its analysis array.
-      // A prior event for the same analysis belongs to the previous viewing
-      // session and must not become startup state.
+      // A fresh saloon-doors navigation transaction is the sole exception: it
+      // carries the canonical source beat that the receiving Video leaf must
+      // raise instead of erasing it with a zero-time reset.
       pendingSourceTimeRef.current = 0;
       startupClockPinnedRef.current = true;
       setVideoTimeLine(0);
@@ -4226,6 +4231,10 @@ export default function VideoPanel() {
           !!manualOverride &&
           (isManualAnnotationVisibleAtTime(manualOverride, currentTime) ||
             isManualAnnotationVisibleInSelectedWorkspace(manualOverride));
+        const manualIntervalExcludesCurrentTime =
+          targetIds.some(
+            (trackId) => (manualOverridesByObjectTrack.get(trackId) || []).length > 0,
+          ) && !manualOverrideActive;
         const sourceLabels = [
           item.displayLabel,
           item.class_name,
@@ -4255,6 +4264,9 @@ export default function VideoPanel() {
           if (objectManualOverrideActive || localOverride) {
             return undefined;
           }
+          if (manualIntervalExcludesCurrentTime) {
+            return undefined;
+          }
           for (const trackId of targetIds) {
             const trackOverride = matureSubjectOverlayLookup.byTrack.get(trackId);
             if (trackOverride) {
@@ -4272,7 +4284,7 @@ export default function VideoPanel() {
           return undefined;
         })();
         const masterSchemaMatureOverride = (() => {
-          if (manualOverrideActive || localOverride) {
+          if (manualIntervalExcludesCurrentTime || manualOverrideActive || localOverride) {
             return undefined;
           }
           for (const trackId of targetIds) {
@@ -4316,7 +4328,12 @@ export default function VideoPanel() {
             : undefined;
         })();
         const matureProliferatedOverride = (() => {
-          if (manualOverrideActive || localOverride || masterSchemaMatureOverride) {
+          if (
+            manualIntervalExcludesCurrentTime ||
+            manualOverrideActive ||
+            localOverride ||
+            masterSchemaMatureOverride
+          ) {
             return undefined;
           }
           for (const trackId of targetIds) {
@@ -4344,6 +4361,7 @@ export default function VideoPanel() {
         })();
         const reviewProliferatedCandidate = (() => {
           if (
+            manualIntervalExcludesCurrentTime ||
             manualOverrideActive ||
             localOverride ||
             masterSchemaMatureOverride ||
@@ -4429,6 +4447,7 @@ export default function VideoPanel() {
           .map((trackId) => backendProjectionBySubject[trackId])
           .find(
             (projection) =>
+              !manualIntervalExcludesCurrentTime &&
               projection?.projection_status === "projected" &&
               projection.authority !== "raw_detection" &&
               Math.abs(projection.timestamp_seconds - projectionTimeBucket) < 0.001 &&
@@ -4440,9 +4459,9 @@ export default function VideoPanel() {
         const unresolvedOverlayLabel = unresolvedObjectConfirmationLabel(item);
         const objectOverlayLabel =
           localOverlayLabel ||
-          backendProjectionOverlayLabel ||
           manualOverrideOverlayLabel ||
           manualTrackOverlayLabel ||
+          backendProjectionOverlayLabel ||
           narrativeAgentOverlayLabel ||
           masterSchemaOverlayLabel ||
           proliferatedOverlayLabel ||
@@ -6405,6 +6424,11 @@ export default function VideoPanel() {
       ) {
         return;
       }
+      if (indicationSaveInFlightRef.current.has(overlay.key)) {
+        setNativeSaveMessage("Saving this BBox/ROI confirmation...");
+        return;
+      }
+      indicationSaveInFlightRef.current.add(overlay.key);
       const label = resolveIndicationLabel(edit.category, edit.label);
       const source = overlay.sourceItem || {};
       const expressionPersonAnchor =
@@ -6639,10 +6663,12 @@ export default function VideoPanel() {
         );
         applySavedAnnotationCorrections(savedCorrections);
       } catch (error) {
+        indicationSaveInFlightRef.current.delete(overlay.key);
         const message = error instanceof Error ? error.message : String(error);
         setNativeSaveMessage(`Could not save BBox/ROI indication: ${message}`);
         return;
       }
+      indicationSaveInFlightRef.current.delete(overlay.key);
       closeSelectedOverlayEditor(overlay.key);
       clearOverlayEditingWorkspace([overlay.key, `manual-${annotation.id}`]);
       setSelectedIndicationEdits((current) => ({

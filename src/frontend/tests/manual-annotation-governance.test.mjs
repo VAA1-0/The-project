@@ -1116,6 +1116,101 @@ test("bbox save paths install backend canonical corrections immediately", () => 
   );
 });
 
+test("correction hydration cannot hold the write lock during source fingerprinting", () => {
+  const route = readFileSync(
+    new URL("../app/api/local-analysis/[analysisId]/download/[fileType]/route.ts", import.meta.url),
+    "utf8",
+  );
+  const binding = route.indexOf(
+    "context = await readCorrectionSourceBinding(analysisId, governedContext.project_id)",
+  );
+  const lock = route.indexOf("return await withCorrectionWriteLock(analysisId", binding);
+  const correctionRead = route.indexOf("const corrections = await readRichestAnnotationCorrections", lock);
+  assert.ok(binding >= 0 && lock > binding && correctionRead > lock,
+    "source binding must resolve before the short correction snapshot lock");
+});
+
+test("Objects installs canonical BBox confirmations from the correction event payload", () => {
+  assert.match(
+    objPanel,
+    /payload: string \| \{ analysisId: string; corrections\?: AnnotationCorrections \}/,
+    "Objects correction listener must accept the canonical committed bundle",
+  );
+  assert.match(
+    objPanel,
+    /payload\.corrections[\s\S]*applySavedAnnotationCorrections\(payload\.corrections\)/,
+    "Objects must project a Video BBox confirmation without waiting for full analysis hydration",
+  );
+  assert.match(
+    objPanel,
+    /confirmedObjectTrackIds[\s\S]*leftConfirmed[\s\S]*return leftConfirmed \? -1 : 1/,
+    "Objects must keep an analyst-confirmed source track above the raw same-beat detector queue",
+  );
+  assert.match(
+    objPanel,
+    /Analyst confirmed · detector confidence/,
+    "Objects must distinguish analyst authority from the model confidence of its source detection",
+  );
+  assert.match(
+    objPanel,
+    /metadata_correlation\?\.target_id[\s\S]*eventBus\.on\("videoEvidenceSelected", handler\)/,
+    "Objects must select the exact source track chosen in Video rather than another detection on the same beat",
+  );
+});
+
+test("a corrected BBox interval vetoes stale same-track identity projections", () => {
+  assert.match(
+    videoPanel,
+    /manualIntervalExcludesCurrentTime[\s\S]*manualOverridesByObjectTrack[\s\S]*!manualOverrideActive/,
+    "an out-of-interval manual correction must establish a hard projection boundary",
+  );
+  for (const downstream of [
+    "narrativeAgentOverride",
+    "masterSchemaMatureOverride",
+    "matureProliferatedOverride",
+    "reviewProliferatedCandidate",
+    "backendProjection",
+  ]) {
+    const start = videoPanel.indexOf(`const ${downstream}`);
+    assert.ok(start >= 0, `${downstream} resolver is missing`);
+    assert.match(
+      videoPanel.slice(start, start + 1800),
+      /manualIntervalExcludesCurrentTime/,
+      `${downstream} must not resurrect a user-corrected identity outside its interval`,
+    );
+  }
+  assert.match(
+    objPanel,
+    /broadScopeOverrides[\s\S]*overlapping\.length > 0 \? overlapping : broadScopeOverrides[\s\S]*candidates\.length === 0[\s\S]*return undefined/,
+    "Objects must not use an interval-scoped identity as a fallback outside its corrected time",
+  );
+});
+
+test("associated analytical panels accept canonical correction event envelopes", () => {
+  for (const panel of [objPanel, masterSchemaPanel, meaningPlotPanel, dataMaturationPanel]) {
+    assert.match(
+      panel,
+      /typeof payload === "string" \? payload : payload(?:\?)?\.analysisId/,
+      "associated panels must refresh for the canonical {analysisId, corrections} event",
+    );
+  }
+});
+
+test("BBox save suppresses duplicate in-flight commits for one overlay", () => {
+  assert.match(
+    videoPanel,
+    /indicationSaveInFlightRef\.current\.has\(overlay\.key\)[\s\S]*Saving this BBox\/ROI confirmation/,
+  );
+  assert.match(
+    videoPanel,
+    /indicationSaveInFlightRef\.current\.add\(overlay\.key\)/,
+  );
+  assert.match(
+    videoPanel,
+    /indicationSaveInFlightRef\.current\.delete\(overlay\.key\)/,
+  );
+});
+
 test("manual annotation panels use shared VAA1 video navigation helpers", () => {
   assert.match(
     videoNavigation,
@@ -5719,8 +5814,8 @@ test("BBox overlays consume quiet backend compatibility projections with local f
   );
   assert.match(
     videoPanel,
-    /backendProjectionOverlayLabel\s*\|\|\s*manualOverrideOverlayLabel/,
-    "saved backend projections must participate before legacy manual-label fallback",
+    /manualOverrideOverlayLabel\s*\|\|[\s\S]*manualTrackOverlayLabel\s*\|\|[\s\S]*backendProjectionOverlayLabel/,
+    "analyst BBox corrections must outrank compatible backend projections",
   );
   assert.match(
     videoPanel,

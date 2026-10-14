@@ -1239,7 +1239,8 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
       setVideoId(id || "");
       setPromotedGovernanceRowId(null);
     };
-    const correctionHandler = (id?: string) => {
+    const correctionHandler = (payload?: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload?.analysisId;
       if (!id || id === videoId) {
         setRefreshNonce((current) => current + 1);
       }

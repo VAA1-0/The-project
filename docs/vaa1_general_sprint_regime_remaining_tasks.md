@@ -3,6 +3,53 @@
 Date: 2026-05-25
 Current delivery sequence updated: 2026-09-22
 Embedded-contract activation register updated: 2026-09-29
+Status quo reconciled: 2026-10-14
+
+## Current status quo — 2026-10-14
+
+This section is the current status authority for the General Sprint Regime. The
+dated checkpoints and domain inventories below remain evidence and requirements,
+but their older `open`, `pending`, or test-count statements do not override a
+later accepted delivery record.
+
+Status vocabulary:
+
+- **delivered** — the bounded stage gate has operational and acceptance evidence;
+- **delivered with residual qualification** — the reusable stage outcome is in
+  force, while explicitly named release/coverage checks remain tracked;
+- **partial** — operational slices exist, but the stage gate is not closed;
+- **open** — the integrated stage outcome has not been delivered.
+
+| Stage | Current status | Evidence and present boundary |
+|---|---|---|
+| **0 — Baseline** | **Delivered for the selected COP30 workshop baseline** | The 13 October fail-closed verifier passed six isolated analyses, six distinct sources, 90/90 registered artifacts and 90/90 checksums after backed-up manifest repair. This is a bounded baseline, not release certification. See [Stage 0 delivery](audits/stage0_2026-10-13/README.md). |
+| **1 — Global Clock** | **Delivered through analyst-confirmed M1–M5; residual qualification tracked** | The 1 October handover records the shared revision-bound cursor, source switching, interval save/reopen/undo, invalidation boundary and 16-consumer concordance as delivered and analyst accepted; the 5 October acceptance reran the consumer matrix and correction lifecycle. Remaining qualification is the real >1,000-second observation, selected-project M6 landmark/history recheck, the recorded 1 ms media normalization classification and post-refresh checksum stability. These items do not restart the delivered clock regime. See [Global Clock handover](working_handover_handout_2026-10-01_global_clock_project_boundaries.md), [Chapter 5 acceptance](working_handover_handout_2026-10-05_chapter_five_reporting_and_correction_boundary.md), and [Stage 0 carry-forward](audits/stage0_2026-10-13/README.md). |
+| **2 — Accepted state** | **Partial; operational core delivered, integrated gate not closed** | Canonical decisions, append-only history, source/revision/project-bound correction persistence, generation guards, restart-safe undo and shared projections are operational. The governed hermeneutic ticket reaches direct Global Clock operations, StatsKit and Data Book publication. Full direct-FastAPI/background-job parity and complete cross-consumer invalidation remain open. The 13 October BBox save/panel/interval regressions were repaired but demonstrate that accepted-state parity still requires regression hardening. See [context-ticket audit](audits/hermeneutic_context_2026-10-02/README.md) and [BBox incident](bug_report_2026-10-13_bbox_correction_save_lock_starvation.md). |
+| **3 — Reliable evidence** | **Partial, with a strong six-analysis operational slice** | The six COP30 analyses are project-isolated, source-bound and complete across their registered branches; transcript ownership, multilingual morphology routing, stale-load cancellation and artifact/projection parity were repaired. Provider/version, vocabulary, missingness and invalidation coverage are not yet closed for every evidence family or optional capability. See [9 October handover](working_handover_handout_2026-10-09_project_bound_multilingual_analysis.md). |
+| **4 — Inspectable evidence** | **Partial; Global Clock consumer matrix delivered** | The 16-surface cursor/concordance regime, representative hydration, project restoration and reciprocal source navigation have accepted slices. Full rendered bidirectional coverage, leaf-state preservation, BBox/ROI DOM fixtures, detach acceptance and systematic correction propagation across every applicable panel remain open. The October BBox regressions belong here as well as Stage 2 and must stay in the regression set. |
+| **5 — Reproducible measurements** | **Partial** | StatsKit contracts and selected native measurements are operational, and the workshop analyses report complete registered branches. The full reproducible-population, missingness, method/version, recomputation and source-navigation gate is not closed motor by motor. Unsupported measurements must remain `not computed`. |
+| **6 — Agent continuity and graph assembly** | **Partial** | Narrative Agent recognition, digital-twin/character-path, Meaning Network presence and selected graph/navigation slices exist. Calibrated, versioned agent-track assembly with reviewed membership, false-join/fragmentation diagnostics and export/reopen acceptance is not closed. Tracking remains evidence, never identity authority. |
+| **7 — Reviewable interpretation** | **Partial / construct-specific** | Narrative, Meaning/Plot, Boje 5B, SFL and relational-lens schemas and selected projections exist. No family-wide activation is claimed. Each construct still requires eligible evidence, candidate review, alternatives, canonical acceptance, invalidation and source-navigation proof. Relational lenses remain an offline draft contract. |
+| **8 — Publication and portability** | **Partial** | M6 core export/import and printable Chapter 5 HTML/Markdown/JSON reporting are delivered. A representative workshop publication still requires analyst completion and inspection; the integrated whole-project export/isolated restore/reproduction gate remains open. |
+| **9 — Release qualification** | **Open** | Packaging, first-run consent/data-location disclosure, optional-provider and licensed-runtime activation, complete recovery/performance budgets, broad regression classification and packaged workflow acceptance remain release work. |
+
+The active delivery frontier is therefore **Stages 2–8 by bounded dependency**,
+not a third implementation of Stages 0 or 1. A regression in an accepted-state
+or consumer projection blocks that dependent slice and must be repaired, but it
+does not reopen the delivered baseline or Global Clock unless evidence shows the
+baseline identity or shared clock contract itself has failed.
+
+Stage 0 delivery checkpoint (2026-10-13): the six-analysis COP30 workshop
+project now passes a reproducible, fail-closed baseline gate. Project,
+analysis-directory, source-media, manifest, correction and canonical-ledger
+identities are checked without mutating analyst data; all six source files are
+distinct and present; all 90 registered branch artifacts are present and their
+checksums verify. The first run exposed stale transcript checksums left by the
+language-profile refresh path. The manifests were repaired from current
+artifacts after a recovery backup, and that refresh path now rebuilds its
+manifest in the same operation. Stage 0 is closed for this selected baseline,
+not as a release-wide certification. Evidence and rerun commands are in
+[the Stage 0 delivery record](audits/stage0_2026-10-13/README.md).
 
 Hermeneutic-context propagation checkpoint (2026-10-02): the first operational
 cross-consumer slice now validates and carries one governed project/analysis
@@ -30,7 +77,7 @@ Historical gate status (2026-07-15; not a blanket certification of the current w
 
 Deliver foundations before the capabilities that consume them. Each stage must produce a reusable operational benefit and evidence that its downstream contract works. A schema, an endpoint, or a successful isolated unit test alone does not close a stage. Existing delivered work is reused and verified; only its missing contracts and regressions are scheduled.
 
-The stages below are the delivery order. The numbered domain sections later in this document remain the detailed requirements catalogue and retain their stable numbers for existing references. Their numerical order is no longer the sprint order. The prerequisite bonus program is subordinate to this schedule for remaining work. No stage is declared complete by this planning revision.
+The stages below are the delivery order. The numbered domain sections later in this document remain the detailed requirements catalogue and retain their stable numbers for existing references. Their numerical order is no longer the sprint order. The prerequisite bonus program is subordinate to this schedule for remaining work. This 22 September planning revision did not itself declare a stage complete; later delivery evidence is reconciled in the current status section above.
 
 | Stage | Delivery and immediate benefit | Depends on | Unlocks |
 |---|---|---|---|
@@ -45,7 +92,12 @@ The stages below are the delivery order. The numbered domain sections later in t
 | 8 | Complete publication and portable project round trips; accepted work travels with its evidence and history. | 2–7 for each included feature | Reproducible per-video and project editions |
 | 9 | Complete release qualification and packaging; the tested product works outside the development workspace. | All included stages, or explicit optional-feature deferrals | Release candidate and #0.1 packaging |
 
-### Current execution checkpoint — 2026-09-22
+### Historical execution checkpoint — 2026-09-22 (superseded for current status)
+
+The following checkpoint records the position on 22 September. It is retained
+for provenance. Later acceptance and delivery records are summarized in
+**Current status quo — 2026-10-14** above; in particular, its statement that
+Stage 1 remains open is no longer the current program status.
 
 Baseline captured for the first source-clock increment, with saved correction/decision/metadata snapshots and current test results. Stage 1 is in progress: shared transcript normalization no longer guesses milliseconds from values above 1,000 seconds; precise formatting/parsing and timing-status preservation now have behavioral regression tests. Fifteen focused tests, TypeScript and two rendered hydration checks pass. The broader frontend suite still has ten unresolved failures. Full source isolation, revision/invalidation, long-source navigation and consumer coverage gates remain open; no dependent stage is declared unlocked. Evidence: [source-clock sprint audit](audits/source_clock_2026-09-22/README.md).
 
@@ -80,6 +132,15 @@ Preserve the timing-authority hierarchy and distinguish measured, verified, corr
 Gate: a coverage matrix has no unclassified active temporal consumer; round-trip seek and display agree within declared source precision; frame/sample conversions and edited intervals pass; clock revision survives restart and export/reimport; stale dependents are identified; unrelated source clocks remain isolated. Existing consumers are fixed to meet this contract before new clock-dependent capabilities are delivered.
 
 ### Stage 2 — One accepted state, durable decisions and shared retrieval
+
+The accepted operating refinement for S2.1–S2.22 is
+[Stage 2 Accepted-State Operating Contract (2026-10-14)](stage2_accepted_state_operating_contract_2026-10-14.md).
+It governs the balance between analyst authority, candidate automation, compound
+and batch review, and the exceptional calibrated 99% constellational-proof route.
+It also makes Saloon Doors/Global Clock synchronization, graph relations, panel
+hydration, visual coordinates, open vocabularies, learning-ready corrections and
+hermetic project scope explicit acceptance criteria. This reference is a delivery
+contract, not a claim that all listed capabilities are already operational.
 
 Extend the verified clock-decision path into consistent authority, identity, evidence-version and dependency handling for other corrections. Close append-only confirmation/correction/rejection, explicit supersession, alternatives, idempotent retries and concurrent-edit behavior. A trusted analyst command establishes authority; candidate payloads cannot declare themselves mature.
 

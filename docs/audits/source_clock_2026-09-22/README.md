@@ -1,5 +1,13 @@
 # Source-clock sprint opening — 2026-09-22
 
+> **Later status — 2026-10-14:** this opening audit is historical evidence for
+> the first clock increment. Its statements that Stage 1 is open describe the
+> 22 September position. The Global Clock was subsequently analyst-accepted
+> through M1–M5 and recorded as delivered in the
+> [1 October handover](../../working_handover_handout_2026-10-01_global_clock_project_boundaries.md),
+> with representative acceptance rerun on 5 October. See the
+> [current General Sprint status](../../vaa1_general_sprint_regime_remaining_tasks.md#current-status-quo--2026-10-14).
+
 Status: baseline captured for the first bounded increment; Stage 1 remains in progress. No downstream stage is unlocked by this increment alone.
 
 ## Baseline and preservation

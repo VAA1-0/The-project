@@ -31,7 +31,7 @@ test("actual dashboard POST rejects a stale clock without touching either artifa
   const fixture = `class CorrectionBindingUnavailable extends Error {}
     class CorrectionWriteBusy extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
-    const assertLocalAnalysisBoundary = async () => {};
+    const assertLocalAnalysisBoundary = async () => ({ project_id: 'project-a' });
     const projectBoundaryErrorResponse = () => null;
     const withCorrectionWriteLock = async (_id, work) => work();
     const projectRoot = () => '/unused';
@@ -53,7 +53,7 @@ test("queued dashboard saves check generation inside the write queue and strip t
   const fixture = `class CorrectionBindingUnavailable extends Error {}
     class CorrectionWriteBusy extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
-    const assertLocalAnalysisBoundary = async () => {};
+    const assertLocalAnalysisBoundary = async () => ({ project_id: 'project-a' });
     const projectBoundaryErrorResponse = () => null;
     const correctionWriteQueues = new Map();
     const withSharedCorrectionLock = async (_root, _id, work) => work();
@@ -137,7 +137,7 @@ test("actual dashboard locks snapshot reads and rejects replaced source before w
   const fixture = `class CorrectionWriteBusy extends Error {}
     class CorrectionBindingUnavailable extends Error {}
     const NextResponse = { json: (body, init = {}) => ({ body, status: init.status || 200 }) };
-    const assertLocalAnalysisBoundary = async () => {};
+    const assertLocalAnalysisBoundary = async () => ({ project_id: 'project-a' });
     const projectBoundaryErrorResponse = () => null;
     let locked = false;
     const withCorrectionWriteLock = async (_id, work) => { locked = true; try { return await work(); } finally { locked = false; } };
@@ -147,12 +147,14 @@ test("actual dashboard locks snapshot reads and rejects replaced source before w
     const readRichestAnnotationCorrections = async () => { if (!locked) throw new Error('Unlocked correction read'); return { transcript_clock_offset_seconds: 2 }; };
     export let context = { analysis_id: 'a', binding_status: 'content_bound', source_fingerprint: 'sha256:one', clock_revision: 'clock-v1:one', timebase: { transcript_clock_offset_seconds: 2 } };
     export const replaceContext = value => { context = value; };
-    const readCorrectionSourceBinding = async () => { if (!locked) throw new Error('Unlocked binding read'); if (!context) throw new CorrectionBindingUnavailable('offline'); return context; };
+    export let bindingReadUnderLock = false;
+    const readCorrectionSourceBinding = async () => { if (locked) bindingReadUnderLock = true; if (!context) throw new CorrectionBindingUnavailable('offline'); return context; };
     const fs = new Proxy({}, { get: () => () => { throw new Error('Unexpected artifact write'); } });`;
   const mod = await import(`data:text/javascript;base64,${Buffer.from(`${code}\n${fixture}\n${compile(functions.map(n => n.getText(ast)).join("\n"))}`).toString("base64")}`);
   const params = { params: Promise.resolve({ analysisId: "a", fileType: "annotation_corrections" }) };
   const loaded = await mod.GET({}, params);
   assert.equal(loaded.status, 200);
+  assert.equal(mod.bindingReadUnderLock, false, 'GET source fingerprinting must finish before the correction snapshot lock');
   assert.equal(loaded.body._clock_write_guard.clock_revision, 'clock-v1:one');
   mod.replaceContext({ ...mod.context, source_fingerprint: 'sha256:replacement' });
   const rejected = await mod.POST({ json: async () => loaded.body }, params);
@@ -185,7 +187,7 @@ test('dashboard delegates global offset changes without holding its lock and pre
   const fixture=`
     const process={env:{}};
     const NextResponse={json:(body,init={})=>({body,status:init.status||200})};
-    const assertLocalAnalysisBoundary=async()=>{};
+    const assertLocalAnalysisBoundary=async()=>({project_id:'project-a'});
     const projectBoundaryErrorResponse=()=>null;
     const withCorrectionWriteLock=()=>{throw new Error('Dashboard must not acquire the backend lock');};
     export let calls=[];

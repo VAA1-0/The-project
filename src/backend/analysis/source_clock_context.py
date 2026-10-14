@@ -4,11 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
+_FINGERPRINT_SINGLE_FLIGHT = threading.Lock()
 
 
 class ClockRevisionConflict(ValueError):
@@ -21,7 +23,7 @@ def _signature(path: Path) -> tuple[int, ...]:
 
 
 @lru_cache(maxsize=128)
-def _fingerprint(path_text: str, signature: tuple[int, ...]) -> str:
+def _fingerprint_cached(path_text: str, signature: tuple[int, ...]) -> str:
     path = Path(path_text)
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -30,6 +32,15 @@ def _fingerprint(path_text: str, signature: tuple[int, ...]) -> str:
     if _signature(path) != signature:
         raise ClockRevisionConflict("Source changed while its clock identity was being read; retry")
     return "sha256:" + digest.hexdigest()
+
+
+def _fingerprint(path_text: str, signature: tuple[int, ...]) -> str:
+    # functools.lru_cache permits concurrent misses to execute more than once.
+    # A dashboard hydration fan-out can therefore hash the same large source
+    # many times and make foreground correction binding time out. Serialize
+    # cold misses; the cached path remains effectively immediate.
+    with _FINGERPRINT_SINGLE_FLIGHT:
+        return _fingerprint_cached(path_text, signature)
 
 
 def _finite(value: Any, name: str, *, signed: bool = False) -> float | None:

@@ -175,7 +175,18 @@ function pickAuthoritativeObjectOverride(
     const bounds = getManualAnnotationBounds(item);
     return objEnd >= bounds.start && objStart <= bounds.end;
   });
-  const candidates = overlapping.length > 0 ? overlapping : overrides;
+  const broadScopeOverrides = overrides.filter((item) =>
+    [
+      "track_family",
+      "narrative_agent_family",
+      "current_continuity_segment",
+      "current_scene",
+    ].includes(String(item.metadata_correlation?.apply_scope || "").toLowerCase()),
+  );
+  const candidates = overlapping.length > 0 ? overlapping : broadScopeOverrides;
+  if (candidates.length === 0) {
+    return undefined;
+  }
   return [...candidates].sort((left, right) => {
     const leftUpdated = Date.parse(left.updated_at || left.created_at || "") || 0;
     const rightUpdated = Date.parse(right.updated_at || right.created_at || "") || 0;
@@ -246,14 +257,38 @@ export default function OBJDetectionPanel() {
     return Array.from(new Set(agents)).sort() as string[];
   }, [analysisData?.masterSchemaResolvedEvidence?.records]);
 
+  const applySavedAnnotationCorrections = React.useCallback(
+    (savedCorrections: AnnotationCorrections) => {
+      setAnalysisData((current: any) =>
+        current
+          ? {
+              ...current,
+              annotationCorrections: savedCorrections,
+            }
+          : current,
+      );
+    },
+    [],
+  );
+
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (
+      payload: string | { analysisId: string; corrections?: AnnotationCorrections },
+    ) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === videoId) {
-        setRefreshNonce((current) => current + 1);
+        if (typeof payload !== "string" && payload.corrections) {
+          // Install the canonical foreground commit immediately. Waiting for a
+          // heavyweight analysis refresh leaves the Objects leaf showing raw
+          // "person" after Video has accepted an analyst identity.
+          applySavedAnnotationCorrections(payload.corrections);
+        } else {
+          setRefreshNonce((current) => current + 1);
+        }
       }
     };
     eventBus.on("videoIdChanged", handler);
@@ -263,7 +298,7 @@ export default function OBJDetectionPanel() {
       eventBus.off("videoIdChanged", handler);
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
     };
-  }, [videoId]);
+  }, [applySavedAnnotationCorrections, videoId]);
 
   useEffect(() => {
     async function load() {
@@ -323,21 +358,21 @@ export default function OBJDetectionPanel() {
   }, [videoId, refreshNonce]);
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
-  const applySavedAnnotationCorrections = React.useCallback(
-    (savedCorrections: AnnotationCorrections) => {
-      setAnalysisData((current: any) =>
-        current
-          ? {
-              ...current,
-              annotationCorrections: savedCorrections,
-            }
-          : current,
-      );
-    },
-    [],
+  const confirmedObjectTrackIds = new Set(
+    (analysisData?.annotationCorrections?.manual_visual_annotations || [])
+      .map((item: ManualVisualAnnotation) => manualObjectTargetId(item))
+      .filter((targetId: string | null): targetId is string => Boolean(targetId)),
   );
   const groupedObjects = [...groupDetectedObjectsForDisplay(detectedObjects)].sort(
     (left: any, right: any) => {
+      // An analyst confirmation is mature evidence, so keep its source track
+      // visible above the raw detector queue instead of burying it among every
+      // other person found on the same beat.
+      const leftConfirmed = confirmedObjectTrackIds.has(getObjectTrackId(left) || "");
+      const rightConfirmed = confirmedObjectTrackIds.has(getObjectTrackId(right) || "");
+      if (leftConfirmed !== rightConfirmed) {
+        return leftConfirmed ? -1 : 1;
+      }
       const leftStart = left.startTimestamp ?? left.timestamp ?? 0;
       const rightStart = right.startTimestamp ?? right.timestamp ?? 0;
       if (leftStart !== rightStart) {
@@ -392,6 +427,28 @@ export default function OBJDetectionPanel() {
     },
     [getManualOverrideForObject],
   );
+
+  useEffect(() => {
+    const handler = (payload: any) => {
+      if (!payload || payload.videoId !== videoId) return;
+      const source = payload.sourceItem || {};
+      const targetTrackId = String(
+        source.trackId ??
+          source.track_id ??
+          source.metadata_correlation?.target_id ??
+          "",
+      );
+      if (!targetTrackId) return;
+      const index = groupedObjects.findIndex(
+        (item: any) => getObjectTrackId(item) === targetTrackId,
+      );
+      if (index >= 0) {
+        setSelectedObjectKey(objectRowKey(groupedObjects[index], index));
+      }
+    };
+    eventBus.on("videoEvidenceSelected", handler);
+    return () => eventBus.off("videoEvidenceSelected", handler);
+  }, [groupedObjects, videoId]);
 
   const updateObjectDraft = (
     key: string,
@@ -827,6 +884,7 @@ export default function OBJDetectionPanel() {
                   return (
                   <details
                     key={rowKey}
+                    open={selected ? true : undefined}
                     className={`group rounded border transition ${
                       selected
                         ? "border-cyan-600/70 bg-cyan-950/15"
@@ -846,6 +904,11 @@ export default function OBJDetectionPanel() {
                         <div className="truncate text-[10px] text-[var(--ui-passive-text)]">
                           Source: {sourceLabel}
                         </div>
+                        {manualOverride && (
+                          <div className="truncate text-[10px] text-emerald-300">
+                            Analyst confirmed · detector confidence {(Number(obj.confidence || 0) * 100).toFixed(1)}%
+                          </div>
+                        )}
                       </div>
                       <span className="shrink-0 text-[10px] text-[var(--ui-passive-text)]">
                         {formatPreciseTime(obj.startTimestamp ?? obj.timestamp)}

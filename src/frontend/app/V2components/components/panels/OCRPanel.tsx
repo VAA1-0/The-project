@@ -241,7 +241,8 @@ export default function OCRPanel({ videoId: initialVideoId = "" }: { videoId?: s
     const handler = (id: string) => {
       setVideoId(id);
     };
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === videoId) {
         setRefreshNonce((current) => current + 1);
       }

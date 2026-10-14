@@ -5632,6 +5632,10 @@ export class VideoService {
 
   static async updateCvatLink(id: string, cvatID: number): Promise<void> {
     await apiService.updateCvatLink(id, cvatID);
+    // Remove a legacy unscoped entry as well as every project-scoped entry.
+    // The latter is the normal path; the former prevents old sessions from
+    // reopening a mixed-generation projection after upgrading.
+    this.analysisCache.delete(id);
     this.invalidateAnalysisCache(id);
   }
 
@@ -6515,11 +6519,16 @@ export class VideoService {
     // correction bundle makes close/reopen serve a mixed generation. Mounted
     // panels receive the verified bundle below; a later reopen must rebuild all
     // projections from canonical artifacts.
+    this.analysisCache.delete(id);
     this.invalidateAnalysisCache(id);
     // The committed bundle is associated memory: every mounted consumer gets
     // the canonical merged value immediately, without reloading the video or
     // waiting for heavyweight analysis hydration.
-    eventBus.emit("analysisCorrectionsChanged", { analysisId: id, corrections: saved });
+    eventBus.emit("analysisCorrectionsChanged", {
+      analysisId: id,
+      corrections: saved,
+      annotationCorrections: saved,
+    });
     eventBus.emit("analysisCorrectionCommitted", {
       analysisId: id,
       corrections: saved,

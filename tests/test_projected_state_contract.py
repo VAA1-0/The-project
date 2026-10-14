@@ -1,5 +1,6 @@
 import json
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -123,6 +124,34 @@ class ProjectedStateContractTests(unittest.TestCase):
         )
         self.assertEqual(batch["projection_count"], 1)
         self.assertEqual(batch["projections"], [single])
+
+    def test_saved_bbox_confirmation_reopens_with_label_interval_and_geometry(self):
+        """S2.16-S2.18: the accepted BBox is the same object after disk reopen."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sidecar = Path(tmpdir) / "annotation_corrections.json"
+            sidecar.write_text(json.dumps(self.manual), encoding="utf-8")
+            reopened = json.loads(sidecar.read_text(encoding="utf-8"))
+
+        result = project_subject_state(
+            analysis_id="analysis-1",
+            subject_ref="track-1",
+            timestamp=2.0,
+            tracked_objects=self.raw,
+            corrections=reopened,
+        )
+
+        self.assertEqual(result["projected_value"], "James Bond")
+        self.assertEqual(result["authority"], "manual_correction")
+        self.assertEqual(result["scope"]["start_seconds"], 1.5)
+        self.assertEqual(result["scope"]["end_seconds"], 3.0)
+        self.assertEqual(
+            result["scope"]["geometry"],
+            {
+                "coordinate_system": "normalized_video",
+                "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+            },
+        )
+        self.assertEqual(result["traceback_refs"], ["manual-1"])
 
     def test_frontend_authority_parity_fixtures(self):
         fixture_path = Path(__file__).resolve().parent / "fixtures" / "projected_state_parity.json"

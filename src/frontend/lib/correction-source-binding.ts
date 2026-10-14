@@ -2,8 +2,8 @@ import type { CorrectionSourceBinding } from "./correction-clock-guard";
 
 export class CorrectionBindingUnavailable extends Error {}
 
-/** Called only while the caller owns the shared correction lock.
- * The backend context GET does not reacquire that lock.
+/** Resolve source identity before a short correction snapshot lock.
+ * The write path resolves and validates it again inside its transaction.
  */
 export async function readCorrectionSourceBinding(analysisId: string, projectId: string): Promise<CorrectionSourceBinding> {
   const base = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");

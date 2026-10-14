@@ -1,5 +1,13 @@
 # Global Clock M5 consumer matrix — 1 October 2026
 
+> **Later status — 2026-10-14:** this file intentionally retains the failed
+> first analyst review and the remediation trail below. M5 was subsequently
+> analyst-confirmed and is recorded as delivered in the
+> [1 October handover](../../working_handover_handout_2026-10-01_global_clock_project_boundaries.md);
+> the representative consumer matrix passed again in the
+> [5 October acceptance](../../working_handover_handout_2026-10-05_chapter_five_reporting_and_correction_boundary.md).
+> Do not quote the initial `M5 is open` outcome below as the current status.
+
 ## Outcome
 
 **Failed analyst review. M5 is open.** The first automated run proved that all

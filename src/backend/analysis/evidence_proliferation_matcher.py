@@ -15,15 +15,84 @@ NEAR_MATCH_PROBABILITY_POLICY = {
     "surface_to_analyst": 0.35,
     "probable_candidate": 0.45,
     "strongly_supported": 0.85,
-    "very_high_probability": 0.95,
-    "auto_proliferation_allowed_above": 0.95,
-    "manual_confirmation_required_below": 0.95,
+    "very_high_probability": 0.99,
+    "auto_proliferation_allowed_above": 0.99,
+    "manual_confirmation_required_below": 0.99,
     "notes": [
         "Near matches are surfaced as review candidates, not mature semantic authority.",
-        "Only manual confirmation, manual correction, or very high probability may proliferate.",
+        "Only manual authority or governed 99% constellational proof may proliferate.",
+        "Raw detector confidence and uncalibrated similarity never constitute constellational proof.",
         "Probability boundaries are open policy values and should remain analyst-discussable.",
     ],
 }
+
+CONSTELLATIONAL_PROOF_POLICY = {
+    "minimum_proof_score": 0.99,
+    "minimum_independent_modalities": 3,
+    "requires_calibration": True,
+    "requires_source_time_anchor": True,
+    "requires_visual_geometry_when_visual": True,
+    "requires_project_boundary_match": True,
+    "requires_no_unresolved_conflict": True,
+}
+
+
+def evaluate_constellational_proof(
+    candidate: Dict[str, Any],
+    *,
+    probability: float,
+    source_anchors: List[Dict[str, Any]],
+    expected_analysis_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Qualify automatic truth without treating a detector score as proof."""
+    envelope = candidate.get("constellational_proof")
+    if not isinstance(envelope, dict):
+        return {
+            "qualified": False,
+            "authority_level": "supported_candidate",
+            "blocking_reasons": ["proof_envelope_missing"],
+            "policy": CONSTELLATIONAL_PROOF_POLICY,
+        }
+
+    reasons: List[str] = []
+    proof_score = _safe_float(envelope.get("proof_score"), 0.0) or 0.0
+    modalities = {
+        _safe_text(value).lower()
+        for value in envelope.get("independent_modalities", [])
+        if _safe_text(value)
+    }
+    analysis_id = _safe_text(envelope.get("analysis_id"))
+    expected = _safe_text(expected_analysis_id or candidate.get("analysis_id"))
+    conflicts = envelope.get("unresolved_conflicts")
+
+    if proof_score < CONSTELLATIONAL_PROOF_POLICY["minimum_proof_score"]:
+        reasons.append("proof_score_below_99_percent")
+    if probability < CONSTELLATIONAL_PROOF_POLICY["minimum_proof_score"]:
+        reasons.append("match_probability_below_99_percent")
+    if envelope.get("calibrated") is not True:
+        reasons.append("proof_not_calibrated")
+    if len(modalities) < CONSTELLATIONAL_PROOF_POLICY["minimum_independent_modalities"]:
+        reasons.append("insufficient_independent_modalities")
+    if envelope.get("source_time_anchored") is not True or not source_anchors:
+        reasons.append("source_time_anchor_missing")
+    if "visual" in modalities and envelope.get("visual_geometry_anchored") is not True:
+        reasons.append("visual_geometry_anchor_missing")
+    if expected and analysis_id != expected:
+        reasons.append("project_boundary_mismatch")
+    if not isinstance(conflicts, list) or conflicts:
+        reasons.append("unresolved_conflict")
+
+    qualified = not reasons
+    return {
+        "qualified": qualified,
+        "authority_level": (
+            "mature_triangulated_evidence" if qualified else "supported_candidate"
+        ),
+        "blocking_reasons": reasons,
+        "proof_score": proof_score,
+        "independent_modalities": sorted(modalities),
+        "policy": CONSTELLATIONAL_PROOF_POLICY,
+    }
 
 PROJECTION_TARGETS_BY_SOURCE_PANEL = {
     "objects_panel": ["video_panel", "bbox_roi_panel", "objects_panel", "traceback_drawer"],
@@ -547,6 +616,11 @@ def _candidate(
             if key in item
         },
     }
+    if isinstance(item.get("constellational_proof"), dict):
+        # Preserve the producer's typed proof envelope for governance. The
+        # evaluator below still independently enforces calibration, modality,
+        # anchoring, conflict and project-boundary requirements.
+        candidate["constellational_proof"] = dict(item["constellational_proof"])
     candidate["source_timesphere"] = _timesphere_from_candidate(candidate)
     return candidate
 
@@ -1779,7 +1853,12 @@ def _authority_level_for_candidate(candidate: Dict[str, Any], probability: float
         return "manual_correction"
     if source_kind == "manual_annotation":
         return "manual_annotation"
-    if probability >= NEAR_MATCH_PROBABILITY_POLICY["very_high_probability"]:
+    proof = evaluate_constellational_proof(
+        candidate,
+        probability=probability,
+        source_anchors=_candidate_source_anchors(candidate),
+    )
+    if proof["qualified"]:
         return "mature_triangulated_evidence"
     if probability >= NEAR_MATCH_PROBABILITY_POLICY["surface_to_analyst"]:
         return "supported_candidate"
@@ -1854,8 +1933,12 @@ def _governance_status(
 ) -> Dict[str, Any]:
     source_kind = _safe_text(candidate.get("source_kind"))
     manual_authority = source_kind in {"manual_correction", "manual_annotation"}
-    very_high = probability >= NEAR_MATCH_PROBABILITY_POLICY["auto_proliferation_allowed_above"]
     has_anchor = bool(source_anchors)
+    proof = evaluate_constellational_proof(
+        candidate,
+        probability=probability,
+        source_anchors=source_anchors,
+    )
     if candidate_role == "anchor_sample":
         proliferation_allowed = False
         review_required = False
@@ -1873,10 +1956,10 @@ def _governance_status(
         review_required = True
         review_reason = "Candidate lacks a source anchor and cannot proliferate."
     else:
-        proliferation_allowed = bool((manual_authority or very_high) and has_anchor)
+        proliferation_allowed = bool((manual_authority or proof["qualified"]) and has_anchor)
         review_required = not proliferation_allowed
     if candidate_role == "identity_candidate" and has_anchor and proliferation_allowed:
-        review_reason = "Proliferation allowed by manual authority or very high probability with traceback."
+        review_reason = "Proliferation allowed by manual authority or governed 99% constellational proof."
     elif candidate_role == "identity_candidate" and has_anchor:
         review_reason = "Near match must be confirmed or canceled before it can proliferate."
     return {
@@ -1886,6 +1969,7 @@ def _governance_status(
         "review_reason": review_reason,
         "conflict_state": "none",
         "unknown_override_blocked": True,
+        "constellational_proof": proof,
     }
 
 

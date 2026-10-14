@@ -41,6 +41,8 @@ import SourceClockBrowser from "./SourceClockBrowser";
 import PanelSourceClockConcordance from "./PanelSourceClockConcordance";
 import { useUniversalPanelDisclosures } from "./useUniversalPanelDisclosures";
 import { activeProjectScopeId, type ProjectScopeViolation } from "@/lib/active-project-scope";
+import { VideoService } from "@/lib/video-service";
+import { RefreshCw, Save } from "lucide-react";
 
 // --- Context Setup ---
 type LayoutHostContextType = {
@@ -123,6 +125,119 @@ const MANUAL_LEAF_PANEL_CONFIGS = [
 
 function manualCategoryDisplayLabel(category: string): string {
   return category === "Identification" ? "Narrative Agent" : category;
+}
+
+function GlobalPanelNavigation({ componentName }: { componentName: string }) {
+  const [analysisId, setAnalysisId] = useState(
+    () => eventBus.getLast<string>("videoIdChanged") || "",
+  );
+  const [busy, setBusy] = useState<"save" | "refresh" | null>(null);
+  const [indication, setIndication] = useState("");
+  const indicationTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleAnalysis = (id: string) => setAnalysisId(id);
+    eventBus.on("videoIdChanged", handleAnalysis);
+    return () => {
+      eventBus.off("videoIdChanged", handleAnalysis);
+      if (indicationTimerRef.current !== null) window.clearTimeout(indicationTimerRef.current);
+    };
+  }, []);
+
+  const showIndication = (message: string) => {
+    setIndication(message);
+    if (indicationTimerRef.current !== null) window.clearTimeout(indicationTimerRef.current);
+    indicationTimerRef.current = window.setTimeout(() => setIndication(""), 2400);
+  };
+
+  const checkpointWorkspace = () =>
+    new Promise<void>((resolve, reject) => {
+      eventBus.emit("workspaceCheckpointRequested", {
+        requestId: `panel-save:${componentName}:${Date.now()}`,
+        acknowledge: resolve,
+        reject,
+      });
+    });
+
+  const savePanel = async () => {
+    if (busy) return;
+    setBusy("save");
+    try {
+      eventBus.emit("panelSaveRequested", { analysisId, componentName });
+      await checkpointWorkspace();
+      if (analysisId) await apiService.getAnnotationCorrections(analysisId);
+      showIndication("Saved");
+    } catch (error) {
+      console.error("Panel checkpoint failed:", error);
+      showIndication("Save unavailable");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const refreshPanel = async () => {
+    if (busy) return;
+    setBusy("refresh");
+    try {
+      let canonicalCorrections = null;
+      if (analysisId) {
+        const refreshed = await VideoService.refreshAnalysis(analysisId);
+        canonicalCorrections =
+          refreshed.annotationCorrections ||
+          (await apiService.getAnnotationCorrections(analysisId));
+        eventBus.emit("analysisCorrectionsChanged", {
+          analysisId,
+          corrections: canonicalCorrections,
+          annotationCorrections: canonicalCorrections,
+          refreshSource: "global-panel-navigation",
+        });
+      }
+      eventBus.emit("panelRefreshRequested", {
+        analysisId,
+        componentName,
+        annotationCorrections: canonicalCorrections,
+      });
+      showIndication("Updated");
+    } catch (error) {
+      console.error("Panel refresh failed:", error);
+      showIndication("Refresh unavailable");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div
+      data-vaa1-global-panel-navigation="true"
+      className="flex h-6 shrink-0 items-center justify-end gap-1 border-b border-white/[0.06] bg-[#111] px-1.5"
+    >
+      <span aria-live="polite" className="mr-1 min-w-0 truncate text-[9px] text-emerald-300/80">
+        {indication}
+      </span>
+      <button
+        type="button"
+        aria-label="Save panel"
+        title="Save panel checkpoint"
+        disabled={busy !== null}
+        onClick={() => void savePanel()}
+        className="inline-flex h-4 items-center gap-1 rounded border border-white/10 px-1.5 text-[9px] text-slate-300 hover:border-white/20 hover:bg-white/5 disabled:opacity-50"
+      >
+        <Save className="size-2.5" />
+        {busy === "save" ? "Saving…" : "Save"}
+      </button>
+      <button
+        type="button"
+        aria-label="Refresh panel"
+        title="Refresh mature panel data"
+        disabled={busy !== null}
+        onClick={() => void refreshPanel()}
+        className="inline-flex h-4 items-center gap-1 rounded border border-white/10 px-1.5 text-[9px] text-slate-300 hover:border-white/20 hover:bg-white/5 disabled:opacity-50"
+      >
+        <RefreshCw className={`size-2.5 ${busy === "refresh" ? "animate-spin" : ""}`} />
+        {busy === "refresh" ? "Refreshing…" : "Refresh"}
+      </button>
+    </div>
+  );
 }
 
 function normalizeLegacyPanelTitle(title: unknown): unknown {
@@ -609,6 +724,7 @@ export default function LayoutHost({
       <div className="flex h-full min-h-0 flex-col">
         <SourceClockBrowser />
         <PanelSourceClockConcordance componentName={componentName} category={category} />
+        <GlobalPanelNavigation componentName={componentName} />
         <div ref={disclosureScopeRef} className="min-h-0 flex-1">{children}</div>
       </div>
       </LayoutHostContext.Provider>
@@ -955,6 +1071,28 @@ export default function LayoutHost({
       }, 150);
     };
 
+    const checkpointLayout = (request: {
+      acknowledge?: () => void;
+      reject?: (error: unknown) => void;
+    }) => {
+      try {
+        const resolvedConfig = layout.saveLayout();
+        const restorableConfig = LayoutConfig.fromResolved(resolvedConfig);
+        window.localStorage.setItem(
+          projectLayoutStorageKey(),
+          JSON.stringify(restorableConfig),
+        );
+        window.localStorage.setItem(
+          projectLayoutVersionStorageKey(),
+          SAVED_LAYOUT_VERSION,
+        );
+        request?.acknowledge?.();
+      } catch (error) {
+        request?.reject?.(error);
+      }
+    };
+    eventBus.on("workspaceCheckpointRequested", checkpointLayout);
+
     let initialLayout = layoutConfig;
     let requestedAnalysisId = "";
     let requestedWorkspace = "";
@@ -1040,6 +1178,7 @@ export default function LayoutHost({
         clearTimeout(saveTimeout);
       }
       layout.off("stateChanged", persistLayout);
+      eventBus.off("workspaceCheckpointRequested", checkpointLayout);
       layout.off("itemDestroyed", persistLayout);
       layout.off("itemCreated", persistLayout);
       eventBus.off("openPanelRequest", openPanelRequestHandler);

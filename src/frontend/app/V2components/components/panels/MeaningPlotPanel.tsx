@@ -3774,7 +3774,8 @@ export default function MeaningPlotPanel({
   }, [selectedVideoId]);
 
   useEffect(() => {
-    const correctionsHandler = (id: string) => {
+    const correctionsHandler = (payload: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (!selectedVideoId || id !== selectedVideoId) {
         return;
       }
@@ -3949,10 +3950,7 @@ export default function MeaningPlotPanel({
   );
   const sourceMediaMetadata = governedSourceMetadata || analysisData?.metadata?.sourceMediaMetadata;
   const masterNarrativeAgentProfiles = useMemo(
-    () => masterSchemaNarrativeAgentProfiles(
-      analysisData?.masterSchemaResolvedEvidence?.records,
-      Boolean(sourceMediaMetadata?.user_annotations?.persons?.length),
-    ),
+    () => masterSchemaNarrativeAgentProfiles(analysisData?.masterSchemaResolvedEvidence?.records),
     [analysisData?.masterSchemaResolvedEvidence?.records, sourceMediaMetadata],
   );
   const sourceNarrativeAgentProfiles = useMemo(

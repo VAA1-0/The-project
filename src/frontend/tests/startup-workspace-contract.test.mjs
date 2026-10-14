@@ -12,11 +12,11 @@ test("startup workspace keeps Video alone between left project and right analysi
   assert.match(source, /storedVersion\s*===\s*SAVED_LAYOUT_VERSION/);
 });
 
-test("opening an analysis discards prior-session cursor and queues global zero", () => {
+test("opening an analysis starts at zero unless a fresh saloon-doors transaction supplies the beat", () => {
   const video = read("app/V2components/components/panels/VideoPanel.tsx");
   const browser = read("app/V2components/components/SourceClockBrowser.tsx");
   const clock = read("lib/source-clock-events.ts");
-  assert.match(video, /if \(sourceChanged\) \{[\s\S]*pendingSourceTimeRef\.current = 0;[\s\S]*setVideoTimeLine\(0\);[\s\S]*setCurrentTime\(0\);/);
+  assert.match(video, /navigationSuppliedSourceTime[\s\S]*navigationRequestedAtRef\.current[\s\S]*if \(sourceChanged && !navigationSuppliedSourceTime\) \{[\s\S]*pendingSourceTimeRef\.current = 0;[\s\S]*setVideoTimeLine\(0\);[\s\S]*setCurrentTime\(0\);/);
   assert.doesNotMatch(video, /getLast<SourceClockTimeEvent>\("sourceClockTimeChanged"\)/);
   assert.match(video, /startupClockPinnedRef\.current \? 0 : nextTime/);
   assert.match(video, /!startupClockPinnedRef\.current && Math\.abs\(nextTime - lastBroadcastTimeRef\.current\)/);

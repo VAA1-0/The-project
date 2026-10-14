@@ -444,7 +444,8 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
 
   useEffect(() => {
     const handler = (id: string) => setSelectedVideoId(id);
-    const correctionHandler = (id: string) => {
+    const correctionHandler = (payload: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
       if (id === selectedVideoId) {
         setRefreshNonce((value) => value + 1);
       }

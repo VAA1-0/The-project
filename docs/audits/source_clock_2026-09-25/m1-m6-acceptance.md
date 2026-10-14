@@ -1,5 +1,14 @@
 # Global clock M1–M6 acceptance record — 25 September 2026
 
+> **Later status — 2026-10-14:** this audit preserves the state and failures of
+> the 25 September run. It was subsequently superseded for program status by
+> the analyst-confirmed M1–M5 delivery recorded in the
+> [1 October handover](../../working_handover_handout_2026-10-01_global_clock_project_boundaries.md)
+> and rerun evidence in the
+> [5 October handover](../../working_handover_handout_2026-10-05_chapter_five_reporting_and_correction_boundary.md).
+> M6 core export/import is delivered; its selected-project landmark/history
+> recheck and the real >1,000-second observation remain qualification work.
+
 ## Outcome
 
 The global-clock implementation and automated evidence are delivered, but Stage 1 is **not closed**. The governing handout defines M1–M6 as ordered manual gates. This run completed the bounded rendered and round-trip work available from the repository; it does not relabel missing analyst observations as passes.

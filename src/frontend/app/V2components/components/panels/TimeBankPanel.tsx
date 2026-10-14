@@ -453,8 +453,9 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     const handler = (id: string) => {
       setSelectedVideoId(id);
     };
-    const correctionHandler = (id: string) => {
-      if (analysisIds.includes(id)) {
+    const correctionHandler = (payload: string | { analysisId?: string }) => {
+      const id = typeof payload === "string" ? payload : payload.analysisId;
+      if (id && analysisIds.includes(id)) {
         setRefreshNonce((current) => current + 1);
       }
     };

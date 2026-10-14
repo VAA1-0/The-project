@@ -23,6 +23,76 @@ matcher = load_matcher_module()
 
 
 class EvidenceProliferationMatcherContractTest(unittest.TestCase):
+    def test_raw_detector_confidence_never_counts_as_constellational_proof(self):
+        candidate = {
+            "source_kind": "tracked_object",
+            "source_panel": "objects_panel",
+            "analysis_id": "analysis-1",
+            "geometry": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+        }
+
+        proof = matcher.evaluate_constellational_proof(
+            candidate,
+            probability=1.0,
+            source_anchors=[{"anchor_type": "bbox"}],
+            expected_analysis_id="analysis-1",
+        )
+
+        self.assertFalse(proof["qualified"])
+        self.assertIn("proof_envelope_missing", proof["blocking_reasons"])
+
+    def test_governed_99_percent_multimodal_proof_can_mature_automatically(self):
+        candidate = {
+            "source_kind": "tracked_object",
+            "source_panel": "objects_panel",
+            "analysis_id": "analysis-1",
+            "geometry": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+            "constellational_proof": {
+                "proof_score": 0.995,
+                "calibrated": True,
+                "independent_modalities": ["visual", "audio", "transcript", "lip_motion"],
+                "source_time_anchored": True,
+                "visual_geometry_anchored": True,
+                "analysis_id": "analysis-1",
+                "unresolved_conflicts": [],
+            },
+        }
+
+        proof = matcher.evaluate_constellational_proof(
+            candidate,
+            probability=0.995,
+            source_anchors=[{"anchor_type": "bbox"}, {"anchor_type": "time_range"}],
+            expected_analysis_id="analysis-1",
+        )
+
+        self.assertTrue(proof["qualified"])
+        self.assertEqual(proof["authority_level"], "mature_triangulated_evidence")
+
+    def test_constellational_proof_is_blocked_across_project_boundary(self):
+        candidate = {
+            "source_kind": "tracked_object",
+            "analysis_id": "foreign-analysis",
+            "constellational_proof": {
+                "proof_score": 1.0,
+                "calibrated": True,
+                "independent_modalities": ["visual", "audio", "transcript"],
+                "source_time_anchored": True,
+                "visual_geometry_anchored": True,
+                "analysis_id": "foreign-analysis",
+                "unresolved_conflicts": [],
+            },
+        }
+
+        proof = matcher.evaluate_constellational_proof(
+            candidate,
+            probability=1.0,
+            source_anchors=[{"anchor_type": "bbox"}, {"anchor_type": "time_range"}],
+            expected_analysis_id="analysis-1",
+        )
+
+        self.assertFalse(proof["qualified"])
+        self.assertIn("project_boundary_mismatch", proof["blocking_reasons"])
+
     def test_matcher_returns_candidate_evidence_without_mutating_authority(self):
         status = {
             "vaa1_annotation_master_schema": {
