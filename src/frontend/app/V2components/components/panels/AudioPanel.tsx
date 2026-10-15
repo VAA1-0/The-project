@@ -1302,6 +1302,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
+  const [newNarrativeAgentByTarget, setNewNarrativeAgentByTarget] = useState<Record<string, string>>({});
   const [governedEventPage, setGovernedEventPage] = useState(0);
   const [speakerTurnPage, setSpeakerTurnPage] = useState(0);
 
@@ -1534,6 +1535,9 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
               ? `Narrative agent confirmed via audio-visual anchor: ${visualAnchor.label}.`
               : "Narrative-agent audio evidence confirmed.",
       );
+      if (decision === "agent") {
+        setNewNarrativeAgentByTarget((current) => ({ ...current, [target.id]: "" }));
+      }
     } catch (saveError) {
       setSaveMessage(saveError instanceof Error ? saveError.message : "Audio decision save failed.");
     } finally {
@@ -1547,9 +1551,15 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     const rowSaveKey = `:${analysisId}:${target.rowType}:${safeIdPart(target.id)}`;
     const rowIsSaving = Boolean(savingDecisionId?.includes(rowSaveKey));
     const invalidTiming = !targetHasValidSourceTiming(target);
+    const isSpeechOrVad = target.rowType.startsWith("speech");
+    const newNarrativeAgent = newNarrativeAgentByTarget[target.id] || "";
     const buttonClass = "rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-200 hover:border-cyan-400 hover:text-cyan-100";
     return (
-      <div className="flex min-w-[220px] items-center gap-1" data-vaa1-audio-row-actions="true">
+      <div
+        className="flex min-w-[220px] flex-wrap items-center gap-1"
+        data-vaa1-audio-row-actions="true"
+        data-vaa1-audio-narrative-agent-confirmation="true"
+      >
         <span className={status === "confirmed" ? "mr-1 text-[10px] text-cyan-200" : status === "dropped" ? "mr-1 text-[10px] text-amber-200" : "mr-1 text-[10px] text-slate-500"}>
           {invalidTiming ? "timing rebuild needed" : visualAnchor ? `anchor: ${visualAnchor.label}` : status}
         </span>
@@ -1572,6 +1582,41 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
             <option key={option.id} value={option.label}>{option.label}</option>
           ))}
         </select>
+        {isSpeechOrVad ? (
+          <div className="flex items-center gap-1" data-vaa1-vad-new-narrative-agent="true">
+            <input
+              value={newNarrativeAgent}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => {
+                const value = event.target.value;
+                setNewNarrativeAgentByTarget((current) => ({ ...current, [target.id]: value }));
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter" && newNarrativeAgent.trim()) {
+                  event.preventDefault();
+                  void persistAudioDecision(target, "agent", newNarrativeAgent.trim());
+                }
+              }}
+              placeholder="New Narrative Agent"
+              aria-label="First-time Narrative Agent for VAD detection"
+              disabled={rowIsSaving || invalidTiming}
+              className="w-[150px] rounded border border-cyan-700/50 bg-slate-950 px-2 py-1 text-[10px] text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400"
+            />
+            <button
+              type="button"
+              className={buttonClass}
+              disabled={rowIsSaving || invalidTiming || !newNarrativeAgent.trim()}
+              title="Confirm first-time Narrative Agent for this source-timed VAD or speech interval"
+              onClick={(event) => {
+                event.stopPropagation();
+                void persistAudioDecision(target, "agent", newNarrativeAgent.trim());
+              }}
+            >
+              Add agent
+            </button>
+          </div>
+        ) : null}
         <button type="button" className={buttonClass} disabled={rowIsSaving || invalidTiming} onClick={(event) => { event.stopPropagation(); void persistAudioDecision(target, "sample"); }}>Sample</button>
         <button type="button" className="rounded border border-amber-700/70 px-2 py-1 text-[10px] text-amber-200 hover:border-amber-400" disabled={rowIsSaving} onClick={(event) => { event.stopPropagation(); void persistAudioDecision(target, "dropped"); }}>Drop</button>
       </div>

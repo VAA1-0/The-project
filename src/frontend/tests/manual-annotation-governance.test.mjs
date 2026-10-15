@@ -2310,8 +2310,14 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     audioPanel,
-    /upsertMasterSchemaPresenceIntervalForManualAnnotation[\s\S]*data-vaa1-audio-row-actions="true"[\s\S]*persistAudioDecision\(target, "agent", label\)/,
+    /upsertMasterSchemaPresenceIntervalForManualAnnotation[\s\S]*data-vaa1-audio-row-actions="true"[\s\S]*data-vaa1-audio-narrative-agent-confirmation="true"[\s\S]*persistAudioDecision\(target, "agent", label\)/,
     "Audio workbench rows must be confirmable as narrative-agent evidence and feed the Master Schema feedback loop",
+  );
+
+  assert.match(
+    audioPanel,
+    /target\.rowType\.startsWith\("speech"\)[\s\S]*data-vaa1-vad-new-narrative-agent="true"[\s\S]*placeholder="New Narrative Agent"[\s\S]*persistAudioDecision\(target, "agent", newNarrativeAgent\.trim\(\)\)/,
+    "source-timed VAD and speech rows must accept a first-time Narrative Agent without promoting raw VAD confidence",
   );
 
   assert.match(

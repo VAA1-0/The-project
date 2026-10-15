@@ -116,6 +116,19 @@ class CanonicalAdapterContractTests(unittest.TestCase):
             "audio_source_class",
         )
 
+    def test_voice_over_confirmation_is_audio_source_class_not_narrative_agent(self):
+        current = {"text_substitutions": [{
+            "id": "text:voice-over:start:12.00:end:14.00",
+            "raw_value": "[voice-over]",
+            "corrected_value": "[voice-over]",
+            "target_start_timestamp": 12.0,
+            "target_end_timestamp": 14.0,
+            "speaker_confirmation": "Voice-over narration",
+        }]}
+        _, events = self.sync({}, current)
+        self.assertEqual(events[0]["property"], "audio.source_class")
+        self.assertEqual(events[0]["authority"], "explicit_user_confirmation")
+
     def test_unknown_cluster_label_cannot_become_canonical_speaker(self):
         current = {"text_substitutions": [{
             "id": "text:unknown:start:1.00:end:2.00",

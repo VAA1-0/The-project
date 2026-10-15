@@ -51,6 +51,8 @@ const TRANSCRIPT_SOURCE_SPEAKERS = [
   "Crowd",
 ] as const;
 
+const TRANSCRIPT_SOURCE_SPEAKER_SET = new Set<string>(TRANSCRIPT_SOURCE_SPEAKERS);
+
 function formatSpeechSeconds(value?: number | null): string {
   return formatPreciseSourceTime(Number(value ?? 0));
 }
@@ -264,7 +266,13 @@ export default function SpeechToTextPanel({
   videoId?: string;
   panelMode?: "transcript" | "audio";
 }) {
-  const [videoId, setVideoId] = useState(initialVideoId);
+  const [videoId, setVideoId] = useState(
+    () =>
+      initialVideoId ||
+      eventBus.getLast<string>("videoIdChanged") ||
+      eventBus.getLast<string>("activeAnalysisContext") ||
+      "",
+  );
   const activeVideoId = React.useRef(videoId);
   activeVideoId.current = videoId;
 
@@ -279,14 +287,15 @@ export default function SpeechToTextPanel({
   const [metadata, setMetadata] = useState<any>(null);
   const [blobMissing, setBlobMissing] = useState<boolean>(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
-  const speakerConfirmationOptions = React.useMemo(
-    () => [
-      ...governedNarrativeAgentLabels(analysisData),
-      ...TRANSCRIPT_SOURCE_SPEAKERS,
-    ].filter((label, index, labels) =>
+  const narrativeAgentConfirmationOptions = React.useMemo(
+    () => governedNarrativeAgentLabels(analysisData).filter((label, index, labels) =>
       labels.findIndex((candidate) => candidate.toLowerCase() === label.toLowerCase()) === index,
     ),
     [analysisData],
+  );
+  const speakerConfirmationOptions = React.useMemo(
+    () => [...narrativeAgentConfirmationOptions, ...TRANSCRIPT_SOURCE_SPEAKERS],
+    [narrativeAgentConfirmationOptions],
   );
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -351,7 +360,26 @@ export default function SpeechToTextPanel({
 
   useEffect(() => {
     const handler = (id: string) => {
-      setVideoId(id);
+      if (id) setVideoId(id);
+    };
+    const activeContextHandler = (id: string) => {
+      if (id) setVideoId(id);
+    };
+    const panelRefreshHandler = (payload?: {
+      analysisId?: string;
+      componentName?: string;
+    }) => {
+      if (payload?.componentName && payload.componentName !== "Transcript") return;
+      const refreshedAnalysisId = payload?.analysisId || eventBus.getLast<string>("videoIdChanged");
+      if (refreshedAnalysisId && refreshedAnalysisId !== activeVideoId.current) {
+        setVideoId(refreshedAnalysisId);
+        return;
+      }
+      if (refreshedAnalysisId && refreshedAnalysisId === activeVideoId.current) {
+        setRefreshNonce((current) => current + 1);
+        return;
+      }
+      eventBus.emit("activeAnalysisContextRequest", null);
     };
     const timeHandler = (time: number) => {
       setVideoTimeLine(Number(time) || 0);
@@ -377,12 +405,19 @@ export default function SpeechToTextPanel({
       } : current);
     };
     eventBus.on("videoIdChanged", handler);
+    eventBus.on("activeAnalysisContext", activeContextHandler);
+    eventBus.on("panelRefreshRequested", panelRefreshHandler);
     const unsubscribeClock = subscribeSourceTime(videoId, timeHandler);
     eventBus.on("analysisCorrectionsChanged", correctionHandler);
     eventBus.on("sourceMediaMetadataChanged", sourceMetadataHandler);
+    if (!videoId) {
+      eventBus.emit("activeAnalysisContextRequest", null);
+    }
 
     return () => {
       eventBus.off("videoIdChanged", handler);
+      eventBus.off("activeAnalysisContext", activeContextHandler);
+      eventBus.off("panelRefreshRequested", panelRefreshHandler);
       unsubscribeClock();
       eventBus.off("analysisCorrectionsChanged", correctionHandler);
       eventBus.off("sourceMediaMetadataChanged", sourceMetadataHandler);
@@ -1290,8 +1325,8 @@ export default function SpeechToTextPanel({
                         <option value="unconfirmed">Unconfirmed</option>
                       </select>
                     </label>
-                    <label className="text-[11px] text-slate-400">
-                      <div className="mb-1 uppercase tracking-[0.14em]">Speaker confirmation</div>
+                    <div className="text-[11px] text-slate-400">
+                      <div className="mb-1 uppercase tracking-[0.14em]">Narrative Agent / audio source</div>
                       <select
                         value={editorDraft.speakerConfirmation}
                         onChange={(event) =>
@@ -1302,6 +1337,7 @@ export default function SpeechToTextPanel({
                           )
                         }
                         data-vaa1-transcript-speaker-confirmation="true"
+                        data-vaa1-transcript-narrative-agent-confirmation="true"
                         className="w-full rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
                       >
                         <option value="">Select speaker</option>
@@ -1313,13 +1349,37 @@ export default function SpeechToTextPanel({
                             {editorDraft.speakerConfirmation}
                           </option>
                         ) : null}
-                        {speakerConfirmationOptions.map((label) => (
-                          <option key={label} value={label}>
-                            {label}
-                          </option>
-                        ))}
+                        {narrativeAgentConfirmationOptions.length > 0 ? (
+                          <optgroup label="Narrative Agents">
+                            {narrativeAgentConfirmationOptions.map((label) => (
+                              <option key={label} value={label}>{label}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        <optgroup label="Non-agent audio sources">
+                          {TRANSCRIPT_SOURCE_SPEAKERS.map((label) => (
+                            <option key={label} value={label}>{label}</option>
+                          ))}
+                        </optgroup>
                       </select>
-                    </label>
+                      <input
+                        value={editorDraft.speakerConfirmation}
+                        onChange={(event) =>
+                          setEditorDraft((current) =>
+                            current
+                              ? { ...current, speakerConfirmation: event.target.value }
+                              : current,
+                          )
+                        }
+                        placeholder="Or enter a first-time Narrative Agent"
+                        aria-label="First-time Narrative Agent"
+                        data-vaa1-transcript-new-narrative-agent="true"
+                        className="mt-1.5 w-full rounded border border-cyan-500/20 bg-[#171717] px-2 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-500/50"
+                      />
+                      <div className="mt-1 text-[9px] leading-tight text-slate-500">
+                        A new name becomes a project-bound analyst-confirmed Narrative Agent for this source interval.
+                      </div>
+                    </div>
                     <label className="text-[11px] text-slate-400">
                       <div className="mb-1 uppercase tracking-[0.14em]">Note</div>
                       <input
@@ -1694,7 +1754,9 @@ export default function SpeechToTextPanel({
                   const transcriptMaturityLabel = !hasSourceTiming
                     ? "Needs timing"
                     : row.speakerConfirmation
-                      ? "Agent confirmed"
+                      ? TRANSCRIPT_SOURCE_SPEAKER_SET.has(row.speakerConfirmation)
+                        ? "Audio source confirmed"
+                        : "Narrative Agent confirmed"
                       : row.correctionSource === "manual"
                         ? "Text corrected"
                         : row.status === "unconfirmed"

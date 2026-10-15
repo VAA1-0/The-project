@@ -3,9 +3,9 @@
 Date: 2026-05-25
 Current delivery sequence updated: 2026-09-22
 Embedded-contract activation register updated: 2026-09-29
-Status quo reconciled: 2026-10-14
+Status quo reconciled: 2026-10-15
 
-## Current status quo — 2026-10-14
+## Current status quo — 2026-10-15
 
 This section is the current status authority for the General Sprint Regime. The
 dated checkpoints and domain inventories below remain evidence and requirements,
@@ -25,7 +25,7 @@ Status vocabulary:
 | **0 — Baseline** | **Delivered for the selected COP30 workshop baseline** | The 13 October fail-closed verifier passed six isolated analyses, six distinct sources, 90/90 registered artifacts and 90/90 checksums after backed-up manifest repair. This is a bounded baseline, not release certification. See [Stage 0 delivery](audits/stage0_2026-10-13/README.md). |
 | **1 — Global Clock** | **Delivered through analyst-confirmed M1–M5; residual qualification tracked** | The 1 October handover records the shared revision-bound cursor, source switching, interval save/reopen/undo, invalidation boundary and 16-consumer concordance as delivered and analyst accepted; the 5 October acceptance reran the consumer matrix and correction lifecycle. Remaining qualification is the real >1,000-second observation, selected-project M6 landmark/history recheck, the recorded 1 ms media normalization classification and post-refresh checksum stability. These items do not restart the delivered clock regime. See [Global Clock handover](working_handover_handout_2026-10-01_global_clock_project_boundaries.md), [Chapter 5 acceptance](working_handover_handout_2026-10-05_chapter_five_reporting_and_correction_boundary.md), and [Stage 0 carry-forward](audits/stage0_2026-10-13/README.md). |
 | **2 — Accepted state** | **Partial; operational core delivered, integrated gate not closed** | Canonical decisions, append-only history, source/revision/project-bound correction persistence, generation guards, restart-safe undo and shared projections are operational. The governed hermeneutic ticket reaches direct Global Clock operations, StatsKit and Data Book publication. Full direct-FastAPI/background-job parity and complete cross-consumer invalidation remain open. The 13 October BBox save/panel/interval regressions were repaired but demonstrate that accepted-state parity still requires regression hardening. See [context-ticket audit](audits/hermeneutic_context_2026-10-02/README.md) and [BBox incident](bug_report_2026-10-13_bbox_correction_save_lock_starvation.md). |
-| **3 — Reliable evidence** | **Partial, with a strong six-analysis operational slice** | The six COP30 analyses are project-isolated, source-bound and complete across their registered branches; transcript ownership, multilingual morphology routing, stale-load cancellation and artifact/projection parity were repaired. Provider/version, vocabulary, missingness and invalidation coverage are not yet closed for every evidence family or optional capability. See [9 October handover](working_handover_handout_2026-10-09_project_bound_multilingual_analysis.md). |
+| **3 — Reliable evidence** | **Partial, with a strong six-analysis operational slice** | The six COP30 analyses are project-isolated, source-bound and complete across their registered branches; transcript ownership, multilingual morphology routing, stale-load cancellation and artifact/projection parity were repaired. The current 15-branch manifest is a useful foundation, but method versions remain null and VAD, scenes, visual sample clouds and SFL/dependency are not yet first-class manifest branches. Provider/settings, quality/missingness and invalidation coverage are not closed for every evidence family or optional capability. See [Stage 3 operating contract](stage3_reliable_evidence_operating_contract_2026-10-15.md) and [9 October handover](working_handover_handout_2026-10-09_project_bound_multilingual_analysis.md). |
 | **4 — Inspectable evidence** | **Partial; Global Clock consumer matrix delivered** | The 16-surface cursor/concordance regime, representative hydration, project restoration and reciprocal source navigation have accepted slices. Full rendered bidirectional coverage, leaf-state preservation, BBox/ROI DOM fixtures, detach acceptance and systematic correction propagation across every applicable panel remain open. The October BBox regressions belong here as well as Stage 2 and must stay in the regression set. |
 | **5 — Reproducible measurements** | **Partial** | StatsKit contracts and selected native measurements are operational, and the workshop analyses report complete registered branches. The full reproducible-population, missingness, method/version, recomputation and source-navigation gate is not closed motor by motor. Unsupported measurements must remain `not computed`. |
 | **6 — Agent continuity and graph assembly** | **Partial** | Narrative Agent recognition, digital-twin/character-path, Meaning Network presence and selected graph/navigation slices exist. Calibrated, versioned agent-track assembly with reviewed membership, false-join/fragmentation diagnostics and export/reopen acceptance is not closed. Tracking remains evidence, never identity authority. |
@@ -149,6 +149,16 @@ Expose one versioned accepted-state projection coordinated through Master Schema
 Gate: a real correction propagates to all applicable existing consumers, survives reopen, invalidates affected derived records and preserves alternatives and unrelated annotations. Verify a minimal export/import fixture here rather than postponing data-loss detection to stage 8. No feature may require a second local confirmation of an already-valid canonical decision.
 
 ### Stage 3 — Reliable evidence and explicit capability boundaries
+
+The accepted preparation and S3.1–S3.22 delivery interpretation is
+[Stage 3 Reliable-Evidence Operating Contract (2026-10-15)](stage3_reliable_evidence_operating_contract_2026-10-15.md).
+It strengthens the existing full-analysis manifest rather than creating a
+parallel registry, and makes method/provider versions, effective settings,
+quality/missingness, dependency lineage, honest fallbacks and provider policy
+explicit gates. The recommended first vertical slice is the source-audio → VAD
+→ diarization → transcript → scene corridor, with Audio, Transcript and Scene
+Cards rendered at the same Global Clock beat. This reference is a preparation
+and acceptance contract, not a claim that all evidence branches are operational.
 
 Consolidate persisted transcript, shot, VAD, diarization, audio-event/prosody/sample-cloud, object/OCR/expression, scene, visual-measurement and SFL/dependency layers under the shared contracts. Reuse valid artifacts before computing replacements. Register method/provider versions, effective settings, quality, missingness and artifact dependencies. Keep scene and shot boundaries distinct, VAD separate from transcript timing authority, and speaker-turn candidates separate from confirmed agent attribution.
 

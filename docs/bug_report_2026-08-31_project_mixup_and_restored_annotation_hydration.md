@@ -4,7 +4,7 @@ Date: 2026-08-31
 
 Severity: High / project-integrity and analyst-trust failure
 
-Status: Recurred on 2026-09-07; targeted BBox recovery verified; canonical profile and import-lineage mitigation remain required
+Status: Recurred on 2026-09-07 and 2026-10-15; targeted BBox and Transcript repairs verified; universal panel-binding mitigation remains required
 
 ## Executive summary
 
@@ -335,6 +335,7 @@ the visibility, timing, ownership or apparent existence of research data.
 | 2026-09-01 | Transcript-dependent outputs retained stale timing after the authoritative transcript was restored. | Linked transcript, prosody, diarization, POS, Quant and time-bank consumers could point to different moments. | Dependents are rebuilt against the operational transcript clock and now carry timing authority. | Release-blocking: all time-based data must share and validate one master clock before panels become reviewable. |
 | 2026-09-01 | Backend and browser-local artifact routes could differ in latency and previously differed in availability. | A panel could be empty although its artifact existed and another consumer could retrieve it. | The restored Bond artifact matrix was checked through governed browser routes; required artifacts were non-empty. | Open: add automated route-parity checks for every artifact and every analysis at startup. |
 | 2026-09-01 | The OCR panel initialized with an empty analysis ID and ignored the workspace analysis passed in component state, relying on a later transient `videoIdChanged` event. | The video badge showed 71 OCR detections while the OCR panel showed `0 surfaced / 0 raw`. | OCR now accepts and reacts to the workspace `videoId`; a Bond OCR Playwright regression verifies 71 raw rows and visible entries. | Fundamental panel-lifecycle defect: audit every panel for the same missed-event pattern. |
+| 2026-10-15 | The Transcript panel initialized with an empty analysis/file ID after CNN.mp4 was already active. It depended on observing a transient `videoIdChanged` event and Global Refresh could not recover an ID the panel had never retained. | Video rendered CNN.mp4 and its detections while Transcript displayed a blank `video Id`, `No transcript on channel yet`, and remained empty after Refresh even though the canonical project-bound transcript artifact existed. | Transcript now accepts restored component state, reads retained `videoIdChanged` or `activeAnalysisContext`, requests the live Video-panel context when absent, and re-resolves context on panel Refresh. The live API returned the authoritative CNN Whisper transcript and 13 focused frontend contracts passed. | Recurrent universal panel-lifecycle defect: every associated panel must retain or recover its project-bound analysis/file ID; a missed notification may never erase panel identity. |
 | 2026-09-01 | Some restored legacy analyses still lack newer optional branches such as spatial tone, adaptive visual scan or Native Statistical Interpretation. Requests for absent optional artifacts produced 404 responses during panel loading. | Panels may look broken instead of explicitly explaining legacy incompatibility or offering a governed repair. | Genuine gaps remain distinguished from restored artifacts. | Open: panels must render typed `not produced`, `legacy unavailable`, `repair available` and `load failed` states. |
 | 2026-09-01 | `pyannote.audio` is not installed in the running environment. | Existing diarization artifacts surface, but newly computed diarization would be limited. | Limitation was reported after startup. | Open: dependency preflight must block or explicitly downgrade diarization before analysis starts. |
 | 2026-09-01 | Existing browser tests contained stale fixture counts and a removed analysis identifier. | Initial Playwright runs failed for reasons unrelated to current data integrity, prolonging diagnosis and obscuring real regressions. | Fixtures now use the active 12-analysis catalogue and restored Bond ID; the suite passes. | Open: fixtures need stable seeded manifests and must not depend on mutable workstation identifiers. |
@@ -374,10 +375,14 @@ Only after that preflight may panels claim that the project is ready for review.
 3. **Project reopen preflight.** Verify cohort membership, source videos,
    correction ledgers, artifact inventory, hashes and clock authority before
    displaying the project as usable.
-4. **Universal panel hydration contract.** Every panel must accept the current
-   analysis through component state, subscribe to later changes, and fetch data
-   through the same artifact registry. No panel may depend solely on having
-   observed a past event.
+4. **Universal panel hydration and identity-retention contract.** Every panel
+   must retain the associated project-bound analysis/file ID, accept it through
+   restored component state, read retained active-analysis context, subscribe to
+   later changes, and request the live context when its binding is absent. Panel
+   Refresh must first recover and validate that binding, then fetch through the
+   shared artifact registry. No panel may depend solely on having observed a
+   past event, silently clear its ID, or translate a missing binding into an
+   empty-data claim.
 5. **Consumer parity matrix.** Automatically exercise backend download,
    browser-local recovery and panel parsing for every registered artifact.
 6. **Master-clock gate.** Reject scaffold timing when authoritative source
@@ -524,6 +529,12 @@ The first useful milestone is: **edit a BBox once, receive a durable revision, r
 32. Lose or reorder a refresh notification and reopen a panel. It must recover the current revision and reject stale responses without erasing saved state.
 33. Fail a downstream projection: the correction remains durably saved, the stale consumer is named, and scoped retry restores revision parity without rerunning detection.
 34. Verify Video, Master Schema, Scene Cards, Narrative Agents, Meaning Network, search and publication against the same pinned revision using semantic values, time and geometry, not row counts alone.
+35. Open every analysis panel after its source-selection event has already fired,
+    restore the layout, click panel Refresh, and switch away and back. Each panel
+    must retain or recover the same project-bound analysis/file ID and hydrate
+    its registered artifact. Intentionally remove the binding: the panel must
+    request current context or display `analysis binding unavailable`; it must
+    never report `no data` merely because its ID was lost.
 
 
 ### Verified restart probe — 7 September 2026

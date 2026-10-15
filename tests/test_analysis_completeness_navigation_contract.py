@@ -38,8 +38,9 @@ class AnalysisCompletenessNavigationContractTests(unittest.TestCase):
 
             completeness = build_analysis_completeness(status)
 
-        self.assertEqual(completeness["overall_state"], "completed_with_gaps")
-        self.assertGreater(completeness["missing_count"], 0)
+        self.assertEqual(completeness["overall_state"], "available_with_projection_gaps")
+        self.assertEqual(completeness["missing_count"], 0)
+        self.assertGreater(completeness["unsurfaced_count"], 0)
         self.assertTrue(all(item["state"] != "computed" for item in completeness["branches"]))
 
     def test_source_layer_row_parity_verifies_projection_hydration_and_consumer(self):

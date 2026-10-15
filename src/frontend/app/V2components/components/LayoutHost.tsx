@@ -790,7 +790,7 @@ export default function LayoutHost({
         new ReactComponentWrapper(
           container,
           SpeechToTextPanel,
-          {},
+          (state as Record<string, unknown>) || {},
           ContextWrapper,
         );
       },

@@ -30,6 +30,14 @@ test("Transcript speaker confirmation uses governed characters and durable sourc
     assert.match(panel, new RegExp(`"${label}"`));
   }
   assert.match(panel, /data-vaa1-transcript-speaker-confirmation="true"/);
+  assert.match(panel, /data-vaa1-transcript-narrative-agent-confirmation="true"/);
+  assert.match(panel, /Narrative Agent \/ audio source/);
+  assert.match(panel, /<optgroup label="Narrative Agents">/);
+  assert.match(panel, /<optgroup label="Non-agent audio sources">/);
+  assert.match(panel, /data-vaa1-transcript-new-narrative-agent="true"/);
+  assert.match(panel, /placeholder="Or enter a first-time Narrative Agent"/);
+  assert.match(panel, /speakerConfirmation: event\.target\.value/);
+  assert.match(panel, /TRANSCRIPT_SOURCE_SPEAKER_SET\.has\(row\.speakerConfirmation\)[\s\S]*"Audio source confirmed"[\s\S]*"Narrative Agent confirmed"/);
   assert.match(panel, /speakerConfirmation:\s*editorDraft\.speakerConfirmation/);
   assert.match(corrections, /speaker_confirmation:\s*options\?\.speakerConfirmation/);
   assert.match(service, /speaker:\s*spanRule\?\.speaker_confirmation \|\| segment\.speaker/);
@@ -46,6 +54,22 @@ test("Transcript speaker confirmation uses governed characters and durable sourc
   assert.match(service, /identity_auto_promotion_allowed:\s*false/);
 });
 
+test("Transcript hydrates from retained, restored, and requested active-analysis context", () => {
+  const panel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
+  const host = read("app/V2components/components/LayoutHost.tsx");
+
+  assert.match(panel, /eventBus\.getLast<string>\("videoIdChanged"\)/);
+  assert.match(panel, /eventBus\.getLast<string>\("activeAnalysisContext"\)/);
+  assert.match(panel, /eventBus\.on\("activeAnalysisContext", activeContextHandler\)/);
+  assert.match(panel, /eventBus\.emit\("activeAnalysisContextRequest", null\)/);
+  assert.match(panel, /eventBus\.on\("panelRefreshRequested", panelRefreshHandler\)/);
+  assert.match(panel, /setRefreshNonce\(\(current\) => current \+ 1\)/);
+  assert.match(
+    host,
+    /"Transcript",[\s\S]*SpeechToTextPanel,[\s\S]*\(state as Record<string, unknown>\) \|\| \{\}/,
+  );
+});
+
 test("source metadata persons surface as individual Narrative Agents", () => {
   const registry = read("lib/narrative-agent-registry.ts");
   const service = read("lib/video-service.ts");
@@ -57,6 +81,8 @@ test("source metadata persons surface as individual Narrative Agents", () => {
   assert.match(registry, /const knownPersons = Array\.isArray\(annotations\?\.persons\)/);
   assert.match(registry, /if \(knownPersons\.length > 0\)[\s\S]*?addValues\(labels, knownPersons\)/);
   assert.match(registry, /split\(\/\[,;\\n\]\+\/\)/);
+  assert.match(registry, /\["Identification", "Role", "OBJ", "Audio"\]\.includes\(entry\.category\)[\s\S]*addLabel\(labels, entry\.identity_affirmation\)/);
+  assert.match(registry, /analysisData\?\.transcript[\s\S]*analysisData\?\.transcriptTimeline[\s\S]*row\?\.speakerConfirmation[\s\S]*NON_AGENT_AUDIO_SOURCES\.has/);
   assert.match(service, /apiService\.getSourceMediaMetadata\(id\)/);
   assert.match(video, /eventBus\.on\("sourceMediaMetadataChanged", sourceMetadataHandler\)/);
   assert.match(transcript, /eventBus\.on\("sourceMediaMetadataChanged", sourceMetadataHandler\)/);

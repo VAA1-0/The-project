@@ -170,7 +170,12 @@ def _speaker_assignment_payload(item: Dict[str, Any], *, created_at: str, create
     scope = _scope(start, end)
     if "start_seconds" not in scope:
         return None
-    source_class = speaker.lower() in {"background noise", "crowd"}
+    source_class = speaker.lower() in {
+        "announcer",
+        "background noise",
+        "crowd",
+        "voice-over narration",
+    }
     payload = {
         "decision_action": "correct_assignment",
         "subject_ref": {"type": "transcript_span", "id": correction_ref},

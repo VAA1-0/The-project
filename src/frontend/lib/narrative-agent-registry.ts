@@ -1,6 +1,13 @@
 import type { ManualVisualAnnotation } from "./api-service";
 import type { AnalysisData, MasterSchemaResolvedEvidenceRecord } from "./video-service";
 
+const NON_AGENT_AUDIO_SOURCES = new Set([
+  "announcer",
+  "background noise",
+  "crowd",
+  "voice-over narration",
+]);
+
 const addLabel = (labels: Set<string>, value: unknown): void => {
   const label = String(value || "").trim();
   const normalized = label.toLowerCase().replace(/_/g, " ");
@@ -66,10 +73,21 @@ export function governedNarrativeAgentLabels(analysisData?: AnalysisData | null)
     addValues(labels, source.fields?.persons);
   });
   (analysisData?.annotationCorrections?.manual_visual_annotations || []).forEach((entry: ManualVisualAnnotation) => {
-    addLabel(labels, entry.identity_affirmation);
+    if (["Identification", "Role", "OBJ", "Audio"].includes(entry.category)) {
+      addLabel(labels, entry.identity_affirmation);
+    }
     if (entry.category === "Identification") {
       addLabel(labels, entry.custom_label);
       addLabel(labels, entry.label);
+    }
+  });
+  [
+    ...(analysisData?.transcript || []),
+    ...(analysisData?.transcriptTimeline || []),
+  ].forEach((row) => {
+    const confirmedSpeaker = String(row?.speakerConfirmation || "").trim();
+    if (confirmedSpeaker && !NON_AGENT_AUDIO_SOURCES.has(confirmedSpeaker.toLowerCase())) {
+      addLabel(labels, confirmedSpeaker);
     }
   });
   (analysisData?.entityRegistry?.entities || []).forEach((entity) => {
