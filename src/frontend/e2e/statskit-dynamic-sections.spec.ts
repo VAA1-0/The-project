@@ -8,8 +8,8 @@ test("StatsKit sections reorder, fill, detach, and return to their host", async 
     "vaa1.panel-section-order.statskit",
     JSON.stringify(["relevance-scanner", "significance-workbench", "stats-metadata", "stats-workbench", "visualization"]),
   ));
-  await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.goto("/dashboard?activeProject=research-test-2-20226-cop30-vids&workspace=default");
+  await page.getByRole("button", { name: /Select video CNN\.mp4/ }).click();
   await page.getByRole("button", { name: "Lenses", exact: true }).click();
   await page.getByRole("button", { name: "StatsKit", exact: true }).click();
   const tab = page.locator(".lm_tab").filter({ hasText: /^StatsKit$/ }).last();

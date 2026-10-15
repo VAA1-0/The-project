@@ -64,6 +64,12 @@ type TranscriptCursorMatch = {
   distance: number;
 };
 
+function transcriptEvidenceId(row: any, rowIndex: number): string {
+  const targetId = String(row?.targetId || row?.id || "").trim();
+  if (targetId) return targetId;
+  return `transcript:${rowIndex}:${Number(row?.start || 0).toFixed(3)}:${Number(row?.end || 0).toFixed(3)}`;
+}
+
 function nearestTranscriptCursorMatch(rows: any[], cursor: number): TranscriptCursorMatch | null {
   if (!Number.isFinite(cursor)) return null;
   return rows.reduce<TranscriptCursorMatch | null>((nearest, row, index) => {
@@ -300,6 +306,7 @@ export default function SpeechToTextPanel({
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedWord, setSelectedWord] = useState<string>("");
+  const [selectedTranscriptEvidenceId, setSelectedTranscriptEvidenceId] = useState<string | null>(null);
   const [selectedWordDraft, setSelectedWordDraft] = useState<string>("");
   const wordBinding = React.useRef<CorrectionDraftBinding | null>(null);
   const [wordMessage, setWordMessage] = useState<string | null>(null);
@@ -1024,6 +1031,20 @@ export default function SpeechToTextPanel({
       setEditorMessage("This transcript row does not have a valid source timestamp.");
       return;
     }
+    const endCandidate = Number(row?.end);
+    const end = Number.isFinite(endCandidate) ? Math.max(start, endCandidate) : start;
+    const evidenceId = transcriptEvidenceId(row, transcript.indexOf(row));
+    const label = String(row?.text || "Transcript evidence").trim() || "Transcript evidence";
+    setSelectedTranscriptEvidenceId(evidenceId);
+    eventBus.emit("transcriptEvidenceFocus", {
+      videoId,
+      evidenceId,
+      start,
+      end,
+      label,
+      source: "Transcript",
+      reviewState: row?.status || row?.timingStatus || "source_timed",
+    });
     openVideoAtTime(videoId, start);
   };
 
@@ -1746,6 +1767,8 @@ export default function SpeechToTextPanel({
                 </div>
               ) : (
                 transcript.map((row: any, rowIndex: number) => {
+                  const evidenceId = transcriptEvidenceId(row, rowIndex);
+                  const isSelectedTranscriptEvidence = selectedTranscriptEvidenceId === evidenceId;
                   const cursorMatch = transcriptCursorMatch?.index === rowIndex
                     ? transcriptCursorMatch
                     : null;
@@ -1795,13 +1818,14 @@ export default function SpeechToTextPanel({
                       else transcriptRowRefs.current.delete(rowIndex);
                     }}
                     data-source-clock-nearest={cursorMatch ? "true" : undefined}
+                    data-vaa1-transcript-active-evidence={isSelectedTranscriptEvidence ? "true" : undefined}
                     className={`rounded border px-3 py-3 transition-colors ${
                       cursorMatch
                         ? "border-cyan-400/45 bg-cyan-950/20 text-slate-200"
                         : isSynthetic
                         ? "border-amber-500/20 bg-amber-950/10 text-slate-300"
                         : "cursor-pointer border-white/8 bg-[#171717] hover:bg-slate-800/25"
-                    }`}
+                    } ${isSelectedTranscriptEvidence ? "ring-1 ring-fuchsia-300/70" : ""}`}
                     onClick={() => {
                       openTranscriptRowAtSourceTime(row);
                     }}

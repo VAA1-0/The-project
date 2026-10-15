@@ -1994,6 +1994,16 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
           panel="data_maturation"
         />
       </div>
+      <div
+        className="border-b border-cyan-950/60 bg-cyan-950/10 px-3 py-2 text-[10px] text-slate-400"
+        data-vaa1-constellational-maturity-contract="true"
+        data-vaa1-constellational-proof-threshold="0.99"
+      >
+        <span className="font-medium text-cyan-200">Constellational maturity:</span>{" "}
+        analyst confirmation, or calibrated ≥99% proof with at least three independent modalities,
+        source-time anchoring, project agreement, required visual geometry, and no unresolved conflict.
+        Raw detector, VAD, diarization, tracking, or duplicated derived confidence remains a candidate.
+      </div>
 
       <details
         open

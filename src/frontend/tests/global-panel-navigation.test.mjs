@@ -24,9 +24,20 @@ test("panel save checkpoints layout and verifies canonical persistence without r
 
 test("panel refresh reloads canonical data and broadcasts the saved envelope in place", () => {
   const host = read("app/V2components/components/LayoutHost.tsx");
-  assert.match(host, /VideoService\.refreshAnalysis\(analysisId\)/);
+  assert.match(host, /VideoService\.refreshAnalysis\(targetAnalysisId\)/);
   assert.match(host, /analysisCorrectionsChanged/);
   assert.match(host, /annotationCorrections: canonicalCorrections/);
   assert.match(host, /panelRefreshRequested/);
   assert.doesNotMatch(host, /panelRefreshRequested[\s\S]{0,500}window\.location\.reload/);
+});
+
+test("late-opened panels recover retained project-bound analysis identity", () => {
+  const host = read("app/V2components/components/LayoutHost.tsx");
+  const bus = read("lib/golden-layout-lib/eventBus.ts");
+  assert.match(bus, /RETAINED_CONTEXT_EVENTS[\s\S]*"videoIdChanged"[\s\S]*"activeAnalysisContext"/);
+  assert.match(bus, /RETAINED_CONTEXT_EVENTS\.has\(event\)[\s\S]*this\.latest\.has\(event\)[\s\S]*cb\(this\.latest\.get\(event\) as T\)/);
+  assert.match(host, /eventBus\.on\("activeAnalysisContext", handleAnalysis\)/);
+  assert.match(host, /eventBus\.emit\("activeAnalysisContextRequest", null\)/);
+  assert.match(host, /Analysis binding unavailable/);
+  assert.match(host, /targetAnalysisId[\s\S]*VideoService\.refreshAnalysis\(targetAnalysisId\)/);
 });

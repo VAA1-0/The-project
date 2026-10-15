@@ -2,6 +2,11 @@
 type Callback<T> = (payload: T) => void;
 import { isAnalysisAllowedInActiveProject, projectScopeViolation } from "@/lib/active-project-scope";
 
+const RETAINED_CONTEXT_EVENTS = new Set([
+  "videoIdChanged",
+  "activeAnalysisContext",
+]);
+
 class EventBus {
   private events = new Map<string, Set<Callback<any>>>();
   private latest = new Map<string, unknown>();
@@ -11,6 +16,9 @@ class EventBus {
       this.events.set(event, new Set());
     }
     this.events.get(event)!.add(cb);
+    if (RETAINED_CONTEXT_EVENTS.has(event) && this.latest.has(event)) {
+      cb(this.latest.get(event) as T);
+    }
   }
 
   off<T>(event: string, cb: Callback<T>) {

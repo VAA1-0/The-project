@@ -284,3 +284,24 @@ test("BBox/ROI resize handle changes dimensions without losing the source-video 
   expectClose(resized.box.w, MANUAL_BOX.w + 0.08, "resized normalized width");
   expectClose(resized.box.h, MANUAL_BOX.h + 0.06, "resized normalized height");
 });
+
+test("BBox/ROI gesture saves normalized geometry and reopens the same rendered box", async ({ page }) => {
+  const contentRect = await mountBBoxFixture(page);
+  const before = await measuredRects(page);
+  const startX = before.bbox.x + before.bbox.width / 2;
+  const startY = before.bbox.y + before.bbox.height / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + contentRect.width * 0.04, startY + contentRect.height * 0.03);
+  await page.mouse.up();
+  const corrected = await measuredRects(page);
+
+  await mountBBoxFixture(page, {
+    box: corrected.box,
+  });
+  const reopened = await measuredRects(page);
+  expect(reopened.box).toEqual(corrected.box);
+  expectClose(reopened.box.x, MANUAL_BOX.x + 0.04, "reopened normalized x");
+  expectClose(reopened.box.y, MANUAL_BOX.y + 0.03, "reopened normalized y");
+});

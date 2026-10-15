@@ -595,6 +595,8 @@ type FocusedAudioEvidence = {
   reviewState?: string;
 };
 
+type FocusedTranscriptEvidence = FocusedAudioEvidence;
+
 type VideoFrameMetadata = {
   mediaTime: number;
 };
@@ -2046,6 +2048,8 @@ export default function VideoPanel() {
   const [selectedOverlayKey, setSelectedOverlayKey] = useState<string | null>(null);
   const [focusedAudioEvidence, setFocusedAudioEvidence] =
     useState<FocusedAudioEvidence | null>(null);
+  const [focusedTranscriptEvidence, setFocusedTranscriptEvidence] =
+    useState<FocusedTranscriptEvidence | null>(null);
   const [pendingGovernedBBoxFocus, setPendingGovernedBBoxFocus] =
     useState<GovernedBBoxFocus | null>(null);
   const [activeOverlayEditorKey, setActiveOverlayEditorKey] = useState<string | null>(null);
@@ -2543,7 +2547,31 @@ export default function VideoPanel() {
       jumpToTime(payload.start);
     };
     eventBus.on("audioEvidenceFocus", handler);
+    const retainedFocus = eventBus.getLast<FocusedAudioEvidence>("audioEvidenceFocus");
+    if (retainedFocus?.videoId === videoId) handler(retainedFocus);
     return () => eventBus.off("audioEvidenceFocus", handler);
+  }, [jumpToTime, pausePrimaryPlayback, videoId]);
+
+  useEffect(() => {
+    const handler = (payload?: FocusedTranscriptEvidence) => {
+      if (!payload || typeof payload.start !== "number") return;
+      if (payload.videoId && payload.videoId !== videoId) {
+        setVideoId(payload.videoId);
+      }
+      setFocusedTranscriptEvidence({
+        ...payload,
+        end:
+          typeof payload.end === "number" && Number.isFinite(payload.end)
+            ? Math.max(payload.start, payload.end)
+            : payload.start,
+      });
+      pausePrimaryPlayback();
+      jumpToTime(payload.start);
+    };
+    eventBus.on("transcriptEvidenceFocus", handler);
+    const retainedFocus = eventBus.getLast<FocusedTranscriptEvidence>("transcriptEvidenceFocus");
+    if (retainedFocus?.videoId === videoId) handler(retainedFocus);
+    return () => eventBus.off("transcriptEvidenceFocus", handler);
   }, [jumpToTime, pausePrimaryPlayback, videoId]);
 
   const clearOverlayEditingWorkspace = React.useCallback((overlayKeys: string[]) => {
@@ -8646,6 +8674,7 @@ export default function VideoPanel() {
                           } ${
                             editableOverlay ? "cursor-move" : "cursor-pointer"
                           } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
+                          data-vaa1-bbox-roi-rendered-overlay="true"
                           style={{
                             left: `${normalizedBox.x * 100}%`,
                             top: `${normalizedBox.y * 100}%`,
@@ -11257,6 +11286,36 @@ export default function VideoPanel() {
                         type="button"
                         className="rounded border border-fuchsia-400/20 px-2 py-1 text-fuchsia-100 hover:bg-fuchsia-900/30"
                         onClick={() => setFocusedAudioEvidence(null)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {focusedTranscriptEvidence ? (
+                  <div
+                    className="mt-2 rounded border border-cyan-400/30 bg-cyan-950/20 px-3 py-2 text-[11px] text-slate-300"
+                    data-vaa1-focused-transcript-evidence="true"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-cyan-100">
+                          Transcript evidence · {focusedTranscriptEvidence.label}
+                        </div>
+                        <div className="mt-1 font-mono text-cyan-200/80">
+                          {formatTime(focusedTranscriptEvidence.start)}–
+                          {formatTime(focusedTranscriptEvidence.end)}
+                        </div>
+                        <div className="mt-1 text-slate-500">
+                          {focusedTranscriptEvidence.source || "Transcript"} ·{" "}
+                          {focusedTranscriptEvidence.reviewState || "source_timed"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded border border-cyan-400/20 px-2 py-1 text-cyan-100 hover:bg-cyan-900/30"
+                        onClick={() => setFocusedTranscriptEvidence(null)}
                       >
                         Close
                       </button>

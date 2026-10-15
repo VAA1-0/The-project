@@ -3679,6 +3679,12 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
+    /data-vaa1-constellational-maturity-contract="true"[\s\S]*data-vaa1-constellational-proof-threshold="0\.99"[\s\S]*three independent modalities[\s\S]*no unresolved conflict[\s\S]*remains a candidate/,
+    "Data Maturation must expose the governed constellational maturity gate rather than confidence-only truth",
+  );
+
+  assert.match(
+    dataMaturationPanel,
     /h-full overflow-auto bg-\[#222222\] text-slate-300/,
     "Data Maturation must use the shared calm governance work surface",
   );

@@ -1,7 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const BOND_ID = "8183c1fd-7cb9-49d0-b20c-378399e9c41f";
-
 type Surface = {
   name: string;
   tab: string;
@@ -52,8 +50,8 @@ async function ensureSurface(page: Page, surface: Surface): Promise<Locator> {
 test("M5 all sixteen surfaces share one revision-bound bidirectional source clock", async ({ page }) => {
   test.setTimeout(240_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
-  await page.goto(`/dashboard?activeProject=bond-cop30-helsinki&workspace=default&analysis_id=${BOND_ID}`);
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.goto("/dashboard?activeProject=research-test-2-20226-cop30-vids&workspace=default");
+  await page.getByRole("button", { name: /Select video CNN\.mp4/ }).click();
 
   const opened: Array<{ surface: Surface; browser: Locator }> = [];
   for (const [index, surface] of SURFACES.entries()) {

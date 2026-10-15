@@ -138,8 +138,11 @@ function GlobalPanelNavigation({ componentName }: { componentName: string }) {
   useEffect(() => {
     const handleAnalysis = (id: string) => setAnalysisId(id);
     eventBus.on("videoIdChanged", handleAnalysis);
+    eventBus.on("activeAnalysisContext", handleAnalysis);
+    if (!analysisId) eventBus.emit("activeAnalysisContextRequest", null);
     return () => {
       eventBus.off("videoIdChanged", handleAnalysis);
+      eventBus.off("activeAnalysisContext", handleAnalysis);
       if (indicationTimerRef.current !== null) window.clearTimeout(indicationTimerRef.current);
     };
   }, []);
@@ -179,21 +182,33 @@ function GlobalPanelNavigation({ componentName }: { componentName: string }) {
     if (busy) return;
     setBusy("refresh");
     try {
+      let targetAnalysisId =
+        analysisId ||
+        eventBus.getLast<string>("videoIdChanged") ||
+        eventBus.getLast<string>("activeAnalysisContext") ||
+        "";
+      if (!targetAnalysisId) {
+        eventBus.emit("activeAnalysisContextRequest", null);
+        targetAnalysisId = eventBus.getLast<string>("activeAnalysisContext") || "";
+      }
+      if (targetAnalysisId && targetAnalysisId !== analysisId) {
+        setAnalysisId(targetAnalysisId);
+      }
       let canonicalCorrections = null;
-      if (analysisId) {
-        const refreshed = await VideoService.refreshAnalysis(analysisId);
+      if (targetAnalysisId) {
+        const refreshed = await VideoService.refreshAnalysis(targetAnalysisId);
         canonicalCorrections =
           refreshed.annotationCorrections ||
-          (await apiService.getAnnotationCorrections(analysisId));
+          (await apiService.getAnnotationCorrections(targetAnalysisId));
         eventBus.emit("analysisCorrectionsChanged", {
-          analysisId,
+          analysisId: targetAnalysisId,
           corrections: canonicalCorrections,
           annotationCorrections: canonicalCorrections,
           refreshSource: "global-panel-navigation",
         });
       }
       eventBus.emit("panelRefreshRequested", {
-        analysisId,
+        analysisId: targetAnalysisId,
         componentName,
         annotationCorrections: canonicalCorrections,
       });
@@ -212,7 +227,7 @@ function GlobalPanelNavigation({ componentName }: { componentName: string }) {
       className="flex h-6 shrink-0 items-center justify-end gap-1 border-b border-white/[0.06] bg-[#111] px-1.5"
     >
       <span aria-live="polite" className="mr-1 min-w-0 truncate text-[9px] text-emerald-300/80">
-        {indication}
+        {indication || (!analysisId ? "Analysis binding unavailable" : "")}
       </span>
       <button
         type="button"

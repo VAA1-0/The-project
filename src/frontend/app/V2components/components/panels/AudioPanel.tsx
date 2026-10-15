@@ -1,6 +1,6 @@
 "use client";
 
-import { publishSourceTime } from "@/lib/source-clock-events";
+import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-events";
 
 import { formatPreciseSourceTime } from "@/lib/source-clock";
 
@@ -143,6 +143,23 @@ type WaveformRow = {
   pitch?: number;
   source: string;
 };
+
+type FocusedAudioEvidence = {
+  videoId?: string;
+  evidenceId?: string;
+  start: number;
+  end: number;
+  label: string;
+  detail?: string;
+  source?: string;
+  reviewState?: string;
+};
+
+function audioEvidenceKey(evidence: Pick<FocusedAudioEvidence, "evidenceId" | "start" | "end" | "label" | "source">): string {
+  const evidenceId = String(evidence.evidenceId || "").trim();
+  if (evidenceId) return evidenceId;
+  return `audio:${Number(evidence.start || 0).toFixed(3)}:${Number(evidence.end || evidence.start || 0).toFixed(3)}:${evidence.source || evidence.label}`;
+}
 
 type TranscriptAudioRow = {
   id?: string;
@@ -1305,6 +1322,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
   const [newNarrativeAgentByTarget, setNewNarrativeAgentByTarget] = useState<Record<string, string>>({});
   const [governedEventPage, setGovernedEventPage] = useState(0);
   const [speakerTurnPage, setSpeakerTurnPage] = useState(0);
+  const [selectedAudioEvidence, setSelectedAudioEvidence] = useState<FocusedAudioEvidence | null>(null);
+  const [sourceClockTime, setSourceClockTime] = useState(0);
 
   useEffect(() => {
     if (propAnalysisId) setAnalysisId(propAnalysisId);
@@ -1315,6 +1334,27 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     eventBus.on("videoIdChanged", handler);
     return () => eventBus.off("videoIdChanged", handler);
   }, []);
+
+  useEffect(() => {
+    if (!analysisId) return;
+    return subscribeSourceTime(analysisId, (time) => setSourceClockTime(time));
+  }, [analysisId]);
+
+  useEffect(() => {
+    const handler = (payload?: FocusedAudioEvidence) => {
+      if (!payload || !Number.isFinite(payload.start)) return;
+      if (payload.videoId && payload.videoId !== analysisId) return;
+      setSelectedAudioEvidence({
+        ...payload,
+        end: Number.isFinite(payload.end) ? Math.max(payload.start, payload.end) : payload.start,
+      });
+    };
+    setSelectedAudioEvidence(null);
+    eventBus.on("audioEvidenceFocus", handler);
+    const retainedFocus = eventBus.getLast<FocusedAudioEvidence>("audioEvidenceFocus");
+    if (retainedFocus?.videoId === analysisId) handler(retainedFocus);
+    return () => eventBus.off("audioEvidenceFocus", handler);
+  }, [analysisId]);
 
   useEffect(() => {
     if (!analysisId) {
@@ -1433,9 +1473,9 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     setSpeakerTurnPage(0);
   }, [analysisId]);
 
-  if (!analysisId) return <div className="h-full bg-[#080808] p-4 text-sm text-slate-500">Select an analysis to inspect audio evidence.</div>;
-  if (isLoading) return <div className="h-full bg-[#080808] p-4 text-sm text-slate-400">Loading audio workbench...</div>;
-  if (error) return <div className="h-full bg-[#080808] p-4 text-sm text-amber-200">{error}</div>;
+  if (!analysisId) return <div data-vaa1-panel-state="analysis-binding-unavailable" className="h-full bg-[#080808] p-4 text-sm text-amber-200">Analysis binding unavailable</div>;
+  if (isLoading) return <div data-vaa1-panel-state="loading" className="h-full bg-[#080808] p-4 text-sm text-slate-400">Loading audio workbench...</div>;
+  if (error) return <div data-vaa1-panel-state="failed" className="h-full bg-[#080808] p-4 text-sm text-amber-200">Audio retrieval failed: {error}</div>;
 
   const correctionDecisions = analysisData?.annotationCorrections?.proliferation_decisions || [];
   const decisionStatusFor = (target: AudioDecisionTarget): string => {
@@ -1685,8 +1725,32 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     };
   };
 
-  const renderAudioEventRows = (events: AudioEvent[]) => events.length ? events.map((event, index) => (
-    <tr key={event.segment_id || event.interval_id || event.event_id || `audio:${index}`} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(event.start, { analysisId, label: eventLabel(event), source: event.source_layer })}>
+  const audioEvidenceRowProps = (evidence: FocusedAudioEvidence) => {
+    const selected = Boolean(
+      selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey(evidence),
+    );
+    const onBeat = sourceClockTime >= evidence.start && sourceClockTime <= evidence.end;
+    return {
+      "data-vaa1-audio-evidence-row": "true",
+      "data-vaa1-audio-selected-row": selected ? "true" : undefined,
+      "data-source-clock-nearest": onBeat ? "true" : undefined,
+      className: `cursor-pointer border-b border-slate-900 hover:bg-slate-900 ${selected ? "bg-fuchsia-950/20 ring-1 ring-inset ring-fuchsia-300/60" : onBeat ? "bg-cyan-950/20" : ""}`,
+    };
+  };
+
+  const renderAudioEventRows = (events: AudioEvent[]) => events.length ? events.map((event, index) => {
+    const evidence: FocusedAudioEvidence = {
+      videoId: analysisId,
+      evidenceId: event.segment_id || event.interval_id || event.event_id || `audio:${index}`,
+      start: Number(event.start || 0),
+      end: Number(event.end || event.start || 0),
+      label: eventLabel(event),
+      source: event.source_layer,
+      detail: event.text,
+      reviewState: event.is_stale ? "stale_rebuild_required" : "candidate_review_required",
+    };
+    return (
+    <tr key={evidence.evidenceId} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(event.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
       <td className="px-3 py-2 font-semibold text-slate-100">{eventLabel(event)}</td>
       <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(event.start)}</td>
       <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(event.end)}</td>
@@ -1710,12 +1774,13 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         validForConfirmation: event.valid_for_confirmation,
       })}</td>
     </tr>
-  )) : (
+    );
+  }) : (
     <tr><td className="px-3 py-3 text-slate-500" colSpan={10}>No rows available for this layer.</td></tr>
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#080808] p-4 text-white" data-vaa1-panel="audio-workbench">
+    <div className="flex h-full min-h-0 flex-col bg-[#080808] p-4 text-white" data-vaa1-panel="audio-workbench" data-vaa1-panel-state="ready">
       <h2 className="mb-3 shrink-0 text-lg font-bold text-slate-100">Audio Workbench</h2>
       {sourceMediaPath ? (
         <div className="mb-3 shrink-0 truncate border border-slate-800 px-3 py-2 text-xs text-slate-400" data-vaa1-audio-source-media-link="true" title={sourceMediaPath}>
@@ -1725,6 +1790,27 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
       {saveMessage ? (
         <div className="mb-3 shrink-0 border border-cyan-900/70 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100" data-vaa1-audio-save-message="true">
           {saveMessage}
+        </div>
+      ) : null}
+      {selectedAudioEvidence ? (
+        <div
+          className="mb-3 shrink-0 border border-fuchsia-400/30 bg-fuchsia-950/20 px-3 py-2 text-xs text-slate-300"
+          data-vaa1-audio-active-evidence="true"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold text-fuchsia-100">Selected audio evidence · {selectedAudioEvidence.label}</div>
+              <div className="mt-1 font-mono text-fuchsia-200/80">
+                {formatTime(selectedAudioEvidence.start)}–{formatTime(selectedAudioEvidence.end)} · current beat {formatTime(sourceClockTime)}
+              </div>
+              <div className="mt-1 text-slate-500">
+                {selectedAudioEvidence.source || "governed audio evidence"} · {selectedAudioEvidence.reviewState || "candidate_review_required"}
+              </div>
+            </div>
+            <button type="button" className="border border-fuchsia-400/20 px-2 py-1 text-fuchsia-100 hover:bg-fuchsia-900/30" onClick={() => setSelectedAudioEvidence(null)}>
+              Close
+            </button>
+          </div>
         </div>
       ) : null}
       {timingAudit.status === "global_anchor_only" ? (
@@ -1783,7 +1869,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 {pagedGovernedSoundIntervals.length ? pagedGovernedSoundIntervals.map((event, index) => (
                   <tr
                     key={event.interval_id || event.segment_id || `sound:${governedEventPage}:${index}`}
-                    className="cursor-pointer border-b border-slate-900 hover:bg-slate-900"
+                    data-vaa1-audio-evidence-row="true"
+                    data-vaa1-audio-selected-row={selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: event.interval_id || event.segment_id || event.event_id, start: Number(event.start || 0), end: Number(event.end || event.start || 0), label: `${categoryFor(event)} · ${eventLabel(event)}`, source: event.source_layer }) ? "true" : undefined}
+                    data-source-clock-nearest={typeof event.start === "number" && typeof event.end === "number" && sourceClockTime >= event.start && sourceClockTime <= event.end ? "true" : undefined}
+                    className={`cursor-pointer border-b border-slate-900 hover:bg-slate-900 ${selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: event.interval_id || event.segment_id || event.event_id, start: Number(event.start || 0), end: Number(event.end || event.start || 0), label: `${categoryFor(event)} · ${eventLabel(event)}`, source: event.source_layer }) ? "bg-fuchsia-950/20 ring-1 ring-inset ring-fuchsia-300/60" : typeof event.start === "number" && typeof event.end === "number" && sourceClockTime >= event.start && sourceClockTime <= event.end ? "bg-cyan-950/20" : ""}`}
                     onClick={() => jumpTo(event.start, {
                       analysisId,
                       evidenceId: event.interval_id || event.segment_id || event.event_id,
@@ -1880,7 +1969,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 {pagedSpeakerTurns.length ? pagedSpeakerTurns.map((turn, index) => (
                   <tr
                     key={turn.turn_id || `turn:${speakerTurnPage}:${index}`}
-                    className="cursor-pointer border-b border-slate-900 hover:bg-slate-900"
+                    data-vaa1-audio-evidence-row="true"
+                    data-vaa1-audio-selected-row={selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: turn.turn_id, start: Number(turn.start || 0), end: Number(turn.end || turn.start || 0), label: turn.speaker_label || "Speaker turn", source: "audio_diarization.speaker_turns" }) ? "true" : undefined}
+                    data-source-clock-nearest={typeof turn.start === "number" && typeof turn.end === "number" && sourceClockTime >= turn.start && sourceClockTime <= turn.end ? "true" : undefined}
+                    className={`cursor-pointer border-b border-slate-900 hover:bg-slate-900 ${selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: turn.turn_id, start: Number(turn.start || 0), end: Number(turn.end || turn.start || 0), label: turn.speaker_label || "Speaker turn", source: "audio_diarization.speaker_turns" }) ? "bg-fuchsia-950/20 ring-1 ring-inset ring-fuchsia-300/60" : typeof turn.start === "number" && typeof turn.end === "number" && sourceClockTime >= turn.start && sourceClockTime <= turn.end ? "bg-cyan-950/20" : ""}`}
                     onClick={() => jumpTo(turn.start, {
                       analysisId,
                       evidenceId: turn.turn_id,
@@ -2007,8 +2099,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 </tr>
               </thead>
               <tbody>
-                {prosodyCues.length ? prosodyCues.map((cue, index) => (
-                  <tr key={cue.cue_id || `prosody:${index}`} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(cue.start, { analysisId, label: cue.sound_environment?.label || cue.text || "Prosody cue", source: cue.cue_id || "audio_prosody.cues" })}>
+                {prosodyCues.length ? prosodyCues.map((cue, index) => {
+                  const evidence: FocusedAudioEvidence = { videoId: analysisId, evidenceId: cue.cue_id || `prosody:${index}`, start: Number(cue.start || 0), end: Number(cue.end || cue.start || 0), label: cue.sound_environment?.label || cue.text || "Prosody cue", source: "audio_prosody.cues", detail: cue.text, reviewState: "candidate_review_required" };
+                  return (
+                  <tr key={evidence.evidenceId} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(cue.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(cue.start)}-{formatTime(cue.end)}</td>
                     <td className="px-3 py-2">{cue.pace?.label || "n/a"} <span className="font-mono text-slate-500">{formatValue(cue.pace?.words_per_second)}</span></td>
                     <td className="px-3 py-2">{cue.pauses?.before_label || "n/a"} / {cue.pauses?.after_label || "n/a"}</td>
@@ -2028,7 +2122,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       rowType: "prosody",
                     })}</td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr><td className="px-3 py-3 text-slate-500" colSpan={10}>No prosody cues are available for this analysis.</td></tr>
                 )}
               </tbody>
@@ -2054,8 +2149,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 </tr>
               </thead>
               <tbody>
-                {musicRows.length ? musicRows.map((row, index) => (
-                  <tr key={`music:${index}`} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(row.start, { analysisId, label: String(row.label || row.source || "Music/sound row"), source: String(row.evidence || row.source || "") })}>
+                {musicRows.length ? musicRows.map((row, index) => {
+                  const evidence: FocusedAudioEvidence = { videoId: analysisId, evidenceId: `music:${index}:${safeIdPart(row.label || row.source)}`, start: Number(row.start || 0), end: Number(row.end || row.start || 0), label: String(row.label || row.source || "Music/sound row"), source: String(row.evidence || row.source || "music_sound"), detail: String(row.value || ""), reviewState: "candidate_review_required" };
+                  return (
+                  <tr key={evidence.evidenceId} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(row.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
                     <td className="px-3 py-2 font-semibold text-slate-100">{String(row.source || "")}</td>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.start)}</td>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.end)}</td>
@@ -2071,7 +2168,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       rowType: "music-sound",
                     })}</td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No music or sound classifier rows are available yet.</td></tr>
                 )}
               </tbody>
@@ -2097,8 +2195,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 </tr>
               </thead>
               <tbody>
-                {lyricRows.length ? lyricRows.map((row, index) => (
-                  <tr key={`lyric:${index}`} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(row.start, { analysisId, label: row.transcript || row.lyric || "Transcript row", source: row.source })}>
+                {lyricRows.length ? lyricRows.map((row, index) => {
+                  const evidence: FocusedAudioEvidence = { videoId: analysisId, evidenceId: `lyric:${index}:${safeIdPart(row.transcript || row.lyric)}`, start: Number(row.start || 0), end: Number(row.end || row.start || 0), label: row.transcript || row.lyric || "Transcript row", source: row.source || "lyrics_in_transcript", detail: row.lyric, reviewState: "candidate_review_required" };
+                  return (
+                  <tr key={evidence.evidenceId} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(row.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.start)}</td>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.end)}</td>
                     <td className="max-w-[360px] truncate px-3 py-2 text-slate-100" title={row.lyric}>{row.lyric}</td>
@@ -2115,7 +2215,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       rowType: "lyrics-transcript",
                     })}</td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No lyric/transcript matches are available. Online lyric lookup remains disabled unless explicitly activated.</td></tr>
                 )}
               </tbody>
@@ -2143,8 +2244,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 </tr>
               </thead>
               <tbody>
-                {foleyRows.length ? foleyRows.map((row, index) => (
-                  <tr key={`foley:${index}`} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(row.start, { analysisId, label: row.label, source: row.source })}>
+                {foleyRows.length ? foleyRows.map((row, index) => {
+                  const evidence: FocusedAudioEvidence = { videoId: analysisId, evidenceId: `foley:${index}:${safeIdPart(row.label)}`, start: Number(row.start || 0), end: Number(row.end || row.start || 0), label: row.label, source: row.source, detail: row.nextAction, reviewState: row.reviewState };
+                  return (
+                  <tr key={evidence.evidenceId} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(row.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
                     <td className="px-3 py-2 font-semibold text-slate-100">{row.label}</td>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.start)}</td>
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.end)}</td>
@@ -2162,7 +2265,8 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       rowType: "foley-sampling",
                     })}</td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr>
                     <td className="px-3 py-3 text-slate-500" colSpan={9}>
                       No gun shot, laughter, roar, or applause/applauds foley candidates are surfaced yet. Use local sample clouds or reviewed audio intervals before proliferating labels across the data array.
@@ -2193,8 +2297,9 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
               <tbody>
                 {governanceRows.map((row) => {
                   const target = governanceNavigationTarget(row);
+                  const evidence: FocusedAudioEvidence = { videoId: analysisId, evidenceId: target.id, start: Number(target.start || 0), end: Number(target.end || target.start || 0), label: target.label, source: target.source, detail: row.nextAction, reviewState: row.status };
                   return (
-                    <tr key={row.layer} className="cursor-pointer border-b border-slate-900 hover:bg-slate-900" onClick={() => jumpTo(target.start, { analysisId, label: target.label, source: target.source })}>
+                    <tr key={row.layer} {...audioEvidenceRowProps(evidence)} onClick={() => jumpTo(target.start, { analysisId, evidenceId: evidence.evidenceId, label: evidence.label, source: evidence.source, end: evidence.end, detail: evidence.detail, reviewState: evidence.reviewState })}>
                       <td className="px-3 py-2 font-semibold text-slate-100">{row.layer}</td>
                       <td className={row.status === "missing" ? "px-3 py-2 text-amber-200" : "px-3 py-2 text-cyan-200"}>{row.status}</td>
                       <td className="px-3 py-2 font-mono">{row.rows}</td>
