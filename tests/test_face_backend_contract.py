@@ -632,6 +632,51 @@ class ApiServerContractTests(unittest.TestCase):
                 self.api_server.RESULTS_DIR = original_results_dir
                 self.api_server.IMPORTED_WORK_DIR = original_imported_dir
 
+    def test_project_import_returns_and_applies_manifest_project_boundary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            results_dir = root / "results"
+            imported_dir = root / "imported"
+            results_dir.mkdir()
+            imported_dir.mkdir()
+
+            archive_buffer = io.BytesIO()
+            with self.api_server.zipfile.ZipFile(
+                archive_buffer, "w", compression=self.api_server.zipfile.ZIP_DEFLATED
+            ) as archive:
+                archive.writestr(
+                    "project_manifest.json",
+                    '{"project_type":"vaa1_project_bundle","project_id":"mature-project","project_name":"Mature Project"}',
+                )
+                archive.writestr(
+                    "analyses/example/saved_work_manifest.json",
+                    '{"original_filename":"mature.mp4"}',
+                )
+                archive.writestr("analyses/example/analysis_summary.json", '{"ok":true}')
+
+            upload = types.SimpleNamespace(
+                filename="mature_project_bundle.zip",
+                file=io.BytesIO(archive_buffer.getvalue()),
+            )
+            original_results_dir = self.api_server.RESULTS_DIR
+            original_imported_dir = self.api_server.IMPORTED_WORK_DIR
+            self.api_server.RESULTS_DIR = results_dir
+            self.api_server.IMPORTED_WORK_DIR = imported_dir
+            try:
+                imported = asyncio.run(self.api_server.import_saved_work(upload))
+                self.assertEqual(imported["bundle_type"], "project")
+                self.assertEqual(imported["project_id"], "mature-project")
+                imported_id = imported["imported_analysis_ids"][0]
+                self.assertEqual(
+                    self.api_server.analysis_status[imported_id]["project_id"],
+                    "mature-project",
+                )
+                status = asyncio.run(self.api_server.get_analysis_status(imported_id))
+                self.assertEqual(status["project_id"], "mature-project")
+            finally:
+                self.api_server.RESULTS_DIR = original_results_dir
+                self.api_server.IMPORTED_WORK_DIR = original_imported_dir
+
     def test_import_saved_work_regenerates_empty_pos_from_transcript(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

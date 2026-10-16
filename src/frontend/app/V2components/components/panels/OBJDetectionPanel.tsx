@@ -6,7 +6,7 @@ import { formatPreciseSourceTime } from "@/lib/source-clock";
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-import { VideoService, groupDetectedObjectsForDisplay } from "@/lib/video-service";
+import { VideoService, groupDetectedObjectsForDisplay, type BodyMovementDetection } from "@/lib/video-service";
 import { getVideoBlob, saveVideoBlob } from "@/lib/blob-store";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -358,6 +358,7 @@ export default function OBJDetectionPanel() {
   }, [videoId, refreshNonce]);
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
+  const bodyMovementDetections = analysisData?.bodyMovementDetections ?? [];
   const confirmedObjectTrackIds = new Set(
     (analysisData?.annotationCorrections?.manual_visual_annotations || [])
       .map((item: ManualVisualAnnotation) => manualObjectTargetId(item))
@@ -855,6 +856,28 @@ export default function OBJDetectionPanel() {
             </div>
           </div>
           <div className="flex-1 min-h-0 px-3 pb-3 flex flex-col">
+            <details open={bodyMovementDetections.length > 0} className="mb-2 shrink-0 rounded border border-cyan-900/40 bg-cyan-950/10">
+              <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-200 marker:hidden">
+                Body movement detections · {bodyMovementDetections.length}
+              </summary>
+              <div className="max-h-32 space-y-1 overflow-y-auto border-t border-cyan-900/30 p-2">
+                {bodyMovementDetections.length ? bodyMovementDetections.map((movement: BodyMovementDetection) => (
+                  <button
+                    key={movement.evidenceId}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 rounded border border-slate-800 px-2 py-1 text-left text-[10px] hover:border-cyan-700"
+                    onClick={() => eventBus.emit("videoTimeLineChanged", movement.start)}
+                  >
+                    <span className="min-w-0 truncate text-slate-200">
+                      {movement.narrativeAgentLabel ? `${movement.narrativeAgentLabel} · ` : ""}{movement.movementType}
+                    </span>
+                    <span className="shrink-0 text-slate-500">
+                      {formatPreciseTime(movement.start)} · {movement.maturity === "candidate_only" ? "candidate" : "confirmed"}
+                    </span>
+                  </button>
+                )) : <div className="text-[10px] text-slate-600">No source-timed body movement evidence</div>}
+              </div>
+            </details>
             <div className="mb-2 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
               Detected objects
             </div>

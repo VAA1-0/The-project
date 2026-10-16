@@ -4,6 +4,23 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+try:
+    from .narrative_agent_continuity_persistence import load_saved_continuity_state
+except ImportError:  # Direct file loading used by legacy contract tests.
+    import importlib.util
+
+    _continuity_path = Path(__file__).with_name(
+        "narrative_agent_continuity_persistence.py"
+    )
+    _continuity_spec = importlib.util.spec_from_file_location(
+        "narrative_agent_continuity_persistence", _continuity_path
+    )
+    if _continuity_spec is None or _continuity_spec.loader is None:
+        raise
+    _continuity_module = importlib.util.module_from_spec(_continuity_spec)
+    _continuity_spec.loader.exec_module(_continuity_module)
+    load_saved_continuity_state = _continuity_module.load_saved_continuity_state
+
 
 CANONICAL_ARTIFACTS = {
     "annotation_corrections": ("annotation_corrections.json", "annotation_corrections"),
@@ -41,6 +58,14 @@ CANONICAL_ARTIFACTS = {
     "pos_matrix": ("pos_matrix.json", "pos_matrix"),
     "quant_matrix": ("quant_matrix.json", "quant_matrix"),
     "tracked_objects_json": ("tracked_objects.json", "tracked_objects"),
+    "narrative_agent_continuity_projection": (
+        "narrative_agent_continuity_projection.json",
+        "narrative_agent_continuity_projection",
+    ),
+    "narrative_agent_continuity_state": (
+        "narrative_agent_continuity_state.json",
+        "narrative_agent_continuity_state",
+    ),
 }
 
 CORRECTION_COLLECTIONS = (
@@ -250,6 +275,54 @@ def hydrate_visual_results(
             audit["already_present"].append(audit_key)
 
 
+def hydrate_narrative_agent_continuity(
+    status: Dict[str, Any], *, analysis_dir: Path, audit: Dict[str, Any]
+) -> None:
+    """Hydrate continuity only through its checksummed, project-bound state."""
+    state_path = path_from_status(status, "narrative_agent_continuity_state")
+    if state_path is None:
+        candidate = analysis_dir / "narrative_agent_continuity_state.json"
+        state_path = candidate if candidate.exists() else None
+    if state_path is None:
+        return
+    project_id = str(status.get("project_id") or "").strip()
+    try:
+        state = load_saved_continuity_state(
+            state_path, expected_project_id=project_id
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        audit.setdefault("rejected", []).append(
+            {
+                "surface": "narrative_agent_continuity_state",
+                "reason": str(exc),
+                "artifact_path": str(state_path),
+            }
+        )
+        return
+    if str(status.get("analysis_id") or "") not in state.get("analysis_ids", []):
+        audit.setdefault("rejected", []).append(
+            {
+                "surface": "narrative_agent_continuity_state",
+                "reason": "analysis_not_declared_in_continuity_state",
+                "artifact_path": str(state_path),
+            }
+        )
+        return
+    status["narrative_agent_continuity_state"] = state
+    status["narrative_agent_continuity_projection"] = state["projection"]
+    output_files = status.setdefault("output_files", {})
+    output_files["narrative_agent_continuity_state"] = str(state_path)
+    projection_path = analysis_dir / "narrative_agent_continuity_projection.json"
+    if projection_path.exists():
+        output_files["narrative_agent_continuity_projection"] = str(projection_path)
+    audit["hydrated"].extend(
+        [
+            "narrative_agent_continuity_state",
+            "narrative_agent_continuity_projection",
+        ]
+    )
+
+
 def build_hydration_audit(status: Dict[str, Any], hydrated_before: list[str]) -> Dict[str, Any]:
     return {
         "schema": "vaa1.saved_analysis_hydration_audit.v1",
@@ -277,6 +350,11 @@ def hydrate_saved_analysis_status(
     analysis_dir = Path(results_dir) / analysis_id
     audit["analysis_dir"] = str(analysis_dir)
     for file_key, (filename, status_key) in CANONICAL_ARTIFACTS.items():
+        if file_key in {
+            "narrative_agent_continuity_projection",
+            "narrative_agent_continuity_state",
+        }:
+            continue
         hydrate_artifact(
             status,
             analysis_dir=analysis_dir,
@@ -285,6 +363,10 @@ def hydrate_saved_analysis_status(
             status_key=status_key,
             audit=audit,
         )
+
+    hydrate_narrative_agent_continuity(
+        status, analysis_dir=analysis_dir, audit=audit
+    )
 
     hydrate_source_samples(status, analysis_dir=analysis_dir, audit=audit)
     hydrate_evidence_proliferation_matches(status, analysis_dir=analysis_dir, audit=audit)

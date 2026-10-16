@@ -8,11 +8,60 @@ const NON_AGENT_AUDIO_SOURCES = new Set([
   "voice-over narration",
 ]);
 
-const addLabel = (labels: Set<string>, value: unknown): void => {
-  const label = String(value || "").trim();
+const NON_AGENT_IDENTITY_LABELS = new Set([
+  "agent",
+  "antagonist",
+  "character",
+  "character present",
+  "chaser",
+  "door",
+  "foe",
+  "friend",
+  "guard",
+  "microphone",
+  "narrative agent",
+  "news anchor",
+  "police officer",
+  "protagonist",
+  "speaker",
+  "villain",
+]);
+
+/**
+ * Keep chooser values identity-shaped. Relationship descriptions, scene casts,
+ * track labels, and prose belong to evidence attributes—not to the canonical
+ * Narrative Agent menu. The open authoring field remains free text, so this
+ * guard only governs suggestions assembled from stored analysis data.
+ */
+export const individualNarrativeAgentLabel = (value: unknown): string => {
+  let label = String(value || "").replace(/\s+/g, " ").trim();
+  if (!label) return "";
+
+  // Preserve the identity portion of profile-style labels such as
+  // "James Bond (Daniel Craig): protagonist, secret agent".
+  if (label.includes(":")) label = label.split(":", 1)[0].trim();
+  label = label.replace(/\s+\([^)]*\)\s*$/, "").trim();
+
   const normalized = label.toLowerCase().replace(/_/g, " ");
-  if (!label || ["unknown", "unknown speaker", "person", "object", "track"].includes(normalized)) return;
-  if (normalized.startsWith("person track") || normalized.startsWith("track ") || /^person\s*\d+$/.test(normalized)) return;
+  if (
+    !label ||
+    label.length > 100 ||
+    ["unknown", "unknown speaker", "person", "object", "track"].includes(normalized) ||
+    NON_AGENT_IDENTITY_LABELS.has(normalized) ||
+    /(?:,|\s+(?:and|with|versus|vs\.?)\s+)/i.test(label) ||
+    /^(?:directed|music|produced)\s+by\b/i.test(label) ||
+    /^man\s+in\b/i.test(label) ||
+    /\b(?:person\s+)?track\s*\d+\b/i.test(label) ||
+    /^person\s*\d+$/i.test(label)
+  ) return "";
+
+  return label;
+};
+
+const addLabel = (labels: Set<string>, value: unknown): void => {
+  const label = individualNarrativeAgentLabel(value);
+  if (!label) return;
+  if ([...labels].some((existing) => existing.localeCompare(label, undefined, { sensitivity: "base" }) === 0)) return;
   labels.add(label);
 };
 

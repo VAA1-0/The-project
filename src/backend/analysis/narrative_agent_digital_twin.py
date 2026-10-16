@@ -251,6 +251,16 @@ def _modality_rows(status: Mapping[str, Any], modality: str) -> List[Dict[str, A
     }
     rows = _artifact_rows(status, *key_map.get(modality, ()))
     if modality == "body_movement":
+        corrections = _dict(status.get("annotation_corrections"))
+        rows.extend(
+            dict(row)
+            for row in _list(corrections.get("manual_visual_annotations"))
+            if isinstance(row, dict)
+            and (
+                _text(row.get("evidence_modality")).casefold() == "body_movement"
+                or _text(row.get("category")).casefold() == "movement"
+            )
+        )
         rows = [
             row for row in rows
             if any(

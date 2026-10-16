@@ -3487,6 +3487,7 @@ export default function VideoPanel() {
   const transcript = analysisData?.transcript ?? [];
   const detectedObjects = analysisData?.detectedObjects ?? [];
   const rawDetectedObjects = analysisData?.rawDetectedObjects ?? detectedObjects;
+  const bodyMovementDetections = analysisData?.bodyMovementDetections ?? [];
   const faceResults = analysisData?.faceResults ?? null;
   const videoWidth = videoRef.current?.videoWidth || 1920;
   const videoHeight = videoRef.current?.videoHeight || 1080;
@@ -4471,6 +4472,9 @@ export default function VideoPanel() {
         const manualOverrideOverlayLabel = manualOverrideActive
           ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
           : undefined;
+        const behavioralOverlayLabel = item.sourceType === "behavioral_detection"
+          ? governedOverlayLabel(item.displayLabel) || `${item.class_name} · behavioral candidate`
+          : undefined;
         const backendProjection = targetIds
           .map((trackId) => backendProjectionBySubject[trackId])
           .find(
@@ -4494,6 +4498,7 @@ export default function VideoPanel() {
           masterSchemaOverlayLabel ||
           proliferatedOverlayLabel ||
           reviewProliferatedOverlayLabel ||
+          behavioralOverlayLabel ||
           unresolvedOverlayLabel;
 
         overlays.push({
@@ -4502,6 +4507,8 @@ export default function VideoPanel() {
           label: objectOverlayLabel,
           color: localOverride || backendProjection || manualOverrideActive || manualTrackAuthority
             ? "border-emerald-300/80 bg-emerald-300/10"
+            : item.sourceType === "behavioral_detection" && bodyMovementDetections.length
+            ? "border-cyan-300/85 bg-cyan-300/10"
             : masterSchemaMatureOverride
             ? "border-violet-300/85 bg-violet-300/10"
             : narrativeAgentOverride

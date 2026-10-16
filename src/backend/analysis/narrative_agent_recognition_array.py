@@ -105,14 +105,22 @@ def collect_confirmed_recognition_anchors(
             continue
         event = _dict(_dict(item.get("metadata_correlation")).get("manual_confirmation_event"))
         fields = _dict(event.get("confirmed_fields"))
+        category = _text(item.get("category")).casefold()
         explicitly_confirmed = (
-            _text(item.get("category")).casefold() == "identification"
+            category == "identification"
             and (
                 fields.get("narrative_agent") is True
+                or bool(_text(item.get("identity_affirmation")))
                 or _text(item.get("review_state")).casefold() == "confirmed"
                 or _text(event.get("authority_level")).casefold()
                 in {"manual_confirmation", "manual_correction"}
             )
+        ) or (
+            category == "movement"
+            and fields.get("narrative_agent") is True
+            and fields.get("body_movement") is True
+            and _text(event.get("authority_level")).casefold()
+            in {"manual_confirmation", "manual_correction"}
         )
         if not explicitly_confirmed:
             continue
@@ -128,6 +136,11 @@ def collect_confirmed_recognition_anchors(
                 "narrative_agent_label": label,
                 "source_interval": interval,
                 "source_geometry": item.get("coordinates"),
+                "evidence_modality": (
+                    _text(item.get("evidence_modality"))
+                    or _text(_dict(item.get("metadata_correlation")).get("evidence_modality"))
+                    or "visual"
+                ),
                 "authority": "explicit_analyst_confirmation",
                 "traceback_refs": [
                     ref

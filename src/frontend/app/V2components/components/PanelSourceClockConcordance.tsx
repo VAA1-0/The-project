@@ -114,6 +114,33 @@ function posRows(data: AnalysisData): TimedItem[] {
   return rows;
 }
 
+function continuityRows(panelName: string, data: AnalysisData): TimedItem[] {
+  const consumerByPanel: Record<string, string> = {
+    Objects: "video",
+    Audio: "audio",
+    "Narrative Agent": "narrative_agent",
+    "Meaning / Plot": "meaning_plot",
+    "Master Schema": "master_schema",
+    "Data Maturation": "data_maturation",
+    Search: "search",
+    Traceback: "traceback",
+    StatsKit: "measurements",
+  };
+  const consumer = consumerByPanel[panelName];
+  const envelope = data.narrativeAgentContinuityProjection as any;
+  const view = envelope?.consumer_views?.[consumer];
+  if (!consumer || !view || view.revision !== envelope?.revision) return [];
+  return (Array.isArray(view.source_navigation) ? view.source_navigation : [])
+    .map((row: any, index: number) => timed(
+      `continuity:${view.collection_id}:${row.occurrence_id || index}`,
+      `${envelope?.canonical_collection?.narrative_agent_label || "Narrative Agent"} continuity`,
+      row?.source_interval?.start,
+      row?.source_interval?.end,
+      `${view.maturity} · ${String(view.revision).slice(0, 10)}`,
+    ))
+    .filter((row: TimedItem | null): row is TimedItem => Boolean(row));
+}
+
 function rowsForPanel(panelName: string, data: AnalysisData): TimedItem[] {
   if (panelName === "Transcript") return (data.transcriptTimeline || data.transcript || []).map((row, index) => timed(`transcript:${index}`, row.text, row.start, row.end, row.speaker)).filter((row): row is TimedItem => Boolean(row));
   if (panelName === "Audio") {
@@ -122,21 +149,21 @@ function rowsForPanel(panelName: string, data: AnalysisData): TimedItem[] {
     const turns = ((data.audioDiarization as any)?.speaker_turns || []).map((row: any, index: number) => timed(`speaker-turn:${index}`, row.speaker || row.speaker_label || "Speaker turn", row.start, row.end, "speaker diarization"));
     return [...prosody, ...events, ...turns].filter((row): row is TimedItem => Boolean(row));
   }
-  if (panelName === "Objects") return (data.detectedObjects || []).map((row, index) => timed(`object:${index}`, row.displayLabel || row.class_name, row.startTimestamp ?? row.timestamp, row.endTimestamp, `${Math.round(Number(row.confidence || 0) * 100)}% confidence`)).filter((row): row is TimedItem => Boolean(row));
+  if (panelName === "Objects") return [...continuityRows(panelName, data), ...(data.detectedObjects || []).map((row, index) => timed(`object:${index}`, row.displayLabel || row.class_name, row.startTimestamp ?? row.timestamp, row.endTimestamp, `${Math.round(Number(row.confidence || 0) * 100)}% confidence`)).filter((row): row is TimedItem => Boolean(row))];
   if (panelName === "OCR") return (data.ocr || []).map((row, index) => timed(`ocr:${index}`, row.text, row.timestamp, undefined, `${Math.round(Number(row.confidence || 0) * 100)}% confidence`)).filter((row): row is TimedItem => Boolean(row));
   if (panelName === "POS") return posRows(data);
-  if (panelName === "Quant" || panelName === "StatsKit") return quantRows(data);
+  if (panelName === "Quant" || panelName === "StatsKit") return [...continuityRows(panelName, data), ...quantRows(data)];
   if (panelName === "Scene Cards") {
     const cards = ((data.miseEnSceneSceneCards as any)?.scene_cards || []) as any[];
     return cards.map((card, index) => timed(card.scene_id || `scene:${index}`, card.display_title || card.title || card.overview || `Scene ${index + 1}`, Number(card.time_interval?.start_ms) / 1000, Number(card.time_interval?.end_ms) / 1000, "scene interval")).filter((row): row is TimedItem => Boolean(row));
   }
-  if (panelName === "Search") return (data.contentSearch?.search_index_records || []).map((row, index) => timed(row.index_id || `search:${index}`, row.canonical_name, row.start_time, row.end_time, `${row.entity_type} · ${row.maturity_summary.highest_maturity}`)).filter((row): row is TimedItem => Boolean(row));
+  if (panelName === "Search") return [...continuityRows(panelName, data), ...(data.contentSearch?.search_index_records || []).map((row, index) => timed(row.index_id || `search:${index}`, row.canonical_name, row.start_time, row.end_time, `${row.entity_type} · ${row.maturity_summary.highest_maturity}`)).filter((row): row is TimedItem => Boolean(row))];
   if (panelName === "Meaning / Plot") {
     const mentions = (data.entityRegistry?.entities || []).flatMap((entity) => entity.source_mentions.map((mention) => timed(`meaning:${entity.entity_id}:${mention.mention_id}`, entity.canonical_name, mention.start_time, mention.end_time, `${entity.entity_type} · ${mention.source_type}`)));
-    return [...mentions, ...masterRows(data, (row) => ["second_order", "scene_card", "organization", "place"].includes(row.category))].filter((row): row is TimedItem => Boolean(row));
+    return [...continuityRows(panelName, data), ...mentions, ...masterRows(data, (row) => ["second_order", "scene_card", "organization", "place"].includes(row.category))].filter((row): row is TimedItem => Boolean(row));
   }
-  if (panelName === "Narrative Agent") return masterRows(data, (row) => ["identity", "narrative_agent_profile", "character_role", "speaker_assignment", "narrative_agent_prosody"].includes(row.category));
-  if (["Master Schema", "Data Maturation", "Traceback"].includes(panelName)) return masterRows(data);
+  if (panelName === "Narrative Agent") return [...continuityRows(panelName, data), ...masterRows(data, (row) => ["identity", "narrative_agent_profile", "character_role", "speaker_assignment", "narrative_agent_prosody"].includes(row.category))];
+  if (["Master Schema", "Data Maturation", "Traceback"].includes(panelName)) return [...continuityRows(panelName, data), ...masterRows(data)];
   return [];
 }
 

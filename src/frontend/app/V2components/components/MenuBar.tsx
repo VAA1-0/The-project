@@ -564,6 +564,17 @@ export function MenuBar() {
           eventBus.emit("mediaLinked", imported.analysis_id);
         }, 50);
         alert(importNote);
+        if (imported.bundle_type === "project") {
+          const importedProjectId = String(
+            imported.project_id || imported.project_name || "",
+          ).trim();
+          if (!importedProjectId) {
+            throw new Error("Imported project did not provide a project boundary identifier.");
+          }
+          window.location.assign(
+            `/dashboard?activeProject=${encodeURIComponent(importedProjectId)}`,
+          );
+        }
       } catch (error) {
         console.error("Import saved work failed:", error);
         alert(
@@ -626,6 +637,10 @@ export function MenuBar() {
     error instanceof Error ? error.message : String(error || "Unknown save error");
 
   const buildProjectPayload = async (projectName?: string) => {
+    const projectId = activeProjectScopeId();
+    if (!projectId) {
+      throw new Error("Open a research project before saving a project bundle.");
+    }
     const analyses = await VideoService.list(200);
     const completedAnalyses = analyses
       .filter((analysis) => analysis.status === "completed")
@@ -668,7 +683,8 @@ export function MenuBar() {
     })();
 
     return {
-      project_name: projectName || "vaa1_project",
+      project_id: projectId,
+      project_name: projectName || projectId,
       analysis_ids: completedAnalyses,
       matrices: {
         pos: {
@@ -772,14 +788,15 @@ export function MenuBar() {
 
   const handleSaveProject = async () => {
     try {
-      const payload = await buildProjectPayload("vaa1_project");
+      const projectId = activeProjectScopeId();
+      const payload = await buildProjectPayload(projectId);
       if (!Array.isArray(payload.analysis_ids) || payload.analysis_ids.length === 0) {
         alert("There are no completed analyses yet to save as a project.");
         return;
       }
       await VideoService.exportProjectBundle(
         payload,
-        buildProjectBundleFilename("vaa1_project"),
+        buildProjectBundleFilename(projectId),
       );
     } catch (error) {
       console.error("Save Project failed:", error);
@@ -789,7 +806,7 @@ export function MenuBar() {
 
   const handleSaveProjectAs = async () => {
     try {
-      const suggested = buildProjectBundleFilename("vaa1_project");
+      const suggested = buildProjectBundleFilename(activeProjectScopeId());
       const customName = window.prompt("Save project bundle as:", suggested);
       if (!customName) {
         return;

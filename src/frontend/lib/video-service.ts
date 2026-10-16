@@ -247,7 +247,7 @@ export interface DetectedObject {
     rank: number;
     cues: string[];
   };
-  sourceType?: "automated" | "manual_visual";
+  sourceType?: "automated" | "manual_visual" | "behavioral_detection";
   sourceAnnotationId?: string;
   identityAffirmation?: string;
   roleAffirmation?: string;
@@ -258,6 +258,23 @@ export interface DetectedObject {
   annotationSubcategory?: string;
   customLabel?: string;
   metadataCorrelation?: ManualVisualAnnotation["metadata_correlation"];
+}
+
+export interface BodyMovementDetection {
+  evidenceId: string;
+  analysisId?: string;
+  movementType: string;
+  movementIntensity?: number | null;
+  confidence?: number | null;
+  start: number;
+  end: number;
+  bbox?: { x1: number; y1: number; x2: number; y2: number };
+  trackRef?: string;
+  poseRef?: string;
+  narrativeAgentLabel?: string;
+  authority: "detector_candidate" | "analyst_confirmation";
+  maturity: "candidate_only" | "analyst_confirmed_source_evidence";
+  tracebackRefs: string[];
 }
 
 export interface OCR {
@@ -1402,7 +1419,7 @@ function buildManualVisualObjects(
   return (corrections?.manual_visual_annotations || [])
     .filter(
       (entry: ManualVisualAnnotation) =>
-        entry.category === "OBJ" || isExpressionOwnerPersonRequest(entry),
+        entry.category === "OBJ" || entry.category === "Movement" || isExpressionOwnerPersonRequest(entry),
     )
     .map(
     (entry: ManualVisualAnnotation, index: number): DetectedObject => {
@@ -1415,7 +1432,7 @@ function buildManualVisualObjects(
       const startTimestamp = Number(entry.start_seconds ?? entry.timestamp_seconds ?? 0);
       const endTimestamp = Number(entry.end_seconds ?? entry.timestamp_seconds ?? 0);
       const label = String(entry.label || "manual annotation").trim() || "manual annotation";
-      const objectClassName = expressionOwnerPerson ? "person" : label;
+      const objectClassName = expressionOwnerPerson || entry.category === "Movement" ? "person" : label;
       const analystDetail = (
         entry.identity_affirmation ||
         entry.role_affirmation ||
@@ -1423,7 +1440,9 @@ function buildManualVisualObjects(
         ""
       )
         .trim();
-      const displayLabel = expressionOwnerPerson
+      const displayLabel = entry.category === "Movement"
+        ? `${entry.identity_affirmation || entry.narrative_agent_affirmation || "Person"} · ${entry.movement_type || label} · behavioral support`
+        : expressionOwnerPerson
         ? analystDetail || label
         : analystDetail
           ? `${label} [manual] • ${analystDetail}`
@@ -1460,6 +1479,115 @@ function buildManualVisualObjects(
       };
     },
   );
+}
+
+function movementRows(value: unknown): LooseRecord[] {
+  if (Array.isArray(value)) return looseRecordArray(value);
+  const record = asLooseRecord(value);
+  if (!record) return [];
+  return looseRecordArray(record.items || record.detections || record.results || record.rows);
+}
+
+function movementNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (value !== null && value !== undefined && value !== "" && Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function normalizedMovementBox(row: LooseRecord): BodyMovementDetection["bbox"] | undefined {
+  const coordinates = asLooseRecord(row.coordinates);
+  const bbox = asLooseRecord(row.bbox);
+  const x = movementNumber(coordinates?.x);
+  const y = movementNumber(coordinates?.y);
+  const w = movementNumber(coordinates?.w);
+  const h = movementNumber(coordinates?.h);
+  if (x !== null && y !== null && w !== null && h !== null && w > 0 && h > 0) {
+    return { x1: x, y1: y, x2: x + w, y2: y + h };
+  }
+  const x1 = movementNumber(bbox?.x1, row.bbox_x1);
+  const y1 = movementNumber(bbox?.y1, row.bbox_y1);
+  const x2 = movementNumber(bbox?.x2, row.bbox_x2);
+  const y2 = movementNumber(bbox?.y2, row.bbox_y2);
+  return x1 !== null && y1 !== null && x2 !== null && y2 !== null
+    ? { x1, y1, x2, y2 }
+    : undefined;
+}
+
+export function collectBodyMovementDetections(
+  status: AnalysisStatus | LooseRecord,
+  corrections?: AnnotationCorrections | null,
+): BodyMovementDetection[] {
+  const statusRecord = status as unknown as LooseRecord;
+  const results = asLooseRecord(statusRecord.results);
+  const visual = asLooseRecord(results?.visual_analysis);
+  const rawRows = [
+    ...movementRows(statusRecord.body_movement_detections),
+    ...movementRows(statusRecord.pose_detections),
+    ...movementRows(visual?.body_movement_detections),
+    ...movementRows(visual?.pose_detections),
+  ];
+  const manualRows = (corrections?.manual_visual_annotations || [])
+    .filter((row) => row.category === "Movement" || row.evidence_modality === "body_movement")
+    .map((row) => row as unknown as LooseRecord);
+  const seen = new Set<string>();
+  return [...rawRows, ...manualRows].flatMap((row, index) => {
+    const manual = String(row.category || "") === "Movement" || String(row.review_state || "") === "confirmed";
+    const movementType = looseString(row.movement_type || row.action || row.motion_label || row.label || "body movement");
+    const start = movementNumber(row.start_seconds, row.start_timestamp, row.timestamp_seconds, row.timestamp);
+    if (start === null) return [];
+    const end = movementNumber(row.end_seconds, row.end_timestamp) ?? start;
+    const evidenceId = looseString(row.id || row.evidence_id || row.sample_id) || `body-movement:${start.toFixed(3)}:${index}`;
+    if (seen.has(evidenceId)) return [];
+    seen.add(evidenceId);
+    const correlation = asLooseRecord(row.metadata_correlation);
+    const event = asLooseRecord(correlation?.manual_confirmation_event);
+    const confirmedFields = asLooseRecord(event?.confirmed_fields);
+    const analystConfirmed = manual && confirmedFields?.body_movement === true;
+    return [{
+      evidenceId,
+      analysisId: looseString(statusRecord.analysis_id) || undefined,
+      movementType,
+      movementIntensity: movementNumber(row.movement_intensity, row.motion_score),
+      confidence: movementNumber(row.confidence, row.score),
+      start,
+      end: Math.max(start, end),
+      bbox: normalizedMovementBox(row),
+      trackRef: looseString(row.track_id || correlation?.target_id) || undefined,
+      poseRef: looseString(row.pose_ref || row.skeleton_ref) || undefined,
+      narrativeAgentLabel: looseString(row.narrative_agent_affirmation || row.narrative_agent_label || row.identity_affirmation) || undefined,
+      authority: analystConfirmed ? "analyst_confirmation" : "detector_candidate",
+      maturity: analystConfirmed ? "analyst_confirmed_source_evidence" : "candidate_only",
+      tracebackRefs: [evidenceId],
+    }];
+  });
+}
+
+function bodyMovementObjects(rows: BodyMovementDetection[]): DetectedObject[] {
+  return rows.filter((row) => Boolean(row.bbox) && row.maturity === "candidate_only").map((row, index) => ({
+    timestamp: row.start,
+    startTimestamp: row.start,
+    endTimestamp: row.end,
+    class_id: -2,
+    class_name: "person",
+    raw_class_name: "person",
+    confidence: row.confidence ?? row.movementIntensity ?? 0,
+    bbox: row.bbox,
+    occurrenceCount: 1,
+    trackId: 200000 + index,
+    displayLabel: `${row.narrativeAgentLabel ? `${row.narrativeAgentLabel} · ` : ""}${row.movementType} · behavioral candidate`,
+    sourceType: "behavioral_detection",
+    sourceAnnotationId: row.evidenceId,
+    annotationCategory: "Movement",
+    annotationSubcategory: row.maturity,
+    metadataCorrelation: {
+      target_type: "object",
+      target_id: row.trackRef,
+      evidence_modality: "body_movement",
+      interpretation_is_candidate_only: row.maturity === "candidate_only",
+    } as ManualVisualAnnotation["metadata_correlation"],
+  }));
 }
 
 function groupManualVisualAnnotationsByCategory(
@@ -3084,6 +3212,7 @@ function buildDatasceneContentSearchView({
   analysisId?: string;
   entityRegistry: DatasceneEntityRegistryView;
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
+  narrativeAgentContinuityProjection?: Record<string, unknown> | null;
   transcript?: TranscriptSegment[];
   objects?: DetectedObject[];
   ocr?: OCR[];
@@ -4376,12 +4505,14 @@ export interface QuantAnalysis {
 
 export interface AnalysisData {
   analysisId?: string;
+  projectId?: string;
   quantAnalysis: QuantAnalysis[];
   posAnalysis: POSAnalysis[];
   transcript: TranscriptSegment[];
   transcriptTimeline?: TranscriptSegment[];
   detectedObjects: DetectedObject[];
   rawDetectedObjects: DetectedObject[];
+  bodyMovementDetections: BodyMovementDetection[];
   faceResults?: AnalysisStatus["face_results"] | null;
   ocr: OCR[];
   expressionResults: ExpressionSample[];
@@ -4414,6 +4545,7 @@ export interface AnalysisData {
   miseEnSceneSceneCards?: Record<string, unknown> | null;
   evidenceProliferationMatches?: EvidenceProliferationMatchSummary[];
   liveMatureDataProliferationAudit?: Record<string, unknown> | null;
+  narrativeAgentContinuityProjection?: Record<string, unknown> | null;
   nativeStatisticalInterpretation?: import("./api-service").NativeStatisticalInterpretationRun | null;
   audioDiarization?: AudioDiarizationScaffold | null;
   audioSampleClouds?: Record<string, unknown> | null;
@@ -5543,6 +5675,7 @@ export interface AnalysisStatus {
   mise_en_scene_scene_cards?: Record<string, unknown> | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   live_mature_data_proliferation_audit?: Record<string, unknown> | null;
+  narrative_agent_continuity_projection?: Record<string, unknown> | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   vaa1_annotation_master_schema?: unknown;
   pipeline_type?: string; // This was missing
@@ -5833,6 +5966,11 @@ export class VideoService {
             ? audioSampleCloudsData.value
             : null;
         const manualVisualObjects = buildManualVisualObjects(correctionsPayload || null);
+        const bodyMovementDetections = collectBodyMovementDetections(
+          status,
+          correctionsPayload || null,
+        );
+        const behavioralObjects = bodyMovementObjects(bodyMovementDetections);
         const manualAnnotationsByCategory =
           groupManualVisualAnnotationsByCategory(correctionsPayload || null);
         const checkpointObjects = Array.isArray(visualCheckpoint?.yolo_results)
@@ -5849,7 +5987,11 @@ export class VideoService {
               },
             }))
           : [];
-        const mergedCheckpointObjects = [...checkpointObjects, ...manualVisualObjects].sort(
+        const mergedCheckpointObjects = [
+          ...checkpointObjects,
+          ...behavioralObjects,
+          ...manualVisualObjects,
+        ].sort(
           (left, right) =>
             Number((left as any).startTimestamp ?? left.timestamp ?? 0) -
             Number((right as any).startTimestamp ?? right.timestamp ?? 0),
@@ -5924,12 +6066,14 @@ export class VideoService {
         this.invalidateAnalysisCache(id);
         return {
           analysisId: id,
+          projectId: status.project_id,
           quantAnalysis: correctedQuantAnalysis,
           posAnalysis: correctedPosAnalysis,
           transcript: correctedTranscript,
           transcriptTimeline: correctedTranscriptTimeline,
           detectedObjects: mergedCheckpointObjects,
           rawDetectedObjects: mergedCheckpointObjects,
+          bodyMovementDetections,
           ocr: checkpointOcr,
           expressionResults: [],
           audioProsody: correctedAudioProsody,
@@ -5943,6 +6087,8 @@ export class VideoService {
           contentSearch,
           secondOrderLabelProliferation: secondOrderStatus || null,
           liveMatureDataProliferationAudit: proliferationAuditStatus || null,
+          narrativeAgentContinuityProjection:
+            status.narrative_agent_continuity_projection || null,
           annotationCorrections: correctionsPayload || null,
           summary: visualCheckpoint
             ? `Analysis ${status.status} (${status.progress}%). Governed visual checkpoint is available through frame ${checkpointNextIndex}.`
@@ -5953,7 +6099,10 @@ export class VideoService {
             vaa1_annotation_master_schema: masterSchemaStatus,
             second_order_label_proliferation: secondOrderStatus,
             live_mature_data_proliferation_audit: proliferationAuditStatus,
+            narrative_agent_continuity_projection:
+              status.narrative_agent_continuity_projection || null,
             audio_diarization: audioDiarizationStatus,
+            body_movement_detections: bodyMovementDetections,
           },
           metadata: {
             sourceName: status.filename,
@@ -6140,14 +6289,16 @@ export class VideoService {
             )
           : [];
       const manualVisualObjects = buildManualVisualObjects(corrections);
+      const bodyMovementDetections = collectBodyMovementDetections(status, corrections);
+      const behavioralObjects = bodyMovementObjects(bodyMovementDetections);
       const manualAnnotationsByCategory =
         groupManualVisualAnnotationsByCategory(corrections);
-      const mergedProfiledObjects = [...profiledObjects, ...manualVisualObjects].sort(
+      const mergedProfiledObjects = [...profiledObjects, ...behavioralObjects, ...manualVisualObjects].sort(
         (left, right) =>
           Number(left.startTimestamp ?? left.timestamp ?? 0) -
           Number(right.startTimestamp ?? right.timestamp ?? 0),
       );
-      const mergedRawObjects = [...correctedRawObjects, ...manualVisualObjects].sort(
+      const mergedRawObjects = [...correctedRawObjects, ...behavioralObjects, ...manualVisualObjects].sort(
         (left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0),
       );
       const nativeAnnotations = (corrections?.manual_visual_annotations || []).map(
@@ -6270,6 +6421,8 @@ export class VideoService {
         entityRegistry,
         liveMatureDataProliferationAudit:
           status.live_mature_data_proliferation_audit || null,
+        narrativeAgentContinuityProjection:
+          status.narrative_agent_continuity_projection || null,
         transcript: correctedTranscript,
         objects: mergedProfiledObjects,
         ocr: correctedOCR,
@@ -6278,12 +6431,14 @@ export class VideoService {
 
       const analysisData = {
         analysisId: id,
+        projectId: status.project_id,
         quantAnalysis: correctedQuantAnalysis,
         posAnalysis: correctedPosAnalysis,
         transcript: correctedTranscript,
         transcriptTimeline: correctedTranscriptTimeline,
         detectedObjects: mergedProfiledObjects,
         rawDetectedObjects: mergedRawObjects,
+        bodyMovementDetections,
         faceResults: status.face_results,
         ocr: correctedOCR,
         expressionResults: correctedExpressions,
@@ -6329,8 +6484,11 @@ export class VideoService {
           audio_diarization: status.audio_diarization || null,
           native_statistical_interpretation:
             status.native_statistical_interpretation || null,
+          body_movement_detections: bodyMovementDetections,
           language_analysis_parity:
             (status as unknown as LooseRecord).language_analysis_parity || null,
+          narrative_agent_continuity_projection:
+            status.narrative_agent_continuity_projection || null,
         },
         status: "completed",
         downloadLinks: status.download_links,

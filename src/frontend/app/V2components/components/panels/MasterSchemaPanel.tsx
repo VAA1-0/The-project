@@ -37,6 +37,7 @@ import { matureSceneSegmentsFromAnalysis } from "@/lib/scene-governance";
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import { useLayoutHost } from "../LayoutHost";
 import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
+import NarrativeAgentContinuityWorkbench from "../NarrativeAgentContinuityWorkbench";
 import { SecondOrderLabelReviewTray } from "./SecondOrderLabelAffirmations";
 
 const CATEGORY_ORDER: ManualVisualAnnotation["category"][] = [
@@ -4500,15 +4501,50 @@ export default function MasterSchemaPanel({
               </div>
             ) : null}
             {category === "Identification" && (
-              <NarrativeAgentCharacterPathsHome
-                analysisData={analysisData}
-                canonicalClaims={canonicalClaims}
-                videoId={videoId}
-                openPanel={openPanel}
-                onCommitTimelineHandle={(commit) => {
-                  void commitNarrativeAgentTimelineHandle(commit);
-                }}
-              />
+              <>
+                {analysisData?.projectId ? (
+                  <div className="px-3">
+                    <NarrativeAgentContinuityWorkbench
+                      projectId={analysisData.projectId}
+                      analysisId={videoId}
+                      agentLabels={governedNarrativeAgentLabels(analysisData)}
+                      sourceIntervals={[
+                        ...(analysisData.audioDiarization?.speaker_turns || []).flatMap((turn: { start?: number; end?: number; turn_id?: string; speaker_label?: string; text?: string }) => {
+                          const start = Number(turn.start);
+                          const end = Number(turn.end);
+                          return Number.isFinite(start) && Number.isFinite(end) && end >= start ? [{
+                            modality: "audio" as const,
+                            start,
+                            end,
+                            sourceRef: turn.turn_id || turn.speaker_label || "",
+                            transcriptText: turn.text || "",
+                          }] : [];
+                        }),
+                        ...(analysisData.transcriptTimeline || analysisData.transcript || []).flatMap((segment: { sourceStart?: number; sourceEnd?: number; start?: number; end?: number; targetId?: string; speaker?: string; text?: string }) => {
+                          const start = Number(segment.sourceStart ?? segment.start);
+                          const end = Number(segment.sourceEnd ?? segment.end);
+                          return Number.isFinite(start) && Number.isFinite(end) && end >= start ? [{
+                            modality: "transcript_audio" as const,
+                            start,
+                            end,
+                            sourceRef: segment.targetId || segment.speaker || "",
+                            transcriptText: segment.text || "",
+                          }] : [];
+                        }),
+                      ]}
+                    />
+                  </div>
+                ) : null}
+                <NarrativeAgentCharacterPathsHome
+                  analysisData={analysisData}
+                  canonicalClaims={canonicalClaims}
+                  videoId={videoId}
+                  openPanel={openPanel}
+                  onCommitTimelineHandle={(commit) => {
+                    void commitNarrativeAgentTimelineHandle(commit);
+                  }}
+                />
+              </>
             )}
             {category === "Identification" ? (
               <>

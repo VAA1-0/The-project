@@ -6,7 +6,7 @@ import { formatPreciseSourceTime } from "@/lib/source-clock";
 import { sourceTimeBoundary } from "@/lib/source-clock";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
-import { VideoService, type AnalysisData, type DatasceneEntityRegistryRecord, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
+import { VideoService, type AnalysisData, type BodyMovementDetection, type DatasceneEntityRegistryRecord, type MasterSchemaResolvedEvidenceRecord } from "@/lib/video-service";
 import type { AudioProsodyCue, ExpressionSample, TranscriptSegment } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import {
@@ -1334,6 +1334,50 @@ function masterRecordToMeaningNode(
       copy_paste_enabled: true,
       update_enabled: true,
       source_navigation_enabled: Boolean(evidenceRef.time_range),
+    },
+  };
+}
+
+function bodyMovementToMeaningNode(
+  movement: BodyMovementDetection,
+): MeaningNetworkNode {
+  const confidence = movement.confidence ?? movement.movementIntensity ?? undefined;
+  return {
+    node_id: `body-movement:${movement.evidenceId}`,
+    node_type: "body_movement",
+    label: movement.movementType,
+    description: movement.narrativeAgentLabel
+      ? `${movement.narrativeAgentLabel} · body-movement continuity support`
+      : "Source-timed body-movement continuity candidate",
+    attributes: {
+      analysis_id: movement.analysisId,
+      narrative_agent_label: movement.narrativeAgentLabel,
+      track_ref: movement.trackRef,
+      pose_ref: movement.poseRef,
+      movement_intensity: movement.movementIntensity,
+      bbox: movement.bbox,
+      interpretation_state: "candidate_only",
+    },
+    maturity: {
+      level: movement.maturity === "analyst_confirmed_source_evidence"
+        ? "analyst_confirmed_source_evidence"
+        : "candidate_only",
+      authority: movement.authority,
+      confidence: confidence ?? undefined,
+    },
+    evidence_refs: [{
+      evidence_id: movement.evidenceId,
+      source_type: "body_movement_detection",
+      time_range: { start: movement.start, end: movement.end },
+      traceback_record_id: movement.tracebackRefs[0] || `traceback:${movement.evidenceId}`,
+      confidence: confidence ?? undefined,
+    }],
+    ui: {
+      display_group: "body_movement",
+      quick_confirm_enabled: movement.maturity === "candidate_only",
+      copy_paste_enabled: true,
+      update_enabled: true,
+      source_navigation_enabled: true,
     },
   };
 }
@@ -4035,6 +4079,12 @@ export default function MeaningPlotPanel({
       .map(prosodyCueToMeaningNode),
     [analysisData?.audioProsody],
   );
+  const bodyMovementMeaningNodes = useMemo(
+    () => (analysisData?.bodyMovementDetections || [])
+      .slice(0, 260)
+      .map(bodyMovementToMeaningNode),
+    [analysisData?.bodyMovementDetections],
+  );
   const entityRegistryMeaningNodes = useMemo(
     () => (analysisData?.entityRegistry?.entities || [])
       .slice(0, 260)
@@ -4056,13 +4106,45 @@ export default function MeaningPlotPanel({
         ...persistedPresenceMeaningNodes,
         ...transcriptMeaningNodes,
         ...prosodyMeaningNodes,
+        ...bodyMovementMeaningNodes,
         ...((datasceneMeaningNetwork?.meaning_network?.nodes || []) as MeaningNetworkNode[]),
         ...draftMeaningNetworkNodes,
       ].forEach((node) => byId.set(node.node_id, node));
       return [...byId.values()];
     },
-    [datasceneMeaningNetwork, draftMeaningNetworkNodes, entityRegistryMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
+    [bodyMovementMeaningNodes, datasceneMeaningNetwork, draftMeaningNetworkNodes, entityRegistryMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
   );
+  const bodyMovementMeaningEdges = useMemo<MeaningNetworkEdge[]>(() => {
+    const agentNodes = [...narrativeAgentProfileMeaningNodes, ...masterSchemaMeaningNodes]
+      .filter((node) => ["narrative_agent", "identity", "character"].includes(meaningNetworkCanonicalNodeType(node.node_type)));
+    return (analysisData?.bodyMovementDetections || []).flatMap((movement) => {
+      const agentKey = normalizeAgentKey(movement.narrativeAgentLabel || "");
+      if (!agentKey) return [];
+      const target = agentNodes.find((node) => normalizeAgentKey(node.label) === agentKey);
+      if (!target) return [];
+      const source = bodyMovementMeaningNodes.find((node) => node.node_id === `body-movement:${movement.evidenceId}`);
+      if (!source) return [];
+      return [{
+        edge_id: `edge:${source.node_id}:behavioral-supports:${target.node_id}`,
+        source_node_id: source.node_id,
+        target_node_id: target.node_id,
+        edge_type: "behavioral_supports",
+        weight: movement.confidence ?? movement.movementIntensity ?? 0,
+        maturity: {
+          level: "candidate_only",
+          authority: movement.authority,
+          confidence: movement.confidence ?? movement.movementIntensity ?? undefined,
+        },
+        evidence_refs: source.evidence_refs,
+        ui: {
+          quick_confirm_enabled: movement.maturity === "candidate_only",
+          copy_paste_enabled: true,
+          update_enabled: true,
+          source_navigation_enabled: true,
+        },
+      }];
+    });
+  }, [analysisData?.bodyMovementDetections, bodyMovementMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes]);
   const masterSchemaMeaningEdges = useMemo<MeaningNetworkEdge[]>(
     () => {
       const edges: MeaningNetworkEdge[] = [];
@@ -4209,10 +4291,11 @@ export default function MeaningPlotPanel({
     () =>
       dedupeMeaningNetworkEdges([
         ...masterSchemaMeaningEdges,
+        ...bodyMovementMeaningEdges,
         ...((datasceneMeaningNetwork?.meaning_network?.edges || []) as MeaningNetworkEdge[]),
         ...draftMeaningNetworkEdges,
       ]),
-    [datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
+    [bodyMovementMeaningEdges, datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
   );
   const reviewableMeaningNetworkNodes = useMemo(
     () =>
@@ -4228,6 +4311,7 @@ export default function MeaningPlotPanel({
             "master_schema_evidence",
             "spoken_word",
             "prosody",
+            "body_movement",
             "open_topology_som_matcher",
             "meaning_network_presence",
             "analyst_added_nodes",
@@ -4240,7 +4324,7 @@ export default function MeaningPlotPanel({
   const reviewableMeaningNetworkEdges = useMemo(
     () =>
       meaningNetworkEdges
-        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as", "has_speaker_assignment", "spoken_by", "prosody_of", "traceable_similarity", "constellational_match_candidate"].includes(edge.edge_type) || isMatcherSomMeaningEdge(edge))
+        .filter((edge) => ["co_occurs_with", "belongs_to_scene", "copy_of_anchor", "tracks_same_entity_as", "has_speaker_assignment", "spoken_by", "prosody_of", "behavioral_supports", "traceable_similarity", "constellational_match_candidate"].includes(edge.edge_type) || isMatcherSomMeaningEdge(edge))
         .sort((left, right) => meaningNetworkEvidenceStart(left.evidence_refs) - meaningNetworkEvidenceStart(right.evidence_refs)),
     [meaningNetworkEdges],
   );

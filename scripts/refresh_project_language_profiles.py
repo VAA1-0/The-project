@@ -40,6 +40,10 @@ def refresh(project_id: str) -> list[dict[str, object]]:
             status.get("language_pack_policy") or {},
             profile,
         )
+        # The transcript is a registered full-analysis artifact. Refresh its
+        # checksum/projection in the same operation so a language-profile
+        # rewrite cannot leave a falsely "full" but unverifiable manifest.
+        api_server.write_full_analysis_manifest(status, api_server.RESULTS_DIR / analysis_id)
         api_server.append_analysis_event(
             status,
             "timeline_language_profile_refreshed",

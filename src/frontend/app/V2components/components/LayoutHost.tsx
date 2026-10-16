@@ -1183,9 +1183,12 @@ export default function LayoutHost({
     }
 
     if (requestedAnalysisId) {
-      window.setTimeout(() => {
+      // A deep-linked analysis must be checked only after the authoritative
+      // active-project membership has hydrated. Emitting on a timer races the
+      // catalogue request and can falsely evict a valid project member.
+      void VideoService.list(200).then(() => {
         eventBus.emit("videoIdChanged", requestedAnalysisId);
-      }, 120);
+      });
     }
 
     return () => {

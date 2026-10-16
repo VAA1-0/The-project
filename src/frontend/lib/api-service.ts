@@ -129,6 +129,8 @@ export interface AnalysisStatus {
   source_video_exists?: boolean;
   source_video_message?: string;
   project_id?: string;
+  body_movement_detections?: Array<Record<string, unknown>> | { items?: Array<Record<string, unknown>>; detections?: Array<Record<string, unknown>> };
+  pose_detections?: Array<Record<string, unknown>> | { items?: Array<Record<string, unknown>>; detections?: Array<Record<string, unknown>> };
   source_size_bytes?: number;
   source_media_metadata?: SourceMediaMetadata;
   analysis_completeness?: AnalysisCompleteness;
@@ -335,6 +337,7 @@ export interface AnalysisStatus {
   } | null;
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   live_mature_data_proliferation_audit?: Record<string, unknown> | null;
+  narrative_agent_continuity_projection?: Record<string, unknown> | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   audio_sample_clouds?: AudioSampleClouds | null;
   download_links?: Record<string, string>;
@@ -1492,9 +1495,17 @@ export interface ManualVisualAnnotation {
   end_seconds?: number;
   identity_affirmation?: string;
   role_affirmation?: string;
+  narrative_agent_affirmation?: string;
+  evidence_modality?: string;
+  movement_type?: string;
+  movement_intensity?: number | null;
+  pose_ref?: string | null;
+  track_id?: string | number | null;
+  interpretation_is_candidate_only?: boolean;
   audio_foley_note?: string;
   open_note?: string;
   metadata_correlation?: {
+    evidence_modality?: string;
     target_type?: string;
     target_id?: string;
     target_label?: string;
@@ -1561,6 +1572,7 @@ export interface ManualVisualAnnotation {
     }>;
     quick_annotations?: string[];
     maturity_policy?: string;
+    interpretation_is_candidate_only?: boolean;
     relation?: "contradicts" | "extends" | "matches" | "supports" | "unknown";
     note?: string;
   } | null;
@@ -1784,6 +1796,54 @@ class ApiService {
     if (!response.ok) {
       throw new Error((await response.text()) || "Narrative Agent Digital Twins unavailable");
     }
+    return response.json();
+  }
+
+  async getNarrativeAgentContinuity(
+    projectId: string,
+    analysisId: string,
+    agent: string,
+  ): Promise<unknown> {
+    const query = new URLSearchParams({ analysis_id: analysisId, agent });
+    const response = await fetch(
+      `${this.baseURL}/api/projects/${encodeURIComponent(projectId)}/narrative-agent-continuity?${query.toString()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) throw new Error((await response.text()) || "Narrative Agent continuity unavailable");
+    return response.json();
+  }
+
+  async confirmNarrativeAgentContinuityEvidence(
+    projectId: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await fetch(
+      `${this.baseURL}/api/projects/${encodeURIComponent(projectId)}/narrative-agent-continuity/evidence`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!response.ok) throw new Error((await response.text()) || "Continuity evidence save failed");
+    this.invalidateReadCaches(String(payload.analysis_id || ""));
+    return response.json();
+  }
+
+  async decideNarrativeAgentContinuity(
+    projectId: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await fetch(
+      `${this.baseURL}/api/projects/${encodeURIComponent(projectId)}/narrative-agent-continuity/decisions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!response.ok) throw new Error((await response.text()) || "Continuity decision failed");
+    this.invalidateReadCaches();
     return response.json();
   }
 

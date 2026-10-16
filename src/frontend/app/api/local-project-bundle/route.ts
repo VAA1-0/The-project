@@ -35,6 +35,13 @@ export async function POST(request: NextRequest) {
     }
 
     const projectName = String(payload.project_name || "vaa1_project");
+    const projectId = String(payload.project_id || "").trim();
+    if (!projectId) {
+      return NextResponse.json(
+        { detail: "A project boundary identifier is required" },
+        { status: 400 },
+      );
+    }
     const included_analyses = [];
     const skipped_analyses = [];
     const runtimeRoot = path.join(projectRoot(), "outputs", "runtime", "project-bundles");
@@ -47,6 +54,10 @@ export async function POST(request: NextRequest) {
     try {
       for (const analysisId of analysisIds) {
         const record = await readAnalysisRecord(String(analysisId));
+        if (String(record.project_id || "") !== projectId) {
+          skipped_analyses.push({ analysis_id: analysisId, reason: "foreign_project_boundary" });
+          continue;
+        }
         if (record.status !== "completed") {
           skipped_analyses.push({ analysis_id: analysisId, reason: "missing_or_not_completed" });
           continue;
@@ -103,6 +114,7 @@ export async function POST(request: NextRequest) {
         JSON.stringify(
           {
             project_type: "vaa1_project_bundle",
+            project_id: projectId,
             project_name: projectName,
             saved_at: new Date().toISOString(),
             analysis_count: included_analyses.length,

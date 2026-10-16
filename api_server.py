@@ -23,6 +23,8 @@ import mimetypes
 import urllib.parse
 import urllib.request
 import re
+import math
+import hashlib
 import html
 from html.parser import HTMLParser
 from typing import Dict, Any, Optional, List
@@ -180,6 +182,18 @@ from src.backend.analysis.decision_ledger import (
 )
 from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
 from src.backend.analysis.claim_projection import project_canonical_claims
+from src.backend.analysis.narrative_agent_continuity import build_continuity_inventory
+from src.backend.analysis.narrative_agent_continuity_decisions import (
+    append_continuity_decision,
+    project_continuity_decisions,
+)
+from src.backend.analysis.narrative_agent_continuity_projection import (
+    build_continuity_projection_envelope,
+)
+from src.backend.analysis.narrative_agent_continuity_persistence import (
+    load_saved_continuity_state,
+    write_continuity_artifacts,
+)
 from src.backend.analysis.correction_write_lock import correction_write_lock, CorrectionWriteBusy
 from src.backend.analysis.source_clock_context import (
     build_source_clock_context, validate_clock_binding, ClockRevisionConflict,
@@ -8335,6 +8349,8 @@ def infer_output_files_from_bundle(extract_dir: Path, bundle_stem: str) -> Dict[
         "scene_card_source_extraction_metadata_summary.json": "source_extraction_metadata_summary",
         "live_mature_data_proliferation_audit.json": "live_mature_data_proliferation_audit",
         "vaa1_annotation_master_schema.json": "vaa1_annotation_master_schema",
+        "narrative_agent_continuity_projection.json": "narrative_agent_continuity_projection",
+        "narrative_agent_continuity_state.json": "narrative_agent_continuity_state",
     }
 
     output_files: Dict[str, str] = {}
@@ -10773,6 +10789,8 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "analysis_started_at": status.get("analysis_started_at"),
         "analysis_completed_at": status.get("analysis_completed_at"),
         "cvatID" : status["cvatID"],
+        "project_id": status.get("project_id", "local-research-project"),
+        "source_size_bytes": status.get("source_size_bytes"),
         "event_log": status.get("event_log", []),
         "source_video_path": status.get("source_video_path"),
         "source_media_metadata": status.get("source_media_metadata"),
@@ -10797,6 +10815,21 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "live_mature_data_proliferation_audit": status.get(
             "live_mature_data_proliferation_audit"
         ),
+        "narrative_agent_continuity_projection": status.get(
+            "narrative_agent_continuity_projection"
+        ),
+        "narrative_agent_continuity_projections": status.get(
+            "narrative_agent_continuity_projections", {}
+        ),
+        "narrative_agent_continuity_states": status.get(
+            "narrative_agent_continuity_states", {}
+        ),
+        "body_movement_detections": status.get("body_movement_detections")
+        or ((status.get("results") or {}).get("visual_analysis") or {}).get("body_movement_detections")
+        or [],
+        "pose_detections": status.get("pose_detections")
+        or ((status.get("results") or {}).get("visual_analysis") or {}).get("pose_detections")
+        or [],
         "audio_event_intervals": (status.get("results", {}).get("audio_analysis", {}) or {}).get("audio_event_intervals"),
         "speaker_prosody_projection": status.get("speaker_prosody_projection"),
         "language_analysis_parity": status.get("language_analysis_parity")
@@ -11063,6 +11096,384 @@ async def get_analysis_status(analysis_id: str) -> dict:
         # Add download links
         response_data["download_links"] = build_download_links(analysis_id, output_files)
     return response_data
+
+
+def continuity_project_records(project_id: str) -> List[Dict[str, Any]]:
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,160}", project_id):
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    records = [
+        status
+        for status in collect_saved_analysis_records().values()
+        if str(status.get("project_id") or "") == project_id
+    ]
+    for status in records:
+        hydrate_saved_analysis_status(status, results_dir=RESULTS_DIR)
+        hydrate_richer_persisted_annotation_corrections(status)
+    if not records:
+        raise HTTPException(status_code=404, detail="Project has no saved analyses")
+    return records
+
+
+def continuity_collection_id(project_id: str, agent_label: str) -> str:
+    normalized = "-".join(re.findall(r"[a-z0-9]+", agent_label.casefold()))
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Narrative Agent label is required")
+    return f"{project_id}:narrative-agent:{normalized}"
+
+
+def continuity_state_path(project_id: str, collection_id: str) -> Path:
+    digest = hashlib.sha256(collection_id.encode("utf-8")).hexdigest()[:20]
+    return RESULTS_DIR / "project_continuity" / project_id / f"{digest}.json"
+
+
+def load_project_continuity_ledger(project_id: str, collection_id: str) -> Dict[str, Any]:
+    path = continuity_state_path(project_id, collection_id)
+    if not path.exists():
+        return empty_decision_ledger(f"project:{project_id}")
+    try:
+        state = load_saved_continuity_state(path, expected_project_id=project_id)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=f"Saved continuity state failed integrity validation: {exc}") from exc
+    ledger = state.get("decision_ledger")
+    return ledger if isinstance(ledger, dict) else empty_decision_ledger(f"project:{project_id}")
+
+
+def continuity_artifact_view(inventory: Dict[str, Any], projection: Optional[Dict[str, Any]], analysis_id: str) -> Dict[str, Any]:
+    corridor = inventory.get("selected_continuity_corridor") or {}
+    view = (projection.get("consumer_views") or {}).get("narrative_agent") if isinstance(projection, dict) else None
+    return {
+        "analysis_id": analysis_id,
+        "confirmed_occurrences": [item for item in inventory.get("confirmed_occurrences", []) if isinstance(item, dict) and item.get("analysis_id") == analysis_id],
+        "proposed_occurrences": [item for item in corridor.get("proposed_members", []) if isinstance(item, dict) and item.get("analysis_id") == analysis_id],
+        "projection_view": view,
+    }
+
+
+@app.get("/api/projects/{project_id}/narrative-agent-continuity", response_model=dict)
+async def get_project_narrative_agent_continuity(project_id: str, agent: str, analysis_id: str) -> dict:
+    records = continuity_project_records(project_id)
+    allowed_ids = {str(item.get("analysis_id") or "") for item in records}
+    if analysis_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Analysis artifact is outside this project")
+    inventory = build_continuity_inventory(records, selected_agent=agent, project_id=project_id)
+    collection_id = continuity_collection_id(project_id, agent)
+    ledger = load_project_continuity_ledger(project_id, collection_id)
+    decision_projection = project_continuity_decisions(ledger, project_id=project_id, collection_id=collection_id)
+    projection = build_continuity_projection_envelope(inventory, ledger, project_id=project_id, collection_id=collection_id) if decision_projection.get("active_decision_ids") else None
+    return make_json_safe({
+        "project_id": project_id,
+        "analysis_id": analysis_id,
+        "collection_id": collection_id,
+        "analysis_artifacts": [{"analysis_id": item.get("analysis_id"), "filename": item.get("original_filename") or item.get("filename")} for item in records],
+        "inventory": inventory,
+        "decision_projection": decision_projection,
+        "continuity_projection": projection,
+        "artifact_view": continuity_artifact_view(inventory, projection, analysis_id),
+    })
+
+
+@app.post("/api/projects/{project_id}/narrative-agent-continuity/evidence", response_model=dict)
+async def confirm_project_narrative_agent_evidence(
+    project_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Commit one analyst-confirmed, artifact-owned continuity occurrence.
+
+    The project is the hermetic outer boundary.  The analysis id and source-clock
+    interval remain attached to the evidence so a project corridor can never
+    erase which video supplied a visual, audio, transcript, or scene-presence
+    confirmation.
+    """
+    records = continuity_project_records(project_id)
+    by_id = {str(item.get("analysis_id") or ""): item for item in records}
+    analysis_id = str(payload.get("analysis_id") or "").strip()
+    status = by_id.get(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=403, detail="Analysis artifact is outside this project")
+    agent = str(payload.get("agent") or "").strip()
+    if not agent:
+        raise HTTPException(status_code=400, detail="Narrative Agent label is required")
+    modality = str(payload.get("modality") or "").strip().casefold()
+    if modality not in {"visual", "audio", "transcript_audio", "scene_presence", "body_movement"}:
+        raise HTTPException(status_code=400, detail="Unsupported continuity evidence modality")
+    try:
+        start = float(payload.get("start_seconds"))
+        end = float(payload.get("end_seconds", start))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="A finite source-clock interval is required") from exc
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start:
+        raise HTTPException(status_code=400, detail="Source-clock interval is invalid")
+    coordinates = payload.get("coordinates")
+    if modality in {"visual", "body_movement"}:
+        if not isinstance(coordinates, dict):
+            raise HTTPException(status_code=400, detail=f"{modality.replace('_', ' ').title()} continuity evidence requires normalized BBox coordinates")
+        try:
+            x = float(coordinates.get("x"))
+            y = float(coordinates.get("y"))
+            width = float(coordinates.get("w"))
+            height = float(coordinates.get("h"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Continuity BBox coordinates are invalid") from exc
+        if (
+            not all(math.isfinite(value) for value in (x, y, width, height))
+            or x < 0 or y < 0 or width <= 0 or height <= 0
+            or x + width > 1.000001 or y + height > 1.000001
+        ):
+            raise HTTPException(status_code=400, detail="Continuity BBox must use normalized x/y/w/h coordinates")
+        coordinates = {"x": x, "y": y, "w": width, "h": height}
+    movement_type = str(payload.get("movement_type") or "").strip()
+    movement_intensity = None
+    if modality == "body_movement":
+        if not movement_type:
+            raise HTTPException(status_code=400, detail="Body movement evidence requires a movement type")
+        raw_intensity = payload.get("movement_intensity")
+        if raw_intensity not in (None, ""):
+            try:
+                movement_intensity = float(raw_intensity)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Body movement intensity must be between 0 and 1") from exc
+            if not math.isfinite(movement_intensity) or not 0 <= movement_intensity <= 1:
+                raise HTTPException(status_code=400, detail="Body movement intensity must be between 0 and 1")
+    evidence_id = str(payload.get("evidence_id") or f"continuity-{uuid.uuid4().hex}").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,240}", evidence_id):
+        raise HTTPException(status_code=400, detail="Invalid evidence ID")
+    now = utc_now_iso()
+    event_id = f"manual-confirmation:{evidence_id}"
+    event = {
+        "event_id": event_id,
+        "authority_level": "manual_confirmation",
+        "confirmed_fields": {
+            "narrative_agent": True,
+            "continuity_membership": False,
+            "visual": modality == "visual",
+            "audio": modality in {"audio", "transcript_audio"},
+            "transcript": modality == "transcript_audio",
+            "scene_presence": modality == "scene_presence",
+            "body_movement": modality == "body_movement",
+        },
+        "confirmed_at": now,
+        "confirmed_by": str(payload.get("created_by") or "analyst"),
+    }
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, analysis_id):
+            corrections = json.loads(json.dumps(canonical_clock_corrections(analysis_id, status)))
+            previous = json.loads(json.dumps(corrections))
+            collection_name = "text_substitutions" if modality == "transcript_audio" else "manual_visual_annotations"
+            collection = corrections.setdefault(collection_name, [])
+            existing = next((row for row in collection if isinstance(row, dict) and str(row.get("id") or "") == evidence_id), None)
+            if existing is not None:
+                return make_json_safe({
+                    "status": "unchanged",
+                    "project_id": project_id,
+                    "analysis_id": analysis_id,
+                    "evidence_id": evidence_id,
+                    "save_committed": True,
+                })
+            def same_confirmed_source(row: Any) -> bool:
+                if not isinstance(row, dict):
+                    return False
+                if modality == "transcript_audio":
+                    row_agent = str(row.get("speaker_confirmation") or "").strip().casefold()
+                    row_modality = "transcript_audio"
+                    row_start = row.get("target_start_timestamp")
+                    row_end = row.get("target_end_timestamp")
+                    row_source_ref = row.get("speaker_label")
+                else:
+                    row_agent = str(row.get("identity_affirmation") or row.get("narrative_agent_affirmation") or "").strip().casefold()
+                    row_modality = str(row.get("evidence_modality") or "").strip().casefold()
+                    row_start = row.get("start_seconds", row.get("timestamp_seconds"))
+                    row_end = row.get("end_seconds", row_start)
+                    row_source_ref = (row.get("metadata_correlation") or {}).get("target_id") if isinstance(row.get("metadata_correlation"), dict) else ""
+                try:
+                    same_interval = abs(float(row_start) - start) <= 0.05 and abs(float(row_end) - end) <= 0.05
+                except (TypeError, ValueError):
+                    return False
+                existing_source_ref = str(row_source_ref or "").strip().casefold()
+                requested_source_ref = str(payload.get("source_ref") or "").strip().casefold()
+                return (
+                    row_agent == agent.casefold()
+                    and row_modality == modality
+                    and same_interval
+                    and (
+                        not existing_source_ref
+                        or not requested_source_ref
+                        or existing_source_ref == requested_source_ref
+                    )
+                )
+
+            semantic_duplicate = next((row for row in collection if same_confirmed_source(row)), None)
+            if semantic_duplicate is not None:
+                existing_id = str(semantic_duplicate.get("id") or evidence_id)
+                return make_json_safe({
+                    "status": "unchanged",
+                    "project_id": project_id,
+                    "analysis_id": analysis_id,
+                    "evidence_id": existing_id,
+                    "duplicate_of": existing_id,
+                    "save_committed": True,
+                })
+            if modality == "transcript_audio":
+                collection.append({
+                    "id": evidence_id,
+                    "target_start_timestamp": start,
+                    "target_end_timestamp": end,
+                    "original_value": str(payload.get("original_text") or ""),
+                    "corrected_value": str(payload.get("transcript_text") or payload.get("original_text") or ""),
+                    "speaker_label": str(payload.get("source_ref") or ""),
+                    "speaker_confirmation": agent,
+                    "scene_id": str(payload.get("scene_id") or ""),
+                    "analyst_note": str(payload.get("note") or ""),
+                    "manual_confirmation_event": event,
+                    "created_at": now,
+                })
+            else:
+                row = {
+                    "id": evidence_id,
+                    "category": "Audio" if modality == "audio" else "Movement" if modality == "body_movement" else "Identification",
+                    "subcategory": (
+                        "Narrative Agent scene presence"
+                        if modality == "scene_presence"
+                        else "Behavioral continuity support"
+                        if modality == "body_movement"
+                        else "Narrative Agent"
+                    ),
+                    "label": movement_type if modality == "body_movement" else agent,
+                    "identity_affirmation": agent,
+                    "narrative_agent_affirmation": agent,
+                    "timestamp_seconds": start,
+                    "start_seconds": start,
+                    "end_seconds": end,
+                    "evidence_modality": modality,
+                    "review_state": "confirmed",
+                    "geometry_type": "box" if modality in {"visual", "body_movement"} else None,
+                    "analyst_note": str(payload.get("note") or ""),
+                    "metadata_correlation": {
+                        "evidence_modality": modality,
+                        "target_type": "object" if modality in {"visual", "body_movement"} else modality,
+                        "target_id": str(payload.get("source_ref") or ""),
+                        "scene_id": str(payload.get("scene_id") or ""),
+                        "coordinate_system": "normalized_video" if modality in {"visual", "body_movement"} else None,
+                        "interpretation_is_candidate_only": modality == "body_movement",
+                        "manual_confirmation_event": event,
+                    },
+                    "created_at": now,
+                }
+                if modality in {"visual", "body_movement"}:
+                    row["coordinates"] = coordinates
+                if modality == "body_movement":
+                    row.update({
+                        "movement_type": movement_type,
+                        "movement_intensity": movement_intensity,
+                        "pose_ref": str(payload.get("pose_ref") or "").strip() or None,
+                        "track_id": str(payload.get("source_ref") or "").strip() or None,
+                        "interpretation_is_candidate_only": True,
+                    })
+                collection.append(row)
+            corrections.update({
+                "version": 1,
+                "updated_at": now,
+                "updated_by": str(payload.get("created_by") or "analyst"),
+                "correction_generation": uuid.uuid4().hex,
+            })
+            status["annotation_corrections"] = corrections
+            ledger, canonical_events = sync_corrections_to_ledger(
+                decision_ledger_for_status(status),
+                previous,
+                corrections,
+                analysis_id=analysis_id,
+                created_at=now,
+                created_by=corrections["updated_by"],
+            )
+            status["canonical_decision_ledger"] = ledger
+            if canonical_events:
+                write_decision_ledger_file(status)
+            write_annotation_corrections_file(status, refresh_master_schema=True)
+            append_analysis_event(status, "narrative_agent_continuity_evidence_confirmed", details={
+                "project_id": project_id,
+                "evidence_id": evidence_id,
+                "narrative_agent": agent,
+                "modality": modality,
+                "start_seconds": start,
+                "end_seconds": end,
+            })
+            persist_analysis_record_for_status(status)
+            if status.get("status") != "processing":
+                threading.Thread(
+                    target=refresh_annotation_dependent_surfaces_when_idle,
+                    args=(status,),
+                    daemon=True,
+                    name=f"continuity-evidence-{analysis_id[:8]}",
+                ).start()
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
+    refreshed_inventory = build_continuity_inventory(records, selected_agent=agent, project_id=project_id)
+    return make_json_safe({
+        "status": "saved",
+        "project_id": project_id,
+        "analysis_id": analysis_id,
+        "collection_id": continuity_collection_id(project_id, agent),
+        "evidence_id": evidence_id,
+        "artifact_occurrence": next(
+            (
+                row for row in refreshed_inventory.get("confirmed_occurrences", [])
+                if isinstance(row, dict) and row.get("occurrence_id") == evidence_id
+            ),
+            None,
+        ),
+        "save_committed": True,
+        "saloon_doors": ["video", "audio", "transcript", "narrative_agent", "meaning_plot", "master_schema", "data_maturation", "search", "traceback", "measurements"],
+    })
+
+
+@app.post("/api/projects/{project_id}/narrative-agent-continuity/decisions", response_model=dict)
+async def decide_project_narrative_agent_continuity(project_id: str, payload: Dict[str, Any] = Body(...)) -> dict:
+    records = continuity_project_records(project_id)
+    allowed_ids = {str(item.get("analysis_id") or "") for item in records}
+    analysis_id = str(payload.get("analysis_id") or "").strip()
+    if analysis_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Analysis artifact is outside this project")
+    agent = str(payload.get("agent") or "").strip()
+    inventory = build_continuity_inventory(records, selected_agent=agent, project_id=project_id)
+    collection_id = continuity_collection_id(project_id, agent)
+    if str(payload.get("collection_id") or collection_id) != collection_id:
+        raise HTTPException(status_code=409, detail="Collection does not match project and Narrative Agent")
+    decision_payload = dict(payload)
+    decision_payload["collection_id"] = collection_id
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, f"project-{project_id}"):
+            ledger = load_project_continuity_ledger(project_id, collection_id)
+            ledger, decision, appended = append_continuity_decision(ledger, decision_payload, analysis_id=analysis_id, project_id=project_id, inventory=inventory)
+            projection = build_continuity_projection_envelope(inventory, ledger, project_id=project_id, collection_id=collection_id)
+            analysis_ids = sorted(allowed_ids)
+            project_dir = continuity_state_path(project_id, collection_id).parent
+            project_result = write_continuity_artifacts(project_dir, inventory=inventory, decision_ledger=ledger, projection=projection, project_id=project_id, analysis_ids=analysis_ids)
+            Path(project_result["state_path"]).replace(continuity_state_path(project_id, collection_id))
+            for status in records:
+                member_analysis_id = str(status.get("analysis_id") or "")
+                persisted = write_continuity_artifacts(RESULTS_DIR / member_analysis_id, inventory=inventory, decision_ledger=ledger, projection=projection, project_id=project_id, analysis_ids=analysis_ids)
+                status["narrative_agent_continuity_state"] = persisted["state"]
+                status["narrative_agent_continuity_projection"] = projection
+                status.setdefault("narrative_agent_continuity_states", {})[collection_id] = persisted["state"]
+                status.setdefault("narrative_agent_continuity_projections", {})[collection_id] = projection
+                status.setdefault("output_files", {}).update({"narrative_agent_continuity_state": persisted["state_path"], "narrative_agent_continuity_projection": persisted["projection_path"]})
+                append_analysis_event(status, "narrative_agent_continuity_committed", details={"collection_id": collection_id, "revision": projection.get("revision"), "decision_id": decision.get("decision_id")})
+                persist_analysis_record_for_status(status)
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return make_json_safe({
+        "project_id": project_id,
+        "analysis_id": analysis_id,
+        "collection_id": collection_id,
+        "appended": appended,
+        "decision": decision,
+        "continuity_projection": projection,
+        "artifact_view": continuity_artifact_view(inventory, projection, analysis_id),
+        "save_committed": True,
+        "content_checksum": project_result["state"].get("content_checksum"),
+        "saloon_doors": ["video", "audio", "transcript", "narrative_agent", "meaning_plot", "master_schema", "data_maturation", "search", "traceback", "measurements"],
+    })
 
 
 def get_forensic_render_root(analysis_id: str) -> Path:
@@ -11456,6 +11867,14 @@ async def download_file(analysis_id: str, file_type: str):
             "live_mature_data_proliferation_audit.json",
             "application/json",
         ),
+        "narrative_agent_continuity_projection": (
+            "narrative_agent_continuity_projection.json",
+            "application/json",
+        ),
+        "narrative_agent_continuity_state": (
+            "narrative_agent_continuity_state.json",
+            "application/json",
+        ),
     }
     
     if file_type not in file_mapping:
@@ -11562,6 +11981,8 @@ async def download_bundle(analysis_id: str):
         "adaptive_visual_scan": "adaptive_visual_scan.json",
         "native_statistical_interpretation": "native_statistical_interpretation.json",
         "live_mature_data_proliferation_audit": "live_mature_data_proliferation_audit.json",
+        "narrative_agent_continuity_projection": "narrative_agent_continuity_projection.json",
+        "narrative_agent_continuity_state": "narrative_agent_continuity_state.json",
     }
 
     original_name = status["original_filename"]
@@ -14425,6 +14846,14 @@ async def import_saved_work(
             raise HTTPException(status_code=400, detail="Project bundle did not contain an analyses folder")
 
         imported_statuses = []
+        imported_project_id = str(
+            project_manifest.get("project_id")
+            or project_manifest.get("project_name")
+            or project_id
+        ).strip()
+        if not imported_project_id:
+            shutil.rmtree(import_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="Project bundle has no project boundary identifier")
         for analysis_folder in analyses_root.iterdir():
             if not analysis_folder.is_dir():
                 continue
@@ -14444,11 +14873,7 @@ async def import_saved_work(
                     output_files=output_files,
                     manifest=manifest,
                     original_filename_override=manifest.get("original_filename"),
-                    project_id=(
-                        project_manifest.get("project_id")
-                        or project_manifest.get("project_name")
-                        or project_id
-                    ),
+                    project_id=imported_project_id,
                 )
             )
 
@@ -14470,6 +14895,7 @@ async def import_saved_work(
             "imported_analysis_ids": [status["analysis_id"] for status in imported_statuses],
             "imported_count": len(imported_statuses),
             "project_name": project_manifest.get("project_name"),
+            "project_id": imported_project_id,
         }
 
     output_files = infer_output_files_from_bundle(import_dir, bundle_stem)
