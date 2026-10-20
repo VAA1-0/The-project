@@ -42,6 +42,28 @@ The schemas are validation envelopes, not canonical stores. Their `governance.re
 
 Corrections append new events. They do not mutate or erase the earlier proposal. `supersedes_event_id`, ledger history and input hashes preserve the analytical trajectory.
 
+#### 2.2.1 Confirm once, mature everywhere
+
+Every explicit user confirmation is immediately 100% mature Master Schema data
+within its declared source, time, geometry and apply scope. The confirmation is
+the canonical acceptance decision: no membership, collection, confidence,
+eligibility, consumer-local or secondary review gate may demote it, delay it or
+ask the analyst to confirm it again. All applicable lenses, graphs, panels,
+timelines, search surfaces, reports, exports and traceback views consume the
+same canonical decision and revision.
+
+This rule does not make the analyst empirically infallible. A later explicit
+correction, rejection or governed invalidation may supersede the effective
+claim while the append-only history remains inspectable. It does mean that
+Datascene must never represent an already confirmed assertion as a candidate
+because one consumer lacks a local ledger entry. Repeated same-assertion input
+creates a traceback receipt, not a duplicate mature attribute.
+
+This principle applies equally to source observations and interpretive
+assertions, but only to the proposition actually confirmed. Confirming identity
+at a BBox matures that identity occurrence; it does not automatically confirm a
+separate claim about dialogue, motive, topic or causality.
+
 ### 2.3 Source-bound time and space
 
 All time-based anchors use `source_relative_seconds`. The unit is declared explicitly to prevent recurrence of the seconds/milliseconds ambiguity. Every anchor records clock authority and precision. Spatial evidence declares either normalized or pixel coordinates; these systems must not be mixed without a registered conversion.

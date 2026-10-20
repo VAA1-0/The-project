@@ -2,6 +2,13 @@
 
 Date: 2026-10-16
 
+Status update — 2026-10-19: resolved for the bounded Nomi occurrence. The
+canonical `41.920–43.180` record remains live and mature; three repeat
+same-beat confirmations are preserved as traceback receipts, not duplicate live
+attributes. The accepted projection hydrates the ten associated consumers at
+one revision. The historical remediation instructions below remain incident
+evidence and no longer describe an open manual gate.
+
 Project boundary: `bond-cop30-helsinki`
 
 Representative artefact: No Time to Die trailer, analysis `81920e95-a0b2-4173-bc23-86db7909a0a9`
@@ -59,6 +66,6 @@ They were not silently deleted. The intended `41.920–43.180` occurrence should
 - Python compilation: passed.
 - Runtime health: healthy; dashboard HTTP 200.
 
-## Remaining manual gate
+## Historical manual gate — closed 2026-10-19
 
 Refresh the Narrative Agent panel, select Nomi, verify the raised audio interval and persistent receipt, include the intended occurrence, reject the duplicate, verify saloon-door proliferation, and only then confirm the continuity collection.

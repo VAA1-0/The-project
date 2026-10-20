@@ -73,7 +73,39 @@ def test_artifact_owned_audio_confirmation_is_saved_and_inventory_visible(monkey
     assert result["artifact_occurrence"]["analysis_id"] == "video-a"
     assert result["artifact_occurrence"]["evidence_modality"] == "audio"
     assert result["artifact_occurrence"]["source_interval"] == {"start": 12.25, "end": 14.5}
+    assert result["maturity"] == "mature"
+    assert result["master_schema_status"] == "mature_user_confirmation"
+    assert result["continuity_projection"]["canonical_collection"]["continuity_claim"] == "accepted"
+    assert result["continuity_projection"]["canonical_collection"]["maturity"] == "mature_governed_agent_track"
+    assert set(result["continuity_projection"]["consumer_views"]) == {
+        "video", "audio", "transcript", "narrative_agent", "meaning_plot",
+        "master_schema", "data_maturation", "search", "traceback", "measurements",
+    }
     assert "transcript" in result["saloon_doors"]
+    graph = result["continuity_projection"]["graph_projection"]
+    assert graph["projection_targets"] == ["meaning_knowledge_graph", "narrative_agent_graph"]
+    assert {edge["edge_type"] for edge in graph["edges"]} == {
+        "evidence_of_identity", "occurs_during", "participates_in"
+    }
+    participation = next(
+        ticket for ticket in graph["relation_tickets"] if ticket["predicate"] == "participates_in"
+    )
+    assert participation["state"] == "mature"
+    assert participation["authority"] == "entailed_by_mature_source_presence"
+    assert participation["editable"] is True
+    assert participation["allowed_decisions"] == ["revise", "reject"]
+    identity = next(
+        ticket for ticket in graph["relation_tickets"] if ticket["predicate"] == "evidence_of_identity"
+    )
+    assert identity["state"] == "mature"
+    snapshot = result["continuity_projection"]["constellational_snapshot"]
+    assert snapshot["layers"]["who_is_present"]["state"] == "confirmed"
+    assert snapshot["layers"]["who_is_present"]["claims"] == ["James Bond"]
+    assert snapshot["layers"]["who_is_in_dialogue"]["state"] == "missing"
+    assert snapshot["layers"]["what_they_are_talking_about"]["state"] == "missing"
+    assert snapshot["layers"]["bodily_expression_in_relation_to_speech"]["state"] == "missing"
+    assert result["continuity_projection"]["consumer_views"]["meaning_plot"]["graph_projection"] == graph
+    assert result["continuity_projection"]["consumer_views"]["narrative_agent"]["graph_projection"] == graph
     sidecar = tmp_path / "results" / "video-a" / "annotation_corrections.json"
     assert sidecar.exists()
     assert not (tmp_path / "results" / "video-b" / "annotation_corrections.json").exists()
@@ -107,6 +139,131 @@ def test_repeated_source_confirmation_is_semantically_idempotent(monkeypatch, tm
     assert repeated["duplicate_of"] == "nomi-audio-first"
     assert repeated["evidence_id"] == "nomi-audio-first"
     assert len(records[0]["annotation_corrections"]["manual_visual_annotations"]) == 1
+    canonical = records[0]["annotation_corrections"]["manual_visual_annotations"][0]
+    assert canonical["maturity"] == "mature"
+    assert canonical["master_schema_status"] == "mature_user_confirmation"
+    assert canonical["confirmation_receipts"][0]["receipt_id"] == "nomi-audio-repeat"
+    assert repeated["continuity_projection"]["canonical_collection"]["member_occurrence_ids"] == ["nomi-audio-first"]
+
+
+def test_mature_participation_rejects_reconfirmation_but_accepts_correction(monkeypatch, tmp_path):
+    records = [status("video-a"), status("video-b")]
+    install_project(monkeypatch, tmp_path, records)
+    confirmed = asyncio.run(api_server.confirm_project_narrative_agent_evidence(
+        "project-one",
+        {
+            "analysis_id": "video-a",
+            "agent": "Nomi",
+            "modality": "audio",
+            "start_seconds": 41.920,
+            "end_seconds": 43.180,
+            "evidence_id": "nomi-audio",
+        },
+    ))
+    graph = confirmed["continuity_projection"]["graph_projection"]
+    ticket = next(item for item in graph["relation_tickets"] if item["predicate"] == "participates_in")
+
+    with pytest.raises(HTTPException, match="would duplicate or violate") as duplicate:
+        asyncio.run(api_server.decide_project_narrative_agent_continuity(
+            "project-one",
+            {
+                "analysis_id": "video-a",
+                "agent": "Nomi",
+                "collection_id": confirmed["continuity_projection"]["canonical_collection"]["collection_id"],
+                "operation": "confirm_relation",
+                "edge_id": ticket["edge_id"],
+                "created_by": "datascene_analyst",
+            },
+        ))
+    assert duplicate.value.status_code == 400
+
+    decided = asyncio.run(api_server.decide_project_narrative_agent_continuity(
+        "project-one",
+        {
+            "analysis_id": "video-a",
+            "agent": "Nomi",
+            "collection_id": confirmed["continuity_projection"]["canonical_collection"]["collection_id"],
+            "operation": "revise_relation",
+            "edge_id": ticket["edge_id"],
+            "analyst_meaning": "Nomi participates through the confirmed audio occurrence.",
+            "created_by": "datascene_analyst",
+        },
+    ))
+
+    projected = decided["continuity_projection"]
+    updated = next(item for item in projected["graph_projection"]["relation_tickets"] if item["edge_id"] == ticket["edge_id"])
+    assert updated["state"] == "confirmed"
+    assert updated["authority"] == "explicit_user_correction"
+    assert updated["decision_id"] == decided["decision"]["decision_id"]
+    assert projected["consumer_views"]["meaning_plot"]["graph_projection"] == projected["graph_projection"]
+    assert projected["consumer_views"]["narrative_agent"]["graph_projection"] == projected["graph_projection"]
+    for record in records:
+        assert record["narrative_agent_continuity_projection"]["revision"] == projected["revision"]
+
+
+def test_interpretive_relation_decision_rejects_noncanonical_edge(monkeypatch, tmp_path):
+    records = [status("video-a")]
+    install_project(monkeypatch, tmp_path, records)
+    confirmed = asyncio.run(api_server.confirm_project_narrative_agent_evidence(
+        "project-one",
+        {
+            "analysis_id": "video-a",
+            "agent": "Nomi",
+            "modality": "audio",
+            "start_seconds": 41.920,
+            "end_seconds": 43.180,
+            "evidence_id": "nomi-audio",
+        },
+    ))
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(api_server.decide_project_narrative_agent_continuity(
+            "project-one",
+            {
+                "analysis_id": "video-a",
+                "agent": "Nomi",
+                "collection_id": confirmed["continuity_projection"]["canonical_collection"]["collection_id"],
+                "operation": "confirm_relation",
+                "edge_id": "foreign-edge",
+            },
+        ))
+    assert raised.value.status_code == 400
+    assert "not part of the current canonical graph projection" in raised.value.detail
+
+
+def test_legacy_duplicate_occurrences_become_traceback_receipts(monkeypatch, tmp_path):
+    records = [status("video-a")]
+    install_project(monkeypatch, tmp_path, records)
+    base = {
+        "analysis_id": "video-a",
+        "agent": "Nomi",
+        "modality": "audio",
+        "start_seconds": 41.920,
+        "end_seconds": 43.180,
+        "source_ref": "",
+    }
+    asyncio.run(api_server.confirm_project_narrative_agent_evidence(
+        "project-one", {**base, "evidence_id": "nomi-canonical"}
+    ))
+    collection = records[0]["annotation_corrections"]["manual_visual_annotations"]
+    for suffix, start in (("duplicate-a", 41.900), ("duplicate-b", 41.900)):
+        duplicate = dict(collection[0])
+        duplicate["confirmation_receipts"] = []
+        duplicate.update({"id": suffix, "start_seconds": start, "timestamp_seconds": start})
+        collection.append(duplicate)
+    api_server.write_annotation_corrections_file(records[0], refresh_master_schema=False)
+
+    reconciled = asyncio.run(api_server.confirm_project_narrative_agent_evidence(
+        "project-one", {**base, "evidence_id": "nomi-canonical"}
+    ))
+
+    collection = records[0]["annotation_corrections"]["manual_visual_annotations"]
+    assert reconciled["status"] == "unchanged"
+    assert len(collection) == 1
+    assert collection[0]["id"] == "nomi-canonical"
+    assert {item["receipt_id"] for item in collection[0]["confirmation_receipts"]} == {
+        "duplicate-a", "duplicate-b"
+    }
+    assert reconciled["continuity_projection"]["canonical_collection"]["maturity"] == "mature_governed_agent_track"
 
 
 def test_scene_presence_is_not_rejected_for_missing_bbox(monkeypatch, tmp_path):

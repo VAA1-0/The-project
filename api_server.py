@@ -183,6 +183,7 @@ from src.backend.analysis.decision_ledger import (
 from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
 from src.backend.analysis.claim_projection import project_canonical_claims
 from src.backend.analysis.narrative_agent_continuity import build_continuity_inventory
+from src.backend.analysis.active_speaker_synchrony import build_active_speaker_synchrony_artifact
 from src.backend.analysis.narrative_agent_continuity_decisions import (
     append_continuity_decision,
     project_continuity_decisions,
@@ -4087,6 +4088,24 @@ def write_iterative_audio_identity_artifacts_for_status(
         if audio_sample_clouds:
             audio_analysis["audio_sample_clouds"] = audio_sample_clouds
 
+    synchrony_path = RESULTS_DIR / analysis_id / "active_speaker_synchrony.json"
+    synchrony_existing = read_json_artifact_if_available(output_files.get("active_speaker_synchrony"))
+    synchrony_revision = status.get("annotations_revision") or status.get("annotation_corrections_revision") or 0
+    if (
+        not synchrony_existing
+        or not synchrony_existing.get("measurement_count")
+        or synchrony_existing.get("annotation_revision") != synchrony_revision
+        or "audio_diarization" in created
+    ):
+        synchrony = build_active_speaker_synchrony_artifact(status)
+        synchrony_path.parent.mkdir(parents=True, exist_ok=True)
+        synchrony_path.write_text(json.dumps(synchrony, indent=2, ensure_ascii=False), encoding="utf-8")
+        status["active_speaker_synchrony"] = synchrony
+        output_files["active_speaker_synchrony"] = str(synchrony_path)
+        created.append("active_speaker_synchrony")
+    else:
+        status["active_speaker_synchrony"] = synchrony_existing
+
     identity_triage_existing = read_json_artifact_if_available(output_files.get("identity_triangulation"))
     identity_triage_needs_rebuild = bool(created and "audio_sample_clouds" in created)
     if (
@@ -6331,6 +6350,9 @@ def build_vaa1_master_schema_from_cvat(
                 "interval": None,
                 "evidence_basis": ["source_media_annotations.character_roles"],
                 "maturity_route": "master_schema.source_media_character_role_maturity",
+                "maturity": "mature",
+                "confirmation_probability": 1.0,
+                "authority": "explicit_source_media_metadata_confirmation",
                 "provenance": build_provenance(
                     source_system="vaa1",
                     source_type="mature_metadata",
@@ -6365,6 +6387,9 @@ def build_vaa1_master_schema_from_cvat(
                 "interval": None,
                 "evidence_basis": ["source_media_annotations.narrative_agent_profiles"],
                 "maturity_route": "master_schema.source_media_narrative_agent_profile_maturity",
+                "maturity": "mature",
+                "confirmation_probability": 1.0,
+                "authority": "explicit_source_media_metadata_confirmation",
                 "provenance": build_provenance(
                     source_system="vaa1",
                     source_type="mature_metadata",
@@ -6396,6 +6421,9 @@ def build_vaa1_master_schema_from_cvat(
                 "interval": None,
                 "evidence_basis": ["source_media_annotations.character_definitions"],
                 "maturity_route": "master_schema.source_media_character_definition_maturity",
+                "maturity": "mature",
+                "confirmation_probability": 1.0,
+                "authority": "explicit_source_media_metadata_confirmation",
                 "provenance": build_provenance(
                     source_system="vaa1",
                     source_type="mature_metadata",
@@ -11138,6 +11166,94 @@ def load_project_continuity_ledger(project_id: str, collection_id: str) -> Dict[
     return ledger if isinstance(ledger, dict) else empty_decision_ledger(f"project:{project_id}")
 
 
+def mature_confirmed_continuity_occurrence(
+    project_id: str,
+    records: List[Dict[str, Any]],
+    *,
+    analysis_id: str,
+    agent: str,
+    occurrence_id: str,
+    created_by: str,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Atomically mature one user-confirmed occurrence across every consumer."""
+    collection_id = continuity_collection_id(project_id, agent)
+    inventory = build_continuity_inventory(records, selected_agent=agent, project_id=project_id)
+    ledger = load_project_continuity_ledger(project_id, collection_id)
+    decision_state = project_continuity_decisions(ledger, project_id=project_id, collection_id=collection_id)
+    if occurrence_id not in decision_state.get("included_occurrence_ids", []):
+        ledger, _, _ = append_continuity_decision(
+            ledger,
+            {
+                "decision_id": f"mature-confirmation:{occurrence_id}:include",
+                "collection_id": collection_id,
+                "operation": "include",
+                "occurrence_id": occurrence_id,
+                "created_by": created_by,
+                "reason": "Explicit user confirmation is immediately mature Master Schema data.",
+            },
+            analysis_id=analysis_id,
+            project_id=project_id,
+            inventory=inventory,
+        )
+    decision_state = project_continuity_decisions(ledger, project_id=project_id, collection_id=collection_id)
+    if not decision_state.get("collection_confirmation"):
+        ledger, _, _ = append_continuity_decision(
+            ledger,
+            {
+                "decision_id": f"mature-confirmation:{hashlib.sha256(collection_id.encode()).hexdigest()[:20]}:collection",
+                "collection_id": collection_id,
+                "operation": "confirm",
+                "target_kind": "collection",
+                "created_by": created_by,
+                "evidence_refs": [occurrence_id],
+                "reason": "Explicit user confirmation is immediately mature Master Schema data.",
+            },
+            analysis_id=analysis_id,
+            project_id=project_id,
+            inventory=inventory,
+        )
+    projection = build_continuity_projection_envelope(
+        inventory, ledger, project_id=project_id, collection_id=collection_id
+    )
+    analysis_ids = sorted(str(item.get("analysis_id") or "") for item in records if item.get("analysis_id"))
+    project_dir = continuity_state_path(project_id, collection_id).parent
+    project_result = write_continuity_artifacts(
+        project_dir,
+        inventory=inventory,
+        decision_ledger=ledger,
+        projection=projection,
+        project_id=project_id,
+        analysis_ids=analysis_ids,
+    )
+    Path(project_result["state_path"]).replace(continuity_state_path(project_id, collection_id))
+    for record in records:
+        member_analysis_id = str(record.get("analysis_id") or "")
+        persisted = write_continuity_artifacts(
+            RESULTS_DIR / member_analysis_id,
+            inventory=inventory,
+            decision_ledger=ledger,
+            projection=projection,
+            project_id=project_id,
+            analysis_ids=analysis_ids,
+        )
+        record["narrative_agent_continuity_state"] = persisted["state"]
+        record["narrative_agent_continuity_projection"] = projection
+        record.setdefault("narrative_agent_continuity_states", {})[collection_id] = persisted["state"]
+        record.setdefault("narrative_agent_continuity_projections", {})[collection_id] = projection
+        record.setdefault("output_files", {}).update({
+            "narrative_agent_continuity_state": persisted["state_path"],
+            "narrative_agent_continuity_projection": persisted["projection_path"],
+        })
+        append_analysis_event(record, "mature_user_confirmation_proliferated", details={
+            "collection_id": collection_id,
+            "occurrence_id": occurrence_id,
+            "revision": projection.get("revision"),
+            "saloon_doors": list((projection.get("consumer_views") or {}).keys()),
+        })
+        persist_analysis_record_for_status(record)
+    return projection, project_result
+
+
 def continuity_artifact_view(inventory: Dict[str, Any], projection: Optional[Dict[str, Any]], analysis_id: str) -> Dict[str, Any]:
     corridor = inventory.get("selected_continuity_corridor") or {}
     view = (projection.get("consumer_views") or {}).get("narrative_agent") if isinstance(projection, dict) else None
@@ -11244,7 +11360,7 @@ async def confirm_project_narrative_agent_evidence(
         "authority_level": "manual_confirmation",
         "confirmed_fields": {
             "narrative_agent": True,
-            "continuity_membership": False,
+            "continuity_membership": True,
             "visual": modality == "visual",
             "audio": modality in {"audio", "transcript_audio"},
             "transcript": modality == "transcript_audio",
@@ -11253,7 +11369,11 @@ async def confirm_project_narrative_agent_evidence(
         },
         "confirmed_at": now,
         "confirmed_by": str(payload.get("created_by") or "analyst"),
+        "maturity": "mature",
+        "master_schema_status": "mature_user_confirmation",
     }
+    result_status = "saved"
+    duplicate_of: Optional[str] = None
     try:
         with correction_write_lock(RESULTS_DIR.parent.parent, analysis_id):
             corrections = json.loads(json.dumps(canonical_clock_corrections(analysis_id, status)))
@@ -11261,14 +11381,6 @@ async def confirm_project_narrative_agent_evidence(
             collection_name = "text_substitutions" if modality == "transcript_audio" else "manual_visual_annotations"
             collection = corrections.setdefault(collection_name, [])
             existing = next((row for row in collection if isinstance(row, dict) and str(row.get("id") or "") == evidence_id), None)
-            if existing is not None:
-                return make_json_safe({
-                    "status": "unchanged",
-                    "project_id": project_id,
-                    "analysis_id": analysis_id,
-                    "evidence_id": evidence_id,
-                    "save_committed": True,
-                })
             def same_confirmed_source(row: Any) -> bool:
                 if not isinstance(row, dict):
                     return False
@@ -11301,18 +11413,53 @@ async def confirm_project_narrative_agent_evidence(
                     )
                 )
 
-            semantic_duplicate = next((row for row in collection if same_confirmed_source(row)), None)
+            semantic_matches = [row for row in collection if same_confirmed_source(row)]
+            semantic_duplicate = existing or (semantic_matches[0] if semantic_matches else None)
             if semantic_duplicate is not None:
                 existing_id = str(semantic_duplicate.get("id") or evidence_id)
-                return make_json_safe({
-                    "status": "unchanged",
-                    "project_id": project_id,
-                    "analysis_id": analysis_id,
-                    "evidence_id": existing_id,
-                    "duplicate_of": existing_id,
-                    "save_committed": True,
-                })
-            if modality == "transcript_audio":
+                duplicate_of = existing_id
+                result_status = "unchanged"
+                if evidence_id != existing_id:
+                    semantic_duplicate.setdefault("confirmation_receipts", []).append({
+                        "receipt_id": evidence_id,
+                        "canonical_occurrence_id": existing_id,
+                        "confirmed_at": now,
+                        "confirmed_by": event["confirmed_by"],
+                        "authority": "explicit_user_confirmation",
+                        "maturity": "mature",
+                        "source_ref": str(payload.get("source_ref") or ""),
+                    })
+                semantic_duplicate["maturity"] = "mature"
+                semantic_duplicate["master_schema_status"] = "mature_user_confirmation"
+                receipts = semantic_duplicate.setdefault("confirmation_receipts", [])
+                receipt_ids = {str(item.get("receipt_id") or "") for item in receipts if isinstance(item, dict)}
+                legacy_duplicates = [row for row in semantic_matches if row is not semantic_duplicate]
+                for duplicate in legacy_duplicates:
+                    legacy_id = str(duplicate.get("id") or "").strip()
+                    if legacy_id and legacy_id not in receipt_ids:
+                        receipts.append({
+                            "receipt_id": legacy_id,
+                            "canonical_occurrence_id": existing_id,
+                            "confirmed_at": str(duplicate.get("created_at") or now),
+                            "confirmed_by": str(
+                                ((duplicate.get("manual_confirmation_event") or {}).get("confirmed_by"))
+                                if isinstance(duplicate.get("manual_confirmation_event"), dict)
+                                else "analyst"
+                            ),
+                            "authority": "explicit_user_confirmation",
+                            "maturity": "mature",
+                            "source_ref": str(
+                                ((duplicate.get("metadata_correlation") or {}).get("target_id"))
+                                if isinstance(duplicate.get("metadata_correlation"), dict)
+                                else ""
+                            ),
+                            "legacy_duplicate_reconciled": True,
+                        })
+                        receipt_ids.add(legacy_id)
+                if legacy_duplicates:
+                    collection[:] = [row for row in collection if row not in legacy_duplicates]
+                evidence_id = existing_id
+            elif modality == "transcript_audio":
                 collection.append({
                     "id": evidence_id,
                     "target_start_timestamp": start,
@@ -11324,6 +11471,9 @@ async def confirm_project_narrative_agent_evidence(
                     "scene_id": str(payload.get("scene_id") or ""),
                     "analyst_note": str(payload.get("note") or ""),
                     "manual_confirmation_event": event,
+                    "maturity": "mature",
+                    "master_schema_status": "mature_user_confirmation",
+                    "confirmation_receipts": [],
                     "created_at": now,
                 })
             else:
@@ -11345,6 +11495,9 @@ async def confirm_project_narrative_agent_evidence(
                     "end_seconds": end,
                     "evidence_modality": modality,
                     "review_state": "confirmed",
+                    "maturity": "mature",
+                    "master_schema_status": "mature_user_confirmation",
+                    "confirmation_receipts": [],
                     "geometry_type": "box" if modality in {"visual", "body_movement"} else None,
                     "analyst_note": str(payload.get("note") or ""),
                     "metadata_correlation": {
@@ -11407,12 +11560,27 @@ async def confirm_project_narrative_agent_evidence(
     except CorrectionWriteBusy as exc:
         raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
     refreshed_inventory = build_continuity_inventory(records, selected_agent=agent, project_id=project_id)
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, f"project-{project_id}"):
+            projection, project_result = mature_confirmed_continuity_occurrence(
+                project_id,
+                records,
+                analysis_id=analysis_id,
+                agent=agent,
+                occurrence_id=evidence_id,
+                created_by=str(payload.get("created_by") or "analyst"),
+            )
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "1"}) from exc
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return make_json_safe({
-        "status": "saved",
+        "status": result_status,
         "project_id": project_id,
         "analysis_id": analysis_id,
         "collection_id": continuity_collection_id(project_id, agent),
         "evidence_id": evidence_id,
+        "duplicate_of": duplicate_of,
         "artifact_occurrence": next(
             (
                 row for row in refreshed_inventory.get("confirmed_occurrences", [])
@@ -11421,6 +11589,10 @@ async def confirm_project_narrative_agent_evidence(
             None,
         ),
         "save_committed": True,
+        "maturity": "mature",
+        "master_schema_status": "mature_user_confirmation",
+        "continuity_projection": projection,
+        "content_checksum": project_result["state"].get("content_checksum"),
         "saloon_doors": ["video", "audio", "transcript", "narrative_agent", "meaning_plot", "master_schema", "data_maturation", "search", "traceback", "measurements"],
     })
 
@@ -11442,6 +11614,50 @@ async def decide_project_narrative_agent_continuity(project_id: str, payload: Di
     try:
         with correction_write_lock(RESULTS_DIR.parent.parent, f"project-{project_id}"):
             ledger = load_project_continuity_ledger(project_id, collection_id)
+            operation = str(decision_payload.get("operation") or "").strip().casefold()
+            if operation in {"confirm_relation", "revise_relation", "reject_relation", "defer_relation"}:
+                current_projection = build_continuity_projection_envelope(
+                    inventory, ledger, project_id=project_id, collection_id=collection_id
+                )
+                edge_id = str(decision_payload.get("edge_id") or "").strip()
+                ticket = next(
+                    (
+                        item
+                        for item in (current_projection.get("graph_projection", {}).get("relation_tickets") or [])
+                        if isinstance(item, dict) and str(item.get("edge_id") or "") == edge_id
+                    ),
+                    None,
+                )
+                if ticket is None:
+                    raise ValueError("Relation ticket is not part of the current canonical graph projection")
+                operation_to_decision = {
+                    "confirm_relation": "confirm",
+                    "revise_relation": "revise",
+                    "reject_relation": "reject",
+                    "defer_relation": "defer",
+                }
+                requested_decision = operation_to_decision[operation]
+                allowed_decisions = {
+                    str(item).strip().casefold()
+                    for item in (ticket.get("allowed_decisions") or [])
+                    if str(item).strip()
+                }
+                if requested_decision not in allowed_decisions:
+                    raise ValueError(
+                        f"Relation is already {ticket.get('state') or 'governed'}; "
+                        f"{requested_decision} would duplicate or violate its canonical state"
+                    )
+                decision_payload.update({
+                    "assertion_id": ticket.get("assertion_id"),
+                    "predicate": ticket.get("predicate"),
+                    "subject_node_id": ticket.get("subject_node_id"),
+                    "object_node_id": ticket.get("object_node_id"),
+                    "evidence_refs": [
+                        item.get("evidence_id")
+                        for item in (ticket.get("evidence_refs") or [])
+                        if isinstance(item, dict) and item.get("evidence_id")
+                    ],
+                })
             ledger, decision, appended = append_continuity_decision(ledger, decision_payload, analysis_id=analysis_id, project_id=project_id, inventory=inventory)
             projection = build_continuity_projection_envelope(inventory, ledger, project_id=project_id, collection_id=collection_id)
             analysis_ids = sorted(allowed_ids)

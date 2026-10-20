@@ -5238,6 +5238,46 @@ function calculateCenterDistance(
   return Math.hypot(leftCx - rightCx, leftCy - rightCy);
 }
 
+/**
+ * Return raw detector samples that are not already represented by the tracked
+ * evidence layer. Matching is deliberately limited to class and source time:
+ * tracked rows often carry one representative box for a longer interval, so an
+ * IoU requirement would incorrectly re-queue legitimate samples from that same
+ * track as new work.
+ */
+export function filterUntrackedRawObjectCandidates(
+  trackedItems: DetectedObject[],
+  rawItems: DetectedObject[],
+  edgeTolerance = 0.125,
+): DetectedObject[] {
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    return [];
+  }
+
+  return rawItems.filter((rawItem) => {
+    const rawTime = Number(rawItem.timestamp ?? rawItem.startTimestamp);
+    if (!Number.isFinite(rawTime)) {
+      return true;
+    }
+    const rawClass = String(rawItem.class_name || "").trim().toLowerCase();
+    return !trackedItems.some((trackedItem) => {
+      const trackedClass = String(trackedItem.class_name || "").trim().toLowerCase();
+      if (rawClass !== trackedClass) {
+        return false;
+      }
+      const start = Number(trackedItem.startTimestamp ?? trackedItem.timestamp);
+      const end = Number(trackedItem.endTimestamp ?? trackedItem.timestamp);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        return false;
+      }
+      return (
+        rawTime >= Math.min(start, end) - edgeTolerance &&
+        rawTime <= Math.max(start, end) + edgeTolerance
+      );
+    });
+  });
+}
+
 export function groupDetectedObjectsForDisplay(
   items: DetectedObject[],
   options?: {

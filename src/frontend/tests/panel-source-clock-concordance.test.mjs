@@ -21,6 +21,16 @@ test("temporal panels share one revision-bound concordance adapter", () => {
 test("the primary on-beat lane renders every matching detection", () => {
   assert.match(rail, /concordance\.on_beat/);
   assert.match(rail, /data-source-clock-on-beat-list="true"/);
+  assert.match(rail, /data-source-clock-recognition-navigation=/);
+  assert.match(rail, /Review recognition/);
+  assert.match(adapter, /data-audio-inline-recognition-review="true"/);
+  assert.match(adapter, /Confirm source input/);
+  assert.match(adapter, /Mature Master Schema data proliferated to all associated panels/);
+  assert.match(rail, /Mature · user confirmed/);
+  assert.match(adapter, /matureDataProliferated/);
+  assert.match(adapter, /narrativeAgentContinuityUpdated/);
+  assert.match(adapter, /isMatureAudioRecognition/);
+  assert.doesNotMatch(adapter, /panelType:\s*"ManualIdentification"/);
   assert.match(rail, /hits\.map/);
   assert.doesNotMatch(rail, /additional on-beat detection/);
 });
@@ -52,4 +62,13 @@ test("Quant deduplicates repeated references and POS projects governed tokens to
 test("panel identity comes from stable Golden Layout component types", () => {
   assert.match(wrapper, /container\.componentType/);
   assert.match(host, /PanelSourceClockConcordance componentName=\{componentName\}/);
+});
+
+test("Meaning Knowledge Graph hydrates shared continuity nodes and editable ticket edges", () => {
+  assert.match(meaningPlot, /eventBus\.on\("narrativeAgentContinuityUpdated", handler\)/);
+  assert.match(meaningPlot, /relation_ticket: tickets\.get\(edge\.edge_id\)/);
+  assert.match(meaningPlot, /\.\.\.\(continuityGraphProjection\?\.nodes \|\| \[\]\)/);
+  assert.match(meaningPlot, /\.\.\.\(continuityGraphProjection\?\.edges \|\| \[\]\)/);
+  assert.match(meaningPlot, /analysisData\?\.narrativeAgentContinuityProjection/);
+  assert.match(meaningPlot, /const graphProjection = hydrated\?\.graph_projection/);
 });

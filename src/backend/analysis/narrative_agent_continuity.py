@@ -8,6 +8,7 @@ split, and merge decisions belong to the canonical decision ledger.
 from __future__ import annotations
 
 from collections import defaultdict
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -90,36 +91,53 @@ def _metadata_confirmed_agents(status: Mapping[str, Any]) -> List[Dict[str, Any]
     metadata = _dict(status.get("source_media_metadata"))
     annotations = _dict(metadata.get("user_annotations"))
     analysis_id = _analysis_id(status)
-    candidates: List[tuple[Any, str]] = []
-    candidates.extend((value, "persons") for value in _list(annotations.get("persons")))
+    candidates: List[tuple[Any, str, List[str]]] = []
+    candidates.extend((value, "persons", []) for value in _list(annotations.get("persons")))
     for profile in _list(annotations.get("narrative_agent_profiles")):
         if isinstance(profile, dict):
+            source_metadata = _dict(profile.get("source_metadata"))
+            roles = [str(value).strip() for value in _list(source_metadata.get("role_labels")) if str(value).strip()]
             candidates.append((
                 profile.get("narrative_agent_name") or profile.get("character_name") or profile.get("name"),
                 "narrative_agent_profiles",
+                roles,
             ))
     for definition in _list(annotations.get("character_definitions")):
         if isinstance(definition, dict):
             candidates.append((
                 definition.get("character_name") or definition.get("narrative_agent_name") or definition.get("name"),
                 "character_definitions",
+                [str(value).strip() for value in _list(definition.get("role_labels")) if str(value).strip()],
             ))
+    for role_line in _list(annotations.get("character_roles")):
+        text = _text(role_line)
+        if not text:
+            continue
+        subject, separator, role_text = text.partition(":")
+        label = subject.split("(", 1)[0].strip()
+        roles = [part.strip() for chunk in role_text.split(";") for part in chunk.split(",") if part.strip()] if separator else []
+        candidates.append((label, "character_roles", roles))
 
     confirmed: Dict[str, Dict[str, Any]] = {}
-    for value, field in candidates:
+    for value, field, roles in candidates:
         label = _individual_agent_label(value)
         key = _key(label)
-        if not key or key in confirmed:
+        if not key:
             continue
-        confirmed[key] = {
-            "narrative_agent_key": key,
-            "narrative_agent_label": label,
-            "authority": "source_media_metadata_identity_confirmation",
-            "confirmation_scope": "identity_registry",
-            "source_analysis_ids": [analysis_id],
-            "traceback_refs": [f"{analysis_id}:source_media_metadata.user_annotations.{field}"],
-            "source_occurrence_confirmed": False,
-        }
+        record = confirmed.setdefault(key, {
+                "narrative_agent_key": key,
+                "narrative_agent_label": label,
+                "authority": "source_media_metadata_identity_confirmation",
+                "confirmation_scope": "identity_registry_and_confirmed_roles",
+                "source_analysis_ids": [analysis_id],
+                "traceback_refs": [],
+                "source_occurrence_confirmed": False,
+                "confirmed_roles": [],
+                "role_authority": "explicit_source_media_metadata_confirmation",
+                "role_probability": 1.0,
+            })
+        record["traceback_refs"] = sorted(set(record["traceback_refs"] + [f"{analysis_id}:source_media_metadata.user_annotations.{field}"]))
+        record["confirmed_roles"] = sorted(set(record["confirmed_roles"] + roles), key=str.casefold)
     return list(confirmed.values())
 
 
@@ -210,6 +228,7 @@ def _confirmed_occurrences(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
             "scene_id": _text(row.get("scene_id")),
             "supporting_track_ref": "",
             "supporting_audio_ref": _text(row.get("speaker_label")),
+            "transcript_text": _text(row.get("corrected_value") or row.get("original_value")),
             "evidence_modality": "transcript_audio",
             "authority": "explicit_analyst_confirmation",
             "membership_state": "confirmed_source_occurrence",
@@ -247,6 +266,155 @@ def _candidate_occurrences(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
             }
         )
     return candidates
+
+
+def _audio_sample_payload(status: Mapping[str, Any]) -> Mapping[str, Any]:
+    direct = status.get("audio_sample_clouds")
+    if isinstance(direct, dict):
+        return direct
+    results = _dict(status.get("results"))
+    audio = _dict(results.get("audio_analysis"))
+    nested = audio.get("audio_sample_clouds")
+    return nested if isinstance(nested, dict) else {}
+
+
+def _audio_sample_matching(
+    statuses: Sequence[Mapping[str, Any]], selected_confirmed: Sequence[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """Expose confirmed audio anchors and measured sample windows for review.
+
+    This deliberately does not invent voice similarity. Existing matcher scores
+    are preserved; otherwise the window remains an unscored comparison target.
+    """
+    seeds = []
+    for row in selected_confirmed:
+        if _text(row.get("evidence_modality")) not in {"audio", "transcript_audio"}:
+            continue
+        seeds.append({
+            "seed_id": _text(row.get("occurrence_id")),
+            "analysis_id": _text(row.get("analysis_id")),
+            "narrative_agent_label": _text(row.get("narrative_agent_label")),
+            "source_interval": copy.deepcopy(_dict(row.get("source_interval"))),
+            "supporting_audio_ref": _text(row.get("supporting_audio_ref")),
+            "maturity": "mature",
+            "authority": "explicit_analyst_confirmation",
+        })
+    seed_ids_by_analysis: Dict[str, List[str]] = defaultdict(list)
+    for seed in seeds:
+        seed_ids_by_analysis[seed["analysis_id"]].append(seed["seed_id"])
+    suggestions: List[Dict[str, Any]] = []
+    for status in statuses:
+        analysis_id = _analysis_id(status)
+        # An artifact is a private hermeneutic space. A confirmed seed in one
+        # analysis never authorizes candidate generation from another analysis.
+        if analysis_id not in seed_ids_by_analysis:
+            continue
+        for cloud in _list(_audio_sample_payload(status).get("clouds")):
+            if not isinstance(cloud, dict):
+                continue
+            for index, sample in enumerate(_list(cloud.get("samples"))):
+                if not isinstance(sample, dict):
+                    continue
+                start = _number(sample.get("time_start", sample.get("start")))
+                end = _number(sample.get("time_end", sample.get("end")))
+                if start is None:
+                    continue
+                sample_id = _text(sample.get("sample_id")) or f"{analysis_id}:audio-sample:{index}"
+                if any(seed["analysis_id"] == analysis_id and abs(float(seed["source_interval"].get("start", -1)) - start) <= .05 and abs(float(seed["source_interval"].get("end", -1)) - (end if end is not None else start)) <= .05 for seed in seeds):
+                    continue
+                score = next((_number(sample.get(key)) for key in ("voice_similarity", "audio_similarity", "reference_match_confidence", "similarity_score") if _number(sample.get(key)) is not None), None)
+                stale = bool(sample.get("is_stale") or cloud.get("is_stale"))
+                suggestions.append({
+                    "candidate_id": sample_id,
+                    "analysis_id": analysis_id,
+                    "hermeneutic_space_id": analysis_id,
+                    "confirmed_seed_ids": list(seed_ids_by_analysis[analysis_id]),
+                    "source_interval": {"start": start, "end": end if end is not None else start},
+                    "speaker_label": _text(sample.get("speaker_label") or cloud.get("entity_label")),
+                    "transcript_text": _text(sample.get("transcript_text") or sample.get("text")),
+                    "comparison_score": score,
+                    "comparison_state": "measured" if score is not None else "awaiting_voice_comparison",
+                    "eligible_for_confirmation": not stale,
+                    "ineligible_reason": _text(sample.get("stale_reason") or cloud.get("stale_reason")) if stale else "",
+                    "source_ref": _text(sample.get("stable_subject_ref") or sample_id),
+                })
+    measured = [row for row in suggestions if row.get("comparison_score") is not None]
+    probable = [row for row in measured if float(row["comparison_score"]) >= 0.45]
+    # Count a source turn once. Transcript, diarization and sample-cloud rows can
+    # otherwise make one utterance look like several independent confirmations.
+    independent: Dict[tuple, Dict[str, Any]] = {}
+    for row in probable:
+        interval = _dict(row.get("source_interval"))
+        key = (
+            row.get("analysis_id"),
+            round(float(interval.get("start") or 0.0), 2),
+            round(float(interval.get("end") or interval.get("start") or 0.0), 2),
+        )
+        previous = independent.get(key)
+        if previous is None or float(row["comparison_score"]) > float(previous["comparison_score"]):
+            independent[key] = row
+
+    # Conservative cumulative support: each score contributes only its margin
+    # above chance. This is descriptive candidate support, never authority for
+    # maturation unless the separately governed proof policy is satisfied.
+    residual = 1.0
+    for row in independent.values():
+        chance_adjusted = max(0.0, min(1.0, (float(row["comparison_score"]) - 0.5) * 2.0))
+        residual *= 1.0 - chance_adjusted
+    aggregate_probability = None
+    if independent:
+        aggregate_probability = round(0.5 + (0.5 * (1.0 - residual)), 4)
+
+    synchrony_measurements = []
+    for status in statuses:
+        if _analysis_id(status) not in seed_ids_by_analysis:
+            continue
+        synchrony = _dict(status.get("active_speaker_synchrony"))
+        synchrony_measurements.extend(
+            row for row in _list(synchrony.get("measurements"))
+            if isinstance(row, dict) and row.get("state") == "measured"
+        )
+
+    return {
+        "schema": "vaa1.narrative_agent_audio_sample_matching.v1",
+        "confirmed_seed_samples": seeds,
+        "suggestions": suggestions,
+        "aggregate_support": {
+            "schema": "vaa1.narrative_agent_audio_aggregate_support.v1",
+            "measured_match_count": len(measured),
+            "probable_match_count": len(probable),
+            "independent_probable_match_count": len(independent),
+            "correlated_representation_count": max(0, len(probable) - len(independent)),
+            "aggregate_probability": aggregate_probability,
+            "state": "measured" if independent else "awaiting_voice_comparison",
+            "method": "chance_adjusted_noisy_or_over_distinct_source_turns",
+            "calibration": "descriptive_not_auto_maturing",
+        },
+        "active_speaker_synchrony": {
+            "state": "measured" if synchrony_measurements else "not_measured",
+            "method": "lower_face_frame_difference_correlated_with_pcm_rms" if synchrony_measurements else None,
+            "measurement_count": len(synchrony_measurements),
+            "measurements": copy.deepcopy(synchrony_measurements),
+            "required_inputs": [
+                "source_timed_face_track",
+                "mouth_motion_signal",
+                "source_timed_speech_activity",
+            ],
+            "reason": "Behavioral and pose detections do not constitute lip-sync evidence.",
+        },
+        "policy": {
+            "unmeasured_similarity_is_never_fabricated": True,
+            "user_confirmed_match_is_mature": True,
+            "distinct_source_turns_accumulate_support": True,
+            "duplicate_representations_count_once": True,
+            "aggregate_candidate_probability_is_not_confirmation": True,
+        },
+        "boundary_policy": {
+            "artifact_hermeneutic_space_is_private": True,
+            "cross_artifact_candidate_generation_forbidden": True,
+            "comparison_requires_a_confirmed_seed_in_the_same_analysis": True,
+        },
+    }
 
 
 def _behavioral_candidate_occurrences(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -400,6 +568,7 @@ def build_continuity_inventory(
             if existing:
                 existing["source_analysis_ids"] = sorted(set(existing["source_analysis_ids"] + row["source_analysis_ids"]))
                 existing["traceback_refs"] = sorted(set(existing["traceback_refs"] + row["traceback_refs"]))
+                existing["confirmed_roles"] = sorted(set(existing.get("confirmed_roles", []) + row.get("confirmed_roles", [])), key=str.casefold)
             else:
                 metadata_agents_by_key[key] = row
     metadata_confirmed_agents = sorted(metadata_agents_by_key.values(), key=lambda row: row["narrative_agent_label"].casefold())
@@ -412,6 +581,7 @@ def build_continuity_inventory(
     selected_confirmed = [row for row in confirmed if row["narrative_agent_key"] == selected_key]
     selected_metadata_confirmation = metadata_agents_by_key.get(selected_key)
     selected_proposed = [row for row in proposed if row["narrative_agent_key"] == selected_key]
+    audio_sample_matching = _audio_sample_matching(statuses, selected_confirmed)
     diagnostics = _diagnostics(confirmed, proposed)
     fingerprint = hashlib.sha256(
         json.dumps(
@@ -435,6 +605,9 @@ def build_continuity_inventory(
             "narrative_agent_label": selected_agent,
             "confirmed_reference_present": bool(selected_confirmed or selected_metadata_confirmation),
             "metadata_identity_confirmed": bool(selected_metadata_confirmation),
+            "confirmed_roles": copy.deepcopy((selected_metadata_confirmation or {}).get("confirmed_roles") or []),
+            "role_authority": _text((selected_metadata_confirmation or {}).get("role_authority")),
+            "role_probability": (selected_metadata_confirmation or {}).get("role_probability"),
         },
         "governance": {
             "read_only_proposal": True,
@@ -454,6 +627,7 @@ def build_continuity_inventory(
         },
         "confirmed_agents": metadata_confirmed_agents,
         "confirmed_occurrences": confirmed,
+        "audio_sample_matching": audio_sample_matching,
         "selected_continuity_corridor": {
             "state": "membership_review" if selected_confirmed else "source_occurrence_required" if selected_metadata_confirmation else "confirmed_reference_required",
             "confirmed_members": selected_confirmed,

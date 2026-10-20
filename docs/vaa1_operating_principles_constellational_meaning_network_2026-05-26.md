@@ -12,6 +12,22 @@ The Meaning Network Graph is the operational workspace where those constellation
 
 Narrative Agent presence handles are an important part of this, but they are only one feature inside the larger Meaning Network regime.
 
+## Quantitative scale, qualitative authority
+
+Datascene scales qualitative analysis through quantitative, source-bound
+measurements. Measured detections and probability-bearing candidates should
+proliferate automatically to every eligible consumer with traceback and
+provenance. They do not silently become accepted interpretations: explicit
+user confirmation is 100% authoritative mature Master Schema data, while
+unconfirmed automated claims mature only through the governed constellational
+proof threshold. Corrections supersede rather than erase earlier history.
+
+Repeated evidence must be accumulated without vote inflation. Distinct audio
+turns, visual Narrative Agent anchors, active-speaker/lip-synchrony
+measurements, textual evidence and scene context may jointly raise
+constellational probability. Duplicate encodings of one source turn count
+once, conflicts lower support, and missing measurements remain explicit.
+
 ## Narrative Agents, not identities
 
 Datascene does not use **identity** as its analyst-facing concept. It works with
@@ -87,6 +103,23 @@ The first priority is narrative structure support. Character meaning dimensions 
 Forensic render is also a real Meaning Network tool, not a future-facing label. A forensic render action should create or open an inspectable source-linked artifact: a BBox crop, zoom, evidence plate, node montage, edge montage, before/after comparison, traceback render, or report asset. It must preserve time, source media, coordinate basis, maturity state, analyst authority, and traceback. It may be delivered stepwise, but each step must produce a usable rendered artifact or a navigable render request with clear persistence state.
 
 Both Plot lens readings and forensic render can be subdivided into smaller deliveries. The acceptance bar for each slice is still functional: the analyst must gain a new way to inspect, compare, save, trace, or correct meaning, not merely see a new named affordance.
+
+## In-panel navigation and analyst cognitive flow
+
+**Every navigation is actually delivered within the panel in which navigation is operationalized.**
+
+Navigation must preserve the analyst's working and cognitive flow. When an
+analyst follows, reviews, corrects, or confirms evidence exposed by a panel, the
+operational interaction opens within that panel. It must not activate or move
+the analyst to another panel merely to complete the action. A panel may provide
+an explicit, optional link to a broader related workbench, but that link cannot
+replace the local workflow.
+
+For repeated review tasks, including Audio beat detections, the analyst must be
+able to move through the sequence and complete each governed confirmation
+without being tossed between panels. Local confirmation still preserves the
+same canonical authority, provenance, source clock, maturity, invalidation, and
+projection contracts; in-panel delivery does not create panel-local truth.
 
 ## Processual achievements so far
 
@@ -294,6 +327,27 @@ completed analysis.
 ## Master Schema feedback loop
 
 Meaning Network edits must feed back into the Master Schema.
+
+**Every explicit user confirmation is immediately 100% mature Master Schema
+data, without exception.** It proliferates to every associated consumer in the
+same governed commit. No confidence, membership, eligibility, collection, or
+secondary review gate may demote or delay it. Repeating the same confirmation
+adds an append-only traceback receipt to the canonical occurrence rather than a
+duplicate attribute. If the confirmation is wrong, a later user correction,
+rejection, or undo supersedes its effective projection while preserving its
+history.
+
+**Mature presence entails participation without a second confirmation.** A
+source-bound, mature screen-presence, audio-presence or confirmed-speaker text
+occurrence automatically projects the corresponding Narrative Agent's
+`participates_in` relation for that bounded beat. This is canonical
+proliferation of the already-confirmed fact, not a new interpretive decision.
+The UI shows its source basis and offers correction, but never asks the analyst
+to confirm it again. Semantic relations that are not entailed by presence—such
+as `dialogue_with`, addressee, topic, intent, causality or emotion—remain
+probability-bearing candidates. When eligible constellational support exists,
+its probability and basis must surface inside the operational panel rather than
+remaining hidden in a backend projection.
 
 The Master Schema is the canonical maturity anchor. BBox/ROI hubs, Meaning Network node/edge sheets, Narrative Agent leaves, scene cards, reports, traceback, and associated panels should behave as synchronized projections of the governed Master Schema state. They may collect corrections and propose candidates, but they must not become competing local sources of mature truth.
 

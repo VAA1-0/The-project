@@ -6,7 +6,12 @@ import { formatPreciseSourceTime } from "@/lib/source-clock";
 import React, { useState, useEffect } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 
-import { VideoService, groupDetectedObjectsForDisplay, type BodyMovementDetection } from "@/lib/video-service";
+import {
+  VideoService,
+  filterUntrackedRawObjectCandidates,
+  groupDetectedObjectsForDisplay,
+  type BodyMovementDetection,
+} from "@/lib/video-service";
 import { getVideoBlob, saveVideoBlob } from "@/lib/blob-store";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -358,6 +363,7 @@ export default function OBJDetectionPanel() {
   }, [videoId, refreshNonce]);
 
   const detectedObjects = analysisData?.detectedObjects ?? [];
+  const rawDetectedObjects = analysisData?.rawDetectedObjects ?? [];
   const bodyMovementDetections = analysisData?.bodyMovementDetections ?? [];
   const confirmedObjectTrackIds = new Set(
     (analysisData?.annotationCorrections?.manual_visual_annotations || [])
@@ -396,6 +402,14 @@ export default function OBJDetectionPanel() {
         String(right.displayLabel || right.class_name || ""),
       );
     },
+  );
+  const untrackedRawObjectCandidates = React.useMemo(
+    () => filterUntrackedRawObjectCandidates(groupedObjects, rawDetectedObjects),
+    [groupedObjects, rawDetectedObjects],
+  );
+  const representedRawObjectCount = Math.max(
+    0,
+    rawDetectedObjects.length - untrackedRawObjectCandidates.length,
   );
   const summaryText = analysisData?.summary ?? "…";
   const manualOverridesByTrack = React.useMemo(() => {
@@ -879,8 +893,39 @@ export default function OBJDetectionPanel() {
               </div>
             </details>
             <div className="mb-2 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--ui-passive-text)]">
-              Detected objects
+              Tracked objects · {groupedObjects.length}
             </div>
+            <details className="mb-2 shrink-0 rounded border border-slate-800 bg-slate-950/20">
+              <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-400 marker:hidden">
+                Unmatched raw candidates · {untrackedRawObjectCandidates.length}
+              </summary>
+              <div className="max-h-40 space-y-1 overflow-y-auto border-t border-slate-800 p-2">
+                <div className="mb-1 text-[10px] text-slate-500">
+                  {representedRawObjectCount} of {rawDetectedObjects.length} raw samples are already represented by tracked intervals. Unmatched samples remain candidates until an analyst confirms them.
+                </div>
+                {untrackedRawObjectCandidates.length ? untrackedRawObjectCandidates.map((obj: any, idx: number) => {
+                  const timestamp = Number(obj.timestamp ?? obj.startTimestamp ?? 0);
+                  const candidateKey = `raw:${obj.class_name || "object"}:${timestamp}:${idx}`;
+                  return (
+                    <button
+                      key={candidateKey}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 rounded border border-slate-800 px-2 py-1 text-left text-[10px] hover:border-cyan-800 hover:bg-cyan-950/10"
+                      onClick={() => eventBus.emit("videoTimeLineChanged", timestamp)}
+                    >
+                      <span className="min-w-0 truncate text-slate-300">
+                        {String(obj.displayLabel || obj.class_name || "Object candidate")}
+                      </span>
+                      <span className="shrink-0 text-slate-500">
+                        {formatPreciseTime(timestamp)} · candidate
+                      </span>
+                    </button>
+                  );
+                }) : (
+                  <div className="text-[10px] text-slate-600">Every raw detector sample is represented by a tracked interval</div>
+                )}
+              </div>
+            </details>
             {objectActionMessage && (
               <div className="mb-2 rounded border border-emerald-900/50 bg-emerald-950/20 px-2 py-1 text-[10px] text-emerald-200">
                 {objectActionMessage}

@@ -607,6 +607,7 @@ function upsertNarrativeAgentPathRow(
 function buildNarrativeAgentPathRows(
   analysisData: any,
   canonicalClaims: ProjectedCanonicalClaim[] = [],
+  activeAnalysisId = "",
 ): NarrativeAgentPathRow[] {
   const rows = new Map<string, NarrativeAgentPathRow>();
   const records: MasterSchemaResolvedEvidenceRecord[] =
@@ -622,6 +623,7 @@ function buildNarrativeAgentPathRows(
     analysisData?.metadata?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
     analysisData?.sourceMediaMetadata?.user_annotations?.narrative_agent_profiles ||
     [];
+  const continuityMembers = narrativeAgentContinuityMembers(analysisData, activeAnalysisId);
 
   for (const record of records) {
     if (!["narrative_agent_profile", "character_role", "identity"].includes(record.category)) {
@@ -684,6 +686,32 @@ function buildNarrativeAgentPathRows(
       sceneRefs: [],
       evidenceChips: ["manual correction"],
       sourceItem: annotation as unknown as Record<string, unknown>,
+    });
+  }
+
+  for (const member of continuityMembers) {
+    const label = stringFrom(member.narrative_agent_label) || "Narrative Agent";
+    const interval = asRecord(member.source_interval);
+    const occurrenceId = stringFrom(member.occurrence_id) || `continuity:${label}:${numberFrom(interval.start) || 0}`;
+    const sceneId = stringFrom(member.scene_id);
+    upsertNarrativeAgentPathRow(rows, {
+      rowKey: `continuity-occurrence:${occurrenceId}`,
+      label,
+      source: "Canonical Narrative Agent continuity",
+      start: numberFrom(interval.start),
+      end: numberFrom(interval.end),
+      manualCount: stringFrom(member.authority) === "explicit_analyst_confirmation" ? 1 : 0,
+      sceneRefs: sceneId ? [sceneId] : [],
+      evidenceChips: [`${stringFrom(member.evidence_modality) || "source"} 1`, "mature continuity"],
+      sourceItem: {
+        ...member,
+        id: occurrenceId,
+        category: "Identification",
+        start_seconds: numberFrom(interval.start),
+        end_seconds: numberFrom(interval.end),
+        maturity: "mature",
+        master_schema_status: "mature_user_confirmation",
+      },
     });
   }
 
@@ -764,12 +792,30 @@ function buildNarrativeAgentPathRows(
         !manuallyConfirmedLabels.has(normalizeAgentKey(row.label)),
     )
     .map((row) => {
+    const matchingContinuityMembers = continuityMembers.filter(
+      (member) => normalizeAgentKey(member.narrative_agent_label) === normalizeAgentKey(row.label),
+    );
+    const continuitySourceItems = matchingContinuityMembers.map((member) => {
+      const interval = asRecord(member.source_interval);
+      return {
+        ...member,
+        id: stringFrom(member.occurrence_id),
+        category: "Identification",
+        start_seconds: numberFrom(interval.start),
+        end_seconds: numberFrom(interval.end),
+        maturity: "mature",
+        master_schema_status: "mature_user_confirmation",
+      } as Record<string, unknown>;
+    });
     const cues = instructions.filter((instruction) => instructionTouchesAgent(instruction, row.label));
     const cueStart = cues
       .map(secondsFromInstruction)
       .filter((value) => Number.isFinite(value))
       .sort((left, right) => left - right)[0];
-    const sourceItems = row.sourceItems.length ? row.sourceItems : [row.sourceItem].filter(Boolean) as Record<string, unknown>[];
+    const sourceItems = [
+      ...(row.sourceItems.length ? row.sourceItems : [row.sourceItem].filter(Boolean) as Record<string, unknown>[]),
+      ...continuitySourceItems,
+    ];
     const supportTimes = [
       ...sourceItems.flatMap(timeSupportsFromSourceItem),
       ...cues.map((cue) => ({
@@ -812,12 +858,19 @@ function buildNarrativeAgentPathRows(
       .slice(0, 12);
     return {
       ...row,
+      sourceItems,
       cues,
       cueCount: cues.length,
-      start: row.start ?? cueStart,
+      start: supportTimes.length
+        ? Math.min(...supportTimes.map((support) => support.start))
+        : row.start ?? cueStart,
       sceneCount: Math.max(row.sceneCount, scenePresence.length),
       scenePresence,
-      evidenceChips: row.evidenceChips.length ? row.evidenceChips : ["profile"],
+      evidenceChips: uniqueStrings([
+        ...(row.evidenceChips.length ? row.evidenceChips : ["profile"]),
+        ...matchingContinuityMembers.map((member) => `${stringFrom(member.evidence_modality) || "source"} 1`),
+        ...(matchingContinuityMembers.length ? ["mature continuity"] : []),
+      ]),
     };
   });
 
@@ -1019,6 +1072,17 @@ function narrativeAgentIdentityMemories(analysisData: unknown): Record<string, u
   ).map(asRecord);
 }
 
+function narrativeAgentContinuityMembers(
+  analysisData: unknown,
+  activeAnalysisId = "",
+): Record<string, unknown>[] {
+  const projection = asRecord(asRecord(analysisData).narrativeAgentContinuityProjection);
+  const collection = asRecord(projection.canonical_collection);
+  return arrayFromUnknown(collection.members)
+    .map(asRecord)
+    .filter((member) => !activeAnalysisId || stringFrom(member.analysis_id) === activeAnalysisId);
+}
+
 function narrativeAgentIdentityContinuityCandidates(analysisData: unknown): Record<string, unknown>[] {
   return arrayFromUnknown(
     narrativeAgentProliferationAudit(analysisData).identity_continuity_candidates,
@@ -1057,7 +1121,44 @@ function narrativeAgentIdentityMemoryForRow(
 ): Record<string, unknown> | undefined {
   const memories = narrativeAgentIdentityMemories(analysisData);
   if (!row) return memories[0];
-  return memories.find((memory) => narrativeAgentMemoryMatchesRow(memory, row));
+  const existing = memories.find((memory) => narrativeAgentMemoryMatchesRow(memory, row));
+  const continuityProjection = asRecord(asRecord(analysisData).narrativeAgentContinuityProjection);
+  const collection = asRecord(continuityProjection.canonical_collection);
+  const projectionLabel = normalizeAgentKey(collection.narrative_agent_label);
+  const rowLabels = [row.label, ...row.aliases, ...row.sourceLabels].map(normalizeAgentKey);
+  const matchesProjection = Boolean(projectionLabel && rowLabels.includes(projectionLabel));
+  if (!matchesProjection) return existing;
+  const continuityAudioSlots = narrativeAgentContinuityMembers(analysisData)
+    .filter((member) => ["audio", "transcript_audio"].includes(stringFrom(member.evidence_modality) || ""))
+    .map((member) => ({
+      sample_id: stringFrom(member.occurrence_id),
+      sample_state: "mature_user_confirmation",
+      authority: stringFrom(member.authority),
+      modality: stringFrom(member.evidence_modality),
+      analysis_id: stringFrom(member.analysis_id),
+      time: {
+        start: numberFrom(asRecord(member.source_interval).start),
+        end: numberFrom(asRecord(member.source_interval).end),
+      },
+      traceback_refs: arrayFromUnknown(member.traceback_refs),
+    }));
+  const existingAudio = arrayFromUnknown(existing?.audio_sample_slots).map(asRecord);
+  const audioById = new Map<string, Record<string, unknown>>();
+  [...existingAudio, ...continuityAudioSlots].forEach((slot, index) => {
+    audioById.set(stringFrom(slot.sample_id) || `audio-slot:${index}`, slot);
+  });
+  return {
+    ...(existing || {}),
+    agent_id: stringFrom(existing?.agent_id) || stringFrom(collection.narrative_agent_key),
+    canonical_label: stringFrom(existing?.canonical_label) || stringFrom(collection.narrative_agent_label),
+    aliases: uniqueStrings([
+      ...arrayStringsFromUnknown(existing?.aliases),
+      stringFrom(collection.narrative_agent_label),
+    ]),
+    audio_sample_slots: [...audioById.values()],
+    continuity_revision: stringFrom(continuityProjection.revision),
+    continuity_hydrated: continuityAudioSlots.length > 0,
+  };
 }
 
 function narrativeAgentContinuityCandidatesForMemory(
@@ -2085,7 +2186,9 @@ function SpeakerAssignmentStrip({
       record.category === "narrative_agent_prosody" ||
       record.category === "audio_source_prosody",
   );
-  if (records.length === 0) {
+  const continuityAudio = narrativeAgentContinuityMembers(analysisData, videoId)
+    .filter((member) => ["audio", "transcript_audio"].includes(stringFrom(member.evidence_modality) || ""));
+  if (records.length === 0 && continuityAudio.length === 0) {
     return (
       <div className="px-3 py-2 text-[10px] text-[var(--ui-passive-text)]">
         No governed speaker assignments have been saved from Transcript yet.
@@ -2094,6 +2197,21 @@ function SpeakerAssignmentStrip({
   }
   return (
     <div className="divide-y divide-white/5" data-vaa1-master-schema-speaker-assignments="true">
+      {continuityAudio.map((member) => {
+        const interval = asRecord(member.source_interval);
+        const start = numberFrom(interval.start) || 0;
+        const end = numberFrom(interval.end) ?? start;
+        return <button
+          key={`continuity-audio:${stringFrom(member.occurrence_id)}`}
+          type="button"
+          onClick={() => openVideoAtTime(videoId, start)}
+          className="grid w-full grid-cols-[minmax(150px,1fr)_auto] gap-3 px-3 py-2 text-left hover:bg-white/[0.035]"
+          data-vaa1-continuity-audio-occurrence="true"
+        >
+          <span><span className="block text-[11px] text-slate-100">{stringFrom(member.narrative_agent_label)}</span><span className="mt-0.5 block text-[9px] text-emerald-200">Mature confirmed audio occurrence · {stringFrom(member.authority)}</span></span>
+          <span className="text-[10px] text-cyan-200">{formatSeconds(start)}–{formatSeconds(end)}</span>
+        </button>;
+      })}
       {records.map((record) => {
         const isProfile = record.category === "speaker_audio_profile_candidate";
         const isProsody =
@@ -2682,8 +2800,8 @@ function NarrativeAgentCharacterPathsHome({
   onCommitTimelineHandle: (commit: NarrativeAgentTimelineHandleCommit) => void;
 }) {
   const rows = useMemo(
-    () => buildNarrativeAgentPathRows(analysisData, canonicalClaims),
-    [analysisData, canonicalClaims],
+    () => buildNarrativeAgentPathRows(analysisData, canonicalClaims, videoId),
+    [analysisData, canonicalClaims, videoId],
   );
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [activeNarrativeAgentArchetypeLens, setActiveNarrativeAgentArchetypeLens] =
@@ -2711,6 +2829,21 @@ function NarrativeAgentCharacterPathsHome({
       setSelectedAgentKey(rows[0].key);
     }
   }, [rows, selectedAgentKey]);
+  useEffect(() => {
+    const handler = (payload: { analysisId?: string; label?: string; source?: string }) => {
+      if (payload.analysisId !== videoId || payload.source === "character_evidence_graph") return;
+      const key = normalizeAgentKey(payload.label || "");
+      const matching = rows.find((row) => normalizeAgentKey(row.label) === key);
+      if (matching && matching.key !== selectedAgentKey) {
+        setSelectedAgentKey(matching.key);
+        setSelectedGraphNodeId("");
+        setGraphAnnotationSheet(null);
+        setGraphContextMenu(null);
+      }
+    };
+    eventBus.on("narrativeAgentSelectionChanged", handler);
+    return () => eventBus.off("narrativeAgentSelectionChanged", handler);
+  }, [rows, selectedAgentKey, videoId]);
   const selectedRow = rows.find((row) => row.key === selectedAgentKey) || rows[0];
   const selectedTimelineHandles = selectedRow ? narrativeAgentTimelineHandles(selectedRow) : [];
   const activeNarrativeAgentArchetype = narrativeAgentArchetypeLensById(activeNarrativeAgentArchetypeLens);
@@ -3063,7 +3196,18 @@ function NarrativeAgentCharacterPathsHome({
               className="mt-1 w-full rounded border border-white/8 bg-[#151515] px-3 py-2 text-[11px] text-slate-200 outline-none focus:border-slate-500"
               value={selectedAgentKey}
               data-vaa1-narrative-agent-profile-dropdown="true"
-              onChange={(event) => setSelectedAgentKey(event.target.value)}
+              onChange={(event) => {
+                const nextKey = event.target.value;
+                setSelectedAgentKey(nextKey);
+                const nextRow = rows.find((row) => row.key === nextKey);
+                if (nextRow) {
+                  eventBus.emit("narrativeAgentSelectionChanged", {
+                    analysisId: videoId,
+                    label: nextRow.label,
+                    source: "character_evidence_graph",
+                  });
+                }
+              }}
             >
               {rows.length === 0 ? (
                 <option value="">No governed Narrative Agents</option>

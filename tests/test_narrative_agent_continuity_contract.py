@@ -31,6 +31,22 @@ def confirmed(agent, occurrence_id, start, end, track, scene, analysis_id="bond-
 
 
 class NarrativeAgentContinuityContractTests(unittest.TestCase):
+    def test_source_media_confirmed_roles_are_mature_selected_agent_authority(self):
+        status = confirmed("James Bond", "bond-1", 1, 2, "track-1", "scene-1")
+        status["source_media_metadata"] = {"user_annotations": {
+            "narrative_agent_profiles": [{
+                "narrative_agent_name": "James Bond",
+                "source_metadata": {"role_labels": ["protagonist", "secret agent"]},
+            }],
+            "character_roles": ["James Bond (Daniel Craig): protagonist, leading character"],
+        }}
+
+        result = build_continuity_inventory([status], selected_agent="James Bond", project_id="bond-cop30-helsinki")
+
+        self.assertEqual(result["selected_agent"]["role_probability"], 1.0)
+        self.assertEqual(result["selected_agent"]["confirmed_roles"], ["leading character", "protagonist", "secret agent"])
+        self.assertEqual(result["selected_agent"]["role_authority"], "explicit_source_media_metadata_confirmation")
+
     def test_source_media_metadata_confirms_identity_without_inventing_a_timed_occurrence(self):
         status = {
             "analysis_id": "bond-a",
@@ -87,6 +103,8 @@ class NarrativeAgentContinuityContractTests(unittest.TestCase):
         audio = next(row for row in rows if row["occurrence_id"] == "bond-audio")
         self.assertEqual(audio["supporting_audio_ref"], "vad-speaker-01")
         self.assertEqual(audio["authority"], "explicit_analyst_confirmation")
+        transcript_audio = next(row for row in rows if row["occurrence_id"] == "bond-line")
+        self.assertEqual(transcript_audio["transcript_text"], "")
 
     def test_james_bond_corridor_preserves_occurrences_and_keeps_track_supporting(self):
         first = confirmed("James Bond", "bond-1", 8, 12, "track-7", "scene-1")
@@ -161,6 +179,56 @@ class NarrativeAgentContinuityContractTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "cannot cross project boundaries"):
             build_continuity_inventory([bond, foreign])
+
+    def test_audio_match_candidates_cannot_bleed_between_artifact_hermeneutic_spaces(self):
+        bond = confirmed("Nomi", "nomi-visual", 40, 44, "track-1", "scene-1", "bond-a")
+        bond["annotation_corrections"]["manual_visual_annotations"].append({
+            "id": "nomi-audio", "category": "Audio", "identity_affirmation": "Nomi",
+            "start_seconds": 41.92, "end_seconds": 43.18,
+            "metadata_correlation": {"manual_confirmation_event": {"confirmed_fields": {"narrative_agent": True}}},
+        })
+        bond["audio_sample_clouds"] = {"clouds": [{"entity_label": "SPEAKER_01", "samples": [
+            {"sample_id": "bond-window", "time_start": 50, "time_end": 52, "text": "Bond artifact"}
+        ]}]}
+        galaxy = confirmed("Other", "other-visual", 1, 2, "track-2", "scene-1", "galaxy-a")
+        galaxy["audio_sample_clouds"] = {"clouds": [{"entity_label": "SPEAKER_00", "samples": [
+            {"sample_id": "galaxy-window", "time_start": 26.16, "time_end": 28.16, "text": "Galaxy Song"}
+        ]}]}
+
+        result = build_continuity_inventory(
+            [bond, galaxy], selected_agent="Nomi", project_id="bond-cop30-helsinki"
+        )
+        matching = result["audio_sample_matching"]
+
+        self.assertEqual([row["candidate_id"] for row in matching["suggestions"]], ["bond-window"])
+        self.assertEqual(matching["suggestions"][0]["hermeneutic_space_id"], "bond-a")
+        self.assertTrue(matching["boundary_policy"]["cross_artifact_candidate_generation_forbidden"])
+        self.assertEqual(matching["aggregate_support"]["state"], "awaiting_voice_comparison")
+        self.assertIsNone(matching["aggregate_support"]["aggregate_probability"])
+        self.assertEqual(matching["active_speaker_synchrony"]["state"], "not_measured")
+        self.assertIn("mouth_motion_signal", matching["active_speaker_synchrony"]["required_inputs"])
+
+    def test_distinct_measured_audio_turns_accumulate_but_duplicate_rows_count_once(self):
+        bond = confirmed("Nomi", "nomi-visual", 40, 44, "track-1", "scene-1", "bond-a")
+        bond["annotation_corrections"]["manual_visual_annotations"].append({
+            "id": "nomi-audio", "category": "Audio", "identity_affirmation": "Nomi",
+            "start_seconds": 41.92, "end_seconds": 43.18,
+            "metadata_correlation": {"manual_confirmation_event": {"confirmed_fields": {"narrative_agent": True}}},
+        })
+        bond["audio_sample_clouds"] = {"clouds": [{"entity_label": "SPEAKER_01", "samples": [
+            {"sample_id": "turn-1-a", "time_start": 50, "time_end": 52, "voice_similarity": .8},
+            {"sample_id": "turn-1-duplicate", "time_start": 50, "time_end": 52, "voice_similarity": .75},
+            {"sample_id": "turn-2", "time_start": 60, "time_end": 62, "voice_similarity": .7},
+        ]}]}
+
+        result = build_continuity_inventory([bond], selected_agent="Nomi", project_id="bond-cop30-helsinki")
+        aggregate = result["audio_sample_matching"]["aggregate_support"]
+
+        self.assertEqual(aggregate["probable_match_count"], 3)
+        self.assertEqual(aggregate["independent_probable_match_count"], 2)
+        self.assertEqual(aggregate["correlated_representation_count"], 1)
+        self.assertEqual(aggregate["aggregate_probability"], .88)
+        self.assertEqual(aggregate["calibration"], "descriptive_not_auto_maturing")
 
 
 if __name__ == "__main__":

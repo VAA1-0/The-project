@@ -3764,16 +3764,25 @@ export default function VideoPanel() {
     [currentTime, faceResults],
   );
   const activeRawObjects = useMemo(
-    () =>
-      alignActiveObjectLabelsWithGroupedTracks(
-        refinePersonOverlaysWithFaces(
-          buildLocalObjectOverlays(groupedDetectedObjects, currentTime),
-          nearbyFaces,
-        ),
+    () => {
+      const trackedAtCurrentBeat = buildLocalObjectOverlays(
         groupedDetectedObjects,
         currentTime,
-      ),
-    [currentTime, groupedDetectedObjects, nearbyFaces],
+      );
+      // The tracked layer remains authoritative. Older/imported analyses can have
+      // gaps between consolidated tracks even though their raw detector samples
+      // are present. In such a gap, render the raw samples as a visual fallback;
+      // this does not promote them to tracked or mature evidence.
+      const visibleAtCurrentBeat = trackedAtCurrentBeat.length
+        ? trackedAtCurrentBeat
+        : buildLocalObjectOverlays(rawDetectedObjects, currentTime);
+      return alignActiveObjectLabelsWithGroupedTracks(
+        refinePersonOverlaysWithFaces(visibleAtCurrentBeat, nearbyFaces),
+        groupedDetectedObjects,
+        currentTime,
+      );
+    },
+    [currentTime, groupedDetectedObjects, nearbyFaces, rawDetectedObjects],
   );
   const projectionTimeBucket = Math.max(0, Math.round(currentTime * 4) / 4);
   const visibleProjectionSubjectRefs = useMemo(

@@ -2,7 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
+import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import { sourceClockConcordance } from "@/lib/source-clock";
 import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-events";
 import SourceClockConcordanceRail, { type ConcordanceDisplayItem } from "./SourceClockConcordanceRail";
@@ -172,12 +174,39 @@ export default function PanelSourceClockConcordance({ componentName, category }:
   const [videoId, setVideoId] = useState(() => eventBus.getLast<string>("videoIdChanged") || "");
   const [cursor, setCursor] = useState<number | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [recognitionDraft, setRecognitionDraft] = useState<{
+    id: string; label: string; start: number; end: number;
+  } | null>(null);
+  const [recognitionAgent, setRecognitionAgent] = useState("");
+  const [recognitionBusy, setRecognitionBusy] = useState(false);
+  const [recognitionMessage, setRecognitionMessage] = useState("");
+  const [confirmedRecognitionIds, setConfirmedRecognitionIds] = useState<Set<string>>(() => new Set());
+  const [confirmationReceipt, setConfirmationReceipt] = useState<{
+    occurrenceId?: string; modality?: string; start?: number; end?: number; revision?: string;
+  } | null>(null);
 
   useEffect(() => {
     const handler = (id: string) => setVideoId(id || "");
     eventBus.on("videoIdChanged", handler);
     return () => eventBus.off("videoIdChanged", handler);
   }, []);
+  useEffect(() => {
+    const handler = (publication: {
+      analysisId?: string; occurrenceId?: string; modality?: string;
+      sourceInterval?: { start?: number; end?: number }; state?: string; maturity?: string; revision?: string;
+    }) => {
+      if (publication.analysisId !== videoId || publication.state !== "confirmed") return;
+      setConfirmationReceipt({
+        occurrenceId: publication.occurrenceId,
+        modality: publication.modality,
+        start: publication.sourceInterval?.start,
+        end: publication.sourceInterval?.end,
+        revision: publication.revision,
+      });
+    };
+    eventBus.on("confirmationNavigationUpdated", handler);
+    return () => eventBus.off("confirmationNavigationUpdated", handler);
+  }, [videoId]);
   useEffect(() => {
     setCursor(null);
     if (!videoId || !panelName) return;
@@ -202,11 +231,133 @@ export default function PanelSourceClockConcordance({ componentName, category }:
       )
     : null;
   const posLinkageGap = panelName === "POS" && Boolean(transcriptAtCursor) && concordance.on_beat.length === 0;
+  const recognitionAgentLabels = governedNarrativeAgentLabels(analysis);
+  const selectedKnownAgent = recognitionAgentLabels.find(
+    (label) => label.localeCompare(recognitionAgent.trim(), undefined, { sensitivity: "base" }) === 0,
+  ) || "";
+
+  const confirmAudioRecognition = async () => {
+    if (!recognitionDraft || !recognitionAgent.trim() || !analysis?.projectId) {
+      setRecognitionMessage("Select or enter a Narrative Agent before confirming this source input.");
+      return;
+    }
+    setRecognitionBusy(true);
+    setRecognitionMessage("");
+    try {
+      const result = await apiService.confirmNarrativeAgentContinuityEvidence(analysis.projectId, {
+        evidence_id: `continuity-ui-${crypto.randomUUID()}`,
+        analysis_id: videoId,
+        agent: recognitionAgent.trim(),
+        modality: "audio",
+        start_seconds: recognitionDraft.start,
+        end_seconds: recognitionDraft.end,
+        source_ref: recognitionDraft.id,
+        note: `Confirmed from Audio on-beat detection: ${recognitionDraft.label}`,
+        created_by: "datascene_analyst",
+      }) as {
+        evidence_id?: string;
+        duplicate_of?: string;
+        status?: string;
+        maturity?: string;
+        continuity_projection?: Record<string, unknown>;
+      };
+      const receipt = result.evidence_id || result.duplicate_of;
+      setRecognitionMessage(
+        `${result.status === "unchanged" ? "Source confirmation already committed" : "Source confirmation committed"}` +
+        `${receipt ? ` · ${receipt}` : ""}. Mature Master Schema data proliferated to all associated panels.`,
+      );
+      const confirmedDetectionId = recognitionDraft.id;
+      setConfirmedRecognitionIds((current) => new Set(current).add(confirmedDetectionId));
+      if (result.continuity_projection) {
+        setAnalysis((current) => current ? {
+          ...current,
+          narrativeAgentContinuityProjection: result.continuity_projection,
+        } : current);
+      }
+      setRecognitionDraft(null);
+      const publication = {
+        analysisId: videoId,
+        evidenceId: receipt,
+        modality: "audio",
+        maturity: "mature",
+        revision: String(result.continuity_projection?.revision || ""),
+      };
+      eventBus.emit("analysisCorrectionsChanged", publication);
+      eventBus.emit("narrativeAgentContinuityUpdated", publication);
+      eventBus.emit("matureDataProliferated", publication);
+    } catch (error) {
+      setRecognitionMessage(error instanceof Error ? error.message : "Audio recognition confirmation failed.");
+    } finally {
+      setRecognitionBusy(false);
+    }
+  };
+  const isMatureAudioRecognition = (hit: { item: ConcordanceDisplayItem; start_seconds: number; end_seconds: number }) => {
+    if (confirmedRecognitionIds.has(hit.item.id)) return true;
+    const projection = analysis?.narrativeAgentContinuityProjection as any;
+    if (projection?.canonical_collection?.maturity !== "mature_governed_agent_track") return false;
+    return (projection?.canonical_collection?.members || []).some((member: any) =>
+      member?.evidence_modality === "audio" &&
+      Math.abs(Number(member?.source_interval?.start) - hit.start_seconds) <= 0.05 &&
+      Math.abs(Number(member?.source_interval?.end) - hit.end_seconds) <= 0.05,
+    );
+  };
   return (
     <div data-panel-source-clock-concordance={panelName} className="shrink-0 px-2 pt-2">
+      {confirmationReceipt ? <button type="button" onClick={() => publishSourceTime(videoId, Number(confirmationReceipt.start || 0))} className="mb-2 w-full rounded border border-slate-600 bg-slate-800/60 px-2 py-1.5 text-left text-[10px] text-slate-200" data-vaa1-shared-confirmation-navigation-receipt="true">
+        Confirmed ✓ · mature {confirmationReceipt.modality || "source"} · {Number(confirmationReceipt.start || 0).toFixed(3)}–{Number(confirmationReceipt.end ?? confirmationReceipt.start ?? 0).toFixed(3)}{confirmationReceipt.revision ? ` · revision ${confirmationReceipt.revision.slice(0, 8)}` : ""}
+      </button> : null}
       {aggregateOnly ? <div className="mb-2 rounded border border-slate-800 bg-slate-950/30 px-2 py-1.5 text-[10px] text-slate-400">No source-timed {panelName} evidence at this beat. Current results are aggregate-only and are not promoted into clock hits.</div> : null}
       {posLinkageGap ? <div role="status" data-pos-source-linkage-gap="true" className="mb-2 rounded border border-amber-700/60 bg-amber-950/20 px-2 py-1.5 text-[10px] text-amber-100">Transcript text exists at this beat, but no governed POS occurrence maps to it. This is a POS–Transcript linkage gap, not evidence that linguistic data is absent.</div> : null}
-      <SourceClockConcordanceRail modality={panelName} concordance={concordance} onNavigate={(timestamp) => publishSourceTime(videoId, timestamp)} />
+      <SourceClockConcordanceRail
+        modality={panelName}
+        concordance={concordance}
+        onNavigate={(timestamp) => publishSourceTime(videoId, timestamp)}
+        onRecognize={panelName === "Audio" ? (hit) => {
+          publishSourceTime(videoId, hit.start_seconds);
+          setRecognitionDraft({
+            id: hit.item.id,
+            label: hit.item.label,
+            start: hit.start_seconds,
+            end: hit.end_seconds,
+          });
+          setRecognitionMessage("");
+        } : undefined}
+        isRecognized={panelName === "Audio" ? isMatureAudioRecognition : undefined}
+      />
+      {panelName === "Audio" && recognitionDraft ? (
+        <div className="mb-2 rounded border border-cyan-700/60 bg-cyan-950/20 p-2" data-audio-inline-recognition-review="true">
+          <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-100">Audio recognition review</div>
+          <div className="mt-1 text-[10px] text-slate-300">
+            {recognitionDraft.label} · {recognitionDraft.start.toFixed(3)}–{recognitionDraft.end.toFixed(3)}
+          </div>
+          <div className="mt-2 grid gap-1.5">
+            <select
+              value={selectedKnownAgent}
+              onChange={(event) => setRecognitionAgent(event.target.value)}
+              aria-label="Known Narrative Agent for audio recognition"
+              className="rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+            >
+              <option value="">Select a known Narrative Agent…</option>
+              {recognitionAgentLabels.map((label) => <option key={label.toLocaleLowerCase()} value={label}>{label}</option>)}
+            </select>
+            <input
+              value={recognitionAgent}
+              onChange={(event) => setRecognitionAgent(event.target.value)}
+              aria-label="Narrative Agent identity for audio recognition"
+              placeholder="Or enter a new Narrative Agent"
+              className="rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100"
+            />
+            <div className="flex items-center gap-1.5">
+              <button type="button" disabled={recognitionBusy || !recognitionAgent.trim()} onClick={() => void confirmAudioRecognition()} className="rounded border border-cyan-700 px-2 py-1 text-[10px] text-cyan-100">
+                {recognitionBusy ? "Saving…" : "Confirm source input"}
+              </button>
+              <button type="button" disabled={recognitionBusy} onClick={() => setRecognitionDraft(null)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300">Cancel</button>
+            </div>
+          </div>
+          <div className="mt-1.5 text-[9px] text-slate-500">The detection supports review; it does not establish identity or continuity membership.</div>
+        </div>
+      ) : null}
+      {panelName === "Audio" && recognitionMessage ? <div role="status" className="mb-2 rounded border border-slate-800 px-2 py-1.5 text-[10px] text-slate-300">{recognitionMessage}</div> : null}
     </div>
   );
 }

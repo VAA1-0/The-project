@@ -42,6 +42,7 @@ class EventBus {
   getLast<T>(event: string): T | undefined {
     return this.latest.get(event) as T | undefined;
   }
+
 }
 
 export const eventBus = new EventBus();

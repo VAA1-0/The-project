@@ -10,7 +10,9 @@ from .decision_ledger import append_decision, empty_decision_ledger
 SCHEMA = "vaa1.narrative_agent_continuity_decision.v1"
 MEMBERSHIP_OPERATIONS = {"include", "exclude", "confirm", "reject", "defer"}
 STRUCTURE_OPERATIONS = {"split", "merge"}
-OPERATIONS = MEMBERSHIP_OPERATIONS | STRUCTURE_OPERATIONS | {"undo"}
+RELATION_OPERATIONS = {"confirm_relation", "revise_relation", "reject_relation", "defer_relation"}
+AUDIO_MATCH_OPERATIONS = {"confirm_audio_match", "reject_audio_match", "defer_audio_match"}
+OPERATIONS = MEMBERSHIP_OPERATIONS | STRUCTURE_OPERATIONS | RELATION_OPERATIONS | AUDIO_MATCH_OPERATIONS | {"undo"}
 
 
 def _text(value: Any) -> str:
@@ -101,6 +103,69 @@ def append_continuity_decision(
             "evidence_refs": [_text(item) for item in _list(payload.get("evidence_refs")) if _text(item)],
             "provenance": {"writer_class": "analyst_interaction"},
             "continuity_operation": "confirm_collection",
+        }
+    elif operation in RELATION_OPERATIONS:
+        edge_id = _text(payload.get("edge_id"))
+        assertion_id = _text(payload.get("assertion_id"))
+        if not edge_id or not assertion_id:
+            raise ValueError("Relation decision requires edge_id and assertion_id")
+        state = {
+            "confirm_relation": "confirmed",
+            "revise_relation": "confirmed",
+            "reject_relation": "rejected",
+            "defer_relation": "deferred",
+        }[operation]
+        decision_payload = {
+            "decision_id": payload.get("decision_id"),
+            "decision_action": (
+                "confirm_candidate"
+                if operation in {"confirm_relation", "revise_relation"}
+                else "reject_candidate"
+                if operation == "reject_relation"
+                else "defer_candidate"
+            ),
+            "subject_ref": {"type": "interpretive_relation", "id": edge_id},
+            "property": "meaning_network.relationship",
+            "value": state,
+            "scope": copy.deepcopy(payload.get("scope") or {}),
+            "authority": (
+                "explicit_user_correction"
+                if operation == "revise_relation"
+                else "explicit_user_confirmation"
+                if operation == "confirm_relation"
+                else "manual_review"
+            ),
+            "created_by": actor,
+            "evidence_refs": [_text(item) for item in _list(payload.get("evidence_refs")) if _text(item)],
+            "provenance": {"writer_class": "analyst_interaction"},
+            "continuity_operation": operation,
+            "edge_id": edge_id,
+            "assertion_id": assertion_id,
+            "predicate": _text(payload.get("predicate")),
+            "subject_node_id": _text(payload.get("subject_node_id")),
+            "object_node_id": _text(payload.get("object_node_id")),
+            "analyst_meaning": _text(payload.get("analyst_meaning")),
+        }
+    elif operation in AUDIO_MATCH_OPERATIONS:
+        candidate_id = _text(payload.get("candidate_id"))
+        matching = inventory.get("audio_sample_matching") if isinstance(inventory.get("audio_sample_matching"), dict) else {}
+        candidate = next((row for row in _list(matching.get("suggestions")) if isinstance(row, dict) and _text(row.get("candidate_id")) == candidate_id), None)
+        if candidate is None:
+            raise ValueError("Audio match candidate is not part of the current project inventory")
+        value = {"confirm_audio_match": "confirmed", "reject_audio_match": "rejected", "defer_audio_match": "deferred"}[operation]
+        decision_payload = {
+            "decision_id": payload.get("decision_id"),
+            "decision_action": "confirm_candidate" if value == "confirmed" else "reject_candidate" if value == "rejected" else "defer_candidate",
+            "subject_ref": {"type": "narrative_agent_audio_match", "id": candidate_id},
+            "property": "narrative_agent.audio_sample_match",
+            "value": value,
+            "scope": copy.deepcopy(candidate.get("source_interval") or {}),
+            "authority": "explicit_user_confirmation" if value == "confirmed" else "manual_review",
+            "created_by": actor,
+            "evidence_refs": [candidate_id],
+            "provenance": {"writer_class": "analyst_interaction"},
+            "continuity_operation": operation,
+            "candidate_snapshot": copy.deepcopy(candidate),
         }
     elif operation in MEMBERSHIP_OPERATIONS:
         occurrence_id = _text(payload.get("occurrence_id"))
@@ -219,6 +284,16 @@ def project_continuity_decisions(
             for row in active
             if _text(row.get("continuity_operation")) in STRUCTURE_OPERATIONS
         ],
+        "relation_decisions": {
+            subject_id: copy.deepcopy(row)
+            for subject_id, row in latest_by_subject.items()
+            if _text(row.get("continuity_operation")) in RELATION_OPERATIONS
+        },
+        "audio_match_decisions": {
+            subject_id: copy.deepcopy(row)
+            for subject_id, row in latest_by_subject.items()
+            if _text(row.get("continuity_operation")) in AUDIO_MATCH_OPERATIONS
+        },
         "collection_confirmation": next(
             (
                 copy.deepcopy(row)

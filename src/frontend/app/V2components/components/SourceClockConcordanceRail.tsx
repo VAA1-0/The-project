@@ -64,6 +64,8 @@ function hitCard(
 function onBeatCard(
   hits: Array<SourceClockConcordanceHit<ConcordanceDisplayItem>>,
   cursor: number,
+  onRecognize?: (hit: SourceClockConcordanceHit<ConcordanceDisplayItem>) => void,
+  isRecognized?: (hit: SourceClockConcordanceHit<ConcordanceDisplayItem>) => boolean,
 ) {
   if (!hits.length) return hitCard("on-beat", null, cursor);
   return (
@@ -84,6 +86,21 @@ function onBeatCard(
               {formatPreciseSourceTime(hit.start_seconds)}
               {hit.end_seconds !== hit.start_seconds ? `–${formatPreciseSourceTime(hit.end_seconds)}` : ""}
             </div>
+            {isRecognized?.(hit) ? (
+              <div className="mt-1 text-[9px] font-medium text-emerald-300" data-source-clock-recognition-mature={hit.item.id}>
+                Mature · user confirmed
+              </div>
+            ) : onRecognize ? (
+              <button
+                type="button"
+                onClick={() => onRecognize(hit)}
+                className="mt-1 rounded border border-cyan-700/70 px-1.5 py-0.5 text-[9px] text-cyan-100 hover:bg-cyan-950/50"
+                aria-label={`Review recognition for ${hit.item.label}`}
+                data-source-clock-recognition-navigation={hit.item.id}
+              >
+                Review recognition
+              </button>
+            ) : null}
           </div>
         ))}
       </div>
@@ -95,10 +112,14 @@ export default function SourceClockConcordanceRail({
   modality,
   concordance,
   onNavigate,
+  onRecognize,
+  isRecognized,
 }: {
   modality: string;
   concordance: SourceClockConcordance<ConcordanceDisplayItem>;
   onNavigate?: (timestamp: number) => void;
+  onRecognize?: (hit: SourceClockConcordanceHit<ConcordanceDisplayItem>) => void;
+  isRecognized?: (hit: SourceClockConcordanceHit<ConcordanceDisplayItem>) => boolean;
 }) {
   const [lane, setLane] = useState<Lane>("on-beat");
   const [showConcordance, setShowConcordance] = useState(false);
@@ -173,13 +194,13 @@ export default function SourceClockConcordanceRail({
       {showConcordance ? (
         <div data-source-clock-concordance-frame="true" className="grid grid-cols-3 gap-2">
           {hitCard("before", concordance.before, concordance.cursor_seconds)}
-          {onBeatCard(concordance.on_beat, concordance.cursor_seconds)}
+          {onBeatCard(concordance.on_beat, concordance.cursor_seconds, onRecognize, isRecognized)}
           {hitCard("after", concordance.after, concordance.cursor_seconds)}
         </div>
       ) : (
         <div data-source-clock-concordance-primary={lane}>
           {lane === "on-beat"
-            ? onBeatCard(concordance.on_beat, concordance.cursor_seconds)
+            ? onBeatCard(concordance.on_beat, concordance.cursor_seconds, onRecognize, isRecognized)
             : hitCard(lane, activeHit, concordance.cursor_seconds)}
         </div>
       )}

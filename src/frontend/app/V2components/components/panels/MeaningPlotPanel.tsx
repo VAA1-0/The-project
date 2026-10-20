@@ -193,6 +193,14 @@ type MeaningNetworkEdge = {
     source_navigation_enabled?: boolean;
     edge_marker?: Record<string, any>;
   };
+  relation_ticket?: Record<string, any>;
+};
+
+type ContinuityGraphProjection = {
+  revision?: string;
+  nodes?: MeaningNetworkNode[];
+  edges?: MeaningNetworkEdge[];
+  relation_tickets?: Array<Record<string, any>>;
 };
 
 type MeaningNetworkContinuityLaneRow = {
@@ -3655,6 +3663,7 @@ export default function MeaningPlotPanel({
   const [renamedMeaningNetworkMarkers, setRenamedMeaningNetworkMarkers] = useState<Record<string, string>>({});
   const [draftMeaningNetworkNodes, setDraftMeaningNetworkNodes] = useState<MeaningNetworkNode[]>([]);
   const [draftMeaningNetworkEdges, setDraftMeaningNetworkEdges] = useState<MeaningNetworkEdge[]>([]);
+  const [continuityGraphProjection, setContinuityGraphProjection] = useState<ContinuityGraphProjection | null>(null);
   const [draftMeaningNetworkScenes, setDraftMeaningNetworkScenes] = useState<MeaningSceneSegment[]>([]);
   const [hiddenMeaningNetworkScenes, setHiddenMeaningNetworkScenes] = useState<Record<string, boolean>>({});
   const [draftMeaningNetworkLanes, setDraftMeaningNetworkLanes] = useState<MeaningNetworkLane[]>([]);
@@ -3840,6 +3849,78 @@ export default function MeaningPlotPanel({
     eventBus.on("analysisCorrectionsChanged", correctionsHandler);
     return () => eventBus.off("analysisCorrectionsChanged", correctionsHandler);
   }, [selectedVideoId]);
+
+  useEffect(() => {
+    const handler = (payload: {
+      analysisId?: string;
+      analysisIds?: string[];
+      graphProjection?: ContinuityGraphProjection;
+    }) => {
+      const applies = Boolean(
+        selectedVideoId &&
+        (payload.analysisId === selectedVideoId || (payload.analysisIds || []).includes(selectedVideoId)),
+      );
+      if (!applies || !payload.graphProjection) return;
+      const tickets = new Map(
+        (payload.graphProjection.relation_tickets || []).map((ticket) => [String(ticket.edge_id || ""), ticket]),
+      );
+      setContinuityGraphProjection({
+        ...payload.graphProjection,
+        nodes: (payload.graphProjection.nodes || []).map((node) => ({
+          ...node,
+          ui: {
+            ...node.ui,
+            display_group: "narrative_agent_continuity",
+            quick_confirm_enabled: false,
+            copy_paste_enabled: true,
+            update_enabled: true,
+            source_navigation_enabled: true,
+          },
+        })),
+        edges: (payload.graphProjection.edges || []).map((edge) => ({
+          ...edge,
+          relation_ticket: tickets.get(edge.edge_id),
+        })),
+      });
+    };
+    eventBus.on("narrativeAgentContinuityUpdated", handler);
+    return () => eventBus.off("narrativeAgentContinuityUpdated", handler);
+  }, [selectedVideoId]);
+
+  useEffect(() => {
+    const hydrated = analysisData?.narrativeAgentContinuityProjection as
+      | (ContinuityGraphProjection & {
+          graph_projection?: ContinuityGraphProjection;
+        })
+      | null
+      | undefined;
+    const graphProjection = hydrated?.graph_projection;
+    if (!graphProjection) {
+      setContinuityGraphProjection(null);
+      return;
+    }
+    const tickets = new Map(
+      (graphProjection.relation_tickets || []).map((ticket) => [String(ticket.edge_id || ""), ticket]),
+    );
+    setContinuityGraphProjection({
+      ...graphProjection,
+      nodes: (graphProjection.nodes || []).map((node) => ({
+        ...node,
+        ui: {
+          ...node.ui,
+          display_group: "narrative_agent_continuity",
+          quick_confirm_enabled: false,
+          copy_paste_enabled: true,
+          update_enabled: true,
+          source_navigation_enabled: true,
+        },
+      })),
+      edges: (graphProjection.edges || []).map((edge) => ({
+        ...edge,
+        relation_ticket: tickets.get(edge.edge_id),
+      })),
+    });
+  }, [analysisData?.narrativeAgentContinuityProjection]);
 
   useEffect(() => {
     const projectedLabels: Record<string, string> = {};
@@ -4107,12 +4188,13 @@ export default function MeaningPlotPanel({
         ...transcriptMeaningNodes,
         ...prosodyMeaningNodes,
         ...bodyMovementMeaningNodes,
+        ...(continuityGraphProjection?.nodes || []),
         ...((datasceneMeaningNetwork?.meaning_network?.nodes || []) as MeaningNetworkNode[]),
         ...draftMeaningNetworkNodes,
       ].forEach((node) => byId.set(node.node_id, node));
       return [...byId.values()];
     },
-    [bodyMovementMeaningNodes, datasceneMeaningNetwork, draftMeaningNetworkNodes, entityRegistryMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
+    [bodyMovementMeaningNodes, continuityGraphProjection, datasceneMeaningNetwork, draftMeaningNetworkNodes, entityRegistryMeaningNodes, masterSchemaMeaningNodes, narrativeAgentProfileMeaningNodes, persistedPresenceMeaningNodes, prosodyMeaningNodes, sceneMeaningNodes, transcriptMeaningNodes],
   );
   const bodyMovementMeaningEdges = useMemo<MeaningNetworkEdge[]>(() => {
     const agentNodes = [...narrativeAgentProfileMeaningNodes, ...masterSchemaMeaningNodes]
@@ -4292,10 +4374,11 @@ export default function MeaningPlotPanel({
       dedupeMeaningNetworkEdges([
         ...masterSchemaMeaningEdges,
         ...bodyMovementMeaningEdges,
+        ...(continuityGraphProjection?.edges || []),
         ...((datasceneMeaningNetwork?.meaning_network?.edges || []) as MeaningNetworkEdge[]),
         ...draftMeaningNetworkEdges,
       ]),
-    [bodyMovementMeaningEdges, datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
+    [bodyMovementMeaningEdges, continuityGraphProjection, datasceneMeaningNetwork, draftMeaningNetworkEdges, masterSchemaMeaningEdges],
   );
   const reviewableMeaningNetworkNodes = useMemo(
     () =>
@@ -4314,6 +4397,7 @@ export default function MeaningPlotPanel({
             "body_movement",
             "open_topology_som_matcher",
             "meaning_network_presence",
+            "narrative_agent_continuity",
             "analyst_added_nodes",
             "analyst_pasted_nodes",
           ].includes(String(node.ui?.display_group || "")),

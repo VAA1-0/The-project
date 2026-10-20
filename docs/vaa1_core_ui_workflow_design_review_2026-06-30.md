@@ -100,6 +100,41 @@ All analytical panels should converge on the same interaction grammar:
 
 This pattern should become a shared UI component family rather than a one-off design in each panel.
 
+## Confirm Once, Mature Everywhere
+
+An explicit user confirmation is the canonical acceptance act. At the instant
+the save succeeds, the confirmed source-bounded assertion is **100% mature
+Master Schema data** and must proliferate to every applicable consumer at the
+same governed revision. This is a core Datascene invariant, not a panel-specific
+convenience.
+
+No downstream panel, continuity collection, graph, matcher, profile, local
+cache, eligibility adapter or secondary review workflow may ask the analyst to
+confirm the same assertion again, or represent it as unreviewed merely because
+that consumer lacks a panel-local decision. The consumer must hydrate the
+canonical confirmation, its source interval and ROI/BBox where applicable, its
+authority, maturity, decision identity and traceback.
+
+The distinction is categorical:
+
+- automated or imported detections are candidates and require review;
+- an explicit user confirmation is mature immediately;
+- a later explicit correction, rejection, defer, split, merge or governed
+  invalidation may supersede the effective projection without erasing history;
+- repeated confirmation of the same assertion adds a traceback receipt rather
+  than another live attribute or another acceptance gate.
+
+Operational sequence:
+
+```text
+user confirms once -> canonical save -> mature Master Schema occurrence
+-> one revision projected everywhere -> no panel-local reconfirmation
+```
+
+Acceptance requires consistent status after immediate refresh, save/reopen,
+detached-panel hydration and export. A single `unreviewed` or `Confirm` prompt
+for an already user-confirmed assertion is a release-blocking authority defect.
+
 ## The Saloon Doors Swing Both Ways Principle
 
 Navigation and correction feedback between the Video panel and every analytical

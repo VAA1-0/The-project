@@ -4,6 +4,18 @@ Date: 2026-10-16
 
 Branch: `petteri`
 
+## Reconciliation note — 2026-10-19
+
+The manual gate described below is closed and its former next sequence is
+superseded. The Nomi audio evidence at `41.920–43.180` is the single live mature
+occurrence. Three repeated same-beat confirmations, including the overlapping
+`41.900–43.180` submission, are retained as append-only confirmation receipts
+rather than separate live attributes. The continuity collection is accepted,
+measurement-eligible and projected at one revision to Video, Audio, Transcript,
+Narrative Agent, Meaning/Plot, Master Schema, Data Maturation, Search, Traceback
+and Measurements. Stage 7 now proceeds through the bounded [reviewable
+interpretation sprint](working_handover_handout_2026-10-19_stage7_reviewable_interpretation.md).
+
 ## Objective
 
 Operationalize a project-scoped and analysis-artefact-owned Narrative Agent continuity workbench in which tracking supports—but never establishes—identity. Confirmed evidence must remain source-timed, navigable, reversible, project-hermetic, and available to associated Datascene panels and graphs.
@@ -76,7 +88,7 @@ Verified:
 - `/api/health`: healthy.
 - Project dashboard: HTTP 200.
 
-## Next manual sequence
+## Historical manual sequence — completed and superseded 2026-10-19
 
 1. Refresh the Narrative Agent panel.
 2. Select Nomi from the complete known-agent selector.
