@@ -23,6 +23,53 @@ matcher = load_matcher_module()
 
 
 class EvidenceProliferationMatcherContractTest(unittest.TestCase):
+    def test_all_explicit_confirmation_families_enter_mature_constellation_memory(self):
+        status = {"annotation_corrections": {
+            "manual_visual_annotations": [{
+                "id": "visual-bond", "identity_affirmation": "James Bond",
+                "start_seconds": 10.0, "end_seconds": 11.0,
+                "coordinates": {"x": .2, "y": .1, "w": .3, "h": .7},
+            }],
+            "text_substitutions": [{
+                "id": "audio-bond", "speaker_confirmation": "James Bond",
+                "start_seconds": 20.0, "end_seconds": 21.0,
+            }],
+        }}
+
+        index = matcher.build_mature_constellation_index(status)
+        constellation = next(iter(index["constellations"].values()))
+
+        self.assertEqual(index["positive_count"], 2)
+        self.assertEqual(len(constellation["positive"]), 2)
+        self.assertTrue(all(row["match_probability"] == 1.0 for row in constellation["positive"]))
+
+    def test_confirmation_runs_one_targeted_rescore_and_writes_probability_delta_receipt(self):
+        status = {"results": {"visual_analysis": {"tracked_objects": [{
+            "track_id": 42, "label": "person", "class": "person",
+            "start": 40.0, "end": 40.2, "x": .34, "y": .08,
+            "width": .30, "height": .70, "confidence": .72,
+        }]}}}
+        request = {"request_id": "bond-memory", "target": "character_continuity", "evidence": {
+            "label": "James Bond", "source_label": "James Bond", "category": "narrative_agent",
+        }}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "match.json"
+            matcher.write_evidence_proliferation_match("analysis-1", status, request, path)
+            status["evidence_proliferation_matches"] = [{"request_id": "bond-memory", "output_json_path": str(path)}]
+            status["annotation_corrections"] = {"manual_visual_annotations": [{
+                "id": "visual-bond", "identity_affirmation": "James Bond",
+                "start_seconds": 8.0, "end_seconds": 8.2,
+                "coordinates": {"x": .33, "y": .08, "w": .31, "h": .70},
+            }]}
+
+            receipt = matcher.run_targeted_maturity_iteration("analysis-1", status, Path(directory))
+
+            self.assertEqual(receipt["status"], "completed")
+            self.assertEqual(receipt["affected_request_ids"], ["bond-memory"])
+            self.assertTrue(receipt["probability_deltas"])
+            self.assertTrue(all(row["after_probability"] > row["before_probability"] for row in receipt["probability_deltas"]))
+            self.assertTrue(Path(receipt["output_json_path"]).exists())
+
     def test_raw_detector_confidence_never_counts_as_constellational_proof(self):
         candidate = {
             "source_kind": "tracked_object",

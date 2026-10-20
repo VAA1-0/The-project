@@ -278,6 +278,59 @@ def _audio_sample_payload(status: Mapping[str, Any]) -> Mapping[str, Any]:
     return nested if isinstance(nested, dict) else {}
 
 
+def _audio_agent_candidate_occurrences(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Expose named audio-cloud rows as source-timed attribution candidates."""
+    analysis_id = _analysis_id(status)
+    synchrony_rows = _list(_dict(status.get("active_speaker_synchrony")).get("measurements"))
+    candidates = []
+    for cloud in _list(_audio_sample_payload(status).get("clouds")):
+        if not isinstance(cloud, dict):
+            continue
+        label = _individual_agent_label(cloud.get("entity_label"))
+        if not label or label.casefold().startswith("speaker_"):
+            continue
+        for index, sample in enumerate(_list(cloud.get("samples"))):
+            if not isinstance(sample, dict):
+                continue
+            start = _number(sample.get("time_start", sample.get("start")))
+            end = _number(sample.get("time_end", sample.get("end")))
+            if start is None:
+                continue
+            end = end if end is not None else start
+            synchrony = next((
+                row for row in synchrony_rows
+                if isinstance(row, dict)
+                and _key(row.get("identity_label")) == _key(label)
+                and _number(_dict(row.get("source_interval")).get("start")) is not None
+                and max(start, float(_dict(row.get("source_interval"))["start"]))
+                < min(end, float(_dict(row.get("source_interval")).get("end") or _dict(row.get("source_interval"))["start"]))
+            ), None)
+            sample_id = _text(sample.get("sample_id")) or f"{analysis_id}:named-audio:{index}"
+            candidates.append({
+                "occurrence_id": sample_id,
+                "analysis_id": analysis_id,
+                "narrative_agent_key": _key(label),
+                "narrative_agent_label": label,
+                "source_interval": {"start": start, "end": end},
+                "source_geometry": None,
+                "scene_id": _text(sample.get("scene_id")),
+                "supporting_track_ref": "",
+                "supporting_audio_ref": _text(sample.get("voice_embedding_ref") or sample_id),
+                "evidence_modality": "transcript_audio",
+                "authority": "named_audio_sample_candidate",
+                "membership_state": "proposed_membership",
+                "traceback_refs": [sample_id],
+                "transcript_text": _text(sample.get("transcript_text") or sample.get("text")),
+                "scores": {
+                    "identity_cue_confidence": _number(sample.get("confidence")) or 0.0,
+                    "active_speaker_probability": _number(_dict(synchrony).get("probability")),
+                },
+                "active_speaker_synchrony": copy.deepcopy(synchrony) if synchrony else None,
+                "interpretation_is_candidate_only": True,
+            })
+    return candidates
+
+
 def _audio_sample_matching(
     statuses: Sequence[Mapping[str, Any]], selected_confirmed: Sequence[Mapping[str, Any]]
 ) -> Dict[str, Any]:
@@ -575,7 +628,7 @@ def build_continuity_inventory(
     proposed = [
         row
         for status in statuses
-        for row in [*_candidate_occurrences(status), *_behavioral_candidate_occurrences(status)]
+        for row in [*_candidate_occurrences(status), *_behavioral_candidate_occurrences(status), *_audio_agent_candidate_occurrences(status)]
     ]
     selected_key = _key(selected_agent)
     selected_confirmed = [row for row in confirmed if row["narrative_agent_key"] == selected_key]

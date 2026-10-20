@@ -31,6 +31,37 @@ def confirmed(agent, occurrence_id, start, end, track, scene, analysis_id="bond-
 
 
 class NarrativeAgentContinuityContractTests(unittest.TestCase):
+    def test_named_audio_candidate_carries_matching_active_speaker_measurement(self):
+        status = confirmed("James Bond", "bond-visual", 55.0, 57.0, "track-7", "scene-1")
+        status["audio_sample_clouds"] = {"clouds": [{
+            "entity_label": "James Bond",
+            "samples": [{
+                "sample_id": "bond-line-55",
+                "time_start": 55.28,
+                "time_end": 56.077,
+                "text": "You know what I mean.",
+                "confidence": 0.8,
+            }],
+        }]}
+        status["active_speaker_synchrony"] = {"measurements": [{
+            "identity_label": "James Bond",
+            "source_interval": {"start": 55.28, "end": 56.077},
+            "probability": 0.5182,
+            "correlation": 0.1886,
+        }]}
+
+        result = build_continuity_inventory([status], selected_agent="James Bond", project_id="bond-cop30-helsinki")
+        candidate = next(
+            row for row in result["selected_continuity_corridor"]["proposed_members"]
+            if row["occurrence_id"] == "bond-line-55"
+        )
+
+        self.assertEqual(candidate["evidence_modality"], "transcript_audio")
+        self.assertEqual(candidate["authority"], "named_audio_sample_candidate")
+        self.assertEqual(candidate["transcript_text"], "You know what I mean.")
+        self.assertEqual(candidate["scores"]["active_speaker_probability"], 0.5182)
+        self.assertTrue(candidate["interpretation_is_candidate_only"])
+
     def test_source_media_confirmed_roles_are_mature_selected_agent_authority(self):
         status = confirmed("James Bond", "bond-1", 1, 2, "track-1", "scene-1")
         status["source_media_metadata"] = {"user_annotations": {

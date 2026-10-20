@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from src.backend.analysis.narrative_agent_continuity_persistence import (
+    changed_correction_occurrence_ids,
     load_saved_continuity_state,
     selectively_invalidate_projection,
     write_continuity_artifacts,
@@ -27,6 +28,36 @@ def fixture():
     projection = {
         "revision": "projection-1",
         "canonical_collection": canonical,
+        "graph_projection": {
+            "edges": [{
+                "edge_id": "spoken-edge",
+                "edge_type": "spoken_by",
+                "maturity": {"level": "confirmed", "authority": "explicit_user_confirmation"},
+            }],
+            "relation_tickets": [{
+                "ticket_id": "spoken-ticket",
+                "edge_id": "spoken-edge",
+                "predicate": "spoken_by",
+                "state": "confirmed",
+                "allowed_decisions": ["revise", "reject"],
+                "evidence_refs": [{"evidence_id": "bond-audio-1"}],
+                "source_navigation": {
+                    "analysis_id": "bond-a",
+                    "source_interval": {"start": 55.28, "end": 56.077},
+                    "return_panel": "narrative_agent",
+                    "return_ticket_id": "spoken-ticket",
+                    "preserve_review_position": True,
+                },
+            }],
+        },
+        "constellational_snapshot": {"layers": {"who_is_speaking": {
+            "state": "candidate",
+            "candidates": [{
+                "candidate_id": "speaker-candidate",
+                "audio_occurrence_id": "bond-audio-1",
+                "state": "candidate",
+            }],
+        }}},
         "consumer_views": {
             name: {
                 "revision": "projection-1",
@@ -41,6 +72,28 @@ def fixture():
 
 
 class NarrativeAgentContinuityPersistenceTests(unittest.TestCase):
+    def test_changed_correction_ids_detect_add_update_and_removal_only(self):
+        previous = {
+            "manual_visual_annotations": [
+                {"id": "unchanged", "label": "Bond"},
+                {"id": "updated", "label": "Bond"},
+                {"id": "removed", "label": "Nomi"},
+            ],
+            "text_substitutions": [],
+        }
+        current = {
+            "manual_visual_annotations": [
+                {"id": "unchanged", "label": "Bond"},
+                {"id": "updated", "label": "James Bond"},
+            ],
+            "text_substitutions": [{"id": "added", "speaker_confirmation": "Bond"}],
+        }
+
+        self.assertEqual(
+            changed_correction_occurrence_ids(previous, current),
+            ["added", "removed", "updated"],
+        )
+
     def test_atomic_save_reopen_preserves_revision_members_and_consumers(self):
         project_id, inventory, ledger, projection = fixture()
         with tempfile.TemporaryDirectory() as tempdir:
@@ -51,6 +104,10 @@ class NarrativeAgentContinuityPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened["projection_revision"], "projection-1")
             for view in reopened["projection"]["consumer_views"].values():
                 self.assertEqual(view["member_occurrence_ids"], ["bond-1"])
+            reopened_ticket = reopened["projection"]["graph_projection"]["relation_tickets"][0]
+            self.assertEqual(reopened_ticket["state"], "confirmed")
+            self.assertEqual(reopened_ticket["source_navigation"]["source_interval"], {"start": 55.28, "end": 56.077})
+            self.assertTrue(reopened_ticket["source_navigation"]["preserve_review_position"])
             self.assertFalse(path.with_suffix(".json.tmp").exists())
 
     def test_foreign_project_and_tampered_payload_fail_closed(self):
@@ -78,6 +135,27 @@ class NarrativeAgentContinuityPersistenceTests(unittest.TestCase):
         self.assertFalse(affected["canonical_collection"]["measurement_eligibility"]["eligible"])
         for view in affected["consumer_views"].values():
             self.assertEqual(view["hydration_state"], "stale_retry")
+
+    def test_audio_correction_stales_only_dependent_spoken_by_relation_and_preserves_history(self):
+        _, _, _, projection = fixture()
+
+        affected = selectively_invalidate_projection(
+            projection, changed_occurrence_ids=["bond-audio-1"]
+        )
+
+        self.assertEqual(affected["canonical_collection"]["continuity_claim"], "accepted")
+        self.assertEqual(affected["invalidation"]["affected_occurrence_ids"], [])
+        self.assertEqual(affected["invalidation"]["affected_relation_edge_ids"], ["spoken-edge"])
+        ticket = affected["graph_projection"]["relation_tickets"][0]
+        self.assertEqual(ticket["state"], "stale")
+        self.assertEqual(ticket["invalidation"]["previous_state"], "confirmed")
+        self.assertTrue(ticket["invalidation"]["history_preserved"])
+        self.assertEqual(affected["graph_projection"]["edges"][0]["maturity"]["level"], "stale")
+        speaker_layer = affected["constellational_snapshot"]["layers"]["who_is_speaking"]
+        self.assertEqual(speaker_layer["state"], "stale")
+        self.assertEqual(speaker_layer["candidates"][0]["previous_state"], "candidate")
+        for view in affected["consumer_views"].values():
+            self.assertEqual(view["hydration_state"], "targeted_relation_retry")
 
     def test_saved_analysis_hydration_requires_checksum_project_and_analysis_membership(self):
         project_id, inventory, ledger, projection = fixture()

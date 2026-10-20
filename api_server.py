@@ -151,6 +151,7 @@ from src.backend.analysis.agent_persistence import (
 from src.backend.analysis.agent_persistence_manager import AgentPersistenceManager
 from src.backend.analysis.evidence_proliferation_matcher import (
     run_open_topology_scanner_refresh,
+    run_targeted_maturity_iteration,
     write_evidence_proliferation_match,
 )
 from src.backend.analysis.saved_analysis_hydration_loader import (
@@ -192,8 +193,16 @@ from src.backend.analysis.narrative_agent_continuity_projection import (
     build_continuity_projection_envelope,
 )
 from src.backend.analysis.narrative_agent_continuity_persistence import (
+    changed_correction_occurrence_ids,
     load_saved_continuity_state,
+    selectively_invalidate_projection,
     write_continuity_artifacts,
+)
+from src.backend.analysis.narrative_agent_continuity_export import (
+    write_continuity_interpretation_export,
+)
+from src.backend.analysis.narrative_agent_stage7_closeout import (
+    write_stage7_closeout_record,
 )
 from src.backend.analysis.correction_write_lock import correction_write_lock, CorrectionWriteBusy
 from src.backend.analysis.source_clock_context import (
@@ -10840,6 +10849,7 @@ async def get_analysis_status(analysis_id: str) -> dict:
         "source_extraction_metadata_summary": status.get("source_extraction_metadata_summary"),
         "vaa1_annotation_master_schema": status.get("vaa1_annotation_master_schema"),
         "evidence_proliferation_matches": status.get("evidence_proliferation_matches", []),
+        "maturity_iteration_latest": status.get("maturity_iteration_latest"),
         "live_mature_data_proliferation_audit": status.get(
             "live_mature_data_proliferation_audit"
         ),
@@ -11285,6 +11295,99 @@ async def get_project_narrative_agent_continuity(project_id: str, agent: str, an
         "decision_projection": decision_projection,
         "continuity_projection": projection,
         "artifact_view": continuity_artifact_view(inventory, projection, analysis_id),
+    })
+
+
+@app.post("/api/projects/{project_id}/narrative-agent-continuity/export", response_model=dict)
+async def export_project_narrative_agent_interpretation(
+    project_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Export one current speaker-attribution construct with its source chain."""
+    continuity_project_records(project_id)
+    agent = str(payload.get("agent") or "").strip()
+    if not agent:
+        raise HTTPException(status_code=400, detail="Narrative Agent label is required")
+    collection_id = continuity_collection_id(project_id, agent)
+    state_path = continuity_state_path(project_id, collection_id)
+    if not state_path.exists():
+        raise HTTPException(status_code=404, detail="No saved continuity state exists for this Narrative Agent")
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, f"project-{project_id}"):
+            state = load_saved_continuity_state(state_path, expected_project_id=project_id)
+            export_dir = state_path.parent / "exports"
+            export_path = export_dir / f"{state_path.stem}-speaker-attribution.json"
+            package = write_continuity_interpretation_export(
+                export_path,
+                state["projection"],
+                state["decision_ledger"],
+            )
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return make_json_safe({
+        "status": "exported",
+        "project_id": project_id,
+        "collection_id": collection_id,
+        "canonical_revision": package["canonical_revision"],
+        "content_checksum": package["content_checksum"],
+        "export_path": str(export_path),
+        "eligibility": package["eligibility"],
+        "state_distinctions": package["state_distinctions"],
+        "source_chain_count": len(package["source_chain"]),
+    })
+
+
+@app.post("/api/projects/{project_id}/narrative-agent-continuity/closeout", response_model=dict)
+async def closeout_project_narrative_agent_interpretation(
+    project_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    """Write an honest automated/manual closeout record for one construct."""
+    continuity_project_records(project_id)
+    agent = str(payload.get("agent") or "").strip()
+    if not agent:
+        raise HTTPException(status_code=400, detail="Narrative Agent label is required")
+    collection_id = continuity_collection_id(project_id, agent)
+    state_path = continuity_state_path(project_id, collection_id)
+    if not state_path.exists():
+        raise HTTPException(status_code=404, detail="No saved continuity state exists for this Narrative Agent")
+    try:
+        with correction_write_lock(RESULTS_DIR.parent.parent, f"project-{project_id}"):
+            state = load_saved_continuity_state(state_path, expected_project_id=project_id)
+            export_dir = state_path.parent / "exports"
+            export_package = write_continuity_interpretation_export(
+                export_dir / f"{state_path.stem}-speaker-attribution.json",
+                state["projection"],
+                state["decision_ledger"],
+            )
+            record = write_stage7_closeout_record(
+                state_path.parent / "closeout" / f"{state_path.stem}-stage7-closeout.json",
+                state["projection"],
+                export_package,
+                automated_verification=(
+                    payload.get("automated_verification")
+                    if isinstance(payload.get("automated_verification"), dict)
+                    else {}
+                ),
+                manual_acceptance=(
+                    payload.get("manual_acceptance")
+                    if isinstance(payload.get("manual_acceptance"), dict)
+                    else None
+                ),
+            )
+    except CorrectionWriteBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return make_json_safe({
+        "status": record["construct_status"],
+        "project_id": project_id,
+        "collection_id": collection_id,
+        "stage7_status": record["stage7_status"],
+        "automated_verification": record["automated_verification"],
+        "manual_acceptance": record["manual_acceptance"],
+        "next_construct_selection": record["next_construct_selection"],
+        "content_checksum": record["content_checksum"],
     })
 
 
@@ -14582,6 +14685,13 @@ def refresh_annotation_dependent_surfaces(status: Dict[str, Any]) -> None:
     write_second_order_meaning_artifacts_for_status(status)
     status.pop("live_mature_data_proliferation_audit", None)
     ensure_live_mature_data_proliferation_audit_for_status(status)
+    maturity_iteration = run_targeted_maturity_iteration(
+        analysis_id,
+        status,
+        RESULTS_DIR / analysis_id,
+    )
+    status["maturity_iteration_latest"] = maturity_iteration
+    status.setdefault("output_files", {})["maturity_iteration_latest"] = maturity_iteration["output_json_path"]
     status.pop("deferred_annotation_projection", None)
     append_analysis_event(
         status,
@@ -14590,6 +14700,8 @@ def refresh_annotation_dependent_surfaces(status: Dict[str, Any]) -> None:
             "speaker_prosody_projections": (
                 status.get("speaker_prosody_projection") or {}
             ).get("projection_count", 0),
+            "maturity_iteration_status": maturity_iteration.get("status"),
+            "maturity_probability_delta_count": len(maturity_iteration.get("probability_deltas") or []),
         },
     )
     persist_analysis_record_for_status(status)
@@ -14696,6 +14808,36 @@ def update_annotation_corrections(
             else:
                 corrections.setdefault("transcript_clock_offset_seconds", None)
 
+            changed_occurrence_ids = changed_correction_occurrence_ids(
+                previous_corrections, corrections
+            )
+            invalidated_projection_count = 0
+            primary_projection = status.get("narrative_agent_continuity_projection")
+            if isinstance(primary_projection, dict) and changed_occurrence_ids:
+                invalidated = selectively_invalidate_projection(
+                    primary_projection,
+                    changed_occurrence_ids=changed_occurrence_ids,
+                )
+                if (invalidated.get("invalidation") or {}).get("state") == "recompute_required":
+                    status["narrative_agent_continuity_projection"] = invalidated
+                    atomic_write_json(
+                        RESULTS_DIR / analysis_id / "narrative_agent_continuity_projection.json",
+                        invalidated,
+                    )
+                    invalidated_projection_count += 1
+            projection_map = status.get("narrative_agent_continuity_projections")
+            if isinstance(projection_map, dict) and changed_occurrence_ids:
+                for collection_id, current_projection in list(projection_map.items()):
+                    if not isinstance(current_projection, dict):
+                        continue
+                    invalidated = selectively_invalidate_projection(
+                        current_projection,
+                        changed_occurrence_ids=changed_occurrence_ids,
+                    )
+                    if (invalidated.get("invalidation") or {}).get("state") == "recompute_required":
+                        projection_map[collection_id] = invalidated
+                        invalidated_projection_count += 1
+
             ledger, canonical_events = sync_corrections_to_ledger(
                 decision_ledger_for_status(status),
                 previous_corrections,
@@ -14782,13 +14924,22 @@ def update_annotation_corrections(
                         corrections.get("meaning_network_custom_lanes", [])
                     ),
                     "dependent_projection": projection_state,
+                    "continuity_invalidated_projection_count": invalidated_projection_count,
+                    "continuity_changed_occurrence_ids": changed_occurrence_ids,
                 },
             )
+
+            persist_analysis_record_for_status(status)
 
             return {
                 "status": "saved",
                 "analysis_id": analysis_id,
                 "dependent_projection": projection_state,
+                "continuity_dependency_invalidation": {
+                    "changed_occurrence_ids": changed_occurrence_ids,
+                    "invalidated_projection_count": invalidated_projection_count,
+                    "state": "recompute_required" if invalidated_projection_count else "current",
+                },
                 "annotation_corrections": correction_clock_read_payload(analysis_id, build_annotation_corrections_payload(status)),
             }
     except CorrectionWriteBusy as exc:

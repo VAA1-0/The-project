@@ -40,6 +40,13 @@ type RelationTicket = {
   uncertainty?: string;
   analyst_meaning?: string;
   evidence_refs?: Array<{ time_range?: { start?: number; end?: number }; analysis_id?: string }>;
+  source_navigation?: {
+    analysis_id?: string;
+    source_interval?: { start?: number; end?: number };
+    return_panel?: string;
+    return_ticket_id?: string;
+    preserve_review_position?: boolean;
+  } | null;
 };
 
 type ConstellationalDialogueCandidate = {
@@ -190,10 +197,31 @@ export default function NarrativeAgentContinuityWorkbench({
   const [note, setNote] = useState("");
   const [relatedCollection, setRelatedCollection] = useState("");
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({});
+  const [activeRelationTicketId, setActiveRelationTicketId] = useState("");
+  const [reviewHydratedKey, setReviewHydratedKey] = useState("");
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [selectedAudioMatches, setSelectedAudioMatches] = useState<Set<string>>(new Set());
   const [audioDecisionReceipts, setAudioDecisionReceipts] = useState<Record<string, { state: string; revision?: string }>>({});
   const [sourceDecisionReceipts, setSourceDecisionReceipts] = useState<Record<string, { state: string; revision?: string; maturity: string }>>({});
+  const reviewStorageKey = `vaa1.continuity-review.${projectId}.${analysisId}.${agent.trim().toLocaleLowerCase()}`;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !agent.trim()) return;
+    try {
+      const restored = JSON.parse(window.localStorage.getItem(reviewStorageKey) || "{}");
+      setActiveRelationTicketId(String(restored.activeRelationTicketId || ""));
+      setRelationDrafts(restored.relationDrafts && typeof restored.relationDrafts === "object" ? restored.relationDrafts : {});
+    } catch {
+      setActiveRelationTicketId("");
+      setRelationDrafts({});
+    }
+    setReviewHydratedKey(reviewStorageKey);
+  }, [agent, reviewStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || reviewHydratedKey !== reviewStorageKey) return;
+    window.localStorage.setItem(reviewStorageKey, JSON.stringify({ activeRelationTicketId, relationDrafts }));
+  }, [activeRelationTicketId, relationDrafts, reviewHydratedKey, reviewStorageKey]);
 
   const publishAgentSelection = (label: string) => {
     const next = label.trim();
@@ -318,6 +346,15 @@ export default function NarrativeAgentContinuityWorkbench({
   const activeRelationTickets = relationTickets.filter((ticket) =>
     (ticket.evidence_refs || []).some((evidence) => evidence.analysis_id === analysisId),
   );
+
+  const openRelationSource = (ticket: RelationTicket) => {
+    const navigation = ticket.source_navigation;
+    const evidence = ticket.evidence_refs?.[0];
+    const targetAnalysisId = navigation?.analysis_id || evidence?.analysis_id;
+    const targetStart = navigation?.source_interval?.start ?? evidence?.time_range?.start;
+    setActiveRelationTicketId(ticket.ticket_id);
+    if (targetAnalysisId) openVideoAtTime(targetAnalysisId, Number(targetStart || 0));
+  };
   const constellationalSnapshot = payload?.continuity_projection?.constellational_snapshot;
   const constellationalLayers = constellationalSnapshot?.layers || {};
   const audioMatching = payload?.continuity_projection?.audio_sample_matching;
@@ -728,13 +765,13 @@ export default function NarrativeAgentContinuityWorkbench({
           <div className="mt-1 text-[9px] text-slate-500">Shared by the Narrative Agent and Meaning Knowledge graphs. One decision updates both projections.</div>
           <div className="mt-2 space-y-2">
             {activeRelationTickets.map((ticket) => {
-              const evidence = ticket.evidence_refs?.[0];
               const needsConfirmation = ticket.allowed_decisions?.includes("confirm") ?? !["mature", "confirmed"].includes(ticket.state);
-              return <div key={ticket.ticket_id} className="rounded border border-slate-800 bg-slate-950/50 p-2" data-relation-ticket-state={ticket.state}>
+              return <div key={ticket.ticket_id} className={`rounded border bg-slate-950/50 p-2 ${activeRelationTicketId === ticket.ticket_id ? "border-violet-500/70" : "border-slate-800"}`} data-relation-ticket-state={ticket.state} data-vaa1-active-relation-ticket={activeRelationTicketId === ticket.ticket_id ? "true" : "false"}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <button type="button" onClick={() => evidence?.analysis_id && openVideoAtTime(evidence.analysis_id, Number(evidence.time_range?.start || 0))} className="text-left text-[10px] font-medium text-violet-100 hover:text-white">{ticket.predicate.replaceAll("_", " ")}</button>
+                  <button type="button" onClick={() => openRelationSource(ticket)} className="text-left text-[10px] font-medium text-violet-100 hover:text-white">{ticket.predicate.replaceAll("_", " ")}</button>
                   <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[9px] text-slate-300">{ticket.state} · {ticket.authority}{!needsConfirmation ? " · proliferated" : ""}</span>
                 </div>
+                {activeRelationTicketId === ticket.ticket_id ? <div className="mt-1 text-[9px] text-violet-300" data-vaa1-review-position-restored="true">Review position retained · source return stays on this ticket</div> : null}
                 <div className="mt-1 text-[9px] text-slate-400">{ticket.warrant}</div>
                 {ticket.alternatives?.length ? <ul className="mt-1 list-disc pl-4 text-[9px] text-slate-500">{ticket.alternatives.map((alternative) => <li key={alternative}>{alternative}</li>)}</ul> : null}
                 <input value={relationDrafts[ticket.ticket_id] ?? ticket.analyst_meaning ?? ""} onChange={(event) => setRelationDrafts((current) => ({ ...current, [ticket.ticket_id]: event.target.value }))} className="mt-2 w-full rounded border border-slate-700 bg-[#171717] px-2 py-1 text-[10px] text-slate-100" placeholder="Analyst account / corrected edge meaning" aria-label={`Analyst meaning for ${ticket.predicate}`} />

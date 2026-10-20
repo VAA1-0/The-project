@@ -64,6 +64,43 @@ def decide(ledger, inventory, payload):
 
 
 class NarrativeAgentContinuityProjectionTests(unittest.TestCase):
+    def test_audio_visual_synchrony_raises_one_reviewable_spoken_by_ticket(self):
+        inventory = fixture()
+        inventory["selected_continuity_corridor"]["proposed_members"].append({
+            "occurrence_id": "bond-line-1",
+            "analysis_id": "bond-a",
+            "narrative_agent_key": "james bond",
+            "narrative_agent_label": "James Bond",
+            "source_interval": {"start": 1.2, "end": 1.8},
+            "evidence_modality": "transcript_audio",
+            "authority": "named_audio_sample_candidate",
+            "membership_state": "proposed_membership",
+            "transcript_text": "We need to leave.",
+            "scores": {"identity_cue_confidence": 0.8, "active_speaker_probability": 0.6},
+        })
+
+        result = build_continuity_projection_envelope(
+            inventory, {}, project_id="bond-cop30-helsinki", collection_id="bond-corridor"
+        )
+        candidate = result["canonical_collection"]["speaker_attribution_candidates"][0]
+        tickets = [row for row in result["graph_projection"]["relation_tickets"] if row["predicate"] == "spoken_by"]
+        layer = result["constellational_snapshot"]["layers"]["who_is_speaking"]
+
+        self.assertEqual(len(tickets), 1)
+        self.assertEqual(tickets[0]["state"], "candidate")
+        self.assertTrue(tickets[0]["editable"])
+        self.assertEqual(tickets[0]["source_navigation"]["analysis_id"], "bond-a")
+        self.assertEqual(tickets[0]["source_navigation"]["source_interval"], {"start": 1.2, "end": 1.8})
+        self.assertEqual(tickets[0]["source_navigation"]["return_panel"], "narrative_agent")
+        self.assertEqual(tickets[0]["source_navigation"]["return_ticket_id"], tickets[0]["ticket_id"])
+        self.assertTrue(tickets[0]["source_navigation"]["preserve_review_position"])
+        self.assertEqual(candidate["constellational_probability"], 0.82)
+        self.assertTrue(candidate["probability_basis"]["mature_visual_presence_overlap"])
+        self.assertEqual(candidate["probability_basis"]["active_speaker_synchrony_probability"], 0.6)
+        self.assertFalse(candidate["probability_basis"]["voice_identity_comparison_present"])
+        self.assertEqual(layer["state"], "candidate")
+        self.assertEqual(layer["candidates"][0]["transcript_text"], "We need to leave.")
+
     def test_interval_recurrence_surfaces_reviewable_roles_and_withholds_antagonist(self):
         inventory = fixture()
 

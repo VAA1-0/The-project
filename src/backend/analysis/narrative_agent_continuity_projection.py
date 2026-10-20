@@ -236,6 +236,80 @@ def _scene_presence_estimates(
     return estimates
 
 
+def _speaker_attribution_candidates(
+    inventory: Mapping[str, Any], members: Sequence[Mapping[str, Any]], selected_key: str
+) -> list[Dict[str, Any]]:
+    """Triangulate source-timed speaker candidates without inventing voice identity."""
+    corridor = _dict(inventory.get("selected_continuity_corridor"))
+    audio_candidates = [
+        row for row in _list(corridor.get("proposed_members"))
+        if isinstance(row, dict)
+        and _text(row.get("narrative_agent_key")) == selected_key
+        and _text(row.get("evidence_modality")) == "transcript_audio"
+        and _text(row.get("authority")) == "named_audio_sample_candidate"
+    ]
+    mature_visuals = [
+        row for row in members
+        if isinstance(row, dict)
+        and _text(row.get("evidence_modality") or "visual") == "visual"
+        and _text(row.get("authority")) == "explicit_analyst_confirmation"
+    ]
+
+    def overlaps(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+        if _text(left.get("analysis_id")) != _text(right.get("analysis_id")):
+            return False
+        left_interval, right_interval = _dict(left.get("source_interval")), _dict(right.get("source_interval"))
+        try:
+            return max(float(left_interval["start"]), float(right_interval["start"])) < min(
+                float(left_interval["end"]), float(right_interval["end"])
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    results = []
+    for audio in audio_candidates:
+        visual_support = [row for row in mature_visuals if overlaps(audio, row)]
+        scores = _dict(audio.get("scores"))
+        identity_cue = scores.get("identity_cue_confidence")
+        synchrony = scores.get("active_speaker_probability")
+        identity_cue = float(identity_cue) if isinstance(identity_cue, (int, float)) else 0.0
+        synchrony = float(synchrony) if isinstance(synchrony, (int, float)) else 0.0
+        probability = min(
+            0.94,
+            0.15 + (0.25 * identity_cue) + (0.35 if visual_support else 0.0) + (0.20 * synchrony),
+        )
+        occurrence_id = _text(audio.get("occurrence_id"))
+        results.append({
+            "candidate_id": _graph_id("speaker-attribution", _text(audio.get("analysis_id")), occurrence_id, selected_key),
+            "analysis_id": _text(audio.get("analysis_id")),
+            "audio_occurrence_id": occurrence_id,
+            "narrative_agent_key": selected_key,
+            "narrative_agent_label": _text(audio.get("narrative_agent_label")),
+            "source_interval": copy.deepcopy(audio.get("source_interval") or {}),
+            "transcript_text": _text(audio.get("transcript_text")),
+            "state": "candidate",
+            "authority": "constellational_speaker_attribution_candidate",
+            "constellational_probability": round(probability, 4),
+            "evidence_occurrence_ids": [occurrence_id] + [_text(row.get("occurrence_id")) for row in visual_support],
+            "probability_basis": {
+                "method": "bounded_audio_visual_synchrony_triangulation_v1",
+                "named_audio_identity_cue": round(identity_cue, 4),
+                "mature_visual_presence_overlap": bool(visual_support),
+                "mature_visual_support_count": len(visual_support),
+                "active_speaker_synchrony_probability": round(synchrony, 4) if synchrony else None,
+                "voice_identity_comparison_present": False,
+                "calibration": "review_candidate_not_identity_authority",
+            },
+            "warrant": "A named source-timed audio candidate is triangulated with mature visual presence and measured active-speaker synchrony where available.",
+            "alternatives": [
+                "The visible agent is present but another person is speaking.",
+                "Mouth motion is coincidental, dubbed, or insufficiently sampled.",
+                "The named audio cue is not a measured voice-identity match.",
+            ],
+        })
+    return results
+
+
 def _interval_recurrence_and_role_hypotheses(
     inventory: Mapping[str, Any], selected_key: str, agent_label: str, confirmed_roles: Sequence[str]
 ) -> Dict[str, Any]:
@@ -426,6 +500,17 @@ def _build_graph_and_snapshot(
                 "analyst_meaning": _text(relation_decision.get("analyst_meaning")) if relation_decision else "",
                 "decision_id": _text(relation_decision.get("decision_id")) if relation_decision else "",
                 "evidence_refs": copy.deepcopy(evidence_refs),
+                "source_navigation": (
+                    {
+                        "analysis_id": _text(evidence_refs[0].get("analysis_id")),
+                        "source_interval": copy.deepcopy(evidence_refs[0].get("time_range") or {}),
+                        "return_panel": "narrative_agent",
+                        "return_ticket_id": _graph_id("relation-ticket", edge_id),
+                        "preserve_review_position": True,
+                    }
+                    if evidence_refs
+                    else None
+                ),
                 "counter_evidence_refs": [],
                 "dependency_revision": revision,
                 "traceback_refs": list(canonical.get("traceback_refs") or []),
@@ -644,6 +729,51 @@ def _build_graph_and_snapshot(
         )
         topic_claims.append(transcript_text)
 
+    speaker_claims = []
+    for candidate in _list(canonical.get("speaker_attribution_candidates")):
+        interval = _dict(candidate.get("source_interval"))
+        candidate_id = _text(candidate.get("candidate_id"))
+        utterance_node_id = _graph_id("utterance-candidate", project_id, candidate_id)
+        evidence_refs = [{
+            "evidence_id": _text(candidate.get("audio_occurrence_id")),
+            "analysis_id": _text(candidate.get("analysis_id")),
+            "source_type": "transcript_audio",
+            "time_range": {"start": interval.get("start"), "end": interval.get("end")},
+            "traceback_record_id": _text(candidate.get("audio_occurrence_id")),
+        }]
+        nodes.append({
+            "node_id": utterance_node_id,
+            "node_type": "utterance_candidate",
+            "label": _text(candidate.get("transcript_text")) or f"Utterance {interval.get('start')}–{interval.get('end')}",
+            "attributes": {
+                "analysis_id": _text(candidate.get("analysis_id")),
+                "source_interval": copy.deepcopy(interval),
+                "constellational_probability": candidate.get("constellational_probability"),
+                "probability_basis": copy.deepcopy(candidate.get("probability_basis") or {}),
+            },
+            "maturity": {"level": "candidate", "authority": "constellational_speaker_attribution_candidate"},
+            "evidence_refs": copy.deepcopy(evidence_refs),
+        })
+        add_edge(
+            utterance_node_id,
+            agent_node_id,
+            "spoken_by",
+            state="candidate",
+            authority="constellational_speaker_attribution_candidate",
+            evidence_refs=evidence_refs,
+            warrant=_text(candidate.get("warrant")),
+            alternatives=[_text(item) for item in _list(candidate.get("alternatives"))],
+        )
+        speaker_claims.append({
+            "candidate_id": candidate_id,
+            "audio_occurrence_id": _text(candidate.get("audio_occurrence_id")),
+            "label": _text(candidate.get("narrative_agent_label")),
+            "transcript_text": _text(candidate.get("transcript_text")),
+            "source_interval": copy.deepcopy(interval),
+            "probability": candidate.get("constellational_probability"),
+            "probability_basis": copy.deepcopy(candidate.get("probability_basis") or {}),
+        })
+
     graph_projection = {
         "schema": "vaa1.stage7.shared_interpretation_graph.v1",
         "project_id": project_id,
@@ -686,6 +816,12 @@ def _build_graph_and_snapshot(
                 "claims": sorted({_text(item.get("label")) for item in dialogue_claims if _text(item.get("label"))}),
                 "candidates": dialogue_claims,
                 "reason": "Source-timed audio proximity requires analyst confirmation; co-presence alone is insufficient." if dialogue_claims else "A confirmed occurrence alone does not establish a dialogue partner or addressee.",
+            },
+            "who_is_speaking": {
+                "state": "candidate" if speaker_claims else "missing",
+                "claims": [],
+                "candidates": speaker_claims,
+                "reason": "Audio, mature visual presence, and measured lip synchrony are triangulated for analyst review." if speaker_claims else "No eligible named, source-timed audio candidate is available.",
             },
             "what_they_are_talking_about": {
                 "state": "candidate" if topic_claims else "missing",
@@ -814,6 +950,7 @@ def build_continuity_projection_envelope(
     }
     canonical["dialogue_candidates"] = _dialogue_candidates(inventory, members, selected_key)
     canonical["topic_candidates"] = _topic_candidates(members)
+    canonical["speaker_attribution_candidates"] = _speaker_attribution_candidates(inventory, members, selected_key)
     canonical["scene_presence_estimates"] = _scene_presence_estimates(
         inventory,
         selected_key,

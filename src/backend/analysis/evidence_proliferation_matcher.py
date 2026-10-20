@@ -488,7 +488,7 @@ def _decision_source_anchors(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
     if start is not None:
         fallback["start_seconds"] = start
         fallback["end_seconds"] = end if end is not None else start
-    geometry = _first_mapping(decision.get("geometry"), decision.get("bbox"))
+    geometry = _first_mapping(decision.get("geometry"), decision.get("bbox"), decision.get("coordinates"))
     if geometry:
         fallback["geometry"] = geometry
     return [fallback] if fallback else []
@@ -564,12 +564,126 @@ def build_mature_constellation_index(status: Dict[str, Any]) -> Dict[str, Any]:
         elif decision_value == "deferred":
             constellation["deferred"].append(record)
 
+    # All explicit source confirmations are mature constellation anchors, not
+    # only confirmations created inside the proliferation workbench.
+    existing_ids = {
+        _safe_text(record.get("decision_id") or record.get("target_evidence_id"))
+        for constellation in constellations.values()
+        for record in constellation.get("positive") or []
+    }
+    confirmed_sources = []
+    for row in corrections.get("manual_visual_annotations") or []:
+        if not isinstance(row, dict):
+            continue
+        event = (row.get("metadata_correlation") or {}).get("manual_confirmation_event") or {}
+        label = _safe_text(row.get("identity_affirmation") or row.get("custom_label") or row.get("label"))
+        if label and (row.get("identity_affirmation") or event):
+            confirmed_sources.append((row, label, "manual_visual_annotations", ["visual_presence"]))
+    for row in corrections.get("text_substitutions") or []:
+        if not isinstance(row, dict):
+            continue
+        label = _safe_text(row.get("speaker_confirmation"))
+        if label:
+            confirmed_sources.append((row, label, "transcript_panel", ["audio_presence", "transcript_speaker_link"]))
+
+    for row, label, source_panel, facets in confirmed_sources:
+        evidence_id = _safe_text(row.get("id") or row.get("decision_id"))
+        if evidence_id and evidence_id in existing_ids:
+            continue
+        key = _canonical_constellation_key(label)
+        if not key:
+            continue
+        constellation = constellations.setdefault(key, {"label": label, "positive": [], "negative": [], "deferred": []})
+        constellation["positive"].append({
+            "decision_id": evidence_id,
+            "candidate_id": evidence_id,
+            "target_evidence_id": evidence_id,
+            "label": label,
+            "source_panel": source_panel,
+            "source_anchors": _decision_source_anchors(row),
+            "presence_facets": facets,
+            "match_probability": 1.0,
+            "created_at": row.get("created_at") or row.get("updated_at"),
+            "authority": "explicit_user_confirmation",
+        })
+        positive_count += 1
+        if evidence_id:
+            existing_ids.add(evidence_id)
+
     return {
         "schema": "vaa1.mature_constellation_index.v1",
         "positive_count": positive_count,
         "negative_count": negative_count,
         "constellations": constellations,
     }
+
+
+def run_targeted_maturity_iteration(
+    analysis_id: str,
+    status: Dict[str, Any],
+    output_dir: Path,
+) -> Dict[str, Any]:
+    """Rescore existing match artifacts affected by newly mature anchors once."""
+    index = build_mature_constellation_index(status)
+    mature_keys = set((index.get("constellations") or {}).keys())
+    rescored = []
+    deltas = []
+    for summary in status.get("evidence_proliferation_matches") or []:
+        if not isinstance(summary, dict):
+            continue
+        path = Path(_safe_text(summary.get("output_json_path")))
+        if not path.exists():
+            continue
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        request = previous.get("request") if isinstance(previous.get("request"), dict) else None
+        if not request:
+            continue
+        evidence = request.get("evidence") if isinstance(request.get("evidence"), dict) else {}
+        request_key = _canonical_constellation_key(evidence.get("label") or evidence.get("source_label"))
+        if request_key not in mature_keys:
+            continue
+        before = {
+            _safe_text(row.get("candidate_id")): float(row.get("match_probability") or 0.0)
+            for row in previous.get("candidates") or [] if isinstance(row, dict)
+        }
+        current = write_evidence_proliferation_match(analysis_id, status, request, path)
+        for row in current.get("candidates") or []:
+            if not isinstance(row, dict):
+                continue
+            candidate_id = _safe_text(row.get("candidate_id"))
+            after = float(row.get("match_probability") or 0.0)
+            prior = before.get(candidate_id)
+            if prior is not None and round(after - prior, 6) != 0:
+                deltas.append({
+                    "request_id": request.get("request_id"),
+                    "candidate_id": candidate_id,
+                    "before_probability": round(prior, 4),
+                    "after_probability": round(after, 4),
+                    "delta": round(after - prior, 4),
+                })
+        rescored.append(_safe_text(request.get("request_id")))
+    receipt = {
+        "schema": "vaa1.maturity_iteration_receipt.v1",
+        "analysis_id": analysis_id,
+        "created_at": _now_iso(),
+        "mature_anchor_count": index.get("positive_count", 0),
+        "affected_request_ids": rescored,
+        "probability_deltas": deltas,
+        "status": "completed" if rescored else "no_existing_affected_matches",
+        "policy": {
+            "single_pass": True,
+            "user_confirmation_is_mature": True,
+            "candidate_self_promotion_forbidden": True,
+        },
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = output_dir / "maturity_iteration_latest.json"
+    receipt_path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8")
+    receipt["output_json_path"] = str(receipt_path)
+    return receipt
 
 
 def _candidate(

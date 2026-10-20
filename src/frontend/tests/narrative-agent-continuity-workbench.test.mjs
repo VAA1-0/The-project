@@ -144,6 +144,11 @@ test("Narrative Agent graph exposes governed editable relation tickets in panel"
   assert.match(workbench, /operation,/);
   assert.match(workbench, /edge_id: ticket\.edge_id/);
   assert.match(workbench, /graphProjection: result\.continuity_projection\?\.graph_projection/);
+  assert.match(workbench, /vaa1\.continuity-review/);
+  assert.match(workbench, /activeRelationTicketId/);
+  assert.match(workbench, /source_navigation/);
+  assert.match(workbench, /data-vaa1-review-position-restored="true"/);
+  assert.match(workbench, /Review position retained/);
 });
 
 test("mature presence proliferates participation without duplicate confirmation and dialogue probability remains visible", () => {

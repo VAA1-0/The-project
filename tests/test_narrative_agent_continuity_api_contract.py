@@ -84,9 +84,9 @@ def test_artifact_owned_audio_confirmation_is_saved_and_inventory_visible(monkey
     assert "transcript" in result["saloon_doors"]
     graph = result["continuity_projection"]["graph_projection"]
     assert graph["projection_targets"] == ["meaning_knowledge_graph", "narrative_agent_graph"]
-    assert {edge["edge_type"] for edge in graph["edges"]} == {
+    assert {
         "evidence_of_identity", "occurs_during", "participates_in"
-    }
+    }.issubset({edge["edge_type"] for edge in graph["edges"]})
     participation = next(
         ticket for ticket in graph["relation_tickets"] if ticket["predicate"] == "participates_in"
     )

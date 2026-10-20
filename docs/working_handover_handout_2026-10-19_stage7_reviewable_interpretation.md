@@ -1,5 +1,15 @@
 # Working Handover — Stage 7 Reviewable Interpretation
 
+## Maturity-iteration slice
+
+An explicit visual or speaker confirmation now enters the shared mature
+constellation memory at probability `1.0`. Existing matcher requests for that
+Narrative Agent are rescored once in the background after the durable save.
+Datascene writes `maturity_iteration_latest.json` with affected request ids and
+candidate-level before/after probability deltas. The slice is deliberately
+single-pass: it does not let candidates promote themselves or recursively
+amplify correlated evidence.
+
 Date: 2026-10-19
 
 Project boundary: `bond-cop30-helsinki`
@@ -259,6 +269,16 @@ Gate: a snapshot survives save/reopen, reconstructs from the same canonical
 revision, exposes contradictions and missingness, navigates every populated
 layer locally, and updates selectively when one dependency is corrected.
 
+Delivered bounded speaker-attribution slice: named source-timed audio candidates
+are now triangulated with overlapping mature visual presence and measured
+active-speaker synchrony. The result is exposed as a `who_is_speaking`
+constellation layer and one editable `spoken_by` relation ticket shared by the
+Meaning Knowledge Graph and Narrative Agent Graph. The probability receipt
+lists each contributing signal and explicitly records when no voice-identity
+comparison exists. The deduction therefore remains a review candidate until the
+analyst confirms it; that confirmation can then mature and proliferate through
+the canonical relation-decision path.
+
 ### Step 7.7 — Prove correction and dependency invalidation
 
 Correct the proposition, its beat boundary or its supporting source link and
@@ -268,6 +288,15 @@ assertions. A later explicit user correction outranks the earlier confirmation.
 
 Gate: affected consumers converge on the corrected revision; stale projections
 cannot remain report-eligible, and unaffected mature evidence is preserved.
+
+Delivered bounded dependency-invalidation slice: the durable correction route
+now detects added, changed and removed visual or transcript/audio occurrence
+ids. Only graph relations and constellation candidates that cite the changed
+evidence are marked `stale` and queued for targeted recomputation. Their prior
+state and the append-only analyst decision remain preserved in the invalidation
+receipt. A changed mature collection member additionally suspends collection
+measurement eligibility; a relation-only audio correction does not demote the
+otherwise valid Narrative Agent continuity collection.
 
 ### Step 7.8 — Prove persistence and local navigation
 
@@ -279,6 +308,14 @@ navigation.
 Gate: semantic parity and project hermeticity hold after reopen; no foreign or
 sparse projection outranks the canonical record.
 
+Delivered bounded persistence and local-navigation slice: every evidence-backed
+relation ticket now carries an exact analysis/interval source-return contract,
+including its originating panel and ticket id. This contract survives the
+checksummed continuity save/reopen path with the ticket decision, evidence and
+canonical revision. The Narrative Agent workbench preserves the active ticket
+and analyst draft per project, artifact and Narrative Agent, so source navigation,
+panel return and detached/reopened hydration retain the analyst's review position.
+
 ### Step 7.9 — Prove governed export
 
 Export the construct with its accepted/candidate/history distinction, evidence
@@ -289,6 +326,15 @@ reproduce the visible assertion and source return.
 Gate: the isolated restoration retains the same meaning and provenance without
 flattening a candidate, rejection or superseded assertion into accepted truth.
 
+Delivered bounded governed-export slice: the project continuity API can export
+the current speaker-attribution construct from the checksummed canonical saved
+state. The package contains the `spoken_by` ticket, graph nodes and edge,
+constellational layer, append-only decision history, exact source-return chain,
+producer/schema identity, canonical revision, state counts and a package
+checksum. Eligibility is rechecked at export time. Stale projections, foreign
+project restoration and checksum tampering fail closed, while isolated restore
+preserves candidate/confirmed/rejected/deferred distinctions without flattening.
+
 ### Step 7.10 — Close the slice and select the next construct
 
 Record automated and rendered evidence, manual acceptance, analyst effort,
@@ -298,6 +344,19 @@ not according to the breadth of an existing schema or menu.
 
 Gate: this construct may be marked operational. Stage 7 remains partial until
 each selected construct independently passes the same lifecycle.
+
+Delivered bounded closeout slice: Datascene now writes a checksummed Stage 7
+construct-readiness record that reconciles automated contracts with five
+separate rendered/manual gates: graph parity, originating-panel source return,
+cross-consumer hydration without reconfirmation, save/reopen plus detached-panel
+parity, and isolated export restoration. Automated success alone produces
+`manual_acceptance_required`, never `operational`. A complete named analyst
+receipt closes only the speaker-attribution construct and authorizes selection
+of the next prerequisite-ready construct; `stage7_status` remains `partial`.
+
+All remaining automatable slices for this first vertical construct are now
+delivered. The only open gate is the ordered rendered/manual acceptance below.
+No broader Stage 7 completion claim is made.
 
 ## Required acceptance sequence
 
