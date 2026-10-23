@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/vaa1_runtime_dependency_mitigation_v1.schema.json",
+  "title": "Datascene runtime dependency mitigation",
+  "type": "object",
+  "required": ["schema", "boundary", "required_executables", "controls", "acceptance"],
+  "properties": {
+    "schema": {"const": "vaa1.runtime_dependency_mitigation.v1"},
+    "boundary": {"const": "analysis_runtime_preflight"},
+    "required_executables": {
+      "type": "array",
+      "items": {"enum": ["ffmpeg", "ffprobe"]},
+      "minItems": 2,
+      "uniqueItems": true
+    },
+    "controls": {
+      "type": "object",
+      "required": ["discover", "disclose", "block", "record", "recover"],
+      "properties": {
+        "discover": {"const": "Search inherited PATH, then the active Python runtime bin."},
+        "disclose": {"const": "Expose resolved paths and missing dependencies in the run receipt."},
+        "block": {"const": "Reject analysis start with typed HTTP 503 before evidence work begins."},
+        "record": {"const": "Preserve dependency state, effective settings, fallbacks and resource observations."},
+        "recover": {"const": "Restart after runtime repair and begin a new comparable run receipt."}
+      },
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["upload_probe", "quick_sweep", "audio_branch", "receipt"],
+      "properties": {
+        "upload_probe": {"const": "passes"},
+        "quick_sweep": {"const": "completed"},
+        "audio_branch": {"const": "completed_without_executable_lookup_error"},
+        "receipt": {"const": "contains_resolved_dependencies_and_no_runtime_field_missingness"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

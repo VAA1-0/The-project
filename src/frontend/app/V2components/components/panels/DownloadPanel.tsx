@@ -23,12 +23,14 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
 import { apiService } from "@/lib/api-service";
+import { activeProjectScopeId } from "@/lib/active-project-scope";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useLayoutHost } from "../LayoutHost";
 
 interface DownloadFile {
   name: string;
@@ -117,6 +119,7 @@ const starfleetNote = (status: any) => {
 };
 
 export default function DownloadPanel() {
+  const { openPanel } = useLayoutHost();
   const [videoId, setVideoId] = useState("");
 
   const [availableFiles, setAvailableFiles] = useState<DownloadFile[]>([]);
@@ -128,12 +131,15 @@ export default function DownloadPanel() {
   const [projectAnalysisCount, setProjectAnalysisCount] = useState(0);
   const [publication, setPublication] = useState<any>(null);
   const [publicationBusy, setPublicationBusy] = useState<"video" | "corpus" | null>(null);
+  const [completion, setCompletion] = useState<any>(null);
+  const [completionBusy, setCompletionBusy] = useState(false);
 
   // Listen for video ID changes via event bus
   useEffect(() => {
     const handler = (id: string) => {
       setVideoId(id);
       setPublication(null);
+      setCompletion(null);
     };
     eventBus.on("videoIdChanged", handler);
 
@@ -297,6 +303,12 @@ export default function DownloadPanel() {
       // Set the status
       if (apiStatus) {
         setAnalysisStatus(apiStatus);
+        try {
+          setCompletion(await apiService.getAnalysisCompletion(videoId));
+        } catch (completionError) {
+          console.warn("Completed-analysis account unavailable:", completionError);
+          setCompletion(null);
+        }
         debugLog += `\n3. Analysis Status Set:\n`;
         debugLog += `   Status: ${apiStatus.status}\n`;
         debugLog += `   Progress: ${apiStatus.progress}\n`;
@@ -524,6 +536,10 @@ export default function DownloadPanel() {
   };
 
   const buildProjectPayload = async () => {
+    const projectId = activeProjectScopeId();
+    if (!projectId) {
+      throw new Error("Open a research project before generating a project publication.");
+    }
     const analyses = await VideoService.list(200);
     const savedAnalyses = analyses
       .filter((analysis) => analysis.status !== "error")
@@ -566,7 +582,8 @@ export default function DownloadPanel() {
     })();
 
     return {
-      project_name: "vaa1_project",
+      project_id: projectId,
+      project_name: projectId,
       analysis_ids: savedAnalyses,
       matrices: {
         pos: {
@@ -601,7 +618,7 @@ export default function DownloadPanel() {
       const result = scope === "video"
         ? await apiService.prepareVideoPublication(videoId)
         : await buildProjectPayload().then((payload) => apiService.prepareCorpusPublication({
-            project_id: String(payload.project_name || "vaa1-research-project"),
+            project_id: String(payload.project_id),
             analysis_ids: payload.analysis_ids as string[],
           }));
       setPublication(result);
@@ -609,6 +626,24 @@ export default function DownloadPanel() {
       alert(error instanceof Error ? error.message : "Publication generation failed");
     } finally {
       setPublicationBusy(null);
+    }
+  };
+
+  const confirmAnalysisComplete = async () => {
+    if (!videoId || completionBusy) return;
+    const note = window.prompt(
+      "Optional completion note. This freezes a new edition; later corrections remain possible in a later edition.",
+      "",
+    );
+    if (note === null) return;
+    try {
+      setCompletionBusy(true);
+      await apiService.completeAnalysisEdition(videoId, note);
+      setCompletion(await apiService.getAnalysisCompletion(videoId));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Analysis completion failed");
+    } finally {
+      setCompletionBusy(false);
     }
   };
 
@@ -890,6 +925,56 @@ export default function DownloadPanel() {
             </div>
           ) : (
             <div className="space-y-3">
+              <details open className="rounded-lg border border-slate-700 bg-slate-900/35" data-vaa1-completed-analysis="true">
+                <summary className="cursor-pointer px-3 py-2 text-xs text-slate-300">
+                  Completed Analysis 1.0
+                </summary>
+                <div className="m-3 mt-1 space-y-3 border-t border-slate-800 pt-3">
+                  {completion?.account ? (
+                    <>
+                      <div className="text-[11px] leading-5 text-slate-300">
+                        <div className="font-medium">{completion.account.source?.filename || analysisStatus.filename}</div>
+                        <div className="text-[var(--ui-passive-text)]">
+                          {completion.account.scope?.analysis_tier || "Recorded scan"} · {completion.account.scope?.modality_focus || "recorded modality"} · source-media clock
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                        {[
+                          ["Confirmed", completion.account.evidence?.confirmed ?? 0],
+                          ["Candidates", completion.account.evidence?.candidates ?? 0],
+                          ["Withheld", completion.account.evidence?.withheld ?? 0],
+                          ["Artifacts", completion.account.evidence?.artifact_count ?? 0],
+                        ].map(([label, value]) => (
+                          <div key={String(label)} className="rounded border border-slate-800 bg-slate-950/30 p-2">
+                            <div className="text-[var(--ui-passive-text)]">{label}</div><div className="mt-1 text-sm text-slate-300">{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-[10px] text-[var(--ui-passive-text)]">
+                        Decisions/history: {completion.account.corrections_and_history?.decision_count ?? 0} · Superseded retained: {completion.account.corrections_and_history?.superseded_count ?? 0}
+                      </div>
+                      {(completion.account.limitations || []).length > 0 && (
+                        <div className="rounded border border-slate-800 p-2 text-[10px] text-slate-400">
+                          <div className="mb-1 font-medium text-slate-300">Limitations and missingness</div>
+                          {(completion.account.limitations || []).map((item: string) => <div key={item}>• {item}</div>)}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button onClick={() => openPanel("AnalysisReport", { videoId })} className="rounded bg-slate-700 px-2.5 py-1.5 text-[10px] text-slate-100 hover:bg-slate-600">
+                          <BookOpen className="mr-1 inline size-3" />Open Analysis Report
+                        </button>
+                        <button onClick={confirmAnalysisComplete} disabled={!completion.eligible || completionBusy} className="rounded bg-slate-800 px-2.5 py-1.5 text-[10px] text-slate-200 hover:bg-slate-700 disabled:opacity-50">
+                          {completionBusy ? <Loader2 className="mr-1 inline size-3 animate-spin" /> : <CheckCircle className="mr-1 inline size-3" />}
+                          {completion.latest_edition ? "Freeze next edition" : "Confirm Analysis 1.0 complete"}
+                        </button>
+                        {completion.latest_edition && <span className="text-[10px] text-slate-400">{completion.latest_edition.label} frozen · {String(completion.latest_edition.content_identity || "").slice(0, 12)}</span>}
+                      </div>
+                      <div className="text-[10px] text-[var(--ui-passive-text)]">Evidence remains navigable in its originating panels. Data Book publication below uses the governed source chain.</div>
+                    </>
+                  ) : <div className="text-[11px] text-slate-400">Completion account is not available for this record.</div>}
+                </div>
+              </details>
+
               <details open className="rounded-lg border border-slate-800 bg-slate-900/25">
                 <summary className="cursor-pointer px-3 py-2 text-xs text-[var(--ui-passive-text)]">
                   Data Book publication

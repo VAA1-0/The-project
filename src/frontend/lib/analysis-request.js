@@ -9,6 +9,7 @@ export function buildAnalysisSearchParams(pipelineType = "full", options = {}) {
     applyFaceAnonymization = false,
     faceMessageStyle = "plain",
     faceRequiresPersonDetection = false,
+    modelChoices = {},
   } = options;
 
   return new URLSearchParams({
@@ -24,5 +25,6 @@ export function buildAnalysisSearchParams(pipelineType = "full", options = {}) {
     apply_face_anonymization: String(applyFaceAnonymization),
     face_message_style: faceMessageStyle,
     face_requires_person_detection: String(faceRequiresPersonDetection),
+    model_choices: JSON.stringify(modelChoices),
   });
 }

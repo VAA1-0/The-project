@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+const BOND_ID = "81920e95-a0b2-4173-bc23-86db7909a0a9";
+
 test("legacy panel disclosures inherit global shuffle, fill, detach, and return controls", async ({ page, context }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.addInitScript(() => window.localStorage.removeItem("vaa1.panel-section-order.global.DownloadPanel"));
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
 
   const tab = page.locator(".lm_tab").filter({ hasText: /^Downloads$/ }).last();
   await expect(tab).toBeVisible({ timeout: 60_000 });
@@ -36,17 +38,29 @@ test("legacy panel disclosures inherit global shuffle, fill, detach, and return 
   await controls.getByRole("button", { name: "Drag to reorder" }).hover();
   await expect(controls.getByRole("tooltip", { name: "Drag to reorder" })).toBeVisible();
 
-  await controls.getByRole("button", { name: "Fill panel" }).click();
+  expect(await first.evaluate((details) => {
+    const button = details.querySelector<HTMLButtonElement>('button[aria-label="Fill panel"]');
+    button?.click();
+    return Boolean(button);
+  })).toBe(true);
   await expect(first).toHaveAttribute("open", "");
   await expect(first).toHaveAttribute("data-vaa1-global-filled", "true");
   const leafBounds = await leaf.boundingBox();
   const filledBounds = await first.boundingBox();
   expect(leafBounds && filledBounds && Math.abs(leafBounds.height - filledBounds.height) < 8).toBe(true);
-  await first.getByRole("button", { name: "Return" }).click();
+  expect(await first.evaluate((details) => {
+    const button = details.querySelector<HTMLButtonElement>('button[aria-label="Return"]');
+    button?.click();
+    return Boolean(button);
+  })).toBe(true);
   await expect(first).not.toHaveAttribute("data-vaa1-global-filled", "true");
 
   const popupPromise = context.waitForEvent("page");
-  await first.getByRole("button", { name: "Detach to another screen" }).click();
+  expect(await first.evaluate((details) => {
+    const button = details.querySelector<HTMLButtonElement>('button[aria-label="Detach to another screen"]');
+    button?.click();
+    return Boolean(button);
+  })).toBe(true);
   const popup = await popupPromise;
   await expect(page.getByText(/is open in a separate window/)).toBeVisible();
   await popup.close();

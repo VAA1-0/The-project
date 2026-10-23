@@ -129,7 +129,7 @@ def _topic_candidates(members: Sequence[Mapping[str, Any]]) -> list[Dict[str, An
     """Raise transcript-grounded topic accounts without keyword interpretation."""
     candidates: list[Dict[str, Any]] = []
     for member in members:
-        if _text(member.get("evidence_modality")) != "transcript_audio":
+        if _text(member.get("evidence_modality")) not in {"audio", "transcript_audio"}:
             continue
         transcript_text = _text(member.get("transcript_text"))
         if not transcript_text:
@@ -153,6 +153,52 @@ def _topic_candidates(members: Sequence[Mapping[str, Any]]) -> list[Dict[str, An
     return candidates
 
 
+def _confirmed_speaker_attributions(members: Sequence[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+    """Project mature speaker facts from explicitly confirmed audio identity."""
+    return [
+        {
+            "attribution_id": _graph_id("confirmed-speaker", _text(member.get("analysis_id")), _text(member.get("occurrence_id"))),
+            "analysis_id": _text(member.get("analysis_id")),
+            "audio_occurrence_id": _text(member.get("occurrence_id")),
+            "narrative_agent_key": _text(member.get("narrative_agent_key")),
+            "narrative_agent_label": _text(member.get("narrative_agent_label")),
+            "source_interval": copy.deepcopy(member.get("source_interval") or {}),
+            "transcript_text": _text(member.get("transcript_text")),
+            "speaker_cluster_label": _text(member.get("speaker_cluster_label")),
+            "state": "confirmed",
+            "authority": "explicit_analyst_confirmation",
+            "evidence_occurrence_ids": [_text(member.get("occurrence_id"))],
+        }
+        for member in members
+        if _text(member.get("evidence_modality")) in {"audio", "transcript_audio"}
+        and _text(member.get("authority")) == "explicit_analyst_confirmation"
+    ]
+
+
+def _bodily_expression_snapshot(canonical: Mapping[str, Any]) -> Dict[str, Any]:
+    evidence: list[Dict[str, Any]] = []
+    for member in _list(canonical.get("members")):
+        for row in _list(member.get("time_aligned_bodily_evidence")):
+            if isinstance(row, dict):
+                evidence.append(copy.deepcopy(row))
+    unique = {( _text(row.get("evidence_id")), _text(row.get("label"))): row for row in evidence}
+    candidates = [
+        {
+            "label": _text(row.get("label")),
+            "state": "candidate",
+            "source_interval": copy.deepcopy(row.get("source_interval") or {}),
+            "evidence_id": _text(row.get("evidence_id")),
+        }
+        for row in unique.values()
+    ]
+    return {
+        "state": "candidate" if candidates else "missing",
+        "claims": [],
+        "candidates": candidates,
+        "reason": "These analyst-confirmed bodily cues are source-time aligned with speech; their relationship to meaning remains non-causal and reviewable." if candidates else "No eligible time-aligned bodily-expression assertion is attached; temporal alignment would remain non-causal.",
+    }
+
+
 def _scene_presence_estimates(
     inventory: Mapping[str, Any], selected_key: str, agent_label: str
 ) -> list[Dict[str, Any]]:
@@ -173,6 +219,9 @@ def _scene_presence_estimates(
     def contribution(row: Mapping[str, Any]) -> tuple[str, float, bool]:
         authority = _text(row.get("authority"))
         modality = _text(row.get("evidence_modality") or "visual")
+        scene_anchor = _dict(row.get("scene_anchor"))
+        if _text(scene_anchor.get("review_state")) == "candidate_review_required":
+            return modality, 0.55, False
         if authority == "explicit_analyst_confirmation":
             return modality, 1.0, True
         scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
@@ -450,6 +499,7 @@ def _build_graph_and_snapshot(
     relation_tickets: list[Dict[str, Any]] = []
     source_occurrences: list[Dict[str, Any]] = []
     scene_ids: set[str] = set()
+    candidate_scene_ids: set[str] = set()
     relation_decisions = canonical.get("relation_decisions") if isinstance(canonical.get("relation_decisions"), dict) else {}
 
     def add_edge(
@@ -518,13 +568,14 @@ def _build_graph_and_snapshot(
         )
 
     confirmed_roles = [_text(role) for role in _list(canonical.get("confirmed_roles")) if _text(role)]
+    confirmed_role_authority = _text(canonical.get("role_authority")) or "explicit_analyst_role_confirmation"
     for role in confirmed_roles:
         role_node_id = _graph_id("narrative-role", project_id, agent_key, role.casefold())
         nodes.append({
             "node_id": role_node_id,
             "node_type": "narrative_role",
             "label": role,
-            "maturity": {"level": "mature", "authority": "explicit_source_media_metadata_confirmation"},
+            "maturity": {"level": "mature", "authority": confirmed_role_authority},
             "evidence_refs": [],
         })
         add_edge(
@@ -532,9 +583,9 @@ def _build_graph_and_snapshot(
             role_node_id,
             "has_narrative_role",
             state="mature",
-            authority="explicit_source_media_metadata_confirmation",
+            authority=confirmed_role_authority,
             evidence_refs=[],
-            warrant="The analyst-confirmed Source Media metadata assigns this Narrative Agent role.",
+            warrant="An explicit analyst confirmation assigns this Narrative Agent role.",
             alternatives=[],
         )
     for hypothesis in _list(_dict(canonical.get("interval_recurrence")).get("role_hypotheses")):
@@ -643,6 +694,10 @@ def _build_graph_and_snapshot(
         scene_id = _text(member.get("scene_id"))
         if scene_id and scene_id not in scene_ids:
             scene_ids.add(scene_id)
+            scene_anchor = _dict(member.get("scene_anchor"))
+            scene_is_candidate = _text(scene_anchor.get("review_state")) == "candidate_review_required"
+            if scene_is_candidate:
+                candidate_scene_ids.add(scene_id)
             scene_node_id = _graph_id("scene", project_id, _text(member.get("analysis_id")), scene_id)
             nodes.append(
                 {
@@ -650,7 +705,7 @@ def _build_graph_and_snapshot(
                     "node_type": "scene_situation",
                     "label": scene_id,
                     "attributes": {"scene_id": scene_id, "analysis_id": _text(member.get("analysis_id"))},
-                    "maturity": {"level": "confirmed", "authority": "source_scene_anchor"},
+                    "maturity": {"level": "candidate" if scene_is_candidate else "confirmed", "authority": _text(scene_anchor.get("authority")) or "source_scene_anchor"},
                     "evidence_refs": [copy.deepcopy(evidence_ref)],
                 }
             )
@@ -658,11 +713,11 @@ def _build_graph_and_snapshot(
                 occurrence_node_id,
                 scene_node_id,
                 "situated_in",
-                state="mature",
-                authority="explicit_analyst_confirmation",
+                state="candidate" if scene_is_candidate else "mature",
+                authority=_text(scene_anchor.get("authority")) or "explicit_analyst_confirmation",
                 evidence_refs=[evidence_ref],
-                warrant="The confirmed occurrence carries this governed scene anchor.",
-                alternatives=[],
+                warrant="The confirmed occurrence overlaps this governed scene interval.",
+                alternatives=["The synthesized scene boundary requires analyst revision."] if scene_is_candidate else [],
             )
         source_occurrences.append(copy.deepcopy(evidence_ref))
 
@@ -729,6 +784,33 @@ def _build_graph_and_snapshot(
         )
         topic_claims.append(transcript_text)
 
+    confirmed_speaker_claims = []
+    for attribution in _list(canonical.get("confirmed_speaker_attributions")):
+        interval = _dict(attribution.get("source_interval"))
+        occurrence_id = _text(attribution.get("audio_occurrence_id"))
+        utterance_node_id = _graph_id("confirmed-utterance", project_id, occurrence_id)
+        evidence_refs = [ref for ref in source_occurrences if _text(ref.get("evidence_id")) == occurrence_id]
+        nodes.append({
+            "node_id": utterance_node_id,
+            "node_type": "confirmed_utterance",
+            "label": _text(attribution.get("transcript_text")) or f"Confirmed utterance {interval.get('start')}–{interval.get('end')}",
+            "attributes": {"analysis_id": _text(attribution.get("analysis_id")), "source_interval": copy.deepcopy(interval)},
+            "maturity": {"level": "mature", "authority": "explicit_analyst_confirmation"},
+            "evidence_refs": copy.deepcopy(evidence_refs),
+        })
+        add_edge(
+            utterance_node_id, agent_node_id, "spoken_by", state="mature",
+            authority="explicit_analyst_confirmation", evidence_refs=evidence_refs,
+            warrant="The analyst explicitly confirmed this bounded audio occurrence as the Narrative Agent.",
+            alternatives=[],
+        )
+        confirmed_speaker_claims.append({
+            "label": _text(attribution.get("narrative_agent_label")),
+            "transcript_text": _text(attribution.get("transcript_text")),
+            "source_interval": copy.deepcopy(interval),
+            "state": "confirmed",
+        })
+
     speaker_claims = []
     for candidate in _list(canonical.get("speaker_attribution_candidates")):
         interval = _dict(candidate.get("source_interval"))
@@ -786,6 +868,7 @@ def _build_graph_and_snapshot(
         "one_canonical_relation_ticket_for_both_graphs": True,
     }
     has_scene = bool(scene_ids)
+    all_scenes_confirmed = has_scene and not candidate_scene_ids
     scene_presence_estimates = _list(canonical.get("scene_presence_estimates"))
     snapshot = {
         "schema": "vaa1.constellational_snapshot.v1",
@@ -818,10 +901,11 @@ def _build_graph_and_snapshot(
                 "reason": "Source-timed audio proximity requires analyst confirmation; co-presence alone is insufficient." if dialogue_claims else "A confirmed occurrence alone does not establish a dialogue partner or addressee.",
             },
             "who_is_speaking": {
-                "state": "candidate" if speaker_claims else "missing",
-                "claims": [],
+                "state": "confirmed" if confirmed_speaker_claims else "candidate" if speaker_claims else "missing",
+                "claims": sorted({_text(item.get("label")) for item in confirmed_speaker_claims if _text(item.get("label"))}),
+                "confirmed_occurrences": confirmed_speaker_claims,
                 "candidates": speaker_claims,
-                "reason": "Audio, mature visual presence, and measured lip synchrony are triangulated for analyst review." if speaker_claims else "No eligible named, source-timed audio candidate is available.",
+                "reason": "The bounded audio identity was explicitly confirmed by the analyst." if confirmed_speaker_claims else "Audio, mature visual presence, and measured lip synchrony are triangulated for analyst review." if speaker_claims else "No eligible named, source-timed audio candidate is available.",
             },
             "what_they_are_talking_about": {
                 "state": "candidate" if topic_claims else "missing",
@@ -829,20 +913,16 @@ def _build_graph_and_snapshot(
                 "reason": "Confirmed speaker transcript supports review, but the topic account requires its own analyst decision." if topic_claims else "No governed transcript proposition or topic decision is attached to this continuity projection.",
             },
             "scenic_and_situational_context": {
-                "state": "confirmed" if has_scene else "missing",
+                "state": "confirmed" if all_scenes_confirmed else "candidate" if has_scene else "missing",
                 "claims": sorted(scene_ids),
-                "reason": None if has_scene else "No governed scene anchor is attached to the occurrence.",
+                "reason": "The source occurrence overlaps a Master Schema scene candidate; the scene interpretation remains reviewable." if candidate_scene_ids else None if has_scene else "No governed scene anchor is attached to the occurrence.",
             },
-            "bodily_expression_in_relation_to_speech": {
-                "state": "missing",
-                "claims": [],
-                "reason": "No eligible time-aligned bodily-expression assertion is attached; temporal alignment would remain non-causal.",
-            },
+            "bodily_expression_in_relation_to_speech": _bodily_expression_snapshot(canonical),
             "narrative_roles": {
                 "state": "confirmed" if confirmed_roles else "missing",
                 "claims": confirmed_roles,
                 "probability": 1.0 if confirmed_roles else None,
-                "authority": "explicit_source_media_metadata_confirmation" if confirmed_roles else None,
+                "authority": confirmed_role_authority if confirmed_roles else None,
                 "reason": None if confirmed_roles else "No analyst-confirmed Source Media Narrative Agent role is available.",
             },
             "narrative_role_hypotheses": {
@@ -950,6 +1030,7 @@ def build_continuity_projection_envelope(
     }
     canonical["dialogue_candidates"] = _dialogue_candidates(inventory, members, selected_key)
     canonical["topic_candidates"] = _topic_candidates(members)
+    canonical["confirmed_speaker_attributions"] = _confirmed_speaker_attributions(members)
     canonical["speaker_attribution_candidates"] = _speaker_attribution_candidates(inventory, members, selected_key)
     canonical["scene_presence_estimates"] = _scene_presence_estimates(
         inventory,

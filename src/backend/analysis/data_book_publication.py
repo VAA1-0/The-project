@@ -8,12 +8,14 @@ import json
 import mimetypes
 import os
 import re
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from .analysis_recovery import atomic_write_json
+from .narrative_agent_continuity_persistence import validate_saved_continuity_state
 
 
 SCHEMA_VERSION = "1.0.0"
@@ -195,6 +197,8 @@ def _overlay_canonical_artifact_paths(status: dict[str, Any]) -> dict[str, str]:
         "decision_ledger": "decision_ledger.json",
         "interpretation_registry": "interpretation_registry.json",
         "framework_projections": "framework_projections.json",
+        "narrative_agent_continuity_projection": "narrative_agent_continuity_projection.json",
+        "narrative_agent_continuity_state": "narrative_agent_continuity_state.json",
     }
     for artifact_key, filename in canonical_files.items():
         canonical_path = analysis_dir / filename
@@ -225,6 +229,303 @@ def _list_at(payload: Any, *keys: str) -> list[Any]:
         if isinstance(value, list):
             return value
     return []
+
+
+def _publication_interpretation_payload(status: dict[str, Any]) -> dict[str, Any] | None:
+    """Recheck and preserve a continuity construct without flattening state."""
+    files = _overlay_canonical_artifact_paths(status)
+    projection = status.get("narrative_agent_continuity_projection")
+    if not isinstance(projection, dict):
+        projection = _read_json_artifact(files.get("narrative_agent_continuity_projection"))
+    state = status.get("narrative_agent_continuity_state")
+    if not isinstance(state, dict):
+        state = _read_json_artifact(files.get("narrative_agent_continuity_state"))
+    if not isinstance(projection, dict) and isinstance(state, dict):
+        projection = state.get("projection")
+    if not isinstance(projection, dict):
+        return None
+
+    project_id = str(status.get("project_id") or "")
+    analysis_id = str(status.get("analysis_id") or "")
+    canonical = projection.get("canonical_collection")
+    graph = projection.get("graph_projection")
+    snapshot = projection.get("constellational_snapshot")
+    if not all(isinstance(item, dict) for item in (canonical, graph, snapshot)):
+        raise ValueError("Interpretation projection is incomplete at publication time")
+    if str(canonical.get("project_id") or "") != project_id:
+        raise ValueError("Interpretation projection project boundary mismatch")
+    revision = str(projection.get("revision") or "")
+    if not revision:
+        raise ValueError("Interpretation projection revision is missing")
+    invalidation = projection.get("invalidation") if isinstance(projection.get("invalidation"), dict) else {}
+    if str(invalidation.get("state") or "current") != "current":
+        raise ValueError("Stale interpretation projection is not publication eligible")
+    for surface_name, surface in (("graph", graph), ("snapshot", snapshot)):
+        surface_revision = str(surface.get("revision") or revision)
+        if surface_revision != revision:
+            raise ValueError(f"Interpretation {surface_name} revision mismatch")
+
+    ledger: dict[str, Any] = {}
+    authorized_analysis_ids = {analysis_id}
+    if isinstance(state, dict):
+        validated = validate_saved_continuity_state(state, expected_project_id=project_id)
+        if analysis_id not in (validated.get("analysis_ids") or []):
+            raise ValueError("Interpretation saved state does not include this analysis")
+        if str(validated.get("projection_revision") or "") != revision:
+            raise ValueError("Interpretation saved-state revision is stale")
+        ledger = validated.get("decision_ledger") or {}
+        authorized_analysis_ids = {str(value) for value in validated.get("analysis_ids") or [] if str(value)}
+    elif isinstance(status.get("canonical_decision_ledger"), dict):
+        ledger = status["canonical_decision_ledger"]
+
+    tickets = [dict(row) for row in graph.get("relation_tickets") or [] if isinstance(row, dict)]
+    decisions = [dict(row) for row in ledger.get("decisions") or [] if isinstance(row, dict)]
+    ticket_states: dict[str, int] = {}
+    for ticket in tickets:
+        value = str(ticket.get("state") or "candidate")
+        ticket_states[value] = ticket_states.get(value, 0) + 1
+    history_states: dict[str, int] = {}
+    for decision in decisions:
+        value = str(decision.get("value") or decision.get("review_status") or "unresolved")
+        history_states[value] = history_states.get(value, 0) + 1
+    publication_claims = []
+    withheld_claims = []
+    for ticket in tickets:
+        evidence_refs = [dict(ref) for ref in ticket.get("evidence_refs") or [] if isinstance(ref, dict)]
+        navigation = ticket.get("source_navigation") if isinstance(ticket.get("source_navigation"), dict) else {}
+        if not navigation and evidence_refs:
+            first_ref = evidence_refs[0]
+            time_range = first_ref.get("time_range") if isinstance(first_ref.get("time_range"), dict) else {}
+            if first_ref.get("analysis_id") and time_range.get("start") is not None and time_range.get("end") is not None:
+                navigation = {
+                    "analysis_id": first_ref.get("analysis_id"),
+                    "source_interval": dict(time_range),
+                    "return_panel": "narrative_agent",
+                    "return_ticket_id": ticket.get("ticket_id"),
+                    "preserve_review_position": True,
+                    "derived_from_evidence_ref": True,
+                }
+        interval = navigation.get("source_interval") if isinstance(navigation.get("source_interval"), dict) else {}
+        source_linked = bool(
+            evidence_refs
+            and str(navigation.get("analysis_id") or "") in authorized_analysis_ids
+            and interval.get("start") is not None
+            and interval.get("end") is not None
+        )
+        claim = {
+            "claim_id": ticket.get("assertion_id") or ticket.get("ticket_id"),
+            "ticket_id": ticket.get("ticket_id"),
+            "edge_id": ticket.get("edge_id"),
+            "subject_node_id": ticket.get("subject_node_id"),
+            "predicate": ticket.get("predicate"),
+            "object_node_id": ticket.get("object_node_id"),
+            "state": ticket.get("state") or "candidate",
+            "authority": ticket.get("authority"),
+            "analyst_meaning": ticket.get("analyst_meaning") or "",
+            "warrant": ticket.get("warrant") or "",
+            "alternatives": ticket.get("alternatives") or [],
+            "evidence_refs": evidence_refs,
+            "source_navigation": navigation or None,
+            "producer": {
+                "id": "datascene.stage8.data_book_interpretation_adapter.v1",
+                "projection_schema": projection.get("schema"),
+                "canonical_revision": revision,
+            },
+            "publication_eligibility": "eligible" if source_linked else "withheld_missing_exact_source_chain",
+        }
+        (publication_claims if source_linked else withheld_claims).append(claim)
+    source_chain_core = {
+        "schema": "vaa1.data_book_interpretation_source_chain.v1",
+        "project_id": project_id,
+        "analysis_id": analysis_id,
+        "canonical_revision": revision,
+        "producer": {
+            "id": "datascene.stage8.data_book_interpretation_adapter.v1",
+            "version": ENGINE_VERSION,
+            "projection_schema": projection.get("schema"),
+        },
+        "published_claims": publication_claims,
+        "withheld_claims": withheld_claims,
+        "summary": {
+            "eligible_claim_count": len(publication_claims),
+            "withheld_claim_count": len(withheld_claims),
+            "all_published_claims_have_exact_source_navigation": all(
+                claim["publication_eligibility"] == "eligible" for claim in publication_claims
+            ),
+            "withheld_claims_are_not_rendered_as_findings": True,
+        },
+    }
+    source_chain_manifest = {
+        **source_chain_core,
+        "content_checksum": _sha_bytes(_canonical(source_chain_core)),
+    }
+    core = {
+        "schema": "vaa1.data_book_interpretation_construct.v1",
+        "project_id": project_id,
+        "analysis_id": analysis_id,
+        "collection_id": canonical.get("collection_id"),
+        "canonical_revision": revision,
+        "narrative_agent": {
+            "key": canonical.get("narrative_agent_key"),
+            "label": canonical.get("narrative_agent_label"),
+        },
+        "eligibility": {
+            "eligible": True,
+            "checked_at_export": True,
+            "freshness_state": "current",
+            "project_boundary_verified": True,
+            "saved_revision_verified": bool(state),
+        },
+        "canonical_collection": canonical,
+        "constellational_snapshot": snapshot,
+        "graph_projection": graph,
+        "decision_history": decisions,
+        "publication_claims": publication_claims,
+        "withheld_claims": withheld_claims,
+        "source_chain_manifest": source_chain_manifest,
+        "state_distinctions": {
+            "relation_ticket_counts": ticket_states,
+            "decision_history_counts": history_states,
+            "preserved_states": ["mature", "confirmed", "candidate", "rejected", "deferred", "superseded", "stale"],
+            "flattened": False,
+        },
+    }
+    return {**core, "content_checksum": _sha_bytes(_canonical(core))}
+
+
+def _render_interpretation_review(payload: dict[str, Any]) -> str:
+    agent = payload.get("narrative_agent") or {}
+    manifest = payload.get("source_chain_manifest") or {}
+    summary = manifest.get("summary") or {}
+    lines = [
+        f"# Governed Narrative Agent Interpretation — {agent.get('label') or 'Unknown agent'}",
+        "",
+        f"Canonical revision: `{payload.get('canonical_revision')}`",
+        f"Publication eligibility checked: `{str((payload.get('eligibility') or {}).get('checked_at_export', False)).lower()}`",
+        f"Source-chain eligible claims: {summary.get('eligible_claim_count', 0)}",
+        f"Withheld claims: {summary.get('withheld_claim_count', 0)}",
+        "",
+        "## Source-linked claims",
+        "",
+    ]
+    for claim_number, claim in enumerate(payload.get("publication_claims") or [], start=1):
+        navigation = claim.get("source_navigation") or {}
+        interval = navigation.get("source_interval") or {}
+        subject = claim.get("subject_node_id") or "unknown subject"
+        target = claim.get("object_node_id") or "unknown object"
+        claim_id = claim.get("claim_id") or claim.get("ticket_id") or "unknown claim"
+        lines.append(
+            f"{claim_number}. **{claim.get('predicate')}** — {claim.get('state')} — "
+            f"{navigation.get('analysis_id')} @ {interval.get('start')}–{interval.get('end')} s  "
+            f"  `{subject}` → `{target}`  "
+            f"  Claim: `{claim_id}`"
+        )
+    if not payload.get("publication_claims"):
+        lines.append("- No interpretation claim passed exact source-chain eligibility.")
+    lines.extend(["", "## Withheld from findings", ""])
+    for claim in payload.get("withheld_claims") or []:
+        lines.append(
+            f"- **{claim.get('predicate')}** — {claim.get('state')} — "
+            "withheld because exact source navigation is unavailable."
+        )
+    if not payload.get("withheld_claims"):
+        lines.append("- None.")
+    lines.extend([
+        "",
+        "Candidate and withheld relations are preserved for review and are not rendered as accepted findings.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _narrative_agent_confirmation_register(status: dict[str, Any]) -> dict[str, Any] | None:
+    """Publish every active analyst-governed agent assignment, not only the open agent."""
+    files = _overlay_canonical_artifact_paths(status)
+    ledger = status.get("canonical_decision_ledger")
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("decisions"), list) or not ledger.get("decisions"):
+        ledger = _read_json_artifact(files.get("decision_ledger"))
+    if not isinstance(ledger, dict):
+        return None
+    analysis_id = str(status.get("analysis_id") or "")
+    confirmations = []
+    seen = set()
+    for decision in ledger.get("decisions") or []:
+        if not isinstance(decision, dict) or decision.get("property") != "narrative_agent.assignment":
+            continue
+        if str(decision.get("validity") or "current") != "current":
+            continue
+        if str(decision.get("review_status") or "accepted") != "accepted":
+            continue
+        if str(decision.get("projection_status") or "active") != "active":
+            continue
+        decision_id = str(decision.get("decision_id") or "")
+        if not decision_id or decision_id in seen:
+            continue
+        seen.add(decision_id)
+        scope = decision.get("scope") if isinstance(decision.get("scope"), dict) else {}
+        confirmations.append({
+            "decision_id": decision_id,
+            "narrative_agent_label": decision.get("value"),
+            "analysis_id": str(decision.get("analysis_id") or analysis_id),
+            "source_interval": {
+                "start": scope.get("start_seconds"),
+                "end": scope.get("end_seconds"),
+            },
+            "source_geometry": scope.get("geometry"),
+            "authority": decision.get("authority"),
+            "maturity": decision.get("maturity"),
+            "evidence_refs": list(decision.get("evidence_refs") or []),
+            "correction_refs": list(decision.get("correction_refs") or []),
+            "created_at": decision.get("created_at"),
+            "created_by": decision.get("created_by"),
+        })
+    if not confirmations:
+        return None
+    confirmations.sort(key=lambda row: (
+        float((row.get("source_interval") or {}).get("start") or 0),
+        str(row.get("narrative_agent_label") or "").casefold(),
+        str(row.get("decision_id") or ""),
+    ))
+    label_counts: dict[str, int] = {}
+    for row in confirmations:
+        label = str(row.get("narrative_agent_label") or "Unlabelled")
+        label_counts[label] = label_counts.get(label, 0) + 1
+    core = {
+        "schema": "vaa1.data_book_narrative_agent_confirmation_register.v1",
+        "project_id": str(status.get("project_id") or ""),
+        "analysis_id": analysis_id,
+        "confirmation_count": len(confirmations),
+        "label_counts": dict(sorted(label_counts.items(), key=lambda item: item[0].casefold())),
+        "confirmations": confirmations,
+        "policy": {
+            "complete_active_accepted_assignments": True,
+            "selected_panel_agent_is_not_a_publication_filter": True,
+            "labels_are_preserved_without_silent_alias_merging": True,
+        },
+    }
+    return {**core, "content_checksum": _sha_bytes(_canonical(core))}
+
+
+def _render_narrative_agent_confirmation_register(payload: dict[str, Any]) -> str:
+    lines = [
+        "# All Governed Narrative Agent Confirmations",
+        "",
+        f"Active accepted confirmations: {payload.get('confirmation_count', 0)}",
+        f"Distinct preserved labels: {len(payload.get('label_counts') or {})}",
+        "",
+        "Labels are reproduced as governed. Apparent aliases remain distinct until an analyst-governed merge resolves them.",
+        "",
+        "## Confirmation register",
+        "",
+    ]
+    for number, row in enumerate(payload.get("confirmations") or [], start=1):
+        interval = row.get("source_interval") or {}
+        lines.append(
+            f"{number}. **{row.get('narrative_agent_label')}** — {row.get('maturity')} — "
+            f"{row.get('analysis_id')} @ {interval.get('start')}–{interval.get('end')} s  "
+            f"  Decision: `{row.get('decision_id')}`"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _chapter_five_case(status: dict[str, Any], video_package: dict[str, Any]) -> dict[str, Any]:
@@ -386,6 +687,8 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
     associated_files: list[dict[str, Any]] = []
     chapters = []
     browse_children = []
+    interpretation_payload = _publication_interpretation_payload(status)
+    confirmation_register = _narrative_agent_confirmation_register(status)
 
     for index, (feature_id, chapter_title, panel_id, artifact_keys) in enumerate(FEATURES, 1):
         chapter_id = _id("chapter", {"edition": edition_id, "feature": feature_id})
@@ -418,6 +721,128 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
                 "value": {"artifact_key": artifact_key, "file_id": file_id, "archive_path": archive_path, "checksum": checksum, "record_count": _artifact_count(path)},
                 "unit": None, "confidence": None, "maturity_state": "mature", "authority": _authority(),
                 "provenance": _provenance(f"Publication projection from {artifact_key}", generated_at), "reference_ids": [],
+            })
+        if feature_id == "narrative_agents" and interpretation_payload is not None:
+            archive_path = f"{folder}/Files/Governed Narrative Agent Interpretation.json"
+            content = json.dumps(interpretation_payload, indent=2, ensure_ascii=False).encode("utf-8")
+            checksum = _sha_bytes(content)
+            file_id = _id("file", {"edition": edition_id, "path": archive_path, "checksum": checksum})
+            archive_files[archive_path] = content
+            associated_files.append({
+                "file_id": file_id,
+                "archive_path": archive_path,
+                "role": "governed_interpretation_construct",
+                "media_type": "application/json",
+                "size_bytes": len(content),
+                "inclusion_state": "included",
+                "checksum": checksum,
+                "related_video_ids": [video_id],
+                "related_chapter_ids": [chapter_id],
+                "generated_by": _provenance("Stage 8 publication-time interpretation eligibility adapter", generated_at),
+                "deterministic": True,
+            })
+            chapter_file_refs.append(file_id)
+            source_chain_path = f"{folder}/Files/Interpretation Source Chain Manifest.json"
+            source_chain_content = json.dumps(
+                interpretation_payload["source_chain_manifest"], indent=2, ensure_ascii=False
+            ).encode("utf-8")
+            review_path = f"{folder}/Governed Interpretation Review.md"
+            review_content = _render_interpretation_review(interpretation_payload).encode("utf-8")
+            supplemental_files = [
+                (source_chain_path, source_chain_content, "interpretation_source_chain_manifest", "application/json"),
+                (review_path, review_content, "analyst_review_render", "text/markdown"),
+            ]
+            supplemental_ids = []
+            for supplemental_path, supplemental_content, role, media_type in supplemental_files:
+                supplemental_checksum = _sha_bytes(supplemental_content)
+                supplemental_id = _id("file", {"edition": edition_id, "path": supplemental_path, "checksum": supplemental_checksum})
+                archive_files[supplemental_path] = supplemental_content
+                associated_files.append({
+                    "file_id": supplemental_id,
+                    "archive_path": supplemental_path,
+                    "role": role,
+                    "media_type": media_type,
+                    "size_bytes": len(supplemental_content),
+                    "inclusion_state": "included",
+                    "checksum": supplemental_checksum,
+                    "related_video_ids": [video_id],
+                    "related_chapter_ids": [chapter_id],
+                    "generated_by": _provenance("Stage 8 source-chain publication adapter", generated_at),
+                    "deterministic": True,
+                })
+                supplemental_ids.append(supplemental_id)
+            chapter_file_refs.extend(supplemental_ids)
+            records.append({
+                "record_id": _id("record", {"chapter": chapter_id, "revision": interpretation_payload["canonical_revision"]}),
+                "record_type": "governed_interpretation_construct",
+                "video_id": video_id,
+                "source_coordinates": {"video_id": video_id, "clock_id": clock_id, "availability_state": "source_chain_embedded"},
+                "value": {
+                    "file_id": file_id,
+                    "archive_path": archive_path,
+                    "checksum": checksum,
+                    "canonical_revision": interpretation_payload["canonical_revision"],
+                    "state_distinctions": interpretation_payload["state_distinctions"],
+                    "source_chain_manifest_path": source_chain_path,
+                    "review_render_path": review_path,
+                    "eligible_claim_count": interpretation_payload["source_chain_manifest"]["summary"]["eligible_claim_count"],
+                    "withheld_claim_count": interpretation_payload["source_chain_manifest"]["summary"]["withheld_claim_count"],
+                },
+                "unit": None,
+                "confidence": None,
+                "maturity_state": "mixed_governed_states",
+                "authority": _authority(),
+                "provenance": _provenance("Current canonical interpretation projection", generated_at),
+                "reference_ids": [],
+            })
+        if feature_id == "narrative_agents" and confirmation_register is not None:
+            register_path = f"{folder}/Files/All Narrative Agent Confirmations.json"
+            register_review_path = f"{folder}/All Narrative Agent Confirmations.md"
+            register_content = json.dumps(confirmation_register, indent=2, ensure_ascii=False).encode("utf-8")
+            register_review_content = _render_narrative_agent_confirmation_register(
+                confirmation_register
+            ).encode("utf-8")
+            register_file_ids = []
+            for publication_path, content, role, media_type in [
+                (register_path, register_content, "narrative_agent_confirmation_register", "application/json"),
+                (register_review_path, register_review_content, "narrative_agent_confirmation_review", "text/markdown"),
+            ]:
+                checksum = _sha_bytes(content)
+                file_id = _id("file", {"edition": edition_id, "path": publication_path, "checksum": checksum})
+                archive_files[publication_path] = content
+                associated_files.append({
+                    "file_id": file_id,
+                    "archive_path": publication_path,
+                    "role": role,
+                    "media_type": media_type,
+                    "size_bytes": len(content),
+                    "inclusion_state": "included",
+                    "checksum": checksum,
+                    "related_video_ids": [video_id],
+                    "related_chapter_ids": [chapter_id],
+                    "generated_by": _provenance("Complete governed Narrative Agent confirmation register", generated_at),
+                    "deterministic": True,
+                })
+                register_file_ids.append(file_id)
+            chapter_file_refs.extend(register_file_ids)
+            records.append({
+                "record_id": _id("record", {"chapter": chapter_id, "confirmation_register": confirmation_register["content_checksum"]}),
+                "record_type": "narrative_agent_confirmation_register",
+                "video_id": video_id,
+                "source_coordinates": {"video_id": video_id, "clock_id": clock_id, "availability_state": "source_time_resolved"},
+                "value": {
+                    "archive_path": register_path,
+                    "review_render_path": register_review_path,
+                    "confirmation_count": confirmation_register["confirmation_count"],
+                    "distinct_preserved_label_count": len(confirmation_register["label_counts"]),
+                    "content_checksum": confirmation_register["content_checksum"],
+                },
+                "unit": "confirmations",
+                "confidence": 1.0,
+                "maturity_state": "analyst_confirmed",
+                "authority": _authority(),
+                "provenance": _provenance("Canonical decision ledger Narrative Agent assignments", generated_at),
+                "reference_ids": [],
             })
         populated = bool(records)
         checks = [_check(f"chapter-{index}-state", "Chapter contains records or a governed empty state.")]
@@ -502,6 +927,11 @@ def build_video_publication(status: dict[str, Any], output_dir: Path) -> dict[st
 
 def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Path, project_id: str) -> dict[str, Any]:
     status_list = list(statuses)
+    if any(str(status.get("project_id") or "") != str(project_id) for status in status_list):
+        raise ValueError("Corpus publication cannot cross project boundaries")
+    analysis_ids = [str(status.get("analysis_id") or "") for status in status_list]
+    if any(not value for value in analysis_ids) or len(analysis_ids) != len(set(analysis_ids)):
+        raise ValueError("Corpus publication requires unique video identities")
     built = [build_video_publication(status, output_dir / "Video Publications") for status in status_list]
     if not built: raise ValueError("Corpus publication requires completed videos")
     video_refs = []
@@ -513,12 +943,13 @@ def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Pat
         identity = video["video_identity"]
         video_id = identity["video_id"]
         video_ids.append(video_id)
-        folder = f"Video Publications/{_safe_name(identity['title'])} - {video_id[:8]}"
-        archive_files[f"{folder}/{item['archive_name']}"] = Path(item["archive_path"])
+        folder = f"Video Publications/{_safe_name(identity['title'])} - {_safe_name(video_id)}"
+        nested_archive_path = f"{folder}/{item['archive_name']}"
+        archive_files[nested_archive_path] = Path(item["archive_path"])
         archive_files[f"{folder}/Publication Manifest.json"] = json.dumps(package, indent=2, ensure_ascii=False).encode("utf-8")
         archive_files[f"{folder}/Data Book/Data Book.json"] = json.dumps(video["data_book"], indent=2, ensure_ascii=False).encode("utf-8")
         archive_files[f"{folder}/Scientific Report/Scientific Report.json"] = json.dumps(video["report"], indent=2, ensure_ascii=False).encode("utf-8")
-        video_refs.append({"video_id": video_id, "video_package_id": package["package_id"], "video_edition_id": package["edition_id"], "data_book_id": video["data_book"]["data_book_id"], "manifest_path": f"{folder}/Publication Manifest.json", "data_book_path": f"{folder}/Data Book/Data Book.json", "report_path": f"{folder}/Scientific Report/Scientific Report.json", "source_clock_id": video["source_clock"]["clock_id"], "authority_policy_id": video["authority_context"]["policy_id"], "content_identity": package["integrity"]["content_identity"], "embedded_video_package": video})
+        video_refs.append({"video_id": video_id, "video_package_id": package["package_id"], "video_edition_id": package["edition_id"], "data_book_id": video["data_book"]["data_book_id"], "archive_path": nested_archive_path, "manifest_path": f"{folder}/Publication Manifest.json", "data_book_path": f"{folder}/Data Book/Data Book.json", "report_path": f"{folder}/Scientific Report/Scientific Report.json", "source_clock_id": video["source_clock"]["clock_id"], "authority_policy_id": video["authority_context"]["policy_id"], "content_identity": package["integrity"]["content_identity"], "embedded_video_package": video})
     edition_id = _id("corpus-edition", [item["package"]["edition_id"] for item in built])
     package_id = _id("corpus-publication", edition_id)
     generated_at = max(str(item["package"]["created_at"]) for item in built)
@@ -537,7 +968,8 @@ def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Pat
     checks = [_check("PUB-006", "Every selected video is preserved as an independent video publication."), _check("PUB-007", "Included video publications have deterministic checksums.")]
     validation = {"validation_id": _id("validation", edition_id), "status": "complete", "executed_at": generated_at, "validator_version": ENGINE_VERSION, "checks": checks, "issues": []}
     report_node = {"node_id": _id("chapter-five-report", edition_id), "label": "Chapter 5 Research Report", "node_type": "report", "state": "ready", "target": {"resource_type": "report", "archive_path": "Chapter 5 Research Report/Chapter 5 Research Report.html"}, "actions": ["open", "inspect", "print", "export_item", "trace_to_source"]}
-    package = {"schema_version": SCHEMA_VERSION, "package_type": "corpus_publication", "package_id": package_id, "edition_id": edition_id, "project_id": project_id, "created_at": generated_at, "hermeneutic_context_tickets": [item["package"].get("hermeneutic_context_ticket") for item in built], "created_by": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "publication_state": "validated", "registry_snapshot": _registry_snapshot(), "software_context": {"datascene_version": "VAA1", "publication_engine_version": ENGINE_VERSION, "master_schema_version": "1.0", "canonicalization_profile": "datascene-canonical-json-v1"}, "browse_manifest": {"panel_id": "download_panel", "default_view": "overview", "available_views": ["overview", "data_book", "report", "files", "matrices", "validation", "integrity", "history"], "root_nodes": [{"node_id": package_id, "label": f"Corpus Publication - {project_id}", "node_type": "package", "state": "ready", "actions": ["open", "inspect", "export_item", "verify_checksum", "compare", "show_history"], "children": [report_node, *[{"node_id": ref["video_package_id"], "label": next(item["package"]["video_package"]["video_identity"]["title"] for item in built if item["package"]["package_id"] == ref["video_package_id"]), "node_type": "video", "state": "ready", "target": {"resource_type": "video", "resource_id": ref["video_id"], "archive_path": ref["manifest_path"]}, "actions": ["open", "inspect", "trace_to_source", "compare", "show_history"]} for ref in video_refs]]}]}, "corpus_package": {"corpus_identity": {"corpus_id": _id("corpus", video_ids), "title": project_id, "description": "Datascene/VAA1 governed research corpus publication.", "video_ids": video_ids, "selection_definition": {"analysis_ids": video_ids, "selection_method": "explicit completed project analyses"}, "grouping_variables": []}, "archive": archive_descriptor, "video_publications": video_refs, "corpus_report": chapter_five_report, "associated_files": [], "matrix_comparisons": chapter_five_report["comparison_matrix"], "validation": validation, "history": [{"event_id": _id("history", edition_id), "event_type": "generated", "occurred_at": generated_at, "actor": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "edition_id": edition_id}]}, "integrity": {"algorithm": "sha256", "canonicalization_profile": "datascene-canonical-json-v1", "content_identity": identity, "archive_checksum": None, "entries": entries, "verified_at": _now(), "verification_status": "passed"}}
+    package = {"schema_version": SCHEMA_VERSION, "package_type": "corpus_publication", "package_id": package_id, "edition_id": edition_id, "project_id": project_id, "created_at": generated_at, "hermeneutic_context_tickets": [item["package"].get("hermeneutic_context_ticket") for item in built], "created_by": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "publication_state": "validated", "registry_snapshot": _registry_snapshot(), "software_context": {"datascene_version": "VAA1", "publication_engine_version": ENGINE_VERSION, "master_schema_version": "1.0", "canonicalization_profile": "datascene-canonical-json-v1"}, "browse_manifest": {"panel_id": "download_panel", "default_view": "overview", "available_views": ["overview", "data_book", "report", "files", "matrices", "validation", "integrity", "history"], "root_nodes": [{"node_id": package_id, "label": f"Corpus Publication - {project_id}", "node_type": "package", "state": "ready", "actions": ["open", "inspect", "export_item", "verify_checksum", "compare", "show_history"], "children": [report_node, *[{"node_id": ref["video_package_id"], "label": next(item["package"]["video_package"]["video_identity"]["title"] for item in built if item["package"]["package_id"] == ref["video_package_id"]), "node_type": "video", "state": "ready", "target": {"resource_type": "video", "resource_id": ref["video_id"], "archive_path": ref["manifest_path"]}, "actions": ["open", "inspect", "trace_to_source", "compare", "show_history"]} for ref in video_refs]]}]}, "corpus_package": {"corpus_identity": {"corpus_id": _id("corpus", video_ids), "title": project_id, "description": "Datascene/VAA1 governed research corpus publication.", "video_ids": video_ids, "selection_definition": {"analysis_ids": video_ids, "selection_method": "explicit completed project analyses"}, "grouping_variables": []}, "archive": archive_descriptor, "video_publications": video_refs, "corpus_report": chapter_five_report, "associated_files": [], "matrix_comparisons": chapter_five_report["comparison_matrix"], "validation": validation, "history": [{"event_id": _id("history", edition_id), "event_type": "generated", "occurred_at": generated_at, "actor": {"actor_type": "service", "actor_id": "datascene.publication.engine"}, "edition_id": edition_id}]}, "integrity": {"algorithm": "sha256", "canonicalization_profile": "datascene-canonical-json-v1", "content_identity": identity, "archive_checksum": None, "entries": entries, "verified_at": generated_at, "verification_status": "passed"}}
+    package["registry_snapshot"] = _registry_snapshot(generated_at)
     archive_files["Corpus Publication Manifest.json"] = json.dumps(package, indent=2, ensure_ascii=False).encode("utf-8")
     output_path = output_dir / archive_name
     _write_deterministic_zip(output_path, archive_files)
@@ -547,3 +979,199 @@ def build_corpus_publication(statuses: Iterable[dict[str, Any]], output_dir: Pat
     manifest_path = output_dir / f"{output_path.stem} - Browse Manifest.json"
     atomic_write_json(manifest_path, package)
     return {"package": package, "archive_path": str(output_path), "archive_name": archive_name, "archive_checksum": _sha_file(output_path), "manifest_path": str(manifest_path), "video_count": len(video_ids), "report_path": str(report_path), "report_name": report_name}
+
+
+def restore_video_publication(
+    archive_path: Path, *, expected_project_id: str | None = None
+) -> dict[str, Any]:
+    """Verify and reopen one video Data Book without trusting its host workspace."""
+    archive_path = Path(archive_path)
+    if not archive_path.is_file():
+        raise ValueError("Publication archive is missing")
+    with zipfile.ZipFile(archive_path) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError("Publication archive contains duplicate paths")
+        if any(name.startswith(("/", "\\")) or ".." in Path(name).parts for name in names):
+            raise ValueError("Publication archive contains an unsafe path")
+        manifest_path = "Publication Manifest.json"
+        if manifest_path not in names:
+            raise ValueError("Publication manifest is missing")
+        package = json.loads(archive.read(manifest_path))
+        if package.get("package_type") != "video_publication":
+            raise ValueError("Archive is not a video publication")
+        project_id = str(package.get("project_id") or "")
+        if expected_project_id is not None and project_id != str(expected_project_id):
+            raise ValueError("Publication belongs to another project")
+        integrity = package.get("integrity") if isinstance(package.get("integrity"), dict) else {}
+        entries = integrity.get("entries") if isinstance(integrity.get("entries"), list) else []
+        if not entries:
+            raise ValueError("Publication integrity manifest is empty")
+        for entry in entries:
+            name = str(entry.get("archive_path") or "")
+            if name not in names:
+                raise ValueError(f"Publication entry is missing: {name}")
+            content = archive.read(name)
+            if _sha_bytes(content) != str(entry.get("checksum") or ""):
+                raise ValueError(f"Publication checksum mismatch: {name}")
+            if len(content) != int(entry.get("byte_length") or -1):
+                raise ValueError(f"Publication byte length mismatch: {name}")
+        if _sha_bytes(_canonical(entries)) != str(integrity.get("content_identity") or ""):
+            raise ValueError("Publication content identity mismatch")
+        data_book_path = "Data Book/Data Book.json"
+        report_path = "Scientific Report/Scientific Report.json"
+        if data_book_path not in names or report_path not in names:
+            raise ValueError("Publication is missing its Data Book or report")
+        data_book = json.loads(archive.read(data_book_path))
+        report = json.loads(archive.read(report_path))
+        video_package = package.get("video_package") if isinstance(package.get("video_package"), dict) else {}
+        if data_book.get("edition_id") != package.get("edition_id") or report.get("edition_id") != package.get("edition_id"):
+            raise ValueError("Publication edition identity is inconsistent")
+        if data_book.get("video_id") != (video_package.get("video_identity") or {}).get("video_id"):
+            raise ValueError("Publication video identity is inconsistent")
+        interpretation_paths = [name for name in names if name.endswith("/Governed Narrative Agent Interpretation.json")]
+        interpretation_constructs = []
+        for name in interpretation_paths:
+            construct = json.loads(archive.read(name))
+            signed = {key: value for key, value in construct.items() if key != "content_checksum"}
+            if _sha_bytes(_canonical(signed)) != str(construct.get("content_checksum") or ""):
+                raise ValueError("Published interpretation construct checksum mismatch")
+            if str(construct.get("project_id") or "") != project_id:
+                raise ValueError("Published interpretation construct project mismatch")
+            if str(construct.get("analysis_id") or "") != str(data_book.get("video_id") or ""):
+                raise ValueError("Published interpretation construct analysis mismatch")
+            if (construct.get("state_distinctions") or {}).get("flattened") is not False:
+                raise ValueError("Published interpretation states were flattened")
+            folder = name.rsplit("/Files/", 1)[0]
+            source_chain_path = f"{folder}/Files/Interpretation Source Chain Manifest.json"
+            review_path = f"{folder}/Governed Interpretation Review.md"
+            if source_chain_path not in names or review_path not in names:
+                raise ValueError("Published interpretation source-chain render is incomplete")
+            source_chain = json.loads(archive.read(source_chain_path))
+            source_chain_signed = {key: value for key, value in source_chain.items() if key != "content_checksum"}
+            if _sha_bytes(_canonical(source_chain_signed)) != str(source_chain.get("content_checksum") or ""):
+                raise ValueError("Published interpretation source-chain checksum mismatch")
+            if source_chain != construct.get("source_chain_manifest"):
+                raise ValueError("Published interpretation source-chain projections disagree")
+            if not (source_chain.get("summary") or {}).get("withheld_claims_are_not_rendered_as_findings"):
+                raise ValueError("Published interpretation withholding policy is missing")
+            interpretation_constructs.append(construct)
+        return {
+            "schema": "vaa1.data_book_isolated_restore_receipt.v1",
+            "restore_state": "verified",
+            "project_id": project_id,
+            "package_id": package.get("package_id"),
+            "edition_id": package.get("edition_id"),
+            "video_id": data_book.get("video_id"),
+            "content_identity": integrity.get("content_identity"),
+            "archive_checksum": _sha_file(archive_path),
+            "entry_count": len(entries),
+            "chapter_count": len(data_book.get("chapters") or []),
+            "publication_state": package.get("publication_state"),
+            "interpretation_constructs": interpretation_constructs,
+            "package": package,
+            "data_book": data_book,
+            "report": report,
+        }
+
+
+def restore_corpus_publication(
+    archive_path: Path, *, expected_project_id: str | None = None
+) -> dict[str, Any]:
+    """Verify a whole-project publication and each isolated nested video edition."""
+    archive_path = Path(archive_path)
+    if not archive_path.is_file():
+        raise ValueError("Corpus publication archive is missing")
+    with zipfile.ZipFile(archive_path) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError("Corpus publication contains duplicate paths")
+        if any(name.startswith(("/", "\\")) or ".." in Path(name).parts for name in names):
+            raise ValueError("Corpus publication contains an unsafe path")
+        manifest_path = "Corpus Publication Manifest.json"
+        if manifest_path not in names:
+            raise ValueError("Corpus publication manifest is missing")
+        package = json.loads(archive.read(manifest_path))
+        if package.get("package_type") != "corpus_publication":
+            raise ValueError("Archive is not a corpus publication")
+        project_id = str(package.get("project_id") or "")
+        if expected_project_id is not None and project_id != str(expected_project_id):
+            raise ValueError("Corpus publication belongs to another project")
+
+        integrity = package.get("integrity") if isinstance(package.get("integrity"), dict) else {}
+        entries = integrity.get("entries") if isinstance(integrity.get("entries"), list) else []
+        if not entries:
+            raise ValueError("Corpus publication integrity manifest is empty")
+        for entry in entries:
+            name = str(entry.get("archive_path") or "")
+            if name not in names:
+                raise ValueError(f"Corpus publication entry is missing: {name}")
+            content = archive.read(name)
+            if _sha_bytes(content) != str(entry.get("checksum") or ""):
+                raise ValueError(f"Corpus publication checksum mismatch: {name}")
+            if len(content) != int(entry.get("byte_length") or -1):
+                raise ValueError(f"Corpus publication byte length mismatch: {name}")
+        if _sha_bytes(_canonical(entries)) != str(integrity.get("content_identity") or ""):
+            raise ValueError("Corpus publication content identity mismatch")
+
+        corpus = package.get("corpus_package") if isinstance(package.get("corpus_package"), dict) else {}
+        corpus_identity = corpus.get("corpus_identity") if isinstance(corpus.get("corpus_identity"), dict) else {}
+        refs = corpus.get("video_publications") if isinstance(corpus.get("video_publications"), list) else []
+        declared_video_ids = [str(value) for value in corpus_identity.get("video_ids") or []]
+        ref_video_ids = [str(ref.get("video_id") or "") for ref in refs if isinstance(ref, dict)]
+        if not refs or ref_video_ids != declared_video_ids:
+            raise ValueError("Corpus video selection and publication references disagree")
+        if len(ref_video_ids) != len(set(ref_video_ids)):
+            raise ValueError("Corpus publication flattens duplicate video identities")
+
+        restored_videos = []
+        edition_ids: set[str] = set()
+        clock_ids: set[str] = set()
+        with tempfile.TemporaryDirectory(prefix="datascene-corpus-restore-") as temp_dir:
+            for index, ref in enumerate(refs):
+                if not isinstance(ref, dict):
+                    raise ValueError("Corpus video publication reference is invalid")
+                for key in ("archive_path", "manifest_path", "data_book_path", "report_path"):
+                    if str(ref.get(key) or "") not in names:
+                        raise ValueError(f"Corpus video publication path is missing: {key}")
+                nested_path = Path(temp_dir) / f"video-{index}.zip"
+                nested_path.write_bytes(archive.read(str(ref["archive_path"])))
+                receipt = restore_video_publication(nested_path, expected_project_id=project_id)
+                if receipt["video_id"] != str(ref.get("video_id") or ""):
+                    raise ValueError("Nested video identity disagrees with corpus reference")
+                if receipt["package_id"] != ref.get("video_package_id"):
+                    raise ValueError("Nested video package identity disagrees with corpus reference")
+                if receipt["edition_id"] != ref.get("video_edition_id"):
+                    raise ValueError("Nested video edition disagrees with corpus reference")
+                if receipt["content_identity"] != ref.get("content_identity"):
+                    raise ValueError("Nested video content identity disagrees with corpus reference")
+                outer_manifest = json.loads(archive.read(str(ref["manifest_path"])))
+                if _canonical(outer_manifest) != _canonical(receipt["package"]):
+                    raise ValueError("Nested and browsable video manifests disagree")
+                edition_id = str(receipt["edition_id"] or "")
+                clock_id = str(ref.get("source_clock_id") or "")
+                if not edition_id or edition_id in edition_ids:
+                    raise ValueError("Corpus publication flattens video editions")
+                if not clock_id or clock_id in clock_ids:
+                    raise ValueError("Corpus publication flattens source clocks")
+                edition_ids.add(edition_id)
+                clock_ids.add(clock_id)
+                restored_videos.append(receipt)
+
+        return {
+            "schema": "vaa1.corpus_data_book_isolated_restore_receipt.v1",
+            "restore_state": "verified",
+            "project_id": project_id,
+            "package_id": package.get("package_id"),
+            "edition_id": package.get("edition_id"),
+            "content_identity": integrity.get("content_identity"),
+            "archive_checksum": _sha_file(archive_path),
+            "entry_count": len(entries),
+            "video_count": len(restored_videos),
+            "video_ids": ref_video_ids,
+            "video_editions_preserved": len(edition_ids),
+            "source_clocks_preserved": len(clock_ids),
+            "publication_state": package.get("publication_state"),
+            "video_restore_receipts": restored_videos,
+            "package": package,
+        }

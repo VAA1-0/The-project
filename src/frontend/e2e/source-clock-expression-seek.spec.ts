@@ -1,16 +1,21 @@
 import { expect, test } from "@playwright/test";
 
+const BOND_ID = "81920e95-a0b2-4173-bc23-86db7909a0a9";
+
 test("an expression cue seeks the selected source through the clock publisher", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
   await expect(page.getByRole("button", { name: "Expressions 49", exact: true })).toBeVisible({ timeout: 90_000 });
   await page.locator(".lm_tab").filter({ hasText: /^Expressions$/ }).evaluate((tab: HTMLElement) => tab.click());
   const cue = page.locator("main:visible").filter({ hasText: "Emotion timeline" }).last().locator("details").filter({ has: page.getByRole("button", { name: "Show in video", exact: true, includeHidden: true }) }).first();
   const summary = cue.locator("summary");
   const text = await summary.innerText();
-  const timestamp = Number(text.match(/(\d+(?:\.\d+)?)s\s*·/i)?.[1]);
+  const timeMatch = text.match(/(?:(\d+):)?(\d+(?:\.\d+)?)\s*·/i);
+  const timestamp = timeMatch
+    ? Number(timeMatch[1] || 0) * 60 + Number(timeMatch[2])
+    : Number.NaN;
   expect(Number.isFinite(timestamp), `Expression cue timestamp: ${text}`).toBeTruthy();
   await summary.click();
   await cue.getByRole("button", { name: "Show in video", exact: true }).click();
@@ -24,7 +29,7 @@ test("Expressions prioritizes a genuine on-beat expression and exposes its excha
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
   await expect(page.getByRole("button", { name: "Expressions 49", exact: true })).toBeVisible({ timeout: 90_000 });
   const tab = page.locator(".lm_tab").filter({ hasText: /^Expressions$/ });
   await tab.evaluate((element: HTMLElement) => element.click());

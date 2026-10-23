@@ -23,6 +23,11 @@ test("Transcript highlights the authoritative interval nearest the source cursor
   assert.match(source, /Cursor \{cursorMatch\.relation\} this interval/);
 });
 
+test("Transcript hydrates a recorded authoritative artifact when the summary projection is empty", () => {
+  assert.match(source, /analysisRows\.length === 0 \|\| transcriptRowsLookLikeScaffold\(analysisRows\)/);
+  assert.match(source, /loadAuthoritativeTranscriptRows\([\s\S]*videoId/);
+});
+
 test("Transcript follows the matched interval without inventing a speaker split", () => {
   assert.match(source, /transcriptRowRefs\.current[\s\S]*scrollIntoView\(\{ block: "nearest", behavior: "smooth" \}\)/);
   assert.match(source, /linkedSpeakerTurn\.turn\.diarization_confidence < 0\.65/);

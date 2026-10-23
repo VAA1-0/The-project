@@ -1054,6 +1054,7 @@ export interface AnalysisStartOptions {
   applyFaceAnonymization?: boolean;
   faceMessageStyle?: "plain" | "starfleet";
   faceRequiresPersonDetection?: boolean;
+  modelChoices?: Record<string, string>;
 }
 
 export interface WorkspaceInfo {
@@ -1778,6 +1779,24 @@ class ApiService {
     return response.json();
   }
 
+  async getAnalysisCompletion(analysisId: string): Promise<any> {
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/completion?${context}`);
+    if (!response.ok) throw new Error((await response.text()) || "Completion account unavailable");
+    return response.json();
+  }
+
+  async completeAnalysisEdition(analysisId: string, analystNote = ""): Promise<any> {
+    const context = hermeneuticContextQuery(analysisId);
+    const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/completion?${context}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ analyst_note: analystNote }),
+    });
+    if (!response.ok) throw new Error((await response.text()) || "Analysis completion failed");
+    return response.json();
+  }
+
   async getPerformanceObservability(analysisId: string): Promise<any> {
     const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/observability`);
     if (!response.ok) throw new Error((await response.text()) || "Observability unavailable");
@@ -2042,6 +2061,7 @@ class ApiService {
       applyFaceAnonymization = false,
       faceMessageStyle = "plain",
       faceRequiresPersonDetection = false,
+      modelChoices = {},
     } = options;
 
     // Check if this is a mock ID
@@ -2066,6 +2086,7 @@ class ApiService {
         applyFaceAnonymization,
         faceMessageStyle,
         faceRequiresPersonDetection,
+        modelChoices,
       });
 
       const response = await fetch(

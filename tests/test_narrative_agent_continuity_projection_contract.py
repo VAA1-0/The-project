@@ -64,6 +64,51 @@ def decide(ledger, inventory, payload):
 
 
 class NarrativeAgentContinuityProjectionTests(unittest.TestCase):
+    def test_confirmed_audio_hydrates_speaker_utterance_scene_and_aligned_body_layers(self):
+        status = {
+            "analysis_id": "bond-a", "project_id": "bond-cop30-helsinki",
+            "annotation_corrections": {"manual_visual_annotations": [
+                {
+                    "id": "nomi-audio", "category": "Audio", "identity_affirmation": "Nomi",
+                    "start_seconds": 41.92, "end_seconds": 43.18,
+                    "metadata_correlation": {"manual_confirmation_event": {"event_id": "confirm-nomi", "confirmed_fields": {"narrative_agent": True}}},
+                },
+                {
+                    "id": "nomi-visual", "category": "Identification", "identity_affirmation": "Nomi",
+                    "start_seconds": 41.35, "end_seconds": 42.0,
+                    "coordinates": {"x": .1, "y": .1, "w": .2, "h": .4},
+                    "metadata_correlation": {
+                        "quick_annotations": ["walking"],
+                        "manual_confirmation_event": {"confirmed_fields": {"narrative_agent": True}},
+                    },
+                },
+            ]},
+            "results": {"audio_analysis": {"audio_sample_clouds": {"clouds": [{"samples": [{
+                "sample_id": "sample-10", "source_turn_id": "turn-10", "speaker_label": "SPEAKER_01",
+                "time_start": 41.92, "time_end": 43.18, "transcript_text": "So stay in your lane.",
+                "timing_authority": "original_whisper_timecode",
+            }]}]}}},
+            "vaa1_annotation_master_schema": {"temporal_segments": [{
+                "segment_id": "scene-segment-2", "scene_id": "scene:002", "segment_type": "scene",
+                "start": 24.0, "end": 48.0, "authority": "Master Schema candidate synthesis",
+                "review_state": "candidate_review_required",
+            }]},
+        }
+        inventory = build_continuity_inventory([status], selected_agent="Nomi", project_id="bond-cop30-helsinki")
+        result = build_continuity_projection_envelope(inventory, {}, project_id="bond-cop30-helsinki", collection_id="nomi-corridor")
+        layers = result["constellational_snapshot"]["layers"]
+        spoken_by = [row for row in result["graph_projection"]["edges"] if row["edge_type"] == "spoken_by"]
+
+        self.assertEqual(layers["who_is_speaking"]["state"], "confirmed")
+        self.assertEqual(layers["who_is_speaking"]["claims"], ["Nomi"])
+        self.assertEqual(layers["who_is_speaking"]["confirmed_occurrences"][0]["transcript_text"], "So stay in your lane.")
+        self.assertEqual(layers["what_they_are_talking_about"]["state"], "candidate")
+        self.assertEqual(layers["scenic_and_situational_context"]["claims"], ["scene:002"])
+        self.assertEqual(layers["scenic_and_situational_context"]["state"], "candidate")
+        self.assertEqual(layers["bodily_expression_in_relation_to_speech"]["state"], "candidate")
+        self.assertEqual(layers["bodily_expression_in_relation_to_speech"]["candidates"][0]["label"], "walking")
+        self.assertTrue(any(row["maturity"]["level"] == "mature" for row in spoken_by))
+
     def test_audio_visual_synchrony_raises_one_reviewable_spoken_by_ticket(self):
         inventory = fixture()
         inventory["selected_continuity_corridor"]["proposed_members"].append({

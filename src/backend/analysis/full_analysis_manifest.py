@@ -28,6 +28,45 @@ BRANCHES = (
     ("native_statistical_interpretation", "Relational connectivity", "native_statistical_interpretation", "native_statistical_interpretation"),
 )
 
+AUDIO_BRANCHES = {
+    "transcript", "linked_transcript", "pos_analysis", "quan_analysis",
+    "audio_prosody", "audio_event_intervals", "audio_diarization", "audio_sample_clouds",
+}
+MEASURED_VISUAL_BRANCHES = {"shot_boundaries", "spatial_tone_scan", "adaptive_visual_scan"}
+
+
+def _branch_requirement(status: dict[str, Any], branch_id: str) -> tuple[bool, str]:
+    """Resolve requirements from the effective run profile, preserving legacy behavior."""
+
+    pipeline = str(status.get("pipeline_type") or "full")
+    effective = status.get("analysis_profile")
+    if not isinstance(effective, dict):
+        relevant = (
+            pipeline == "full"
+            or (pipeline == "visual_only" and branch_id in {
+                "tracked_objects", "ocr", "expressions", *MEASURED_VISUAL_BRANCHES,
+            })
+            or (pipeline == "audio_only" and branch_id in AUDIO_BRANCHES)
+        )
+        return relevant, "legacy_pipeline_profile"
+
+    tier = str(effective.get("analysis_tier") or status.get("analysis_tier") or "science_scan")
+    if branch_id in AUDIO_BRANCHES:
+        return bool(effective.get("enable_audio_analysis")), "effective.enable_audio_analysis"
+    if branch_id == "tracked_objects":
+        return bool(effective.get("enable_object_detection")), "effective.enable_object_detection"
+    if branch_id == "ocr":
+        return bool(effective.get("enable_ocr")), "effective.enable_ocr"
+    if branch_id == "expressions":
+        return bool(effective.get("enable_expression_detection")), "effective.enable_expression_detection"
+    if branch_id in MEASURED_VISUAL_BRANCHES:
+        enabled = pipeline in {"full", "visual_only"} and tier != "quick_sweep"
+        return enabled, "measured_visual_branch_disabled_by_quick_sweep" if not enabled else "measured_visual_profile"
+    if branch_id == "native_statistical_interpretation":
+        enabled = pipeline == "full" and tier != "quick_sweep"
+        return enabled, "interpretation_disabled_by_quick_sweep" if not enabled else "full_interpretation_profile"
+    return False, "not_selected_by_effective_profile"
+
 PARITY_SPECS: dict[str, dict[str, Any]] = {
     "audio_event_intervals": {"projection_layer": "audio_event_intervals", "hydration_path": ("results", "audio_analysis", "audio_event_intervals"), "rows_key": "intervals"},
     "audio_diarization": {"projection_layer": "speaker_diarization_turns", "hydration_path": ("results", "audio_analysis", "audio_diarization"), "rows_key": "speaker_turns"},
@@ -285,7 +324,7 @@ def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     branches = []
     for branch_id, label, artifact_key, producer in BRANCHES:
-        relevant = profile == "full" or (profile == "visual_only" and branch_id in {"tracked_objects", "ocr", "expressions", "shot_boundaries", "spatial_tone_scan", "adaptive_visual_scan"}) or (profile == "audio_only" and branch_id in {"transcript", "linked_transcript", "pos_analysis", "quan_analysis", "audio_prosody", "audio_event_intervals", "audio_diarization", "audio_sample_clouds"})
+        relevant, requirement_reason = _branch_requirement(status, branch_id)
         metadata = _artifact_metadata(outputs.get(artifact_key))
         exists = metadata["artifact_checksum"] is not None
         state = "computed" if exists else "artifact_missing"
@@ -313,6 +352,7 @@ def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
                 state = "consumer_missing"
         branches.append({"branch_id": branch_id, "label": label, "required": relevant,
                          "state": state if relevant else "not_applicable", "producer": producer,
+                         "requirement_reason": requirement_reason,
                          "method_version": None, **metadata,
                          **parity,
                          "error": str(error) if error else None,

@@ -477,7 +477,11 @@ export default function SpeechToTextPanel({
         if (cancelled) return;
         let displayAnalysis = analysis;
         const analysisRows = analysis.transcript ?? analysis.transcriptTimeline ?? [];
-        if (transcriptRowsLookLikeScaffold(analysisRows)) {
+        // Imported/restored records may expose an empty summary projection even
+        // though their governed output map points at a populated, authoritative
+        // transcript. Empty projection is therefore a hydration trigger, not
+        // evidence that the source has no transcript.
+        if (analysisRows.length === 0 || transcriptRowsLookLikeScaffold(analysisRows)) {
           const authoritativeRows = await loadAuthoritativeTranscriptRows(
             videoId,
             analysis.annotationCorrections,

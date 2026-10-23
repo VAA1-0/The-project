@@ -24,3 +24,17 @@ test("buildAnalysisSearchParams includes all selected face options", () => {
   assert.equal(params.get("face_message_style"), "starfleet");
   assert.equal(params.get("face_requires_person_detection"), "true");
 });
+
+test("buildAnalysisSearchParams carries the governed model choice matrix", () => {
+  const params = buildAnalysisSearchParams("full", {
+    modelChoices: {
+      transcription: "local-whisper",
+      identification: "local-face-embedding",
+    },
+  });
+
+  assert.deepEqual(JSON.parse(params.get("model_choices")), {
+    transcription: "local-whisper",
+    identification: "local-face-embedding",
+  });
+});

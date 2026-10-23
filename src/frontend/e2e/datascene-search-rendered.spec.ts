@@ -43,7 +43,7 @@ test("Datascene Search surfaces saved analyses and source-linked records", async
   await expect(firstResult).toBeVisible({
     timeout: 30_000,
   });
-  await firstResult.locator("summary").click();
+  await firstResult.locator("summary").evaluate((element: HTMLElement) => element.click());
 
   await expect(firstResult.getByRole("button", { name: "Open" })).toBeVisible();
   await expect(firstResult.getByRole("button", { name: "Network" })).toBeVisible();
@@ -53,9 +53,9 @@ test("Datascene Search surfaces saved analyses and source-linked records", async
 });
 
 test("local saved-analysis fallbacks produce valid save bundles", async ({ request }) => {
-  const analysisId = "8183c1fd-7cb9-49d0-b20c-378399e9c41f";
+  const analysisId = "81920e95-a0b2-4173-bc23-86db7909a0a9";
   const analysisResponse = await request.get(
-    `/api/local-analysis/${analysisId}/bundle`,
+    `/api/local-analysis/${analysisId}/bundle?project_id=bond-cop30-helsinki&context_analysis_id=${analysisId}`,
   );
   expect(analysisResponse.ok()).toBeTruthy();
   const analysisBundle = await analysisResponse.body();
@@ -64,6 +64,8 @@ test("local saved-analysis fallbacks produce valid save bundles", async ({ reque
   const projectResponse = await request.post("/api/local-project-bundle", {
     data: {
       project_name: "vaa1_project",
+      project_id: "bond-cop30-helsinki",
+      context_analysis_id: analysisId,
       analysis_ids: [analysisId],
       matrices: {},
     },

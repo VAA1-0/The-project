@@ -8,6 +8,9 @@ test("COP30 project surfaces six sources and the complete three-slot morphology 
   await page.goto(`/dashboard?activeProject=${PROJECT}`);
 
   await expect(page.locator('[data-analysis-id]')).toHaveCount(6, { timeout: 90_000 });
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Analysis Setup", exact: true }).click();
+  await page.locator("details").filter({ hasText: "Analysis and morphology setup" }).last().locator("summary").click();
   await expect(page.locator("#morphology-pack-policy")).toBeEnabled();
   await expect(page.locator("#morphology-pack-policy")).toContainText("English +3");
   await expect(page.locator("#morphology-language-0")).toBeEnabled();
@@ -21,6 +24,8 @@ test("COP30 project surfaces six sources and the complete three-slot morphology 
 
   await page.locator("#morphology-language-0").click();
   expect(await page.getByRole("option").count()).toBeGreaterThanOrEqual(90);
+  await page.getByRole("option", { name: "French", exact: true }).click();
+  await page.locator("#morphology-language-0").click();
   await page.getByRole("option", { name: "Finnish", exact: true }).click();
 
   await page.locator("#morphology-language-1").click();

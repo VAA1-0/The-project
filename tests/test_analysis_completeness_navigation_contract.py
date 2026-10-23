@@ -7,6 +7,32 @@ from src.backend.analysis.full_analysis_manifest import BRANCHES, evaluate_full_
 
 
 class AnalysisCompletenessNavigationContractTests(unittest.TestCase):
+    def test_quick_sweep_requirements_follow_effective_profile(self):
+        status = {
+            "analysis_id": "quick-1",
+            "pipeline_type": "full",
+            "analysis_tier": "quick_sweep",
+            "analysis_profile": {
+                "analysis_tier": "quick_sweep",
+                "pipeline_type": "full",
+                "enable_audio_analysis": True,
+                "enable_object_detection": False,
+                "enable_ocr": False,
+                "enable_expression_detection": False,
+            },
+            "output_files": {},
+        }
+        manifest = evaluate_full_analysis_manifest(status)
+        by_id = {item["branch_id"]: item for item in manifest["branches"]}
+
+        self.assertTrue(by_id["transcript"]["required"])
+        for branch_id in (
+            "tracked_objects", "ocr", "expressions", "shot_boundaries",
+            "spatial_tone_scan", "adaptive_visual_scan", "native_statistical_interpretation",
+        ):
+            self.assertFalse(by_id[branch_id]["required"])
+            self.assertEqual(by_id[branch_id]["state"], "not_applicable")
+
     def test_missing_artifacts_are_named_and_repairable(self):
         status = {
             "analysis_id": "video-2",

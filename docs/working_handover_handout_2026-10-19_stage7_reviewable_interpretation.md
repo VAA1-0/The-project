@@ -342,21 +342,24 @@ limitations and optional deferrals. Expand only after this complete vertical
 slice passes. Select the next construct according to satisfied dependencies,
 not according to the breadth of an existing schema or menu.
 
-Gate: this construct may be marked operational. Stage 7 remains partial until
-each selected construct independently passes the same lifecycle.
+Gate: this construct may be marked operational. Any later selected construct
+must independently pass the same lifecycle; it does not reopen this bounded
+gate.
 
 Delivered bounded closeout slice: Datascene now writes a checksummed Stage 7
 construct-readiness record that reconciles automated contracts with five
 separate rendered/manual gates: graph parity, originating-panel source return,
 cross-consumer hydration without reconfirmation, save/reopen plus detached-panel
 parity, and isolated export restoration. Automated success alone produces
-`manual_acceptance_required`, never `operational`. A complete named analyst
-receipt closes only the speaker-attribution construct and authorizes selection
-of the next prerequisite-ready construct; `stage7_status` remains `partial`.
+`manual_acceptance_required`, never `operational`. The 21 October 2026 analyst
+closeout closes the selected speaker-attribution construct and the bounded
+Stage 7 operational gate. It authorizes movement to Stage 8 while retaining
+family-wide interpretation and relational-lens activation as explicit future
+expansion scope.
 
-All remaining automatable slices for this first vertical construct are now
-delivered. The only open gate is the ordered rendered/manual acceptance below.
-No broader Stage 7 completion claim is made.
+All automatable and rendered/manual slices for this first vertical construct
+are delivered and accepted. No family-wide interpretation activation claim is
+made.
 
 ## Required acceptance sequence
 

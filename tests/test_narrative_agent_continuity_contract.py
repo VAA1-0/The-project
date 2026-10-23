@@ -31,6 +31,23 @@ def confirmed(agent, occurrence_id, start, end, track, scene, analysis_id="bond-
 
 
 class NarrativeAgentContinuityContractTests(unittest.TestCase):
+    def test_confirmed_legacy_role_label_reconciles_to_canonical_agent_and_mature_roles(self):
+        status = confirmed(
+            "Nomi (Lashana Lynch): secret agent, intelligence role; MI6 agent assigned the 007 number",
+            "nomi-role-confirmation", 51, 52.1, "track-27", "scene-3",
+        )
+
+        result = build_continuity_inventory(
+            [status], selected_agent="Nomi", project_id="bond-cop30-helsinki"
+        )
+
+        self.assertEqual(result["selected_agent"]["confirmed_roles"], [
+            "intelligence role", "MI6 agent assigned the 007 number", "secret agent",
+        ])
+        self.assertEqual(result["selected_agent"]["role_authority"], "explicit_analyst_role_confirmation")
+        self.assertEqual(result["selected_agent"]["role_probability"], 1.0)
+        self.assertEqual(result["selected_continuity_corridor"]["confirmed_members"][0]["narrative_agent_label"], "Nomi")
+
     def test_named_audio_candidate_carries_matching_active_speaker_measurement(self):
         status = confirmed("James Bond", "bond-visual", 55.0, 57.0, "track-7", "scene-1")
         status["audio_sample_clouds"] = {"clouds": [{

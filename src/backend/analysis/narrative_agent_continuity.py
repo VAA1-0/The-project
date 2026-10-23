@@ -43,6 +43,80 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _interval(row: Mapping[str, Any]) -> tuple[float | None, float | None]:
+    start = _number(row.get("start") if row.get("start") is not None else row.get("time_start") if row.get("time_start") is not None else row.get("start_seconds") if row.get("start_seconds") is not None else row.get("timestamp_seconds"))
+    end = _number(row.get("end") if row.get("end") is not None else row.get("time_end") if row.get("time_end") is not None else row.get("end_seconds"))
+    return start, end if end is not None else start
+
+
+def _overlaps(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    left_start, left_end = _interval(left)
+    right_start, right_end = _interval(right)
+    if None in (left_start, left_end, right_start, right_end):
+        return False
+    return max(left_start, right_start) <= min(left_end, right_end)
+
+
+def _hydrate_confirmed_audio_context(statuses: Sequence[Mapping[str, Any]], confirmed: List[Dict[str, Any]]) -> None:
+    """Attach existing source evidence to mature audio identity confirmations."""
+    statuses_by_analysis = {_analysis_id(status): status for status in statuses}
+    for occurrence in confirmed:
+        if _text(occurrence.get("evidence_modality")) != "audio":
+            continue
+        status = statuses_by_analysis.get(_text(occurrence.get("analysis_id")))
+        if not status:
+            continue
+        source_interval = _dict(occurrence.get("source_interval"))
+        audio = _dict(_dict(status.get("results")).get("audio_analysis"))
+        samples: List[Mapping[str, Any]] = []
+        for cloud_source in (status.get("audio_sample_clouds"), audio.get("audio_sample_clouds")):
+            for cloud in _list(_dict(cloud_source).get("clouds")):
+                if isinstance(cloud, dict):
+                    samples.extend(row for row in _list(cloud.get("samples")) if isinstance(row, dict))
+        matching_samples = [row for row in samples if _overlaps(source_interval, row)]
+        if matching_samples:
+            sample = max(matching_samples, key=lambda row: min(_interval(source_interval)[1] or 0, _interval(row)[1] or 0) - max(_interval(source_interval)[0] or 0, _interval(row)[0] or 0))
+            occurrence["transcript_text"] = _text(sample.get("transcript_text") or sample.get("text"))
+            occurrence["supporting_audio_ref"] = _text(sample.get("sample_id") or sample.get("source_turn_id"))
+            occurrence["speaker_cluster_label"] = _text(sample.get("speaker_label"))
+            occurrence["source_transcript_authority"] = _text(sample.get("timing_authority") or sample.get("source_type"))
+            occurrence["traceback_refs"] = sorted(set(_list(occurrence.get("traceback_refs")) + [ref for ref in (_text(sample.get("sample_id")), _text(sample.get("source_turn_id"))) if ref]))
+
+        master = _dict(status.get("vaa1_annotation_master_schema"))
+        scenes = [row for row in _list(master.get("temporal_segments")) if isinstance(row, dict) and _text(row.get("segment_type")) == "scene" and _overlaps(source_interval, row)]
+        if scenes:
+            scene = min(scenes, key=lambda row: (_interval(row)[1] or 0) - (_interval(row)[0] or 0))
+            occurrence["scene_id"] = _text(scene.get("scene_id") or scene.get("segment_id"))
+            occurrence["scene_anchor"] = {
+                "scene_id": occurrence["scene_id"],
+                "source_interval": {"start": _interval(scene)[0], "end": _interval(scene)[1]},
+                "authority": _text(scene.get("authority")) or "master_schema_scene_anchor",
+                "review_state": _text(scene.get("review_state")),
+                "traceback_ref": _text(scene.get("segment_id")),
+            }
+
+        aligned_body: List[Dict[str, Any]] = []
+        selected_key = _text(occurrence.get("narrative_agent_key"))
+        for row in _manual_visual_rows(status):
+            label = _text(row.get("identity_affirmation") or row.get("narrative_agent_label"))
+            if _key(label) != selected_key or not _overlaps(source_interval, row):
+                continue
+            correlation = _dict(row.get("metadata_correlation"))
+            annotations = [_text(value) for value in _list(correlation.get("quick_annotations")) if _text(value)]
+            if _text(row.get("category")).casefold() in {"action", "expression", "gesture", "pose"}:
+                annotations.append(_text(row.get("label")))
+            for annotation in sorted(set(value for value in annotations if value), key=str.casefold):
+                aligned_body.append({
+                    "evidence_id": _text(row.get("id")),
+                    "label": annotation,
+                    "source_interval": {"start": _interval(row)[0], "end": _interval(row)[1]},
+                    "authority": "explicit_analyst_confirmation",
+                    "relation_state": "time_aligned_candidate",
+                    "causal_interpretation_confirmed": False,
+                })
+        occurrence["time_aligned_bodily_evidence"] = aligned_body
+
+
 def _analysis_id(status: Mapping[str, Any]) -> str:
     return _text(status.get("analysis_id")) or "unknown-analysis"
 
@@ -141,6 +215,38 @@ def _metadata_confirmed_agents(status: Mapping[str, Any]) -> List[Dict[str, Any]
     return list(confirmed.values())
 
 
+def _annotation_confirmed_agent_roles(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Recover confirmed legacy labels that embedded role prose."""
+    analysis_id = _analysis_id(status)
+    confirmed: Dict[str, Dict[str, Any]] = {}
+    for row in _manual_visual_rows(status):
+        raw = _text(row.get("identity_affirmation") or row.get("label"))
+        subject, separator, role_text = raw.partition(":")
+        event = _dict(_dict(row.get("metadata_correlation")).get("manual_confirmation_event"))
+        if not separator or _dict(event.get("confirmed_fields")).get("narrative_agent") is not True:
+            continue
+        label = _individual_agent_label(subject)
+        roles = [part.strip() for chunk in role_text.split(";") for part in chunk.split(",") if part.strip()]
+        if not label or not roles:
+            continue
+        key = _key(label)
+        record = confirmed.setdefault(key, {
+            "narrative_agent_key": key,
+            "narrative_agent_label": label,
+            "authority": "explicit_analyst_confirmation",
+            "confirmation_scope": "identity_registry_and_confirmed_roles",
+            "source_analysis_ids": [analysis_id],
+            "traceback_refs": [],
+            "source_occurrence_confirmed": True,
+            "confirmed_roles": [],
+            "role_authority": "explicit_analyst_role_confirmation",
+            "role_probability": 1.0,
+        })
+        record["confirmed_roles"] = sorted(set(record["confirmed_roles"] + roles), key=str.casefold)
+        record["traceback_refs"] = sorted(set(record["traceback_refs"] + [_text(row.get("id"))]))
+    return list(confirmed.values())
+
+
 def _scene_id(row: Mapping[str, Any]) -> str:
     correlation = _dict(row.get("metadata_correlation"))
     return _text(row.get("scene_id") or correlation.get("scene_id"))
@@ -162,12 +268,13 @@ def _confirmed_occurrences(status: Mapping[str, Any]) -> List[Dict[str, Any]]:
     occurrences: List[Dict[str, Any]] = []
     for anchor in collect_confirmed_recognition_anchors(status):
         source_row = rows_by_id.get(_text(anchor.get("anchor_id")), {})
+        canonical_label = _individual_agent_label(anchor.get("narrative_agent_label")) or anchor["narrative_agent_label"]
         occurrences.append(
             {
                 "occurrence_id": anchor["anchor_id"],
                 "analysis_id": analysis_id,
-                "narrative_agent_key": anchor["narrative_agent_key"],
-                "narrative_agent_label": anchor["narrative_agent_label"],
+                "narrative_agent_key": _key(canonical_label),
+                "narrative_agent_label": canonical_label,
                 "source_interval": anchor["source_interval"],
                 "source_geometry": anchor.get("source_geometry"),
                 "evidence_modality": anchor.get("evidence_modality") or "visual",
@@ -613,15 +720,19 @@ def build_continuity_inventory(
         raise ValueError("Narrative Agent continuity inventory project mismatch")
 
     confirmed = [row for status in statuses for row in _confirmed_occurrences(status)]
+    _hydrate_confirmed_audio_context(statuses, confirmed)
     metadata_agents_by_key: Dict[str, Dict[str, Any]] = {}
     for status in statuses:
-        for row in _metadata_confirmed_agents(status):
+        for row in [*_metadata_confirmed_agents(status), *_annotation_confirmed_agent_roles(status)]:
             key = row["narrative_agent_key"]
             existing = metadata_agents_by_key.get(key)
             if existing:
                 existing["source_analysis_ids"] = sorted(set(existing["source_analysis_ids"] + row["source_analysis_ids"]))
                 existing["traceback_refs"] = sorted(set(existing["traceback_refs"] + row["traceback_refs"]))
                 existing["confirmed_roles"] = sorted(set(existing.get("confirmed_roles", []) + row.get("confirmed_roles", [])), key=str.casefold)
+                if row.get("confirmed_roles"):
+                    existing["role_authority"] = row.get("role_authority")
+                    existing["role_probability"] = 1.0
             else:
                 metadata_agents_by_key[key] = row
     metadata_confirmed_agents = sorted(metadata_agents_by_key.values(), key=lambda row: row["narrative_agent_label"].casefold())

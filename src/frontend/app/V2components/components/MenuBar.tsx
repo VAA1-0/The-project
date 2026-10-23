@@ -1098,6 +1098,12 @@ export function MenuBar() {
       label: "Window",
       submenu: [
         {
+          label: "Analysis Report",
+          onClick: () => {
+            openPanel("AnalysisReport", selectedVideoId ? { videoId: selectedVideoId } : {});
+          },
+        },
+        {
           label: "Audio",
           onClick: () => {
             if (selectedVideoId) {

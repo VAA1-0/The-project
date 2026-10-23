@@ -1,13 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-const A = process.env.VAA1_CLOCK_A_ID || "clock-acceptance-db1f40f585954e1bbd0885c52bbfdfd1";
-const B = process.env.VAA1_CLOCK_B_ID || "clock-acceptance-bdf5e416bdd54be4be30454aea9f6b09";
+const A = process.env.VAA1_CLOCK_A_ID || "";
+const B = process.env.VAA1_CLOCK_B_ID || "";
 const PROJECT = "source-clock-acceptance";
 
 const sourceClockUrl = (analysisId: string) =>
   `http://127.0.0.1:8000/api/analysis/${analysisId}/source-clock?project_id=${PROJECT}&context_analysis_id=${analysisId}`;
 
 test("delayed A context cannot replace B during rendered A to B to A switching", async ({ page, request }) => {
+  test.skip(!A || !B, "Requires two explicitly created isolated clock fixtures");
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
 

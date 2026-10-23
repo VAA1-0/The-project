@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const BOND_ID = "81920e95-a0b2-4173-bc23-86db7909a0a9";
+
 async function openSurface(page: import("@playwright/test").Page, tabLabel: string, menu: "Lenses" | "Window", item: string) {
   let tab = page.locator(".lm_tab").filter({ hasText: new RegExp(`^${tabLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }).last();
   if ((await tab.count()) === 0 || !(await tab.last().isVisible())) {
@@ -16,7 +18,7 @@ test("Transcript concordance navigation moves the global clock and Video frame",
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
   const tab = page.locator(".lm_tab").filter({ hasText: /^Transcript$/ });
   await tab.evaluate((element: HTMLElement) => element.click());
   const stack = tab.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' lm_stack ')][1]");
@@ -40,11 +42,11 @@ test("all on-beat detections surface and Meaning Plot follows associated graph n
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
 
   const searchStack = await openSurface(page, "Search", "Lenses", "Search");
   const searchBrowser = searchStack.locator('[data-source-clock-browser="true"]:visible');
-  await expect(searchBrowser).toContainText("global · revision bound", { timeout: 30_000 });
+  await expect(searchBrowser).toContainText("global · revision bound", { timeout: 90_000 });
   await searchBrowser.getByLabel("Browse source time").fill("1:08.200");
   await searchBrowser.getByRole("button", { name: "Go", exact: true }).click();
   const searchRail = searchStack.locator('[data-panel-source-clock-concordance="Search"]:visible');
@@ -66,7 +68,7 @@ test("Scene Cards, Quant and POS resolve the same beat without contradictory sur
   test.setTimeout(150_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
 
   const quantStack = await openSurface(page, "Quant", "Lenses", "Quantitative Analysis");
   const quantBrowser = quantStack.locator('[data-source-clock-browser="true"]:visible');

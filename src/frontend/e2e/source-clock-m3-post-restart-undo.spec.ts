@@ -4,9 +4,8 @@ const ID = "clock-acceptance-5324d4dd643a453bb188c33657a6b227";
 const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections?project_id=source-clock-acceptance&context_analysis_id=${ID}`;
 const MARKER = "M3 interval continuity marker";
 
-test.use({ storageState: "/tmp/datascene-m3-storage-state.json" });
-
 test("M3 interval survives restart and guarded undo appends history", async ({ page, request }) => {
+  test.skip(true, "Archived fixed M3 fixture; current mutation acceptance uses an explicitly isolated clock fixture");
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/dashboard?activeProject=source-clock-acceptance");

@@ -17,6 +17,7 @@ import OBJDetectionPanel from "./panels/OBJDetectionPanel";
 import OCRPanel from "./panels/OCRPanel";
 import ExpressionPanel from "./panels/ExpressionPanel";
 import DownloadPanel from "./panels/DownloadPanel";
+import AnalysisReportPanel from "./panels/AnalysisReportPanel";
 import POSAnalyzePanel from "./panels/POSAnalyzePanel";
 import POSMatrixPanel from "./panels/POSMatrixPanel";
 import QuantitativeAnalysisPanel from "./panels/QuantitativeAnalysisPanel";
@@ -60,6 +61,7 @@ const projectLayoutStorageKey = () =>
 const projectLayoutVersionStorageKey = () => `${projectLayoutStorageKey()}.version`;
 
 const RIGHT_STACK_ANCHOR_TYPES = [
+  "AnalysisReport",
   "TracebackDrawer",
   "AdminObservability",
   "StatsKit",
@@ -579,6 +581,7 @@ export default function LayoutHost({
     };
   }, [fallbackContextMenu]);
   const PANEL_TITLES: Record<string, string> = {
+    AnalysisReport: "Analysis Report",
     Audio: "Audio",
     CvatPluginPanel: "CVAT plugin",
     Transcript: "Transcript",
@@ -789,6 +792,18 @@ export default function LayoutHost({
       "DownloadPanel",
       (container, state: JsonValue | undefined) => {
         new ReactComponentWrapper(container, DownloadPanel, {}, ContextWrapper);
+      },
+    );
+
+    layout.registerComponentFactoryFunction(
+      "AnalysisReport",
+      (container, state: JsonValue | undefined) => {
+        new ReactComponentWrapper(
+          container,
+          AnalysisReportPanel,
+          (state as Record<string, unknown>) || {},
+          ContextWrapper,
+        );
       },
     );
 

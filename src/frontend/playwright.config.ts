@@ -6,6 +6,10 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://${HOST}:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  // The rendered acceptance suite exercises a shared saved-work catalogue.
+  // Serial execution is the safe release-gate default; callers may opt into
+  // bounded parallelism explicitly after the serial gate is green.
+  workers: Number(process.env.VAA1_PLAYWRIGHT_WORKERS || 1),
   timeout: 30_000,
   expect: {
     timeout: 10_000,

@@ -68,6 +68,7 @@ import type {
   SourceSample,
 } from "@/lib/api-service";
 import { getVideoBlob } from "@/lib/blob-store";
+import { activeProjectScopeId } from "@/lib/active-project-scope";
 import { listJobs } from "@/cvat-api/client";
 import {
   broadcastAnalysisCorrectionRefresh,
@@ -182,6 +183,7 @@ const CINEMATIC_SHOT_SIZE_OPTIONS = [
 ];
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
+const ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX = "vaa1.analysis.model-selections.v1";
 
 const MANUAL_LEAF_NAV_OPTIONS: Array<{
   category: ManualVisualAnnotation["category"];
@@ -561,6 +563,9 @@ export default function ToolsPanel() {
     useState("");
   const [allowRoughInterpretation, setAllowRoughInterpretation] =
     useState(true);
+  const [analysisModelSelections, setAnalysisModelSelections] = useState<
+    Record<string, string>
+  >({});
   const [applyFaceAnonymization, setApplyFaceAnonymization] = useState(false);
   const [faceMessageStyle, setFaceMessageStyle] = useState<
     "plain" | "starfleet"
@@ -692,6 +697,33 @@ export default function ToolsPanel() {
     setSpecialUseMorphologyLanguage(saved.specialUseLanguage);
     setAllowRoughInterpretation(saved.allowRoughInterpretation);
   }, []);
+
+  useEffect(() => {
+    try {
+      const projectId = activeProjectScopeId() || "catalogue";
+      const raw = window.localStorage.getItem(
+        `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`,
+      );
+      setAnalysisModelSelections(raw ? JSON.parse(raw) : {});
+    } catch {
+      setAnalysisModelSelections({});
+    }
+  }, []);
+
+  const updateAnalysisModelSelection = React.useCallback(
+    (featureId: string, candidateName: string) => {
+      setAnalysisModelSelections((current) => {
+        const next = { ...current, [featureId]: candidateName };
+        const projectId = activeProjectScopeId() || "catalogue";
+        window.localStorage.setItem(
+          `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`,
+          JSON.stringify(next),
+        );
+        return next;
+      });
+    },
+    [],
+  );
 
   const workspaceOptions: Array<{ key: ToolsWorkspace; label: string }> = [
     { key: "ai_agent", label: "AI Agent processes" },
@@ -2625,7 +2657,11 @@ export default function ToolsPanel() {
   }, []);
 
   useEffect(() => {
-    if (activeWorkspace === "ai_agent" && !aiAgentManifest && !aiAgentManifestLoading) {
+    if (
+      (activeWorkspace === "ai_agent" || activeWorkspace === "analysis") &&
+      !aiAgentManifest &&
+      !aiAgentManifestLoading
+    ) {
       void loadAiAgentFeatureStarters();
     }
   }, [activeWorkspace, aiAgentManifest, aiAgentManifestLoading, loadAiAgentFeatureStarters]);
@@ -2822,6 +2858,7 @@ export default function ToolsPanel() {
         applyFaceAnonymization,
         faceMessageStyle,
         faceRequiresPersonDetection,
+        modelChoices: analysisModelSelections,
       });
       alert(
         `Launch sequence confirmed. ${analysisTierLabel} / ${modalityFocusLabel} / ${morphologyPackLabel} is underway.`,
@@ -5211,7 +5248,7 @@ export default function ToolsPanel() {
                 </summary>
                 <div className="space-y-3 border-t border-white/10 p-3">
                 <div className="space-y-1">
-                  <Label htmlFor="analysis-tier">Analysis tier</Label>
+                  <Label htmlFor="analysis-tier">1. Scan choice</Label>
                   <Select
                     value={analysisTier}
                     onValueChange={(
@@ -5245,7 +5282,7 @@ export default function ToolsPanel() {
                 </div>
 
                 <div className="space-y-1">
-                  <Label htmlFor="modality-focus">Modality focus</Label>
+                  <Label htmlFor="modality-focus">Material and modality focus</Label>
                   <Select
                     value={modalityFocus}
                     onValueChange={(
@@ -5275,7 +5312,7 @@ export default function ToolsPanel() {
 
                 <div className="space-y-1">
                   <Label htmlFor="morphology-pack-policy">
-                    Morphology regime
+                    2. Morphology choice
                   </Label>
                   <Select
                     value={morphologyPackPolicy}
@@ -5498,6 +5535,75 @@ export default function ToolsPanel() {
                     </CollapsibleContent>
                   </div>
                 </Collapsible>
+
+                <div className="space-y-2 rounded-md border border-white/8 bg-[#171717] p-3">
+                  <div className="space-y-1">
+                    <div className="text-sm text-slate-200">
+                      3. Model choice matrix and licence record
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Select one recorded preference per analysis function. A selection
+                      does not install, license, or activate a missing runtime.
+                    </div>
+                  </div>
+
+                  {aiAgentManifestLoading && (
+                    <div className="text-xs text-slate-500">Loading model catalogue...</div>
+                  )}
+                  {aiAgentManifestError && (
+                    <div className="text-xs text-amber-300">{aiAgentManifestError}</div>
+                  )}
+                  <div className="grid gap-2">
+                    {(aiAgentManifest?.features ?? []).map((feature) => (
+                      <div
+                        key={`analysis-model-${feature.feature_id}`}
+                        className="grid gap-2 rounded border border-white/8 bg-[#141414] p-2 md:grid-cols-[minmax(150px,0.8fr)_minmax(220px,1.2fr)]"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs text-slate-200">{feature.title}</div>
+                          <div className="text-[11px] text-slate-500">
+                            {feature.status.replaceAll("_", " ")}
+                          </div>
+                        </div>
+                        <Select
+                          value={analysisModelSelections[feature.feature_id] || ""}
+                          onValueChange={(value: string) =>
+                            updateAnalysisModelSelection(feature.feature_id, value)
+                          }
+                          disabled={isAnalyzing}
+                        >
+                          <SelectTrigger className="h-8 border-white/12 bg-[#202020] text-xs text-slate-200">
+                            <SelectValue placeholder="Choose a model preference" />
+                          </SelectTrigger>
+                          <SelectContent className={selectContentClassName}>
+                            {feature.candidates.map((candidate) => (
+                              <SelectItem
+                                key={`${feature.feature_id}-${candidate.name}`}
+                                value={candidate.name}
+                              >
+                                {candidate.name} · {candidate.license} · {candidate.core_compatible ? "core compatible" : "isolated/deferred"}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Strong-copyleft, licensed, remote, or otherwise isolated choices
+                    remain unavailable to the core runtime until their activation gate
+                    and environment configuration have passed.
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-white/8 bg-[#171717] p-3">
+                  <div className="text-sm text-slate-200">4. Other analysis setup navigation</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Material focus, rough interpretation, face/privacy controls,
+                    language records, forensic rendering, and mission records remain
+                    available through this Tools workspace.
+                  </div>
+                </div>
                 </div>
               </details>
               )}

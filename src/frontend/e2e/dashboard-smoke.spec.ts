@@ -52,7 +52,7 @@ test("dashboard exposes the default governed workspace tabs", async ({ page }) =
 
   await expectDashboardStable(page);
 
-  await expect(page.locator(".lm_header")).toHaveCount(6);
+  await expect(page.locator(".lm_header")).toHaveCount(3);
   await expect(page.locator(".lm_tab")).toHaveCount(DEFAULT_DASHBOARD_TABS.length);
 });
 

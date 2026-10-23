@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const BOND_ID = "8183c1fd-7cb9-49d0-b20c-378399e9c41f";
+const BOND_ID = "81920e95-a0b2-4173-bc23-86db7909a0a9";
 
 async function openAnalysisSurface(page: import("@playwright/test").Page, tabLabel: string, item: string) {
   let tab = page.locator(".lm_tab").filter({ hasText: new RegExp(`^${tabLabel}$`) }).last();
@@ -23,7 +23,7 @@ test("saved POS and Quant hydrate without playable media and retain project memb
   expect(summary.project_id).toBe("bond-cop30-helsinki");
   await page.route(/\/download\/(source_video|video)(\?|$)/, route => route.abort());
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
   const pos = await openAnalysisSurface(page, "POS", "POS analysis Lens");
   await expect(pos.getByText("Loading saved language analysis…")).toHaveCount(0, { timeout: 90_000 });
   await pos.getByText("POS COUNTS", { exact: true }).click();

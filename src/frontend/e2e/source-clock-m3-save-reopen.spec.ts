@@ -8,6 +8,7 @@ const CORRECTIONS = `/api/local-analysis/${ID}/download/annotation_corrections?p
 const MARKER = "M3 interval continuity marker";
 
 test("M3 interval correction saves, verifies, and survives close/reopen", async ({ page, request }) => {
+  test.skip(true, "Archived fixed M3 fixture; current mutation acceptance uses an explicitly isolated clock fixture");
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
 

@@ -32,6 +32,13 @@ import asyncio
 import csv
 import threading
 from datetime import datetime, timezone
+from src.backend.utils.runtime_executables import configure_media_executables
+
+# ffmpeg-python and direct subprocess consumers resolve these names from PATH.
+# Installed application runtimes commonly keep them beside the active Python
+# even when a shell launch does not inherit that directory.
+MEDIA_EXECUTABLES = configure_media_executables()
+
 from src.backend.analysis.pipeline_video_frames import FrameAnalysisPipeline
 from src.backend.analysis.pipeline_manager import run_full_pipeline
 from src.backend.analysis.pipeline_ingestion import run_ingestion_pipeline, validate_video
@@ -92,6 +99,14 @@ from src.backend.analysis.evidence_linker import (
     link_ocr_csv_to_trace,
 )
 from src.backend.analysis.timestamp_schema import MediaProfile, MediaRef
+from src.backend.analysis.analysis_run_record import (
+    analysis_run_record_path,
+    build_analysis_run_record,
+    capture_resource_observation,
+    runtime_provider_versions,
+    update_resource_use,
+)
+from src.backend.analysis.source_import_contract import build_source_import_preflight
 
 # A laptop analysis process must not admit concurrent heavyweight model runs.
 # The visual stack (PyTorch/Metal plus video decoders) can otherwise exhaust the
@@ -260,6 +275,11 @@ from src.backend.analysis.power_assertion import AnalysisPowerAssertion
 from src.backend.analysis.data_book_publication import (
     build_corpus_publication,
     build_video_publication,
+)
+from src.backend.analysis.analysis_edition import (
+    build_completion_account,
+    freeze_analysis_edition,
+    latest_analysis_edition,
 )
 from src.backend.analysis.performance_observability import write_performance_observation
 from src.backend.analysis.source_policy_service import evaluate_source_use
@@ -498,8 +518,17 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
 
     record_path = get_analysis_record_path(analysis_id)
     record_path.parent.mkdir(parents=True, exist_ok=True)
+    status["provider_versions"] = status.get("provider_versions") or runtime_provider_versions()
+    status["resource_use"] = update_resource_use(
+        status.get("resource_use"),
+        capture_resource_observation(RESULTS_DIR),
+    )
     payload = json.loads(json.dumps(status, default=str))
     atomic_write_json(record_path, payload)
+    atomic_write_json(
+        analysis_run_record_path(record_path.parent),
+        build_analysis_run_record(payload),
+    )
 
     # Keep catalogue-critical ownership outside the potentially very large
     # analysis record. Browser startup can then restore project boundaries
@@ -7907,6 +7936,28 @@ def refresh_audio_analysis_parity(status: Dict[str, Any]) -> Optional[Dict[str, 
     return parity
 
 
+def refresh_language_analysis_parity(status: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Persist language parity even when every governed row count is zero."""
+    analysis_id = str(status.get("analysis_id") or "").strip()
+    output_files = status.get("output_files") if isinstance(status.get("output_files"), dict) else {}
+    if not analysis_id:
+        return None
+    transcript = read_json_artifact_if_available(output_files.get("transcript"))
+    pos_payload = read_json_artifact_if_available(output_files.get("pos_analysis"))
+    quant_payload = read_json_artifact_if_available(output_files.get("quan_analysis"))
+    linked_payload = read_json_artifact_if_available(output_files.get("linked_transcript")) or {}
+    if not all(isinstance(value, dict) for value in (transcript, pos_payload, quant_payload)):
+        return None
+    parity = build_language_analysis_parity(
+        transcript or {}, pos_payload or {}, quant_payload or {}, linked_payload
+    )
+    parity_path = RESULTS_DIR / analysis_id / "language_analysis_parity.json"
+    atomic_write_json(parity_path, parity)
+    status["language_analysis_parity"] = parity
+    status.setdefault("output_files", {})["language_analysis_parity"] = str(parity_path)
+    return parity
+
+
 def repair_transcript_timing_if_needed(status: Dict[str, Any]) -> bool:
     output_files = status.setdefault("output_files", {})
     transcript_path_raw = output_files.get("transcript")
@@ -8547,6 +8598,12 @@ async def upload_preflight(payload: Dict[str, Any] = Body(...)) -> dict:
     }
 
 
+@app.post("/api/source-import/preflight", response_model=dict)
+async def source_import_preflight(payload: Dict[str, Any] = Body(...)) -> dict:
+    """Classify source coordinates and disclose operational admission truthfully."""
+    return build_source_import_preflight(payload)
+
+
 @app.post("/api/acquisition/packages/validate", response_model=dict)
 async def validate_golden_retriever_package(payload: Dict[str, Any] = Body(...)) -> dict:
     """Validate an acquisition envelope without fetching, persisting, or admitting it."""
@@ -8798,6 +8855,7 @@ async def start_analysis(
     apply_face_anonymization: bool = False,
     face_message_style: str = "plain",
     face_requires_person_detection: bool = False,
+    model_choices: str = "",
 ) -> dict:
     """
     Start video analysis for uploaded video
@@ -8811,6 +8869,17 @@ async def start_analysis(
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    if not MEDIA_EXECUTABLES["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "RUNTIME_DEPENDENCY_UNAVAILABLE",
+                "message": "Analysis cannot start until required media executables are available.",
+                "missing": MEDIA_EXECUTABLES["missing"],
+                "boundary": "analysis_runtime_preflight",
+                "retryable": True,
+            },
+        )
 
     if status["status"] == "processing":
         raise HTTPException(status_code=400, detail="Analysis already in progress")
@@ -8872,6 +8941,15 @@ async def start_analysis(
         raise HTTPException(status_code=400, detail="Invalid modality focus")
     if morphology_pack_policy not in VALID_MORPHOLOGY_PACK_POLICIES:
         raise HTTPException(status_code=400, detail="Invalid morphology pack policy")
+    try:
+        parsed_model_choices = json.loads(model_choices) if model_choices else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid model choices JSON") from exc
+    if not isinstance(parsed_model_choices, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in parsed_model_choices.items()
+    ):
+        raise HTTPException(status_code=400, detail="Model choices must be a string map")
 
     analysis_profile = resolve_analysis_profile(
         pipeline_type=pipeline_type,
@@ -8898,6 +8976,12 @@ async def start_analysis(
     status["modality_focus"] = modality_focus
     status["analysis_profile"] = analysis_profile
     status["language_pack_policy"] = language_pack_policy
+    status["model_choices"] = parsed_model_choices
+    status["provider_versions"] = runtime_provider_versions()
+    status["runtime_dependencies"] = MEDIA_EXECUTABLES
+    status["resource_use"] = update_resource_use(
+        {}, capture_resource_observation(RESULTS_DIR)
+    )
     status["apply_face_anonymization"] = apply_face_anonymization
     status["face_message_style"] = face_message_style
     status["face_requires_person_detection"] = face_requires_person_detection
@@ -8919,6 +9003,7 @@ async def start_analysis(
             "apply_face_anonymization": apply_face_anonymization,
             "face_message_style": face_message_style,
             "face_requires_person_detection": face_requires_person_detection,
+            "model_choices": parsed_model_choices,
             "resume": is_resume,
             "checkpoint": load_analysis_checkpoint(RESULTS_DIR, analysis_id).get(
                 "completed_stages", []
@@ -8964,6 +9049,7 @@ async def start_analysis(
         "apply_face_anonymization": apply_face_anonymization,
         "face_message_style": face_message_style,
         "face_requires_person_detection": face_requires_person_detection,
+        "model_choices": parsed_model_choices,
     }
 
 def run_complete_analysis(
@@ -9970,6 +10056,7 @@ def _run_complete_analysis_unlocked(
         )
         refresh_visual_analysis_parity(status)
         refresh_audio_analysis_parity(status)
+        refresh_language_analysis_parity(status)
         write_full_analysis_manifest(status, RESULTS_DIR / analysis_id)
         persist_analysis_record_for_status(status)
         
@@ -14976,6 +15063,59 @@ async def reveal_workspace_path(path_type: str) -> dict:
         "path": str(target_path),
     }
 
+# Analyst-governed completed-analysis editions
+@app.get("/api/analysis/{analysis_id}/completion", response_model=dict)
+async def get_analysis_completion(
+    analysis_id: str,
+    project_id: Optional[str] = None,
+    context_analysis_id: Optional[str] = None,
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    context_ticket = require_hermeneutic_context(
+        analysis_id=analysis_id, status=status, project_id=project_id,
+        context_analysis_id=context_analysis_id, entry_path="analysis.completion.read",
+        active_lens="completed_analysis",
+    )
+    governed = {**status, "canonical_decision_ledger": decision_ledger_for_status(status)}
+    return {
+        "eligible": effective_analysis_status(status) == "completed",
+        "account": build_completion_account(governed),
+        "latest_edition": latest_analysis_edition(RESULTS_DIR / analysis_id),
+        "hermeneutic_context_ticket": context_ticket,
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/completion", response_model=dict)
+async def complete_analysis_edition(
+    analysis_id: str,
+    payload: dict = Body(default={}),
+    project_id: Optional[str] = None,
+    context_analysis_id: Optional[str] = None,
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    context_ticket = require_hermeneutic_context(
+        analysis_id=analysis_id, status=status, project_id=project_id,
+        context_analysis_id=context_analysis_id, entry_path="analysis.completion.confirm",
+        active_lens="completed_analysis",
+    )
+    governed = {
+        **status,
+        "status": effective_analysis_status(status),
+        "canonical_decision_ledger": decision_ledger_for_status(status),
+    }
+    try:
+        receipt = freeze_analysis_edition(
+            governed, RESULTS_DIR / analysis_id, str(payload.get("analyst_note") or "")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**receipt, "hermeneutic_context_ticket": context_ticket}
+
+
 # Data Book publication endpoints
 @app.post("/api/publication/video/{analysis_id}/prepare", response_model=dict)
 async def prepare_video_publication(
@@ -15013,6 +15153,8 @@ async def prepare_video_publication(
 @app.post("/api/publication/corpus/prepare", response_model=dict)
 async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
     requested = [str(item) for item in payload.get("analysis_ids", [])]
+    if not requested or len(requested) != len(set(requested)):
+        raise HTTPException(status_code=409, detail="Corpus publication requires a unique non-empty analysis selection")
     records = collect_saved_analysis_records()
     statuses = [
         records[item]
@@ -15021,6 +15163,17 @@ async def prepare_corpus_publication(payload: dict = Body(...)) -> dict:
     ]
     if not statuses:
         raise HTTPException(status_code=409, detail="No publishable saved analyses were selected")
+    selected_ids = {str(status.get("analysis_id") or "") for status in statuses}
+    missing_ids = [analysis_id for analysis_id in requested if analysis_id not in selected_ids]
+    if missing_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CORPUS_SELECTION_INCOMPLETE",
+                "message": "Every requested analysis must be available before corpus publication",
+                "analysis_ids": missing_ids,
+            },
+        )
     project_id = str(payload.get("project_id") or statuses[0].get("project_id") or "local-research-project")
     tickets = [
         require_hermeneutic_context(

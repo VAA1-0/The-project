@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const BOND_ID = "81920e95-a0b2-4173-bc23-86db7909a0a9";
+
 test("expressions recover from a backend body timeout in both panel and video", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
@@ -17,7 +19,7 @@ test("expressions recover from a backend body timeout in both panel and video", 
     };
   });
   await page.goto("/dashboard?activeProject=bond-cop30-helsinki");
-  await page.getByRole("button", { name: /Select video NO_TIME_TO_DIE_Trailer_UK/ }).click();
+  await page.locator(`[role="button"][data-analysis-id="${BOND_ID}"]`).click();
   await expect(page.getByRole("button", { name: "Expressions 49", exact: true })).toBeVisible({ timeout: 90_000 });
   await page.locator(".lm_tab").filter({ hasText: /^Expressions$/ }).evaluate((tab: HTMLElement) => tab.click());
   await expect(page.getByText(/49 source-linked expression detections/)).toBeVisible();

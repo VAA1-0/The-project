@@ -18,6 +18,17 @@ class LanguageAnalysisParityTests(unittest.TestCase):
         self.assertEqual(result["transcript"]["timed_coverage_percentage"], 100.0)
         self.assertEqual(result["linked_transcript"]["anchor_count"], 1)
 
+    def test_zero_row_artifacts_are_valid_aligned_parity(self):
+        result = build_language_analysis_parity(
+            {"language": "en", "segments": []},
+            {"token_count": 0, "pos_counts": {}, "analysis_mode": "empty_source"},
+            {"token_info": {"tokens": [], "tokens_filtered": [], "ttr": 0}, "stats_df": []},
+            {"anchors": []},
+        )
+        self.assertEqual(result["transcript"]["timed_coverage_percentage"], 100.0)
+        self.assertEqual(result["cross_panel"]["pos_quant_token_parity_percentage"], 100.0)
+        self.assertEqual(result["cross_panel"]["status"], "aligned")
+
 
 if __name__ == "__main__":
     unittest.main()

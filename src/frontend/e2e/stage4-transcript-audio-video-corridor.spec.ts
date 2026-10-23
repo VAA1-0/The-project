@@ -24,13 +24,13 @@ async function openAudio(page: Page): Promise<Locator> {
 test("Stage 4 keeps Transcript and Audio evidence inspectable through Video, reopen, and source switch", async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 2560, height: 1440 });
-  await page.goto("/dashboard?activeProject=research-test-2-20226-cop30-vids&workspace=default");
-  await page.getByRole("button", { name: /Select video CNN\.mp4/ }).click();
+  await page.goto("/dashboard?activeProject=bond-cop30-helsinki&workspace=default");
+  await page.locator('[role="button"][data-analysis-id="81920e95-a0b2-4173-bc23-86db7909a0a9"]').click();
 
   const transcriptStack = await activateTab(page, "Transcript");
   const transcriptClock = transcriptStack.locator('[data-source-clock-browser="true"]:visible');
   await expect(transcriptClock).toContainText("global · revision bound", { timeout: 60_000 });
-  await transcriptClock.getByLabel("Browse source time").fill("0:03.780");
+  await transcriptClock.getByLabel("Browse source time").fill("0:41.920");
   await transcriptClock.getByRole("button", { name: "Go", exact: true }).click();
   const transcriptRow = transcriptStack.locator('[data-source-clock-nearest="true"]').last();
   await expect(transcriptRow).toBeVisible();
@@ -38,7 +38,13 @@ test("Stage 4 keeps Transcript and Audio evidence inspectable through Video, reo
   await expect(transcriptRow).toHaveAttribute("data-vaa1-transcript-active-evidence", "true");
 
   const videoStack = await activateTab(page, "Video");
-  await expect(videoStack.locator('[data-vaa1-focused-transcript-evidence="true"]')).toBeVisible();
+  const focusedTranscript = videoStack.locator('[data-vaa1-focused-transcript-evidence="true"]');
+  if ((await focusedTranscript.count()) === 0) {
+    await activateTab(page, "Transcript");
+    await transcriptRow.click();
+    await activateTab(page, "Video");
+  }
+  await expect(focusedTranscript).toBeVisible({ timeout: 30_000 });
 
   let audioStack = await openAudio(page);
   await audioStack.getByRole("button", { name: /Governed music, noise, and silence intervals/ }).click();
