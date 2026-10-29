@@ -24,6 +24,24 @@ test("unchanged legacy clocks remain writable and malformed offsets fail", () =>
   }
 });
 
+test("source-unavailable reads do not manufacture a source-binding conflict", () => {
+  const corrections = { correction_generation: "generation-a", transcript_clock_offset_seconds: 0 };
+  const unavailable = {
+    analysis_id: "a", binding_status: "source_unavailable",
+    source_fingerprint: null, clock_revision: null,
+  };
+  const guard = correctionClockGuard("a", corrections, unavailable);
+  assert.equal(guard.correction_generation, "generation-a");
+  assert.equal(guard.source_fingerprint, null);
+  assert.equal(guard.clock_revision, null);
+  validateCorrectionSourceBinding("a", { _clock_write_guard: guard }, unavailable);
+  validateCorrectionSourceBinding("a", { _clock_write_guard: guard }, {
+    analysis_id: "a", binding_status: "content_bound",
+    source_fingerprint: "sha256:recovered", clock_revision: "revision:recovered",
+    timebase: { transcript_clock_offset_seconds: 0 },
+  });
+});
+
 test("actual dashboard POST rejects a stale clock without touching either artifact", async () => {
   const route = readFileSync(new URL("../app/api/local-analysis/[analysisId]/download/[fileType]/route.ts", import.meta.url), "utf8");
   const ast = ts.createSourceFile("route.ts", route, ts.ScriptTarget.Latest, true);

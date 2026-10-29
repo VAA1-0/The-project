@@ -31,13 +31,39 @@ Status vocabulary:
 | **6 — Agent continuity and graph assembly** | **Implemented; selected Nomi live gate passed** | The governed Nomi audio occurrence at `41.920–43.180` is one mature canonical occurrence; three repeated same-beat confirmations are retained as traceback receipts rather than duplicate attributes. The accepted continuity collection is measurement-eligible and carries one projection revision across Video, Audio, Transcript, Narrative Agent, Meaning/Plot, Master Schema, Data Maturation, Search, Traceback and Measurements. Broader motor-by-motor continuity coverage remains regression and expansion work, not a reason to withhold the completed bounded gate. |
 | **7 — Reviewable interpretation** | **Delivered for the bounded Nomi speaker-attribution construct** | The Nomi audio-backed construct at `41.920–43.180` now completes the selected lifecycle: eligible evidence, stable identity, warrant, alternatives, uncertainty, provenance, in-panel review, canonical analyst authority, shared Meaning Knowledge/Narrative Agent graph tickets, mature speaker and role edges, evidence-honest constellational hydration, correction/invalidation, save/reopen and isolated export/restore. The 21 October analyst closeout accepts this bounded Stage 7 gate. Family-wide activation and the offline relational-lens package remain explicitly deferred expansion scope rather than conditions for this bounded delivery. See the [Stage 7 handover](working_handover_handout_2026-10-19_stage7_reviewable_interpretation.md) and [Nomi role hydration incident](bug_report_2026-10-21_nomi_role_confirmation_missing_from_constellational_snapshot.md). |
 | **8 — Publication and portability** | **Delivered and manually accepted** | Per-video archives restore independently with path, project, checksum and identity enforcement. Live No Time to Die acceptance passed with 20 exact source-linked relations, zero withheld relations, and all 144 active accepted Narrative Agent assignments across 60 preserved labels. The six-video Bond corpus restores with six independent editions and clocks; cross-project, tampered, identity-colliding and non-reproducible packages fail closed. Consecutive live corpus builds produced the same checksum. On 22 October 2026 the analyst downloaded and opened the corpus outside the workspace and confirmed the Chapter 5 report, corpus manifest and six separate video-publication folders. Maintain as a release regression gate. See the [Stage 8 handover](working_handover_handout_2026-10-21_stage8_publication_and_portability.md). |
-| **9 — Release qualification** | **Active; 9.1, initial 9.3, core 9.5, video-path 9.6 and first 9.7 slice delivered** | Release qualification now includes a first-class Tools/Analysis setup surface; the bounded `vaa1.analysis_run_record.v1` receipt; panel-local model-transition journeys; an accepted live Quick Sweep; governed source admission; verified video consumer hydration; and an analyst-governed, immutable Analysis 1.0 edition with a human-readable completion account. Non-video families remain truthfully blocked and have a deferred manual protocol. Fresh-location Mac/Windows installation remains gated until configuration freeze. First-run consent/data-location disclosure, operational non-video workflows, recovery/performance budgets, broad regression classification and packaged workflow acceptance remain. See the [Stage 9 handover](working_handover_handout_2026-10-22_stage9_release_qualification.md). |
+| **9 — Release qualification** | **Active; 9.1, initial 9.3, core 9.5, video-path 9.6 and first 9.7 slice delivered** | Release qualification now includes a first-class Tools/Analysis setup surface; the bounded `vaa1.analysis_run_record.v1` receipt; panel-local model-transition journeys; an accepted live Quick Sweep; governed source admission; verified video consumer hydration; and an analyst-governed, immutable Analysis 1.0 edition with a human-readable completion account. Model/script, licence, role and honest literature disclosure are part of analysis launch and working Tools. Before the remaining 9.6–9.8 acceptance work, all prior sprint patches must pass an operational audit covering Meaning Knowledge and Narrative Agent graphs/lenses, Narrative Agent evidence clustering, Mature Data Proliferation, open bug mitigations and runtime updates. Fresh-location Mac/Windows installation remains gated until configuration freeze, and unresolved former “optional deferrals” now require an explicit disposition before that freeze. See the [Stage 9 handover](working_handover_handout_2026-10-22_stage9_release_qualification.md). |
 
 The active delivery frontier is therefore **Stages 2–8 by bounded dependency**,
 not a third implementation of Stages 0 or 1. A regression in an accepted-state
 or consumer projection blocks that dependent slice and must be repaired, but it
 does not reopen the delivered baseline or Global Clock unless evidence shows the
 baseline identity or shared clock contract itself has failed.
+
+### Audio Narrative Agent cultivation — remaining work registered 2026-10-28
+
+The completed one-line markup run establishes a useful confirmed voice corpus,
+but not a safe automatic speaker classifier. Carry the following work in the
+General Sprint rather than treating similarity as confirmation:
+
+- expose each audio candidate's overlapping transcript line in the Audio
+  workbench and preserve the exact confirmed identity/boundary join;
+- project analyst-confirmed speaker-to-line relations to Narrative Agent and
+  Meaning Knowledge consumers, while keeping dialogue co-presence as a
+  reviewable candidate and never inferring a directed addressee from adjacency;
+- prove save, reopen and boundary-length parity across Audio, Master Schema,
+  Data Maturation, Narrative Agent and Meaning Knowledge consumers;
+- add top-two speaker suggestions with visible score margin and supporting
+  seeds as fast batch markup, without automatic maturation;
+- replace or recalibrate the current voice representation before enabling any
+  automation: the 22-seed leave-one-out result was 6/22 (27.27%), despite many
+  cosine scores above 0.99; and
+- record held-out accuracy, abstention coverage, correction rate, interaction
+  latency and analyst time saved before an automation threshold can graduate.
+
+Mitigation rule: transcript/scene adjacency and neighboring confirmed turns may
+rank candidates, but remain separately inspectable evidence. Only an analyst
+decision enters the canonical correction table until a held-out gate proves the
+speaker model and its abstention policy.
 
 Stage 0 delivery checkpoint (2026-10-13): the six-analysis COP30 workshop
 project now passes a reproducible, fail-closed baseline gate. Project,
@@ -468,6 +494,16 @@ Acceptance:
 - SignificanceKit and RelevanceRadar claims that depend on these measurements remain candidate until linked evidence and method provenance are present.
 
 ## 7A. VAD installation, provider routing, and actual analysis support
+
+Current mitigation record (26 October 2026): `pyannote.audio Community-1` is now
+listed in Analysis Setup and Tools as an optional analyst-selected diarization
+provider. The active `vaa1_core` runtime does not currently include it. Before
+activation, resolve Python/Torch dependency compatibility, user-owned Hugging
+Face authentication, gated model-term acceptance, model checksum/version
+pinning, local data handling, source-clock parity, fallback behavior and
+Mac/Windows packaged-runtime verification. Its absence must remain visible and
+must not erase or demote the existing native diarization scaffold or any prior
+source-linked evidence.
 
 - Audit the current "double VAD" situation: local waveform VAD/acoustic clustering, pyannote or other diarization-capable installs, Whisper-derived speech spans, and any frontend/audio-panel assumptions that treat one as the other.
 - Detect which VAD/speaker-segmentation providers are installed, activated, unavailable, stale, or license/API constrained.

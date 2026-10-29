@@ -4,7 +4,7 @@ import { publishSourceTime, subscribeSourceTime } from "@/lib/source-clock-event
 
 import { formatPreciseSourceTime } from "@/lib/source-clock";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import {
@@ -18,9 +18,11 @@ import type {
 } from "@/lib/api-service";
 
 const GOVERNED_AUDIO_PAGE_SIZE = 25;
+const NARRATIVE_AGENT_SEMANTIC_THRESHOLD = 0.65;
 import { VideoService, type AnalysisData } from "@/lib/video-service";
-import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+import { governedNarrativeAgentLabels, individualNarrativeAgentLabel } from "@/lib/narrative-agent-registry";
 import { DynamicPanelSection, DynamicPanelSectionGroup } from "../DynamicPanelSection";
+import NarrativeAgentThumbnailProjectionStrip from "../NarrativeAgentThumbnailProjectionStrip";
 
 type AudioPanelProps = {
   analysis?: {
@@ -80,6 +82,8 @@ type AudioWorkbenchDecision = "confirmed" | "agent" | "dropped" | "sample";
 
 type AudioDecisionTarget = {
   id: string;
+  /** Stable acoustic row identity; unlike id, this does not change family when reassigned. */
+  lineupSampleId?: string;
   label: string;
   text?: string;
   start?: number;
@@ -90,6 +94,8 @@ type AudioDecisionTarget = {
   isStale?: boolean;
   staleReason?: string;
   validForConfirmation?: boolean;
+  clusterMemberIds?: string[];
+  clusterMemberEvidence?: Array<{ id: string; start: number; end: number; speaker: string }>;
 };
 
 type VisualAnchor = {
@@ -114,6 +120,8 @@ type FoleyCandidateRow = {
   reviewState: string;
   proliferationTarget: string;
   nextAction: string;
+  boundarySafe: boolean;
+  boundaryReason?: string;
 };
 
 type AudioSampleRow = {
@@ -133,6 +141,198 @@ type AudioSampleRow = {
   staleReason?: string;
   validForConfirmation?: boolean;
 };
+
+type AudioClusterSample = {
+  id: string;
+  speaker: string;
+  start: number;
+  end: number;
+  quality: number;
+  vector: number[];
+  boundarySafe: boolean;
+  boundaryReason?: string;
+};
+
+type AudioCluster = {
+  id: string;
+  label: string;
+  members: AudioClusterSample[];
+  representative: AudioClusterSample;
+  problematic: AudioClusterSample;
+  purity: number;
+  start: number;
+  end: number;
+};
+
+type NarrativeAgentAudioMember = AudioClusterSample & {
+  matchScore: number;
+  voiceSimilarity?: number;
+  presenceSupport: number;
+  directSeed: boolean;
+  support: string[];
+};
+
+type NarrativeAgentAudioFamily = {
+  id: string;
+  label: string;
+  registrySources: string[];
+  seedMembers: AudioClusterSample[];
+  candidates: NarrativeAgentAudioMember[];
+  state: "confirmed_voice_seed" | "constellational_candidates" | "awaiting_audio_evidence";
+};
+
+type NarrativeAgentAudioExclusion = {
+  sample: AudioClusterSample;
+  score?: number;
+  reason: "below semantic threshold" | "no voice or source-time support";
+};
+
+type NarrativeAgentAudioFamilyReview = {
+  includedCandidates: NarrativeAgentAudioMember[];
+  excludedSamples: NarrativeAgentAudioExclusion[];
+  representative?: NarrativeAgentAudioMember;
+  uncertain?: NarrativeAgentAudioMember;
+  cohesion?: number;
+  nearestCompetitor?: { label: string; score: number };
+  temporalStart?: number;
+  temporalEnd?: number;
+  coveredSeconds: number;
+  sampleCoverage: number;
+};
+
+function cosineDistance(left: number[], right: number[]): number {
+  if (!left.length || left.length !== right.length) return 1;
+  const leftNorm = Math.sqrt(left.reduce((sum, value) => sum + value * value, 0));
+  const rightNorm = Math.sqrt(right.reduce((sum, value) => sum + value * value, 0));
+  if (!leftNorm || !rightNorm) return 1;
+  const dot = left.reduce((sum, value, index) => sum + value * right[index], 0);
+  return Math.max(0, Math.min(2, 1 - dot / (leftNorm * rightNorm)));
+}
+
+function singleSpeakerBoundary(turn: Record<string, any>, allTurns: Record<string, any>[]) {
+  const start = Number(turn.start || 0);
+  const end = Number(turn.end ?? start);
+  const duration = end - start;
+  if (turn.is_stale || turn.valid_for_confirmation === false) {
+    return { safe: false, reason: String(turn.stale_reason || "Source timing is not valid for confirmation") };
+  }
+  if (duration < 0.25) return { safe: false, reason: "Speaker sample is shorter than 250 ms" };
+  if (duration > 8) return { safe: false, reason: "Speaker sample exceeds one safe line-sized window (8 s)" };
+  const competing = allTurns.find((other) => (
+    other !== turn &&
+    String(other.speaker_label || "") !== String(turn.speaker_label || "") &&
+    overlapSeconds(start, end, Number(other.start || 0), Number(other.end ?? other.start ?? 0)) > 0.12
+  ));
+  if (competing) return { safe: false, reason: "Another diarized speaker overlaps this sample" };
+  return { safe: true };
+}
+
+function BoundedAudioSample({ analysisId, start, end, label, onNavigate }: { analysisId: string; start: number; end: number; label: string; onNavigate?: () => void }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const enforceStart = () => {
+    const audio = audioRef.current;
+    if (audio && (audio.currentTime < start - 0.05 || audio.currentTime >= end)) audio.currentTime = start;
+  };
+  return (
+    <audio
+      ref={audioRef}
+      controls
+      preload="none"
+      className="h-7 w-full min-w-[110px]"
+      src={apiService.getDownloadUrl(analysisId, "source_video")}
+      aria-label={label}
+      title={`Play or pause ${label}`}
+      onLoadedMetadata={enforceStart}
+      onPlay={() => { enforceStart(); onNavigate?.(); }}
+      onTimeUpdate={() => {
+        const audio = audioRef.current;
+        if (audio && audio.currentTime >= end) {
+          audio.pause();
+          audio.currentTime = start;
+        }
+      }}
+      data-vaa1-bounded-audio-sample="true"
+      data-sample-start={start.toFixed(3)}
+      data-sample-end={end.toFixed(3)}
+    />
+  );
+}
+
+function audioClusterExploration(diarization: Record<string, any>, threshold: number) {
+  const allTurns = asArray<any>(diarization.speaker_turns);
+  const turns = new Map(allTurns.map((turn) => [String(turn.turn_id || ""), turn]));
+  const exclusions: Array<{ id: string; reason: string }> = [];
+  const samples: AudioClusterSample[] = [];
+  asArray<any>(asObject(diarization.embedding_index).items).forEach((item, index) => {
+    const id = String(item.embedding_id || item.turn_id || `embedding:${index}`);
+    const vector = asArray<number>(item.vector).map(Number).filter(Number.isFinite);
+    const turn = turns.get(String(item.turn_id || "")) || {};
+    if (!vector.length) {
+      exclusions.push({ id, reason: "Missing or invalid acoustic embedding" });
+      return;
+    }
+    if (turn.is_stale) {
+      exclusions.push({ id, reason: String(turn.stale_reason || "Stale source timing") });
+      return;
+    }
+    const boundary = singleSpeakerBoundary(turn, allTurns);
+    samples.push({
+      id,
+      speaker: String(turn.speaker_label || item.speaker_label || "Unassigned speaker"),
+      start: Number(turn.start || 0),
+      end: Number(turn.end ?? turn.start ?? 0),
+      quality: Math.max(0, Math.min(1, Number(turn.diarization_confidence ?? 0))),
+      vector,
+      boundarySafe: boundary.safe,
+      boundaryReason: boundary.reason,
+    });
+  });
+  const clusters: AudioCluster[] = [];
+  const speakerGroups = new Map<string, AudioClusterSample[]>();
+  samples.forEach((sample) => speakerGroups.set(sample.speaker, [...(speakerGroups.get(sample.speaker) || []), sample]));
+  [...speakerGroups.entries()].sort(([left], [right]) => left.localeCompare(right)).forEach(([speaker, speakerSamples]) => {
+    const unseen = new Set(speakerSamples.map((_, index) => index));
+    let component = 0;
+    while (unseen.size) {
+      const seed = Math.min(...unseen);
+      unseen.delete(seed);
+      const queue = [seed];
+      const indexes = [seed];
+      while (queue.length) {
+        const current = queue.pop() as number;
+        [...unseen].forEach((candidate) => {
+          if (cosineDistance(speakerSamples[current].vector, speakerSamples[candidate].vector) <= threshold) {
+            unseen.delete(candidate);
+            queue.push(candidate);
+            indexes.push(candidate);
+          }
+        });
+      }
+      const members = indexes.map((index) => speakerSamples[index]);
+    const scored = members.map((member) => {
+      const meanDistance = members.length > 1
+        ? members.reduce((sum, other) => sum + cosineDistance(member.vector, other.vector), 0) / (members.length - 1)
+        : 0;
+      return { member, score: (1 - Math.min(1, meanDistance)) * (0.5 + 0.5 * member.quality) };
+    }).sort((left, right) => right.score - left.score || left.member.id.localeCompare(right.member.id));
+    const meanPairDistance = members.length > 1
+      ? members.reduce((sum, member, index) => sum + members.slice(index + 1).reduce((inner, other) => inner + cosineDistance(member.vector, other.vector), 0), 0) / ((members.length * (members.length - 1)) / 2)
+      : 0;
+      component += 1;
+      clusters.push({
+        id: `audio-cluster:${safeIdPart(speaker)}:${component}`,
+        label: speaker,
+        members: members.sort((left, right) => left.start - right.start),
+        representative: scored[0].member,
+        problematic: scored[scored.length - 1].member,
+        purity: Math.max(0, Math.min(1, 1 - meanPairDistance)),
+        start: Math.min(...members.map((member) => member.start)),
+        end: Math.max(...members.map((member) => member.end)),
+      });
+    }
+  });
+  return { samples, clusters, exclusions };
+}
 
 type WaveformRow = {
   id: string;
@@ -221,8 +421,7 @@ function eventDuration(event: AudioEvent): number {
 }
 
 function eventLabel(event: AudioEvent): string {
-  if (event.speaker_label) return `${event.speaker_label} speech`;
-  return event.event_label || event.event_type || "audio event";
+  return event.event_label || event.event_type || "speech activity";
 }
 
 function normalizeSpeechText(value: unknown): string {
@@ -301,8 +500,8 @@ function addNarrativeAgentOption(
   source: string,
   id?: unknown,
 ) {
-  const normalizedLabel = String(label || "").trim();
-  if (!normalizedLabel || /^unknown$/i.test(normalizedLabel)) return;
+  const normalizedLabel = individualNarrativeAgentLabel(label);
+  if (!normalizedLabel || /^unknown$/i.test(normalizedLabel) || /^\d+$/.test(normalizedLabel)) return;
   const optionId = String(id || `${source}:${safeIdPart(normalizedLabel)}`);
   if (options.some((option) => option.label.toLowerCase() === normalizedLabel.toLowerCase())) return;
   options.push({ id: optionId, label: normalizedLabel, source });
@@ -336,6 +535,10 @@ function knownNarrativeAgentOptions(analysisData: AnalysisData | null): Narrativ
     asArray(definition.aliases).forEach((alias) => addNarrativeAgentOption(options, alias, "source_media_metadata.character_alias"));
   });
 
+  asArray<string>(annotations?.persons).forEach((person, index) => {
+    addNarrativeAgentOption(options, person, "source_media_metadata.persons", `source-person:${index}`);
+  });
+
   if (asArray<string>(annotations?.persons).length === 0) {
     asArray<string>(annotations?.character_roles).forEach((roleLine, index) => {
       String(roleLine || "").split(/[,;\n]+/).forEach((role, roleIndex) => {
@@ -366,7 +569,8 @@ function knownNarrativeAgentOptions(analysisData: AnalysisData | null): Narrativ
   });
 
   asArray<ManualVisualAnnotation>(analysisData?.annotationCorrections?.manual_visual_annotations).forEach((annotation) => {
-    if (!["Identification", "Role", "OBJ", "Audio"].includes(annotation.category)) return;
+    if (!confirmedNarrativeAgentAnnotation(annotation)) return;
+    if (/^(character present|person|unknown|speaker_\d+)$/i.test(manualAnnotationLabel(annotation))) return;
     addNarrativeAgentOption(
       options,
       manualAnnotationLabel(annotation),
@@ -378,8 +582,188 @@ function knownNarrativeAgentOptions(analysisData: AnalysisData | null): Narrativ
   return options.sort((left, right) => left.label.localeCompare(right.label));
 }
 
+function narrativeAgentFamilyKey(label: unknown): string {
+  const individualLabel = individualNarrativeAgentLabel(label);
+  const aliasLabel = individualLabel.includes("/")
+    ? individualLabel.split("/").map((value) => value.trim()).filter(Boolean).at(-1) || individualLabel
+    : individualLabel;
+  return aliasLabel
+    .split(":")[0]
+    .replace(/\([^)]*\)/g, " ")
+    .toLowerCase()
+    .replace(/^dr\.?\s+/, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function sameNarrativeAgentFamily(left: unknown, right: unknown): boolean {
+  const leftKey = narrativeAgentFamilyKey(left);
+  const rightKey = narrativeAgentFamilyKey(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  if (leftKey.length >= 4 && rightKey.length >= 4) {
+    return leftKey.startsWith(rightKey) || rightKey.startsWith(leftKey);
+  }
+  return false;
+}
+
+function confirmedNarrativeAgentAnnotation(annotation: ManualVisualAnnotation): boolean {
+  const confirmedFields = asObject(annotation.metadata_correlation?.manual_confirmation_event?.confirmed_fields);
+  const label = individualNarrativeAgentLabel(manualAnnotationLabel(annotation));
+  if (!label) return false;
+  if (confirmedFields.narrative_agent === true && !/^(character present|identity affirmed)$/i.test(label)) return true;
+  if (annotation.category === "Audio") return annotation.subcategory === "Narrative Agent" && Boolean(annotation.identity_affirmation);
+  return annotation.category === "Identification" && annotation.subcategory === "Character" && Boolean(annotation.identity_affirmation);
+}
+
+function narrativeAgentAudioFamilies(
+  samples: AudioClusterSample[],
+  options: NarrativeAgentOption[],
+  analysisData: AnalysisData | null,
+): NarrativeAgentAudioFamily[] {
+  const annotations = asArray<ManualVisualAnnotation>(analysisData?.annotationCorrections?.manual_visual_annotations)
+    .filter(confirmedNarrativeAgentAnnotation);
+  const optionGroups = new Map<string, NarrativeAgentOption[]>();
+  options.forEach((option) => {
+    const key = narrativeAgentFamilyKey(option.label);
+    if (!key) return;
+    optionGroups.set(key, [...(optionGroups.get(key) || []), option]);
+  });
+
+  return [...optionGroups.entries()].map(([key, familyOptions]): NarrativeAgentAudioFamily => {
+    const label = [...familyOptions].sort((left, right) => {
+      const leftPenalty = /[a-z][A-Z]/.test(left.label) ? 20 : 0;
+      const rightPenalty = /[a-z][A-Z]/.test(right.label) ? 20 : 0;
+      return (left.label.length + leftPenalty) - (right.label.length + rightPenalty);
+    })[0].label;
+    const familyAnnotations = annotations.filter((annotation) => sameNarrativeAgentFamily(manualAnnotationLabel(annotation), label));
+    const audioSeeds = familyAnnotations.filter((annotation) => annotation.category === "Audio");
+    const presenceAnchors = familyAnnotations.filter((annotation) => annotation.category !== "Audio");
+    const seedMembers = samples.filter((sample) => audioSeeds.some((annotation) => {
+      const start = numericTime(annotation.start_seconds ?? annotation.timestamp_seconds, 0);
+      const end = numericTime(annotation.end_seconds ?? annotation.timestamp_seconds, start + 0.001);
+      return overlapSeconds(sample.start, sample.end, start, end) > 0;
+    }));
+
+    const candidates = samples.map((sample): NarrativeAgentAudioMember | null => {
+      const directSeed = seedMembers.some((seed) => seed.id === sample.id);
+      const voiceSimilarity = seedMembers.length
+        ? Math.max(...seedMembers.map((seed) => Math.max(0, Math.min(1, 1 - cosineDistance(sample.vector, seed.vector)))))
+        : undefined;
+      const duration = Math.max(0.001, sample.end - sample.start);
+      const presenceSupport = Math.max(0, ...presenceAnchors.map((annotation) => {
+        const start = numericTime(annotation.start_seconds ?? annotation.timestamp_seconds, 0);
+        const end = numericTime(annotation.end_seconds ?? annotation.timestamp_seconds, start + 0.001);
+        return Math.min(1, overlapSeconds(sample.start, sample.end, start, end) / duration);
+      }));
+      if (!directSeed && voiceSimilarity === undefined && presenceSupport <= 0) return null;
+      const matchScore = directSeed
+        ? 1
+        : voiceSimilarity !== undefined
+          ? Math.min(0.99, (voiceSimilarity * 0.65) + (presenceSupport * 0.2) + (sample.quality * 0.15))
+          : Math.min(0.79, 0.5 + (presenceSupport * 0.29));
+      const support = [
+        directSeed ? "user-confirmed audio seed" : null,
+        voiceSimilarity !== undefined ? `voice similarity ${(voiceSimilarity * 100).toFixed(1)}%` : null,
+        presenceSupport > 0 ? `Master Schema presence overlap ${(presenceSupport * 100).toFixed(0)}%` : null,
+      ].filter((value): value is string => Boolean(value));
+      return { ...sample, matchScore, voiceSimilarity, presenceSupport, directSeed, support };
+    }).filter((member): member is NarrativeAgentAudioMember => Boolean(member))
+      .sort((left, right) => right.matchScore - left.matchScore || left.start - right.start);
+
+    return {
+      id: `narrative-agent-audio-family:${key}`,
+      label,
+      registrySources: [...new Set(familyOptions.map((option) => option.source))],
+      seedMembers,
+      candidates,
+      state: seedMembers.length
+        ? "confirmed_voice_seed"
+        : candidates.length
+          ? "constellational_candidates"
+          : "awaiting_audio_evidence",
+    };
+  }).sort((left, right) => {
+    const stateOrder = { confirmed_voice_seed: 0, constellational_candidates: 1, awaiting_audio_evidence: 2 };
+    return stateOrder[left.state] - stateOrder[right.state] || left.label.localeCompare(right.label);
+  });
+}
+
+function intervalUnionSeconds(members: Array<{ start: number; end: number }>): number {
+  const intervals = members
+    .map((member) => [member.start, Math.max(member.start, member.end)] as const)
+    .sort((left, right) => left[0] - right[0]);
+  if (!intervals.length) return 0;
+  let total = 0;
+  let [activeStart, activeEnd] = intervals[0];
+  intervals.slice(1).forEach(([start, end]) => {
+    if (start <= activeEnd) {
+      activeEnd = Math.max(activeEnd, end);
+      return;
+    }
+    total += activeEnd - activeStart;
+    activeStart = start;
+    activeEnd = end;
+  });
+  return total + activeEnd - activeStart;
+}
+
+function narrativeAgentAudioFamilyReview(
+  family: NarrativeAgentAudioFamily,
+  families: NarrativeAgentAudioFamily[],
+  allSamples: AudioClusterSample[],
+  threshold: number,
+): NarrativeAgentAudioFamilyReview {
+  const includedCandidates = family.candidates.filter((member) => member.directSeed || member.matchScore >= threshold);
+  const candidateIds = new Set(family.candidates.map((member) => member.id));
+  const excludedSamples: NarrativeAgentAudioExclusion[] = [
+    ...family.candidates
+      .filter((member) => !member.directSeed && member.matchScore < threshold)
+      .map((member) => ({ sample: member, score: member.matchScore, reason: "below semantic threshold" as const })),
+    ...allSamples
+      .filter((sample) => !candidateIds.has(sample.id))
+      .map((sample) => ({ sample, reason: "no voice or source-time support" as const })),
+  ].sort((left, right) => left.sample.start - right.sample.start);
+  const representative = includedCandidates[0];
+  const uncertain = includedCandidates
+    .filter((member) => !member.directSeed)
+    .sort((left, right) => Math.abs(left.matchScore - threshold) - Math.abs(right.matchScore - threshold))[0];
+  const cohesion = includedCandidates.length
+    ? includedCandidates.reduce((sum, member) => {
+        const peers = includedCandidates.filter((peer) => peer.id !== member.id);
+        const similarity = peers.length
+          ? peers.reduce((peerSum, peer) => peerSum + Math.max(0, 1 - cosineDistance(member.vector, peer.vector)), 0) / peers.length
+          : member.quality;
+        return sum + similarity;
+      }, 0) / includedCandidates.length
+    : undefined;
+  const nearestCompetitor = representative
+    ? families
+        .filter((candidateFamily) => candidateFamily.id !== family.id)
+        .flatMap((candidateFamily) => candidateFamily.candidates
+          .filter((member) => member.id === representative.id)
+          .map((member) => ({ label: candidateFamily.label, score: member.matchScore })))
+        .sort((left, right) => right.score - left.score)[0]
+    : undefined;
+  return {
+    includedCandidates,
+    excludedSamples,
+    representative,
+    uncertain,
+    cohesion,
+    nearestCompetitor,
+    temporalStart: includedCandidates.length ? Math.min(...includedCandidates.map((member) => member.start)) : undefined,
+    temporalEnd: includedCandidates.length ? Math.max(...includedCandidates.map((member) => member.end)) : undefined,
+    coveredSeconds: intervalUnionSeconds(includedCandidates),
+    sampleCoverage: allSamples.length ? includedCandidates.length / allSamples.length : 0,
+  };
+}
+
 const FOLEY_PATTERNS: Array<{ label: string; pattern: RegExp; target: string }> = [
   { label: "gun shot / impact", pattern: /gun|shot|gunshot|bang|blast|explosion|impact|weapon/i, target: "Audio sample cloud -> repeated point foley candidates" },
+  { label: "car / engine", pattern: /car|engine|motor|vehicle|rev(?:ving)?|accelerat/i, target: "Audio sample cloud -> vehicle and engine sound candidates" },
+  { label: "door", pattern: /door|slam|creak|latch/i, target: "Audio sample cloud -> door and closure sound candidates" },
+  { label: "footsteps", pattern: /footstep|footsteps|steps|walking|running/i, target: "Audio sample cloud -> movement sound candidates" },
   { label: "laughter", pattern: /laugh|laughter|chuckle|giggle/i, target: "Audio sample cloud -> expressive social sound candidates" },
   { label: "roar", pattern: /roar|growl|scream|shout|yell/i, target: "Audio sample cloud -> high-energy vocal or environmental sound candidates" },
   { label: "applause / applauds", pattern: /applause|applaud|clap|cheer/i, target: "Audio sample cloud -> audience reaction candidates" },
@@ -462,6 +846,19 @@ function transcriptRowsFromAnalysisData(analysisData: AnalysisData | null): Tran
       synthetic: segment.synthetic,
     }))
     .filter((row) => normalizeSpeechText(row.text).length > 0);
+}
+
+function transcriptTextForInterval(
+  rows: TranscriptAudioRow[],
+  start: number,
+  end: number,
+): string {
+  return rows
+    .filter((row) => overlapSeconds(start, end, Number(row.start || 0), Number(row.end ?? row.start ?? 0)) > 0)
+    .sort((left, right) => Number(left.start || 0) - Number(right.start || 0))
+    .map((row) => normalizeSpeechText(row.text))
+    .filter(Boolean)
+    .join(" ");
 }
 
 function transcriptTimingAudit(
@@ -750,7 +1147,7 @@ function audioEventsFromMatureTranscript(
         timingAudit?.status === "global_anchor_only"
           ? "transcript timeline: global anchor only / per-line sync needed"
           : row.source || "transcript timeline",
-        matchedEvent?.speaker_label ? "speaker diarization label only" : null,
+        matchedEvent?.speaker_label ? "technical speech segmentation only" : null,
       ),
     };
   });
@@ -962,6 +1359,7 @@ function lyricRowsFromStatus(status: any, transcriptRows: TranscriptAudioRow[]) 
 
 function foleyRowsFromAudio(status: any, audioEvents: AudioEvent[], prosodyCues: ProsodyCue[]): FoleyCandidateRow[] {
   const sampleRows = sampleCloudRowsFromStatus(status);
+  const speechTurns = asArray<any>(diarizationFromStatus(status).speaker_turns);
   const candidates: FoleyCandidateRow[] = [];
 
   const inspect = (
@@ -973,6 +1371,22 @@ function foleyRowsFromAudio(status: any, audioEvents: AudioEvent[], prosodyCues:
   ) => {
     const match = FOLEY_PATTERNS.find((pattern) => pattern.pattern.test(text));
     if (!match) return;
+    const boundedStart = typeof start === "number" ? start : undefined;
+    const boundedEnd = typeof end === "number" ? end : undefined;
+    const duration = boundedStart !== undefined && boundedEnd !== undefined ? boundedEnd - boundedStart : 0;
+    const overlapsSpeech = boundedStart !== undefined && boundedEnd !== undefined && speechTurns.some((turn) => (
+      overlapSeconds(boundedStart, boundedEnd, Number(turn.start || 0), Number(turn.end ?? turn.start ?? 0)) > 0.12
+    ));
+    const boundarySafe = duration >= 0.08 && duration <= 3 && !overlapsSpeech;
+    const boundaryReason = duration <= 0
+      ? "Foley sample has no valid source interval"
+      : duration < 0.08
+        ? "Foley sample is shorter than 80 ms"
+        : duration > 3
+          ? "Foley sample exceeds one isolated sound-bite window (3 s)"
+          : overlapsSpeech
+            ? "Speech overlaps this Foley interval"
+            : undefined;
     candidates.push({
       label: match.label,
       start: typeof start === "number" ? start : undefined,
@@ -982,6 +1396,8 @@ function foleyRowsFromAudio(status: any, audioEvents: AudioEvent[], prosodyCues:
       reviewState: "candidate_review_required",
       proliferationTarget: match.target,
       nextAction: "Audition sample, confirm label, then proliferate only as reviewed local evidence.",
+      boundarySafe,
+      boundaryReason,
     });
   };
 
@@ -1028,6 +1444,8 @@ function foleyRowsFromAudio(status: any, audioEvents: AudioEvent[], prosodyCues:
     reviewState: sample.reviewState || "candidate_review_required",
     proliferationTarget: "Audio sample cloud -> reviewed foley/sound candidate if analyst confirms a repeatable point sound",
     nextAction: "Audition sample at source time; only promote as gun shot, laughter, roar, applause, or other foley after review.",
+    boundarySafe: false,
+    boundaryReason: "Generic sample-cloud windows require an isolated Foley boundary before confirmation",
   }));
 }
 
@@ -1159,13 +1577,17 @@ function buildAudioManualAnnotation(
   now: string,
 ): ManualVisualAnnotation {
   const range = decisionTimeRange(target);
-  const annotationId = `audio-workbench:${analysisId}:${target.rowType}:${safeIdPart(target.id)}:${decision}`;
+  const clusterMembershipDecision = target.rowType === "audio-cluster" || target.rowType === "audio-cluster-member";
+  const clusterIdentityDecision = target.rowType.startsWith("audio-cluster-identity");
+  const annotationId = `audio-workbench:${analysisId}:${target.rowType}:${safeIdPart(target.id)}`;
   const confirmed = decision === "confirmed" || decision === "agent" || decision === "sample";
   return {
     id: annotationId,
     category: "Audio",
     subcategory:
-      decision === "sample"
+      clusterMembershipDecision
+        ? decision === "dropped" ? "Dropped audio cluster membership" : "Audio cluster membership confirmation"
+      : decision === "sample"
         ? "Audio sample candidate"
       : decision === "dropped"
         ? "Dropped audio candidate"
@@ -1177,7 +1599,7 @@ function buildAudioManualAnnotation(
     timestamp_seconds: range.start,
     start_seconds: range.start,
     end_seconds: range.end,
-    identity_affirmation: decision === "dropped" ? undefined : appliedLabel,
+    identity_affirmation: decision === "dropped" || clusterMembershipDecision ? undefined : appliedLabel,
     audio_foley_note: target.rowType.includes("foley") || decision === "sample" ? target.label : undefined,
     open_note: [
       target.text ? `Transcript: ${target.text}` : null,
@@ -1186,21 +1608,28 @@ function buildAudioManualAnnotation(
       decision === "dropped" ? "Analyst dropped this audio candidate." : null,
     ].filter(Boolean).join(" / "),
     metadata_correlation: {
-      target_type: "audio_evidence_row",
+      target_type: clusterMembershipDecision || clusterIdentityDecision ? "audio_evidence_cluster" : "audio_evidence_row",
       target_id: target.id,
       target_label: appliedLabel,
-      apply_scope: decision === "sample" ? "linked_candidates" : "this_interval_only",
+      apply_scope: clusterMembershipDecision || clusterIdentityDecision || decision === "sample" ? "linked_candidates" : "this_interval_only",
       authority_state:
         decision === "dropped"
           ? "analyst_rejected"
+          : clusterMembershipDecision
+            ? "analyst_confirmed_audio_cluster_membership"
+          : clusterIdentityDecision
+            ? "analyst_confirmed_narrative_agent_audio_cluster_identity"
           : visualAnchor
             ? "analyst_confirmed_narrative_agent_via_audio_visual_anchor"
             : "analyst_confirmed_narrative_agent_audio_anchor",
       maturity_state: confirmed ? "mature_manual_anchor" : "dropped",
       relation: visualAnchor ? "supports" : "unknown",
       source_range_source: "mature_transcript_timeline",
-      maturity_policy: "Most mature data wins: analyst-confirmed audio-visual narrative-agent anchors outrank raw diarization labels.",
+      maturity_policy: clusterMembershipDecision
+        ? "Analyst confirmation makes cluster membership mature; a diarization cluster label is not a Narrative Agent identity."
+        : "Most mature data wins: analyst-confirmed audio-visual narrative-agent anchors outrank raw diarization labels.",
       note: target.source,
+      cluster_member_ids: target.clusterMemberIds,
       manual_confirmation_event: {
         event_type: "audio_workbench_confirmation",
         event_id: annotationId,
@@ -1209,7 +1638,8 @@ function buildAudioManualAnnotation(
         confirmed_fields: {
           source_time: true,
           transcript_text: Boolean(target.text),
-          narrative_agent: decision !== "dropped",
+          narrative_agent: decision !== "dropped" && !clusterMembershipDecision,
+          audio_cluster_membership: decision !== "dropped" && clusterMembershipDecision,
           audio_visual_narrative_agent_triangulation: Boolean(visualAnchor),
           sample_candidate: decision === "sample",
           dropped: decision === "dropped",
@@ -1220,7 +1650,8 @@ function buildAudioManualAnnotation(
           source_layer: target.source,
           start_seconds: range.start,
           end_seconds: range.end,
-          narrative_agent_label: appliedLabel,
+          narrative_agent_label: clusterMembershipDecision ? undefined : appliedLabel,
+          speaker_cluster_label: clusterMembershipDecision ? appliedLabel : undefined,
           visual_anchor_id: visualAnchor?.id,
           visual_anchor_label: visualAnchor?.label,
         },
@@ -1248,10 +1679,14 @@ function buildAudioProliferationDecision(
   const confirmed = decision === "confirmed" || decision === "agent";
   const sample = decision === "sample";
   const canceled = decision === "dropped";
+  const clusterDecision = target.rowType === "audio-cluster";
+  const clusterIdentityDecision = target.rowType === "audio-cluster-identity";
+  const clusterMembershipDecision = clusterDecision || target.rowType === "audio-cluster-member";
   return {
     decision_id: `audio:${decision}:${analysisId}:${target.rowType}:${safeIdPart(target.id)}`,
     candidate_id: target.id,
-    decision_scope: sample ? "cluster" : "candidate",
+    decision_scope: clusterDecision || clusterIdentityDecision || sample ? "cluster" : "candidate",
+    cluster_key: clusterMembershipDecision || clusterIdentityDecision ? (target.speakerLabel || target.id) : undefined,
     decision: confirmed || sample ? "confirmed" : canceled ? "canceled" : "inspected",
     authority_level: visualAnchor
       ? "manual_audio_visual_narrative_agent_triangulation"
@@ -1280,16 +1715,12 @@ function buildAudioProliferationDecision(
           }
         : {},
     ].filter((item) => Object.keys(item).length),
-    evidence_refs: [
-      {
-        id: target.id,
-        panel: "AudioPanel",
-        time: range,
-        narrative_agent_label: appliedLabel,
-        text: target.text,
-      },
-    ],
-    source_traceback_refs: [`traceback:audio:${target.id}`],
+    evidence_refs: target.clusterMemberEvidence?.length
+      ? target.clusterMemberEvidence.map((member) => ({ id: member.id, panel: "AudioPanel", time: { start: member.start, end: member.end }, speaker_label: member.speaker }))
+      : [{ id: target.id, panel: "AudioPanel", time: range, narrative_agent_label: appliedLabel, text: target.text }],
+    source_traceback_refs: target.clusterMemberIds?.length
+      ? target.clusterMemberIds.map((id) => `traceback:audio:${id}`)
+      : [`traceback:audio:${target.id}`],
     projection_targets: confirmed || sample
       ? ["MasterSchema", "MeaningNetwork", "TracebackDrawer", "VideoPanel", "StatsKit"]
       : [],
@@ -1298,7 +1729,11 @@ function buildAudioProliferationDecision(
       : [],
     proliferation_allowed: confirmed || sample,
     decision_reason:
-      confirmed
+      clusterIdentityDecision && confirmed
+        ? `Analyst confirmed ${appliedLabel} as the Narrative Agent for every listed source-timed member of this audio cluster.`
+      : clusterMembershipDecision && confirmed
+        ? "Analyst confirmed that the listed source-timed samples form one governed audio cluster. Narrative Agent confirmation remains a separate decision."
+      : confirmed
         ? "Analyst confirmed narrative-agent audio evidence with mature transcript timing and optional audio-visual anchor."
         : sample
           ? "Analyst staged this source-timed audio row as a governed sample for local proliferation."
@@ -1321,9 +1756,15 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
   const [newNarrativeAgentByTarget, setNewNarrativeAgentByTarget] = useState<Record<string, string>>({});
   const [governedEventPage, setGovernedEventPage] = useState(0);
-  const [speakerTurnPage, setSpeakerTurnPage] = useState(0);
+  const [narrativeAgentThreshold, setNarrativeAgentThreshold] = useState(NARRATIVE_AGENT_SEMANTIC_THRESHOLD);
+  const [audioFamilyAssignments, setAudioFamilyAssignments] = useState<Record<string, string>>({});
+  const [optimisticAudioDecisions, setOptimisticAudioDecisions] = useState<Record<string, "confirmed" | "dropped">>({});
+  const [optimisticAudioLabels, setOptimisticAudioLabels] = useState<Record<string, string>>({});
+  const [audioBoundaryEdits, setAudioBoundaryEdits] = useState<Record<string, { start: number; end: number }>>({});
+  const [selectedAudioFamilyId, setSelectedAudioFamilyId] = useState("");
   const [selectedAudioEvidence, setSelectedAudioEvidence] = useState<FocusedAudioEvidence | null>(null);
   const [sourceClockTime, setSourceClockTime] = useState(0);
+  const audioDecisionQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (propAnalysisId) setAnalysisId(propAnalysisId);
@@ -1444,42 +1885,119 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
     [categorizedEvents],
   );
   const diarization = useMemo(() => diarizationFromStatus(status), [status]);
-  const governedSpeakerTurns = useMemo(
-    () =>
-      asArray<any>(diarization.speaker_turns).sort(
-        (left, right) => Number(left.start || 0) - Number(right.start || 0),
-      ),
-    [diarization],
+  // Diarization labels are an internal segmentation input. They are deliberately
+  // not exposed as analyst-facing categories or confirmation targets.
+  const clusterExploration = useMemo(() => audioClusterExploration(diarization, 0.25), [diarization]);
+  const narrativeAgentFamilies = useMemo(
+    () => narrativeAgentAudioFamilies(clusterExploration.samples, narrativeAgentOptions, analysisData),
+    [clusterExploration.samples, narrativeAgentOptions, analysisData],
   );
+  const narrativeAgentFamilyReviews = useMemo(
+    () => new Map(narrativeAgentFamilies.map((family) => [
+      family.id,
+      narrativeAgentAudioFamilyReview(family, narrativeAgentFamilies, clusterExploration.samples, narrativeAgentThreshold),
+    ])),
+    [narrativeAgentFamilies, clusterExploration.samples, narrativeAgentThreshold],
+  );
+  const audioLineupMembers = useMemo(() => {
+    const best = new Map<string, { familyId: string; member: NarrativeAgentAudioMember }>();
+    narrativeAgentFamilies.forEach((family) => {
+      const review = narrativeAgentFamilyReviews.get(family.id);
+      (review?.includedCandidates || []).forEach((member) => {
+        const existing = best.get(member.id);
+        const wins = !existing || member.directSeed || (!existing.member.directSeed && member.matchScore > existing.member.matchScore);
+        if (wins) best.set(member.id, { familyId: family.id, member });
+      });
+    });
+    const grouped = new Map<string, NarrativeAgentAudioMember[]>();
+    narrativeAgentFamilies.forEach((family) => grouped.set(family.id, []));
+    best.forEach(({ familyId, member }, sampleId) => {
+      // A mature user seed is authoritative and cannot be dragged into a
+      // competing family. Candidate reassignment remains provisional until
+      // the analyst confirms it.
+      const targetFamilyId = member.directSeed ? familyId : (audioFamilyAssignments[sampleId] || familyId);
+      grouped.set(targetFamilyId, [...(grouped.get(targetFamilyId) || []), member]);
+    });
+    grouped.forEach((members) => members.sort((left, right) => left.start - right.start));
+    return grouped;
+  }, [audioFamilyAssignments, narrativeAgentFamilies, narrativeAgentFamilyReviews]);
+  const baselineNarrativeAgentCandidateCount = useMemo(
+    () => narrativeAgentFamilies.reduce(
+      (total, family) => total + narrativeAgentAudioFamilyReview(
+        family,
+        narrativeAgentFamilies,
+        clusterExploration.samples,
+        NARRATIVE_AGENT_SEMANTIC_THRESHOLD,
+      ).includedCandidates.length,
+      0,
+    ),
+    [narrativeAgentFamilies, clusterExploration.samples],
+  );
+  const previewNarrativeAgentCandidateCount = [...narrativeAgentFamilyReviews.values()]
+    .reduce((total, review) => total + review.includedCandidates.length, 0);
   const governedEventPageCount = Math.max(
     1,
     Math.ceil(governedSoundIntervals.length / GOVERNED_AUDIO_PAGE_SIZE),
-  );
-  const speakerTurnPageCount = Math.max(
-    1,
-    Math.ceil(governedSpeakerTurns.length / GOVERNED_AUDIO_PAGE_SIZE),
   );
   const pagedGovernedSoundIntervals = governedSoundIntervals.slice(
     governedEventPage * GOVERNED_AUDIO_PAGE_SIZE,
     (governedEventPage + 1) * GOVERNED_AUDIO_PAGE_SIZE,
   );
-  const pagedSpeakerTurns = governedSpeakerTurns.slice(
-    speakerTurnPage * GOVERNED_AUDIO_PAGE_SIZE,
-    (speakerTurnPage + 1) * GOVERNED_AUDIO_PAGE_SIZE,
-  );
 
   useEffect(() => {
     setGovernedEventPage(0);
-    setSpeakerTurnPage(0);
+    setNarrativeAgentThreshold(NARRATIVE_AGENT_SEMANTIC_THRESHOLD);
+    setOptimisticAudioDecisions({});
+    setOptimisticAudioLabels({});
+    setAudioBoundaryEdits({});
+    setSelectedAudioFamilyId("");
   }, [analysisId]);
+
+  useEffect(() => {
+    if (!narrativeAgentFamilies.length) return;
+    if (!narrativeAgentFamilies.some((family) => family.id === selectedAudioFamilyId)) {
+      setSelectedAudioFamilyId(narrativeAgentFamilies[0].id);
+    }
+  }, [narrativeAgentFamilies, selectedAudioFamilyId]);
+
+  useEffect(() => {
+    const persisted: Record<string, { start: number; end: number }> = {};
+    const samples = clusterExploration.samples;
+    asArray<ManualVisualAnnotation>(analysisData?.annotationCorrections?.manual_visual_annotations)
+      .filter((annotation) => annotation.category === "Audio" && confirmedNarrativeAgentAnnotation(annotation))
+      .forEach((annotation) => {
+        const targetId = String(annotation.metadata_correlation?.target_id || "");
+        const sample = samples.find((candidate) => targetId.endsWith(`:${candidate.id}`));
+        const start = Number(annotation.start_seconds ?? annotation.timestamp_seconds);
+        const end = Number(annotation.end_seconds ?? annotation.timestamp_seconds);
+        if (sample && Number.isFinite(start) && Number.isFinite(end) && end > start) {
+          persisted[sample.id] = { start, end };
+        }
+      });
+    if (Object.keys(persisted).length) {
+      setAudioBoundaryEdits((current) => ({ ...current, ...persisted }));
+    }
+  }, [analysisData?.annotationCorrections?.manual_visual_annotations, clusterExploration.samples]);
 
   if (!analysisId) return <div data-vaa1-panel-state="analysis-binding-unavailable" className="h-full bg-[#080808] p-4 text-sm text-amber-200">Analysis binding unavailable</div>;
   if (isLoading) return <div data-vaa1-panel-state="loading" className="h-full bg-[#080808] p-4 text-sm text-slate-400">Loading audio workbench...</div>;
   if (error) return <div data-vaa1-panel-state="failed" className="h-full bg-[#080808] p-4 text-sm text-amber-200">Audio retrieval failed: {error}</div>;
 
   const correctionDecisions = analysisData?.annotationCorrections?.proliferation_decisions || [];
+  const latestDecisionFor = (target: AudioDecisionTarget) => (
+    [...correctionDecisions].reverse().find((decision) => {
+      if (decision.candidate_id === target.id) return true;
+      const anchor = decision.source_anchors?.[0] as Record<string, any> | undefined;
+      const range = anchor?.source_time as { start?: number; end?: number } | undefined;
+      return decision.source_panel === "AudioPanel" &&
+        String(decision.applied_label || "").toLowerCase() === String(target.label || "").toLowerCase() &&
+        typeof range?.start === "number" && typeof range?.end === "number" &&
+        Math.abs(range.start - Number(target.start)) < 0.01 && Math.abs(range.end - Number(target.end)) < 0.01;
+    })
+  );
   const decisionStatusFor = (target: AudioDecisionTarget): string => {
-    const matched = correctionDecisions.find((decision) => decision.candidate_id === target.id);
+    if (optimisticAudioDecisions[target.id]) return optimisticAudioDecisions[target.id];
+    const matched = latestDecisionFor(target);
     if (matched?.decision === "canceled") return "dropped";
     if (matched?.decision === "confirmed") return "confirmed";
     return "candidate";
@@ -1499,7 +2017,9 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
       );
       return;
     }
-    const visualAnchor = visualAnchorForTarget(target, analysisData);
+    const visualAnchor = target.rowType.startsWith("audio-narrative-agent-family")
+      ? null
+      : visualAnchorForTarget(target, analysisData);
     if (decision === "confirmed" && target.rowType.startsWith("speech") && !visualAnchor && !explicitLabel) {
       setSaveMessage("Choose a known narrative agent for this speech row, or confirm an overlapping visual anchor first.");
       return;
@@ -1515,6 +2035,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
       target.label ||
       "Narrative agent audio evidence",
     ).trim();
+    const range = decisionTimeRange(target);
     const now = new Date().toISOString();
     const decisionId = `audio:${decision}:${analysisId}:${target.rowType}:${safeIdPart(target.id)}`;
     setSavingDecisionId(decisionId);
@@ -1523,18 +2044,78 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         ? "Dropping audio evidence..."
         : decision === "sample"
           ? "Staging audio sample..."
-          : "Saving narrative-agent audio confirmation...",
+        : "Saving narrative-agent audio confirmation...",
     );
     try {
-      const existing: AnnotationCorrections = analysisData?.annotationCorrections || {};
-      const manualAnnotation = buildAudioManualAnnotation(
+      if (decision === "agent" && target.rowType === "audio-narrative-agent-family-candidate") {
+        const annotation = buildAudioManualAnnotation(analysisId, target, decision, appliedLabel, visualAnchor, now);
+        const proliferationDecision = buildAudioProliferationDecision(analysisId, target, decision, appliedLabel, visualAnchor, now);
+        const projectId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("activeProject") : null;
+        const query = new URLSearchParams({ context_analysis_id: analysisId });
+        if (projectId) query.set("project_id", projectId);
+        const response = await fetch(`/api/local-analysis/${encodeURIComponent(analysisId)}/download/annotation_corrections?${query}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operation: "upsert_audio_narrative_agent", annotation, decision: proliferationDecision }),
+        });
+        const receipt = await response.json();
+        if (!response.ok) throw new Error(receipt?.detail || `audio save failed (${response.status})`);
+        const committed = receipt?.annotation;
+        const committedDecision = receipt?.decision;
+        if (
+          committed?.id !== annotation.id ||
+          String(committed?.identity_affirmation || "").trim() !== appliedLabel ||
+          Math.abs(Number(committed?.start_seconds) - range.start) >= 0.001 ||
+          Math.abs(Number(committed?.end_seconds) - range.end) >= 0.001 ||
+          committedDecision?.candidate_id !== proliferationDecision.candidate_id
+        ) throw new Error("canonical save receipt did not contain the exact label and edited interval");
+        setAnalysisData((current) => {
+          if (!current) return current;
+          let corrections = upsertManualVisualAnnotation(current.annotationCorrections || {}, committed);
+          corrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(corrections, committed, { now, sourcePanel: "AudioPanel" });
+          corrections.proliferation_decisions = [
+            ...(corrections.proliferation_decisions || []).filter((item) => item.candidate_id !== committedDecision.candidate_id),
+            committedDecision,
+          ];
+          corrections.correction_generation = receipt.correction_generation;
+          return { ...current, annotationCorrections: corrections };
+        });
+        const destinationFamily = narrativeAgentFamilies.find((family) => sameNarrativeAgentFamily(family.label, appliedLabel));
+        if (destinationFamily && target.lineupSampleId) {
+          setAudioFamilyAssignments((current) => ({ ...current, [target.lineupSampleId as string]: destinationFamily.id }));
+          setSelectedAudioFamilyId(destinationFamily.id);
+        }
+        setOptimisticAudioDecisions((current) => ({ ...current, [target.id]: "confirmed" }));
+        setSaveMessage(`Saved · ${appliedLabel}`);
+        setNewNarrativeAgentByTarget((current) => ({ ...current, [target.id]: "" }));
+        void apiService.refreshAnnotationDependentSurfaces(analysisId).catch(() => undefined);
+        return;
+      }
+      // Each queued table edit rebases on the latest canonical generation.
+      // Rapid clicks therefore serialize without erasing or conflicting with
+      // the preceding row's write.
+      const existing: AnnotationCorrections = await apiService.getAnnotationCorrections(analysisId);
+      const clusterIdentityMembers = target.rowType === "audio-cluster-identity" ? target.clusterMemberEvidence || [] : [];
+      const annotationTargets: AudioDecisionTarget[] = clusterIdentityMembers.length
+        ? clusterIdentityMembers.map((member) => ({
+            id: `${target.id}:member:${member.id}`,
+            label: appliedLabel,
+            start: member.start,
+            end: member.end,
+            source: target.source,
+            rowType: "audio-cluster-identity-member",
+            speakerLabel: member.speaker,
+            validForConfirmation: true,
+          }))
+        : [target];
+      const manualAnnotations = annotationTargets.map((annotationTarget) => buildAudioManualAnnotation(
         analysisId,
-        target,
+        annotationTarget,
         decision,
         appliedLabel,
         visualAnchor,
         now,
-      );
+      ));
       const proliferationDecision = buildAudioProliferationDecision(
         analysisId,
         target,
@@ -1543,13 +2124,20 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         visualAnchor,
         now,
       );
-      const withAnnotation = upsertManualVisualAnnotation(existing, manualAnnotation);
-      const withPresence = decision === "dropped"
+      const withAnnotation = manualAnnotations.reduce(
+        (corrections, manualAnnotation) => upsertManualVisualAnnotation(corrections, manualAnnotation),
+        existing,
+      );
+      const isClusterMembershipDecision = target.rowType === "audio-cluster" || target.rowType === "audio-cluster-member";
+      const withPresence = decision === "dropped" || isClusterMembershipDecision
         ? withAnnotation
-        : upsertMasterSchemaPresenceIntervalForManualAnnotation(withAnnotation, manualAnnotation, {
-            now,
-            sourcePanel: "AudioPanel",
-          });
+        : manualAnnotations.reduce(
+            (corrections, manualAnnotation) => upsertMasterSchemaPresenceIntervalForManualAnnotation(corrections, manualAnnotation, {
+              now,
+              sourcePanel: "AudioPanel",
+            }),
+            withAnnotation,
+          );
       const nextCorrections: AnnotationCorrections = {
         ...withPresence,
         analysis_id: analysisId,
@@ -1557,18 +2145,50 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         updated_at: now,
         updated_by: "analyst",
         proliferation_decisions: [
-          ...(withPresence.proliferation_decisions || []).filter((item) => item.decision_id !== proliferationDecision.decision_id),
+          ...(withPresence.proliferation_decisions || []).filter((item) => item.candidate_id !== proliferationDecision.candidate_id),
           proliferationDecision,
         ],
       };
-      const savedCorrections = await VideoService.saveAnnotationCorrections(analysisId, nextCorrections);
+      await VideoService.saveAnnotationCorrections(analysisId, nextCorrections);
+      const savedCorrections = await apiService.getAnnotationCorrections(analysisId);
+      const savedAnnotations = asArray<ManualVisualAnnotation>(savedCorrections.manual_visual_annotations);
+      const missingAnnotation = manualAnnotations.find((expected) => !savedAnnotations.some((saved) => (
+        saved.id === expected.id &&
+        String(saved.identity_affirmation || saved.custom_label || saved.label || "").trim() === appliedLabel &&
+        Math.abs(Number(saved.start_seconds ?? saved.timestamp_seconds) - Number(expected.start_seconds ?? expected.timestamp_seconds)) < 0.001 &&
+        Math.abs(Number(saved.end_seconds ?? saved.timestamp_seconds) - Number(expected.end_seconds ?? expected.timestamp_seconds)) < 0.001
+      )));
+      const savedDecision = asArray<any>(savedCorrections.proliferation_decisions)
+        .find((item) => item.candidate_id === proliferationDecision.candidate_id && item.decision === proliferationDecision.decision);
+      if (missingAnnotation || !savedDecision) {
+        throw new Error("canonical read-back did not contain the exact label and edited interval");
+      }
       setAnalysisData((current) => current ? { ...current, annotationCorrections: savedCorrections } : current);
-      const refreshed = await VideoService.refreshAnalysis(analysisId);
-      setAnalysisData(refreshed);
-      eventBus.emit("analysisCorrectionsChanged", analysisId);
+      const destinationFamily = decision === "agent"
+        ? narrativeAgentFamilies.find((family) => sameNarrativeAgentFamily(family.label, appliedLabel))
+        : undefined;
+      if (destinationFamily && target.lineupSampleId) {
+        setAudioFamilyAssignments((current) => ({
+          ...current,
+          [target.lineupSampleId as string]: destinationFamily.id,
+        }));
+        setSelectedAudioFamilyId(destinationFamily.id);
+      }
+      setOptimisticAudioDecisions((current) => ({
+        ...current,
+        [target.id]: decision === "dropped" ? "dropped" : "confirmed",
+        ...(destinationFamily && target.lineupSampleId
+          ? { [`${destinationFamily.id}:${target.lineupSampleId}`]: "confirmed" as const }
+          : {}),
+      }));
+      // The verified correction bundle above is sufficient to rebuild this
+      // workbench. A full analysis refresh is intentionally not awaited here:
+      // projection consumers refresh independently after the save receipt.
       setSaveMessage(
         decision === "dropped"
           ? "Audio evidence dropped."
+          : isClusterMembershipDecision
+            ? "Audio cluster membership confirmed."
           : decision === "sample"
             ? "Audio sample staged for governed proliferation."
             : visualAnchor
@@ -1579,11 +2199,41 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         setNewNarrativeAgentByTarget((current) => ({ ...current, [target.id]: "" }));
       }
     } catch (saveError) {
-      setSaveMessage(saveError instanceof Error ? saveError.message : "Audio decision save failed.");
+      const detail = saveError instanceof Error ? saveError.message : "audio decision save failed.";
+      setSaveMessage(`Not saved — ${detail}`);
     } finally {
       setSavingDecisionId(null);
     }
   };
+
+  const queueAudioDecision = (
+    target: AudioDecisionTarget,
+    decision: AudioWorkbenchDecision,
+    explicitLabel?: string,
+  ) => {
+    const appliedLabel = String(explicitLabel || target.label || "Narrative agent").trim();
+    setSaveMessage(`Saving · ${appliedLabel}`);
+    audioDecisionQueue.current = audioDecisionQueue.current
+      .catch(() => undefined)
+      .then(() => persistAudioDecision(target, decision, explicitLabel));
+  };
+
+  const narrativeAgentFamilyMemberTarget = (
+    family: NarrativeAgentAudioFamily,
+    member: NarrativeAgentAudioMember,
+  ): AudioDecisionTarget => ({
+    id: `${family.id}:${member.id}`,
+    lineupSampleId: member.id,
+    label: family.label,
+    start: member.start,
+    end: member.end,
+    text: transcriptTextForInterval(transcriptRows, member.start, member.end) || member.support.join(" · "),
+    source: "MasterSchema Narrative Agent family + audio_diarization.embedding_index",
+    rowType: "audio-narrative-agent-family-candidate",
+    speakerLabel: member.speaker,
+    validForConfirmation: member.boundarySafe,
+    staleReason: member.boundaryReason,
+  });
 
   const renderDecisionControls = (target: AudioDecisionTarget) => {
     const visualAnchor = visualAnchorForTarget(target, analysisData);
@@ -1760,19 +2410,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
       <td className="px-3 py-2 font-mono text-slate-300">{formatValue(event.measurements?.pitch_hz)}</td>
       <td className="max-w-[360px] truncate px-3 py-2 text-slate-400" title={event.text || ""}>{event.text || ""}</td>
       <td className="max-w-[300px] truncate px-3 py-2 text-slate-500" title={event.source_layer || ""}>{event.source_layer || event.classifier_labels?.join(", ") || ""}</td>
-      <td className="px-3 py-2">{renderDecisionControls({
-        id: event.segment_id || event.interval_id || event.event_id || `audio:${index}`,
-        label: eventLabel(event),
-        text: event.text,
-        start: event.start,
-        end: event.end,
-        source: event.source_layer,
-        rowType: `speech-${categoryFor(event)}`,
-        speakerLabel: event.speaker_label,
-        isStale: event.is_stale,
-        staleReason: event.stale_reason,
-        validForConfirmation: event.valid_for_confirmation,
-      })}</td>
+      <td className="px-3 py-2 text-slate-500">Measured speech activity · no confirmation required</td>
     </tr>
     );
   }) : (
@@ -1781,15 +2419,26 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#080808] p-4 text-white" data-vaa1-panel="audio-workbench" data-vaa1-panel-state="ready">
-      <h2 className="mb-3 shrink-0 text-lg font-bold text-slate-100">Audio Workbench</h2>
+      <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
+        <h2 className="text-lg font-bold text-slate-100">Audio Workbench</h2>
+        <span className="text-[10px] text-slate-500">{narrativeAgentFamilies.length} character families · {clusterExploration.samples.length} samples</span>
+      </div>
+      {saveMessage ? (
+        <div className="mb-2 shrink-0 truncate border border-cyan-900/70 bg-cyan-950/20 px-2 py-1 text-[10px] text-cyan-100" data-vaa1-audio-save-message="true" title={saveMessage}>
+          {saveMessage}
+        </div>
+      ) : null}
+      <div className="mb-2 shrink-0" data-vaa1-audio-context-diagnostics="collapsed">
+      <DynamicPanelSection
+        sectionId="audio-context-diagnostics"
+        title="Context & diagnostics"
+        summary="source · selected evidence · visual anchors · timing · waveform"
+        defaultOpen={false}
+      >
+        <div className="p-2">
       {sourceMediaPath ? (
         <div className="mb-3 shrink-0 truncate border border-slate-800 px-3 py-2 text-xs text-slate-400" data-vaa1-audio-source-media-link="true" title={sourceMediaPath}>
           Source media: <span className="font-mono text-cyan-200">{sourceMediaPath}</span>
-        </div>
-      ) : null}
-      {saveMessage ? (
-        <div className="mb-3 shrink-0 border border-cyan-900/70 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100" data-vaa1-audio-save-message="true">
-          {saveMessage}
         </div>
       ) : null}
       {selectedAudioEvidence ? (
@@ -1813,6 +2462,14 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
           </div>
         </div>
       ) : null}
+      <NarrativeAgentThumbnailProjectionStrip
+        analysisId={analysisId}
+        decisions={analysisData?.annotationCorrections?.proliferation_decisions}
+        annotations={analysisData?.annotationCorrections?.manual_visual_annotations}
+        atTime={selectedAudioEvidence?.start ?? sourceClockTime}
+        title="Visual agent at audio time"
+        max={6}
+      />
       {timingAudit.status === "global_anchor_only" ? (
         <div className="mb-3 shrink-0 border border-amber-800/70 bg-amber-950/20 px-3 py-2 text-xs text-amber-100" data-vaa1-audio-timing-audit="global-anchor-only">
           <span className="font-semibold">{timingAudit.label}:</span>{" "}
@@ -1846,7 +2503,217 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
           )}
         </div>
       </div>
+        </div>
+      </DynamicPanelSection>
+      </div>
       <DynamicPanelSectionGroup panelId="audio" className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+        <DynamicPanelSection sectionId="cluster-exploration" title="Audio recognition governance · Narrative Agent family exploration" summary={`${narrativeAgentFamilies.length} Narrative Agent families · ${clusterExploration.samples.length} measured samples`}>
+          <section className="border border-slate-800 bg-[#0c0c0c]" data-vaa1-audio-cluster-exploration="true">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Mature Data Proliferation · audio sample-cloud review</div>
+              </div>
+              <div className="text-right text-[10px] text-slate-400" data-vaa1-cluster-labour-account="true">
+                {narrativeAgentFamilies.length} families · {clusterExploration.samples.length} samples
+              </div>
+            </div>
+            <datalist id="audio-cluster-known-narrative-agents">
+              {narrativeAgentOptions.map((option) => <option key={option.id} value={option.label}>{option.source}</option>)}
+            </datalist>
+            <div className="border-b border-slate-800 p-3" data-vaa1-narrative-agent-audio-families="true">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-fuchsia-200">Narrative Agent audio families</div>
+                </div>
+                <div className="text-right text-[10px] text-slate-400">{narrativeAgentFamilies.length} governed families · {narrativeAgentFamilies.reduce((sum, family) => sum + family.candidates.length, 0)} candidate relations</div>
+              </div>
+              <details className="mb-2 rounded border border-slate-800 bg-slate-950/50" data-vaa1-semantic-threshold-preview="true">
+                <summary className="cursor-pointer px-2 py-1 text-[10px] text-slate-400">Matcher threshold &amp; methodological notes · {(narrativeAgentThreshold * 100).toFixed(0)}%</summary>
+                <div className="grid gap-3 border-t border-slate-800 p-2 md:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+                <label className="grid gap-1 text-[11px] text-slate-300">
+                  Semantic candidate threshold preview · {(narrativeAgentThreshold * 100).toFixed(0)}%
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="0.95"
+                    step="0.01"
+                    value={narrativeAgentThreshold}
+                    onChange={(event) => setNarrativeAgentThreshold(Number(event.target.value))}
+                    aria-label="Narrative Agent semantic candidate threshold"
+                  />
+                </label>
+                <div className="text-[10px] text-slate-400">
+                  Baseline {(NARRATIVE_AGENT_SEMANTIC_THRESHOLD * 100).toFixed(0)}%: {baselineNarrativeAgentCandidateCount} candidates. Preview: {previewNarrativeAgentCandidateCount} candidates ({previewNarrativeAgentCandidateCount - baselineNarrativeAgentCandidateCount >= 0 ? "+" : ""}{previewNarrativeAgentCandidateCount - baselineNarrativeAgentCandidateCount}). Preview changes review membership only and never writes governed data.
+                  <span className="mt-1 block text-slate-500">Families come from confirmed Master Schema Narrative Agents. Audio embeddings and source-time presence rank candidates; technical segmentation labels are not analytical categories.</span>
+                </div>
+                </div>
+              </details>
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_240px]" data-vaa1-audio-family-focus-layout="true">
+                <div className="min-w-0">
+                {narrativeAgentFamilies.map((family) => {
+                  const review = narrativeAgentFamilyReviews.get(family.id) || narrativeAgentAudioFamilyReview(family, narrativeAgentFamilies, clusterExploration.samples, narrativeAgentThreshold);
+                  const lineupMembers = audioLineupMembers.get(family.id) || [];
+                  const governedCount = lineupMembers.filter((member) => {
+                    const status = decisionStatusFor(narrativeAgentFamilyMemberTarget(family, member));
+                    return member.directSeed || status === "confirmed" || status === "dropped";
+                  }).length;
+                  return (
+                  <article
+                    key={family.id}
+                    className={`${family.id === selectedAudioFamilyId ? "block" : "hidden"} rounded border border-fuchsia-950/80 bg-fuchsia-950/10 p-2`}
+                    data-vaa1-narrative-agent-audio-family={family.label}
+                    onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const sampleId = event.dataTransfer.getData("application/x-datascene-narrative-agent-audio-candidate");
+                      if (!sampleId) return;
+                      setAudioFamilyAssignments((current) => ({ ...current, [sampleId]: family.id }));
+                      setSaveMessage(`Audio candidate moved to ${family.label}. Confirm it once to write the governed Narrative Agent relation.`);
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-fuchsia-100">{family.label}</div>
+                        <div className="mt-0.5 text-[9px] text-slate-600">Master Schema · {family.registrySources.join(" + ")}</div>
+                      </div>
+                      <span className={`rounded px-2 py-1 text-[9px] ${family.state === "confirmed_voice_seed" ? "bg-cyan-950 text-cyan-200" : family.state === "constellational_candidates" ? "bg-amber-950 text-amber-200" : "bg-slate-900 text-slate-500"}`}>
+                        {family.state === "confirmed_voice_seed" ? `${family.seedMembers.length} confirmed audio seed${family.seedMembers.length === 1 ? "" : "s"}` : family.state === "constellational_candidates" ? "constellational candidates" : "awaiting audio evidence"}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-1 text-[9px] text-slate-400 sm:grid-cols-4" data-vaa1-semantic-family-metrics="true">
+                      <div className="rounded bg-slate-950 px-1.5 py-1">Cohesion <span className="text-slate-200">{typeof review.cohesion === "number" ? `${(review.cohesion * 100).toFixed(1)}%` : "not available"}</span></div>
+                      <div className="rounded bg-slate-950 px-1.5 py-1">Sample coverage <span className="text-slate-200">{review.includedCandidates.length}/{clusterExploration.samples.length} · {(review.sampleCoverage * 100).toFixed(0)}%</span></div>
+                      <div className="rounded bg-slate-950 px-1.5 py-1">Time coverage <span className="text-slate-200">{review.coveredSeconds.toFixed(2)}s{typeof review.temporalStart === "number" && typeof review.temporalEnd === "number" ? ` · ${formatTime(review.temporalStart)}–${formatTime(review.temporalEnd)}` : ""}</span></div>
+                      <div className="rounded bg-slate-950 px-1.5 py-1">Reviewed <span className="text-slate-200">{governedCount}/{lineupMembers.length}</span></div>
+                    </div>
+                    <div className="mt-1 text-[9px] text-slate-500" data-vaa1-nearest-competing-family="true">
+                      Nearest competing family: {review.nearestCompetitor ? `${review.nearestCompetitor.label} · ${(review.nearestCompetitor.score * 100).toFixed(1)}%` : "none supported for the representative sample"}
+                    </div>
+                    {review.representative || review.uncertain ? (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {review.representative ? (
+                          <button type="button" className="rounded border border-emerald-900/60 bg-emerald-950/10 p-2 text-left" data-vaa1-semantic-representative="true" onClick={() => jumpTo(review.representative!.start, { analysisId, evidenceId: review.representative!.id, label: `${family.label} representative`, source: "narrative_agent_audio_family_review", end: review.representative!.end, detail: review.representative!.support.join(" · "), reviewState: review.representative!.directSeed ? "mature_manual_anchor" : "candidate_review_required" })}>
+                            <span className="block text-[9px] uppercase tracking-[0.12em] text-emerald-300">Strongest representative</span>
+                            <span className="mt-1 block font-mono text-[10px] text-slate-200">{formatTime(review.representative.start)}–{formatTime(review.representative.end)} · {(review.representative.matchScore * 100).toFixed(1)}%</span>
+                          </button>
+                        ) : <div />}
+                        {review.uncertain ? (
+                          <button type="button" className="rounded border border-amber-900/60 bg-amber-950/10 p-2 text-left" data-vaa1-semantic-uncertain="true" onClick={() => jumpTo(review.uncertain!.start, { analysisId, evidenceId: review.uncertain!.id, label: `${family.label} uncertain membership`, source: "narrative_agent_audio_family_review", end: review.uncertain!.end, detail: review.uncertain!.support.join(" · "), reviewState: "candidate_review_required" })}>
+                            <span className="block text-[9px] uppercase tracking-[0.12em] text-amber-300">Uncertain / threshold boundary</span>
+                            <span className="mt-1 block font-mono text-[10px] text-slate-200">{formatTime(review.uncertain.start)}–{formatTime(review.uncertain.end)} · {(review.uncertain.matchScore * 100).toFixed(1)}%</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {lineupMembers.length ? (
+                      <div className="mt-2 max-h-[calc(100vh-330px)] min-h-48 overflow-y-auto border-t border-slate-800" data-vaa1-narrative-agent-audio-family-members="true">
+                        {lineupMembers.map((member) => {
+                          const boundaryEdit = audioBoundaryEdits[member.id];
+                          const editedStart = boundaryEdit?.start ?? member.start;
+                          const editedEnd = boundaryEdit?.end ?? member.end;
+                          const editedDuration = editedEnd - editedStart;
+                          const editedCompetingSpeaker = clusterExploration.samples.some((sample) => (
+                            sample.id !== member.id && sample.speaker !== member.speaker &&
+                            overlapSeconds(editedStart, editedEnd, sample.start, sample.end) > 0.12
+                          ));
+                          const editedBoundarySafe = editedDuration >= 0.25 && editedDuration <= 8 && !editedCompetingSpeaker;
+                          const editedMember = {
+                            ...member,
+                            start: editedStart,
+                            end: editedEnd,
+                            boundarySafe: editedBoundarySafe,
+                            boundaryReason: editedBoundarySafe ? undefined : editedCompetingSpeaker ? "Adjusted sample still overlaps another diarized speaker" : "Adjusted sample must remain between 250 ms and 8 s",
+                          };
+                          const target = narrativeAgentFamilyMemberTarget(family, editedMember);
+                          const status = decisionStatusFor(target);
+                          const confirmedNarrativeAgent = status === "confirmed"
+                            ? String(optimisticAudioLabels[target.id] || latestDecisionFor(target)?.applied_label || target.label).trim()
+                            : "";
+                          const persistConfirmedBoundary = () => {
+                            if (!confirmedNarrativeAgent || savingDecisionId !== null) return;
+                            const savedCandidateId = latestDecisionFor(target)?.candidate_id;
+                            queueAudioDecision(
+                              savedCandidateId ? { ...target, id: savedCandidateId } : target,
+                              "agent",
+                              confirmedNarrativeAgent,
+                            );
+                          };
+                          const finishBoundaryPointer = (event: React.PointerEvent<HTMLInputElement>) => {
+                            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                              event.currentTarget.releasePointerCapture(event.pointerId);
+                            }
+                            event.currentTarget.blur();
+                            persistConfirmedBoundary();
+                          };
+                          const transcriptText = transcriptTextForInterval(transcriptRows, editedStart, editedEnd);
+                          return (
+                            <div
+                              key={target.id}
+                              draggable={!member.directSeed}
+                              onDragStart={(event) => {
+                                if (member.directSeed) return;
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("application/x-datascene-narrative-agent-audio-candidate", member.id);
+                              }}
+                              className="grid grid-cols-[minmax(0,1fr)_minmax(90px,130px)_auto_auto_auto] items-center gap-2 border-b border-slate-900 py-1 text-[10px]"
+                              data-vaa1-narrative-agent-audio-candidate="true"
+                              data-vaa1-narrative-agent-audio-draggable={!member.directSeed ? "true" : "false"}
+                              data-candidate-status={status}
+                            >
+                              <button type="button" className="min-w-0 text-left" data-vaa1-audio-constellation-support="true" onClick={() => jumpTo(member.start, { analysisId, evidenceId: member.id, label: `${family.label} candidate`, source: target.source, end: member.end, detail: member.support.join(" · "), reviewState: member.directSeed ? "mature_manual_anchor" : "candidate_review_required" })}>
+                                <span className="block truncate text-cyan-200">{formatTime(member.start)}–{formatTime(member.end)} · {(member.matchScore * 100).toFixed(1)}%</span>
+                                <span className="block truncate text-slate-500">{member.support.join(" · ") || "source-linked candidate"}</span>
+                                <span className={`block ${transcriptText ? "text-slate-200" : "text-slate-600"}`} data-vaa1-audio-candidate-transcript="true">{transcriptText ? `“${transcriptText}”` : "No overlapping transcript line"}</span>
+                                <span className={`block truncate ${member.boundarySafe ? "text-emerald-500" : "text-amber-400"}`}>{member.boundarySafe ? "single-speaker boundary eligible" : member.boundaryReason}</span>
+                              </button>
+                              <div className="grid gap-1">
+                                <BoundedAudioSample analysisId={analysisId} start={editedStart} end={Math.max(editedStart + 0.05, editedEnd)} label={`Play bounded ${family.label} audio candidate at ${formatTime(editedStart)}`} onNavigate={() => jumpTo(editedStart, { analysisId, evidenceId: member.id, label: `${family.label} audio candidate`, source: target.source, end: editedEnd })} />
+                                <div className="grid min-w-0 gap-0.5" data-vaa1-audio-boundary-editor="true">
+                                  <label className="grid min-w-0 grid-cols-[28px_minmax(0,1fr)] items-center gap-1 text-[8px] text-slate-500"><span>Start</span><input className="block w-full min-w-0" type="range" min={Math.max(0, member.start - 2)} max={Math.max(member.start + 0.05, member.end)} step="0.05" value={editedStart} onChange={(event) => setAudioBoundaryEdits((current) => ({ ...current, [member.id]: { start: Math.min(Number(event.target.value), (current[member.id]?.end ?? member.end) - 0.05), end: current[member.id]?.end ?? member.end } }))} onPointerUp={finishBoundaryPointer} onPointerCancel={finishBoundaryPointer} onKeyUp={persistConfirmedBoundary} aria-label={`Start boundary ${formatTime(editedStart)}`} /></label>
+                                  <label className="grid min-w-0 grid-cols-[28px_minmax(0,1fr)] items-center gap-1 text-[8px] text-slate-500"><span>End</span><input className="block w-full min-w-0" type="range" min={Math.min(member.end - 0.05, member.start)} max={member.end + 2} step="0.05" value={editedEnd} onChange={(event) => setAudioBoundaryEdits((current) => ({ ...current, [member.id]: { start: current[member.id]?.start ?? member.start, end: Math.max(Number(event.target.value), (current[member.id]?.start ?? member.start) + 0.05) } }))} onPointerUp={finishBoundaryPointer} onPointerCancel={finishBoundaryPointer} onKeyUp={persistConfirmedBoundary} aria-label={`End boundary ${formatTime(editedEnd)}`} /></label>
+                                </div>
+                              </div>
+                              <span className={status === "confirmed" ? "rounded bg-emerald-950 px-1.5 py-1 font-semibold text-emerald-200" : status === "dropped" ? "text-slate-300" : "text-slate-600"} data-vaa1-audio-decision-receipt={status}>{member.directSeed ? "mature seed" : status === "confirmed" ? `Mature · ${target.label}` : status}</span>
+                              <select aria-label={`Confirm audio sample at ${formatTime(editedStart)} as Narrative Agent`} className="max-w-[170px] rounded border border-cyan-900 bg-slate-950 px-1 py-0.5 text-[9px] text-cyan-100 disabled:opacity-70" value={confirmedNarrativeAgent} disabled={!editedBoundarySafe} onChange={(event) => { const label = event.target.value; const savedCandidateId = latestDecisionFor(target)?.candidate_id; if (label) queueAudioDecision(savedCandidateId ? { ...target, id: savedCandidateId } : target, "agent", label); }}>{confirmedNarrativeAgent ? <option value={confirmedNarrativeAgent}>Confirmed · {confirmedNarrativeAgent}</option> : <option value="">Confirm as…</option>}{newNarrativeAgentByTarget.__audio_family_new__?.trim() && !sameNarrativeAgentFamily(newNarrativeAgentByTarget.__audio_family_new__, confirmedNarrativeAgent) ? <option value={newNarrativeAgentByTarget.__audio_family_new__.trim()}>New: {newNarrativeAgentByTarget.__audio_family_new__.trim()}</option> : null}{narrativeAgentOptions.filter((option) => !sameNarrativeAgentFamily(option.label, confirmedNarrativeAgent)).map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}</select>
+                              <button type="button" className="rounded border border-slate-700 px-1.5 py-0.5 text-slate-300 disabled:opacity-40" disabled={savingDecisionId !== null || status === "dropped" || member.directSeed} onClick={() => void persistAudioDecision(target, "dropped")}>{status === "dropped" ? "Dropped" : "Drop"}</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : <div className="mt-2 border-t border-slate-800 pt-2 text-[10px] text-slate-500">No source-timed audio candidate currently meets the preview threshold for this confirmed Narrative Agent. Drop a plausible candidate on this row or adjust the preview threshold; Datascene does not invent a voice match.</div>}
+                    <details className="mt-2 border-t border-slate-800 pt-1" data-vaa1-semantic-exclusions="true">
+                      <summary className="cursor-pointer text-[9px] uppercase tracking-[0.12em] text-slate-500">Excluded from preview · {review.excludedSamples.length}</summary>
+                      <div className="mt-1 max-h-40 overflow-y-auto">
+                        {review.excludedSamples.length ? review.excludedSamples.map((exclusion) => (
+                          <button key={`${family.id}:excluded:${exclusion.sample.id}`} type="button" className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 border-t border-slate-900 py-1 text-left text-[9px]" data-vaa1-semantic-excluded-sample="true" onClick={() => jumpTo(exclusion.sample.start, { analysisId, evidenceId: exclusion.sample.id, label: `${family.label} excluded candidate`, source: "narrative_agent_audio_family_review", end: exclusion.sample.end, detail: exclusion.reason, reviewState: "excluded_from_threshold_preview" })}>
+                            <span className="font-mono text-cyan-300">{formatTime(exclusion.sample.start)}–{formatTime(exclusion.sample.end)}</span>
+                            <span className="truncate text-slate-500">{exclusion.reason}{typeof exclusion.score === "number" ? ` · ${(exclusion.score * 100).toFixed(1)}%` : ""}</span>
+                          </button>
+                        )) : <div className="py-1 text-[9px] text-slate-600">No samples are excluded at this preview threshold.</div>}
+                      </div>
+                    </details>
+                  </article>
+                  );
+                })}
+                </div>
+                <aside className="self-start rounded border border-slate-800 bg-slate-950/70 p-2 xl:sticky xl:top-0" data-vaa1-audio-family-destination-list="true">
+                  <div className="mb-2 text-[9px] uppercase tracking-[0.12em] text-slate-400">Known characters · select or drop</div>
+                  <div className="grid max-h-[55vh] gap-1 overflow-y-auto">
+                    {narrativeAgentFamilies.map((family) => (
+                      <button key={`destination:${family.id}`} type="button" className={`rounded border px-2 py-1 text-left text-[10px] ${family.id === selectedAudioFamilyId ? "border-fuchsia-600 bg-fuchsia-950/30 text-fuchsia-100" : "border-slate-800 text-slate-300"}`} onClick={() => setSelectedAudioFamilyId(family.id)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => { event.preventDefault(); const sampleId = event.dataTransfer.getData("application/x-datascene-narrative-agent-audio-candidate"); if (sampleId) { setAudioFamilyAssignments((current) => ({ ...current, [sampleId]: family.id })); setSelectedAudioFamilyId(family.id); setSaveMessage(`Audio candidate moved to ${family.label}; choose it from Confirm as… to save.`); } }}>
+                        <span className="block truncate font-medium">{family.label}</span><span className="text-[8px] text-slate-600">{(audioLineupMembers.get(family.id) || []).length} samples</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 border-t border-slate-800 pt-2">
+                    <input list="audio-cluster-known-narrative-agents" value={newNarrativeAgentByTarget.__audio_family_new__ || ""} onChange={(event) => setNewNarrativeAgentByTarget((current) => ({ ...current, __audio_family_new__: event.target.value }))} placeholder="New character, e.g. Police officer" className="w-full rounded border border-slate-700 bg-black px-2 py-1 text-[9px] text-slate-100" data-vaa1-audio-new-character="true" />
+                    <div className="mt-1 text-[8px] text-slate-600">Enter a new character, then choose “New:” from the selected sample’s Confirm as… menu.</div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </section>
+        </DynamicPanelSection>
         <DynamicPanelSection sectionId="governed-sound-intervals" title="Governed music, noise, and silence intervals" summary={`${governedSoundIntervals.length} measured intervals`}>
         <details open className="mb-3 border border-slate-800" data-vaa1-audio-section="governed-sound-intervals">
           <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">
@@ -1866,7 +2733,10 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                 </tr>
               </thead>
               <tbody>
-                {pagedGovernedSoundIntervals.length ? pagedGovernedSoundIntervals.map((event, index) => (
+                {pagedGovernedSoundIntervals.length ? pagedGovernedSoundIntervals.map((event, index) => {
+                  const soundCategory = categoryFor(event);
+                  const automaticallyMature = soundCategory === "music" || soundCategory === "silence";
+                  return (
                   <tr
                     key={event.interval_id || event.segment_id || `sound:${governedEventPage}:${index}`}
                     data-vaa1-audio-evidence-row="true"
@@ -1880,14 +2750,14 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       source: event.source_layer || "audio_event_intervals",
                       end: event.end,
                       detail: event.classifier_labels?.join(", "),
-                      reviewState: "candidate_review_required",
+                      reviewState: automaticallyMature ? "mature_measured_detection" : "candidate_review_required",
                     })}
                   >
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-cyan-300">
                       {formatTime(event.start)}–{formatTime(event.end)}
                     </td>
                     <td className="px-3 py-2 font-semibold text-slate-100">
-                      {categoryFor(event)} · {eventLabel(event)}
+                      {soundCategory} · {eventLabel(event)}
                     </td>
                     <td className="px-3 py-2 font-mono">{formatValue(event.confidence)}</td>
                     <td className="px-3 py-2 font-mono">
@@ -1897,7 +2767,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                       {event.classifier_labels?.join(", ") || event.source_layer || "measured waveform interval"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-slate-500">
-                      measured candidate
+                      {automaticallyMature ? "mature · automatic measurement" : "measured · review in semantic sound family"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <button
@@ -1906,26 +2776,20 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                         onClick={() => jumpTo(event.start, {
                           analysisId,
                           evidenceId: event.interval_id || event.segment_id || event.event_id,
-                          label: `${categoryFor(event)} · ${eventLabel(event)}`,
+                          label: `${soundCategory} · ${eventLabel(event)}`,
                           source: event.source_layer || "audio_event_intervals",
                           end: event.end,
                           detail: event.classifier_labels?.join(", "),
-                          reviewState: "candidate_review_required",
+                          reviewState: automaticallyMature ? "mature_measured_detection" : "candidate_review_required",
                         })}
                       >
                         Open source
                       </button>
-                      {renderDecisionControls({
-                        id: event.interval_id || event.segment_id || `sound:${governedEventPage}:${index}`,
-                        label: eventLabel(event),
-                        start: event.start,
-                        end: event.end,
-                        source: event.source_layer,
-                        rowType: `sound-${categoryFor(event)}`,
-                      })}
+                      <span className={automaticallyMature ? "text-emerald-200" : "text-slate-500"}>{automaticallyMature ? "No confirmation required" : "Use Foley/sound family review"}</span>
                     </td>
                   </tr>
-                )) : (
+                  );
+                }) : (
                   <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No governed music, noise, or silence intervals are available.</td></tr>
                 )}
               </tbody>
@@ -1947,116 +2811,9 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
         </details>
         </DynamicPanelSection>
 
-        <DynamicPanelSection sectionId="speaker-linked-diarization" title="Speaker-linked diarization turns" summary={`${governedSpeakerTurns.length} measured turns`}>
-        <details open className="mb-3 border border-slate-800" data-vaa1-audio-section="speaker-linked-diarization">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">
-            Speaker-linked diarization turns
-          </summary>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-400">
-              <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">Turn</th>
-                  <th className="px-3 py-2">Speaker cluster</th>
-                  <th className="px-3 py-2">Confidence</th>
-                  <th className="px-3 py-2">Transcript</th>
-                  <th className="px-3 py-2">Timing authority</th>
-                  <th className="px-3 py-2">Review state</th>
-                  <th className="px-3 py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedSpeakerTurns.length ? pagedSpeakerTurns.map((turn, index) => (
-                  <tr
-                    key={turn.turn_id || `turn:${speakerTurnPage}:${index}`}
-                    data-vaa1-audio-evidence-row="true"
-                    data-vaa1-audio-selected-row={selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: turn.turn_id, start: Number(turn.start || 0), end: Number(turn.end || turn.start || 0), label: turn.speaker_label || "Speaker turn", source: "audio_diarization.speaker_turns" }) ? "true" : undefined}
-                    data-source-clock-nearest={typeof turn.start === "number" && typeof turn.end === "number" && sourceClockTime >= turn.start && sourceClockTime <= turn.end ? "true" : undefined}
-                    className={`cursor-pointer border-b border-slate-900 hover:bg-slate-900 ${selectedAudioEvidence && audioEvidenceKey(selectedAudioEvidence) === audioEvidenceKey({ evidenceId: turn.turn_id, start: Number(turn.start || 0), end: Number(turn.end || turn.start || 0), label: turn.speaker_label || "Speaker turn", source: "audio_diarization.speaker_turns" }) ? "bg-fuchsia-950/20 ring-1 ring-inset ring-fuchsia-300/60" : typeof turn.start === "number" && typeof turn.end === "number" && sourceClockTime >= turn.start && sourceClockTime <= turn.end ? "bg-cyan-950/20" : ""}`}
-                    onClick={() => jumpTo(turn.start, {
-                      analysisId,
-                      evidenceId: turn.turn_id,
-                      label: turn.speaker_label || "Speaker turn",
-                      source: "audio_diarization.speaker_turns",
-                      end: turn.end,
-                      detail: turn.text,
-                      reviewState: turn.is_stale
-                        ? "stale_rebuild_required"
-                        : turn.reference_match
-                          ? "reference_linked_candidate"
-                          : "cluster_identity_unconfirmed",
-                    })}
-                  >
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-cyan-300">
-                      {formatTime(turn.start)}–{formatTime(turn.end)}
-                    </td>
-                    <td className="px-3 py-2 font-semibold text-slate-100">{turn.speaker_label || "unassigned cluster"}</td>
-                    <td className="px-3 py-2 font-mono">{formatValue(turn.diarization_confidence)}</td>
-                    <td className="max-w-[420px] px-3 py-2" title={turn.text || ""}>{turn.text || ""}</td>
-                    <td className="px-3 py-2 text-slate-500">{turn.timing_authority || turn.timing_source || "unavailable"}</td>
-                    <td className="px-3 py-2 text-slate-500">
-                      {turn.is_stale ? `quarantined · ${turn.stale_reason || "stale"}` : turn.reference_match ? "reference-linked candidate" : "cluster only · identity unconfirmed"}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      <button
-                        type="button"
-                        className="mr-3 text-cyan-300 hover:text-cyan-100"
-                        onClick={() => jumpTo(turn.start, {
-                          analysisId,
-                          evidenceId: turn.turn_id,
-                          label: turn.speaker_label || "Speaker turn",
-                          source: "audio_diarization.speaker_turns",
-                          end: turn.end,
-                          detail: turn.text,
-                          reviewState: turn.is_stale
-                            ? "stale_rebuild_required"
-                            : turn.reference_match
-                              ? "reference_linked_candidate"
-                              : "cluster_identity_unconfirmed",
-                        })}
-                      >
-                        Open source
-                      </button>
-                      {renderDecisionControls({
-                        id: turn.turn_id || `turn:${speakerTurnPage}:${index}`,
-                        label: turn.speaker_label || "Speaker cluster",
-                        text: turn.text,
-                        start: turn.start,
-                        end: turn.end,
-                        source: "audio_diarization.speaker_turns",
-                        rowType: "speech-diarization",
-                        speakerLabel: turn.speaker_label,
-                        isStale: Boolean(turn.is_stale),
-                        staleReason: turn.stale_reason,
-                        validForConfirmation: turn.valid_for_confirmation,
-                      })}
-                    </td>
-                  </tr>
-                )) : (
-                  <tr><td className="px-3 py-3 text-slate-500" colSpan={7}>No measured speaker turns are available.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {governedSpeakerTurns.length ? (
-            <div className="flex items-center justify-between border-t border-slate-800 px-3 py-2 text-xs text-slate-500">
-              <span>
-                Rows {speakerTurnPage * GOVERNED_AUDIO_PAGE_SIZE + 1}–
-                {Math.min((speakerTurnPage + 1) * GOVERNED_AUDIO_PAGE_SIZE, governedSpeakerTurns.length)} of {governedSpeakerTurns.length}
-              </span>
-              <div className="flex items-center gap-2">
-                <button type="button" disabled={speakerTurnPage === 0} onClick={() => setSpeakerTurnPage((page) => Math.max(0, page - 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Previous</button>
-                <span>Page {speakerTurnPage + 1} of {speakerTurnPageCount}</span>
-                <button type="button" disabled={speakerTurnPage + 1 >= speakerTurnPageCount} onClick={() => setSpeakerTurnPage((page) => Math.min(speakerTurnPageCount - 1, page + 1))} className="border border-slate-800 px-2 py-1 disabled:opacity-30">Next</button>
-              </div>
-            </div>
-          ) : null}
-        </details>
-        </DynamicPanelSection>
-
-        <DynamicPanelSection sectionId="speech-diarization" title="Speech, VAD, and speaker diarization" summary={`${categorizedEvents.speech.length} events`}>
-        <details open className="mb-3 border border-slate-800" data-vaa1-audio-section="speech-diarization">
-          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Speech, VAD, and speaker diarization</summary>
+        <DynamicPanelSection sectionId="speech-activity" title="Speech and voice-activity intervals" summary={`${categorizedEvents.speech.length} events`}>
+        <details open className="mb-3 border border-slate-800" data-vaa1-audio-section="speech-activity">
+          <summary className="cursor-pointer border-b border-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-200">Speech and voice-activity intervals</summary>
           <div className="max-h-[58vh] overflow-auto">
             <table className="w-full text-left text-xs text-slate-400">
               <thead className="sticky top-0 bg-slate-950 uppercase tracking-[0.12em] text-slate-500">
@@ -2253,17 +3010,19 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
                     <td className="px-3 py-2 font-mono text-cyan-300">{formatTime(row.end)}</td>
                     <td className="px-3 py-2 font-mono">{formatValue(row.confidence)}</td>
                     <td className="px-3 py-2 text-slate-300">{row.source}</td>
-                    <td className="px-3 py-2 text-amber-200">{row.reviewState}</td>
+                    <td className="px-3 py-2 text-amber-200">{row.boundarySafe ? row.reviewState : `boundary blocked · ${row.boundaryReason}`}</td>
                     <td className="px-3 py-2 text-slate-300">{row.proliferationTarget}</td>
                     <td className="px-3 py-2 text-slate-500">{row.nextAction}</td>
-                    <td className="px-3 py-2">{renderDecisionControls({
+                    <td className="min-w-[250px] px-3 py-2"><div className="grid gap-1">{typeof row.start === "number" && typeof row.end === "number" && row.end > row.start ? <BoundedAudioSample analysisId={analysisId} start={row.start} end={row.end} label={`Play bounded ${row.label} Foley sample at ${formatTime(row.start)}`} /> : null}{renderDecisionControls({
                       id: `foley:${index}:${safeIdPart(row.label)}`,
                       label: row.label,
                       start: row.start,
                       end: row.end,
                       source: row.source,
                       rowType: "foley-sampling",
-                    })}</td>
+                      validForConfirmation: row.boundarySafe,
+                      staleReason: row.boundaryReason,
+                    })}</div></td>
                   </tr>
                   );
                 }) : (

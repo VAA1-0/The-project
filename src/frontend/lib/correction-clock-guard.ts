@@ -22,6 +22,12 @@ export function correctionClockGuard(analysisId: string, corrections: any, conte
   const guard = { analysis_id: analysisId, correction_generation: corrections?.correction_generation ?? null, transcript_clock_offset_seconds: offset(corrections?.transcript_clock_offset_seconds) };
   if (!context) return guard;
   if (context.analysis_id !== analysisId) throw new CorrectionClockConflict("Clock binding belongs to another analysis");
+  // Source unavailability is not evidence of a source change. Retain the
+  // correction generation and timebase preconditions, but omit an unusable
+  // source binding so ordinary annotation writes can still be validated.
+  if (context.binding_status !== "content_bound") {
+    return { ...guard, binding_status: context.binding_status, source_fingerprint: null, clock_revision: null };
+  }
   if (context.binding_status === "content_bound" && offset(context.timebase?.transcript_clock_offset_seconds) !== guard.transcript_clock_offset_seconds) {
     throw new CorrectionClockConflict("Correction snapshot and source clock disagree; reload before editing");
   }
@@ -31,6 +37,11 @@ export function correctionClockGuard(analysisId: string, corrections: any, conte
 export function validateCorrectionSourceBinding(analysisId: string, incoming: any, context: CorrectionSourceBinding) {
   const guard = incoming?._clock_write_guard;
   if (!guard || (!("source_fingerprint" in guard) && !("clock_revision" in guard))) return;
+  // A snapshot loaded while source inspection was unavailable carries no
+  // affirmative source identity to compare. Its generation/timebase guard is
+  // still checked separately; null binding fields must not become a permanent
+  // rejection of unrelated annotation work when the source service recovers.
+  if (guard.binding_status === "source_unavailable" && guard.source_fingerprint === null && guard.clock_revision === null) return;
   if (guard.analysis_id !== analysisId || context.analysis_id !== analysisId ||
       context.binding_status !== "content_bound" ||
       typeof guard.source_fingerprint !== "string" || !guard.source_fingerprint ||

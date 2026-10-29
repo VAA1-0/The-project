@@ -113,6 +113,18 @@ def _overlaps(left: Dict[str, Optional[float]], right: Dict[str, Optional[float]
     return max(left_start, right_start) <= min(left_end, right_end)
 
 
+def _gap_seconds(left: Dict[str, Optional[float]], right: Dict[str, Optional[float]]) -> Optional[float]:
+    left_start = left.get("start")
+    right_start = right.get("start")
+    if left_start is None or right_start is None:
+        return None
+    left_end = left.get("end") if left.get("end") is not None else left_start
+    right_end = right.get("end") if right.get("end") is not None else right_start
+    if _overlaps(left, right):
+        return 0.0
+    return max(0.0, max(left_start, right_start) - min(left_end, right_end))
+
+
 def _within_scene(scene: Dict[str, Optional[float]], item: Dict[str, Optional[float]]) -> bool:
     scene_start = scene.get("start")
     scene_end = scene.get("end")
@@ -1295,6 +1307,75 @@ def build_datascene_meaning_network(
             )
         )
 
+    # Confirmed identity governs the overlapping line, but does not establish
+    # an addressee. That stronger interpretation remains outside this join.
+    confirmed_audio_sorted = sorted(
+        confirmed_audio,
+        key=lambda item: (_interval(item).get("start") is None, _interval(item).get("start") or 0.0),
+    )
+    transcript_link_count = 0
+    dialogue_candidate_count = 0
+    for item in confirmed_audio_sorted:
+        anchor_id = confirmed_audio_source_ids[id(item)]
+        agent_node_id = f"narrative-agent-audio:{anchor_id}"
+        anchor_interval = _interval(item)
+        for transcript_item in transcripts:
+            transcript_interval = _interval(transcript_item)
+            if not _overlaps(anchor_interval, transcript_interval):
+                continue
+            transcript_id = transcript_source_ids[id(transcript_item)]
+            transcript_node_id = f"transcript:{transcript_id}"
+            edges.append(
+                _edge(
+                    f"edge:{agent_node_id}:spoken-line:{transcript_node_id}",
+                    agent_node_id,
+                    transcript_node_id,
+                    "spoken_by",
+                    weight=1.0,
+                    maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                    evidence_refs=[
+                        _evidence_ref(anchor_id, "manual_audio_confirmation", anchor_interval, confidence=1.0),
+                        _evidence_ref(transcript_id, "transcript", transcript_interval, confidence=1.0),
+                    ],
+                )
+            )
+            transcript_link_count += 1
+
+    # Adjacent confirmed speakers can support a dialogue constellation, not a
+    # directed `speaks_to` claim. Keep it candidate and source inspectable.
+    for left, right in zip(confirmed_audio_sorted, confirmed_audio_sorted[1:]):
+        left_label = _safe_text(left.get("identity_affirmation") or left.get("custom_label") or left.get("label"))
+        right_label = _safe_text(right.get("identity_affirmation") or right.get("custom_label") or right.get("label"))
+        if not left_label or not right_label or left_label.casefold() == right_label.casefold():
+            continue
+        left_interval = _interval(left)
+        right_interval = _interval(right)
+        gap = _gap_seconds(left_interval, right_interval)
+        if gap is None or gap > 4.0:
+            continue
+        left_scene = _best_scene_index(scenes, left_interval)
+        right_scene = _best_scene_index(scenes, right_interval)
+        if left_scene is None or left_scene != right_scene:
+            continue
+        left_id = confirmed_audio_source_ids[id(left)]
+        right_id = confirmed_audio_source_ids[id(right)]
+        score = max(0.5, 1.0 - (gap / 8.0))
+        edges.append(
+            _edge(
+                f"edge:narrative-agent-audio:{left_id}:dialogue-copresence:narrative-agent-audio:{right_id}",
+                f"narrative-agent-audio:{left_id}",
+                f"narrative-agent-audio:{right_id}",
+                "dialogue_copresence_candidate",
+                weight=score,
+                maturity=_maturity("candidate", "source_timed_adjacency", score),
+                evidence_refs=[
+                    _evidence_ref(left_id, "manual_audio_confirmation", left_interval, confidence=1.0),
+                    _evidence_ref(right_id, "manual_audio_confirmation", right_interval, confidence=1.0),
+                ],
+            )
+        )
+        dialogue_candidate_count += 1
+
     unresolved_persons = [
         person for person in persons
         if _safe_text(person.get("agent_label") or person.get("identity") or person.get("label") or person.get("class_name")).lower() in {"person", "unknown", ""}
@@ -1480,6 +1561,8 @@ def build_datascene_meaning_network(
             "node_count": len(nodes),
             "edge_count": len(edges),
             "continuity_anchor_count": len(continuity_anchors),
+            "confirmed_audio_transcript_link_count": transcript_link_count,
+            "dialogue_copresence_candidate_count": dialogue_candidate_count,
             "raw_detection_overload": bool(diagnostics),
             "scene_timing": {
                 "source": scenes[0].get("scene_timing_source") if scenes else None,
@@ -1510,6 +1593,7 @@ def build_datascene_meaning_network(
             "Scene-bounded person/transcript candidates are visible review anchors for analyst confirmation.",
             "Candidate scene timing can provide provisional membership but cannot promote scene truth without review.",
             "Evidence outside governed scene coverage remains unresolved rather than stretching the final scene.",
+            "Confirmed audio identity governs overlapping spoken-line attribution; adjacent different speakers create dialogue co-presence candidates, never automatic addressee claims.",
         ],
     }
 

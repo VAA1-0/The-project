@@ -182,6 +182,34 @@ class DatasceneMeaningNetworkContractTest(unittest.TestCase):
                 for node in nodes
             )
         )
+    def test_confirmed_audio_links_lines_and_only_candidates_dialogue_copresence(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-dialogue",
+            {
+                "annotation_corrections": {
+                    "manual_visual_annotations": [
+                        {"id": "bond-1", "category": "Audio", "identity_affirmation": "James Bond", "start_seconds": 1.0, "end_seconds": 2.0},
+                        {"id": "nomi-1", "category": "Audio", "identity_affirmation": "Nomi", "start_seconds": 3.0, "end_seconds": 4.0},
+                    ]
+                }
+            },
+            transcript={"segments": [
+                {"id": "line-1", "start": 1.0, "end": 2.0, "text": "Where have you been?"},
+                {"id": "line-2", "start": 3.0, "end": 4.0, "text": "Working."},
+            ]},
+            visual_analysis={"scene_segments": [{"scene_id": "s1", "start": 0.0, "end": 5.0}], "tracked_objects": []},
+        )
+        edges = artifact["meaning_network"]["edges"]
+        spoken = [edge for edge in edges if edge["edge_type"] == "spoken_by"]
+        dialogue = [edge for edge in edges if edge["edge_type"] == "dialogue_copresence_candidate"]
+        self.assertEqual(len(spoken), 2)
+        self.assertTrue(all(edge["maturity"]["level"] == "analyst_confirmed" for edge in spoken))
+        self.assertEqual(len(dialogue), 1)
+        self.assertEqual(dialogue[0]["maturity"]["level"], "candidate")
+        self.assertFalse(any(edge["edge_type"] == "speaks_to" for edge in edges))
+        self.assertEqual(artifact["summary"]["confirmed_audio_transcript_link_count"], 2)
+        self.assertEqual(artifact["summary"]["dialogue_copresence_candidate_count"], 1)
+
     def test_scene_bounded_person_transcript_candidates_are_navigable(self):
         artifact = meaning_network.build_datascene_meaning_network(
             "analysis-meaning-network",

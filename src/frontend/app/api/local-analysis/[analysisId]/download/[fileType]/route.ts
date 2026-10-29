@@ -7,6 +7,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { mergeAnnotationCorrections } from "@/lib/annotation-correction-merge";
+import { upsertManualVisualAnnotation, upsertMasterSchemaPresenceIntervalForManualAnnotation } from "@/lib/annotation-corrections";
 import { assertLocalAnalysisBoundary, projectBoundaryErrorResponse } from "../../../project-boundary";
 
 const correctionWriteQueues = new Map<string, Promise<void>>();
@@ -696,6 +697,134 @@ export async function POST(
         canonical_committed: canonicalCommitted,
       },
       { status: (error instanceof CorrectionClockConflict || (error instanceof Error && error.name === "CorrectionClockConflict")) ? 409 : error instanceof CorrectionWriteBusy || error instanceof CorrectionBindingUnavailable ? 503 : 500 },
+    );
+  }
+}
+
+/** Narrow category reassignment for governed audio rows.
+ * Reads the latest canonical table inside the write lock and changes only the
+ * requested row identities plus their already-linked projections.
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ analysisId: string; fileType: string }> },
+) {
+  const { analysisId, fileType } = await params;
+  if (fileType !== "annotation_corrections") {
+    return NextResponse.json({ detail: "Local writes are only supported for annotation corrections" }, { status: 405 });
+  }
+  try {
+    await assertLocalAnalysisBoundary(request, analysisId);
+    const body = await request.json();
+    if (!["reassign_audio_narrative_agent", "upsert_audio_narrative_agent"].includes(body?.operation)) {
+      return NextResponse.json({ detail: "Unsupported correction operation" }, { status: 400 });
+    }
+    if (body.operation === "upsert_audio_narrative_agent") {
+      const annotation = body.annotation && typeof body.annotation === "object" ? body.annotation : null;
+      const decision = body.decision && typeof body.decision === "object" ? body.decision : null;
+      if (!annotation?.id || !annotation?.identity_affirmation || !decision?.candidate_id) {
+        return NextResponse.json({ detail: "A complete audio annotation and proliferation decision are required" }, { status: 400 });
+      }
+      return await withCorrectionWriteLock(analysisId, async () => {
+        const current = await readRichestAnnotationCorrections(analysisId);
+        const now = new Date().toISOString();
+        let corrections = upsertManualVisualAnnotation(current, annotation);
+        corrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(corrections, annotation, { now, sourcePanel: "AudioPanel" });
+        corrections.proliferation_decisions = [
+          ...(corrections.proliferation_decisions || []).filter((item: any) => item.candidate_id !== decision.candidate_id),
+          decision,
+        ];
+        corrections.updated_at = now;
+        corrections.updated_by = "analyst";
+        corrections.correction_generation = globalThis.crypto.randomUUID();
+        delete corrections._clock_write_guard;
+        const outputPath = path.join(projectRoot(), "outputs", "api_results", analysisId, "annotation_corrections.json");
+        const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+        await fs.mkdir(path.dirname(outputPath), { recursive: true });
+        await fs.writeFile(temporaryPath, JSON.stringify(corrections, null, 2), "utf8");
+        await fs.rename(temporaryPath, outputPath);
+        void updateMasterSchemaCorrectionReviewLayer(analysisId, corrections).catch((error) => {
+          console.error("Post-commit audio Master Schema projection failed", error);
+        });
+        const committed = (corrections.manual_visual_annotations || []).find((item: any) => item.id === annotation.id);
+        const committedDecision = (corrections.proliferation_decisions || []).find((item: any) => item.candidate_id === decision.candidate_id);
+        return NextResponse.json({
+          analysis_id: analysisId,
+          operation: body.operation,
+          correction_generation: corrections.correction_generation,
+          annotation: committed,
+          decision: committedDecision,
+        });
+      });
+    }
+    const targetIds: string[] = [...new Set<string>((Array.isArray(body.target_ids) ? body.target_ids : [])
+      .map((value: unknown) => String(value || "").trim()).filter(Boolean))];
+    const label = String(body.label || "").trim();
+    if (!targetIds.length || targetIds.length > 100 || !label) {
+      return NextResponse.json({ detail: "A label and 1–100 target row IDs are required" }, { status: 400 });
+    }
+    return await withCorrectionWriteLock(analysisId, async () => {
+      const corrections = await readRichestAnnotationCorrections(analysisId);
+      const now = new Date().toISOString();
+      const matchedAnnotationIds = new Set<string>();
+      const matchedTargetIds = new Set<string>();
+      for (const annotation of corrections.manual_visual_annotations || []) {
+        const targetId = String(annotation?.metadata_correlation?.target_id || "");
+        if (!targetIds.includes(targetId)) continue;
+        matchedTargetIds.add(targetId);
+        matchedAnnotationIds.add(String(annotation.id));
+        annotation.label = label;
+        annotation.custom_label = label;
+        annotation.identity_affirmation = label;
+        annotation.updated_at = now;
+        annotation.updated_by = "analyst";
+        annotation.metadata_correlation.target_label = label;
+        const activeState = annotation.metadata_correlation?.manual_confirmation_event?.active_state_after_save;
+        if (activeState) activeState.narrative_agent_label = label;
+      }
+      const missing = targetIds.filter((targetId) => !matchedTargetIds.has(targetId));
+      if (missing.length) {
+        return NextResponse.json({ detail: `Audio rows were not found: ${missing.join(", ")}` }, { status: 404 });
+      }
+      for (const decision of corrections.proliferation_decisions || []) {
+        if (!targetIds.includes(String(decision.candidate_id || ""))) continue;
+        decision.applied_label = label;
+        decision.updated_at = now;
+        decision.updated_by = "analyst";
+        for (const evidence of decision.evidence_refs || []) evidence.narrative_agent_label = label;
+      }
+      for (const interval of corrections.master_schema_presence_intervals || []) {
+        const linked = (interval.source_evidence_refs || []).some((ref: any) => matchedAnnotationIds.has(String(ref.evidence_id || "")));
+        if (!linked) continue;
+        interval.label = label;
+        interval.updated_at = now;
+        interval.updated_by = "analyst";
+      }
+      corrections.updated_at = now;
+      corrections.updated_by = "analyst";
+      corrections.correction_generation = globalThis.crypto.randomUUID();
+      delete corrections._clock_write_guard;
+      const outputPath = path.join(projectRoot(), "outputs", "api_results", analysisId, "annotation_corrections.json");
+      const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(temporaryPath, JSON.stringify(corrections, null, 2), "utf8");
+      await fs.rename(temporaryPath, outputPath);
+      await updateMasterSchemaCorrectionReviewLayer(analysisId, corrections);
+      return NextResponse.json({
+        analysis_id: analysisId,
+        operation: body.operation,
+        target_ids: targetIds,
+        label,
+        updated_at: now,
+        annotation_ids: [...matchedAnnotationIds],
+      });
+    });
+  } catch (error) {
+    const boundaryResponse = projectBoundaryErrorResponse(error);
+    if (boundaryResponse) return boundaryResponse;
+    return NextResponse.json(
+      { detail: error instanceof Error ? error.message : "Could not reassign audio narrative-agent rows" },
+      { status: error instanceof CorrectionWriteBusy ? 503 : 500 },
     );
   }
 }
