@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Body
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uuid
@@ -163,8 +163,22 @@ from src.backend.analysis.datascene_meaning_network import (
 from src.backend.analysis.agent_persistence import (
     build_agent_persistence_feature_event,
 )
+from src.backend.analysis.facial_landmark_embedding import (
+    write_face_discrimination,
+)
+from src.backend.analysis.object_appearance_embedding import (
+    write_object_appearance_measurement,
+)
+from src.backend.analysis.object_detection_runs import (
+    append_object_detection_run,
+    write_object_detection_projection,
+)
+from src.backend.analysis.constellational_cluster_exploration import (
+    explore_constellational_clusters,
+)
 from src.backend.analysis.agent_persistence_manager import AgentPersistenceManager
 from src.backend.analysis.evidence_proliferation_matcher import (
+    automatic_proliferation_decisions,
     run_open_topology_scanner_refresh,
     run_targeted_maturity_iteration,
     write_evidence_proliferation_match,
@@ -241,6 +255,7 @@ from src.backend.analysis.reproducible_measurement import ReproducibleMeasuremen
 from src.backend.analysis.shot_boundary_measurement import measure_shot_boundaries
 from src.backend.analysis.spatial_tone_measurement import measure_spatial_tone
 from src.backend.analysis.adaptive_visual_measurement import measure_adaptive_visual
+from src.backend.analysis.set_location_recognition import measure_set_location_recurrence
 from src.backend.analysis.interpretation_registry import InterpretationRegistry
 from src.backend.analysis.framework_projection import (
     build_framework_projections,
@@ -267,6 +282,11 @@ from src.backend.analysis.analysis_recovery import (
 from src.backend.analysis.full_analysis_manifest import (
     evaluate_full_analysis_manifest,
     write_full_analysis_manifest,
+)
+from src.backend.analysis.parsimonious_workflow import build_parsimonious_workflow_plan
+from src.backend.analysis.parsimonious_runtime import (
+    ParsimoniousRuntime,
+    normalize_compatibility as normalize_parsimonious_compatibility,
 )
 from src.backend.analysis.language_analysis_parity import build_language_analysis_parity
 from src.backend.analysis.visual_analysis_parity import build_visual_analysis_parity
@@ -5475,6 +5495,12 @@ def write_second_order_meaning_artifacts_for_status(
         )
         if adaptive_payload is not None:
             visual["adaptive_visual_scan"] = adaptive_payload
+    if not visual.get("set_location_recognition"):
+        set_payload = artifact_payload_from_status_any(
+            status, "set_location_recognition", "set_location_recognition_json"
+        )
+        if set_payload is not None:
+            visual["set_location_recognition"] = set_payload
     analysis_dir = RESULTS_DIR / analysis_id
     analysis_dir.mkdir(parents=True, exist_ok=True)
     source_metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
@@ -8832,12 +8858,34 @@ def resolve_analysis_profile(
 
     if analysis_tier == "quick_sweep":
         resolved["pipeline_type"] = "full"
-        resolved["enable_object_detection"] = False
+        # Quick Sweep is a sparse multimodal scout, not an audio-only shortcut.
+        # Ten-second sampling supplies economical anchors for agents, actions,
+        # objects, and episode boundaries without paying Science Sweep density.
+        resolved["enable_object_detection"] = modality_focus in {
+            "multimodal", "graphics", "images"
+        }
         resolved["enable_ocr"] = False
-        resolved["enable_expression_detection"] = False
-        resolved["enable_face_sampling"] = False
+        resolved["enable_expression_detection"] = modality_focus in {
+            "multimodal", "graphics", "images"
+        }
+        resolved["enable_face_sampling"] = resolved["enable_expression_detection"]
         resolved["enable_audio_analysis"] = True
         resolved["save_annotated_video"] = False
+        resolved["workflow_role"] = "sparse_multimodal_scout"
+        resolved["tracking_programs"] = [
+            "narrative_agents",
+            "actions_movements",
+            "episodic_scene_continuums",
+        ]
+        resolved["deepening_policy"] = "route_uncertain_intervals_to_science_sweep"
+    elif analysis_tier == "science_scan":
+        resolved["workflow_role"] = "bounded_evidence_deepening"
+        resolved["tracking_programs"] = [
+            "narrative_agents",
+            "actions_movements",
+            "episodic_scene_continuums",
+        ]
+        resolved["deepening_policy"] = "prefer_declared_hotspots_and_research_priorities"
 
     return resolved
 
@@ -8950,6 +8998,46 @@ async def start_analysis(
         for key, value in parsed_model_choices.items()
     ):
         raise HTTPException(status_code=400, detail="Model choices must be a string map")
+    selected_object_detector = parsed_model_choices.get("object_detection")
+    raw_object_detection_threshold = parsed_model_choices.get(
+        "object_detection_confidence_threshold",
+        "0.15",
+    )
+    try:
+        object_detection_confidence_threshold = float(raw_object_detection_threshold)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Object detection confidence threshold must be numeric",
+        ) from exc
+    if not 0.01 <= object_detection_confidence_threshold <= 0.99:
+        raise HTTPException(
+            status_code=400,
+            detail="Object detection confidence threshold must be between 0.01 and 0.99",
+        )
+    licence_sensitive_object_detectors = {
+        "Ultralytics YOLOv8n",
+        "YOLO-NAS",
+    }
+    if selected_object_detector in licence_sensitive_object_detectors and (
+        parsed_model_choices.get("object_detection_license_choice")
+        != selected_object_detector
+        or parsed_model_choices.get("object_detection_license_authority")
+        != "analyst_explicit_selection"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "LICENSED_MODEL_ANALYST_SELECTION_REQUIRED",
+                "message": (
+                    "Datascene cannot select or infer acceptance of this detector's "
+                    "licence. The analyst must explicitly select it in Analysis setup "
+                    "or the working Tools panel."
+                ),
+                "model": selected_object_detector,
+                "boundary": "analyst_model_licence_authority",
+            },
+        )
 
     analysis_profile = resolve_analysis_profile(
         pipeline_type=pipeline_type,
@@ -9109,6 +9197,17 @@ def _run_complete_analysis_unlocked(
     try:
         status = analysis_status[analysis_id]
         video_path = status["file_path"]
+        parsed_model_choices = (
+            dict(status.get("model_choices"))
+            if isinstance(status.get("model_choices"), dict)
+            else {}
+        )
+        try:
+            object_detection_confidence_threshold = float(
+                parsed_model_choices.get("object_detection_confidence_threshold") or 0.15
+            )
+        except (TypeError, ValueError):
+            object_detection_confidence_threshold = 0.15
         analysis_profile = status.get("analysis_profile") or resolve_analysis_profile(
             pipeline_type=pipeline_type,
             analysis_tier=analysis_tier,
@@ -9162,6 +9261,50 @@ def _run_complete_analysis_unlocked(
             else {}
         )
         completed_stages = set(checkpoint.get("completed_stages") or [])
+        current_object_provider = str(
+            parsed_model_choices.get("object_detection") or "Meta DETR ResNet-50"
+        )
+        prior_visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+        prior_runs = prior_visual.get("object_detection_runs") if isinstance(prior_visual.get("object_detection_runs"), list) else []
+        prior_receipt = (
+            prior_runs[-1].get("provider_receipt")
+            if prior_runs and isinstance(prior_runs[-1], dict)
+            else prior_visual.get("object_detector")
+        )
+        prior_receipt = prior_receipt if isinstance(prior_receipt, dict) else {}
+        prior_object_provider = str(
+            prior_receipt.get("provider")
+            or (prior_runs[-1].get("provider") if prior_runs and isinstance(prior_runs[-1], dict) else "")
+        )
+        prior_threshold = prior_receipt.get("confidence_threshold")
+        try:
+            prior_threshold_number = float(prior_threshold) if prior_threshold is not None else None
+        except (TypeError, ValueError):
+            prior_threshold_number = None
+        detector_configuration_changed = bool(
+            prior_object_provider
+            and (
+                prior_object_provider != current_object_provider
+                or (
+                    prior_threshold_number is not None
+                    and abs(prior_threshold_number - object_detection_confidence_threshold) > 1e-9
+                )
+            )
+        )
+        if detector_configuration_changed and "visual" in completed_stages:
+            completed_stages.discard("visual")
+            append_analysis_event(
+                status,
+                "object_detection_configuration_changed",
+                details={
+                    "previous_provider": prior_object_provider,
+                    "selected_provider": current_object_provider,
+                    "previous_confidence_threshold": prior_threshold,
+                    "selected_confidence_threshold": object_detection_confidence_threshold,
+                    "action": "targeted_visual_recompute_append_run",
+                    "mature_master_schema_data_preserved": True,
+                },
+            )
         status["recovery"] = {
             **(status.get("recovery") if isinstance(status.get("recovery"), dict) else {}),
             "checkpoint_schema": checkpoint.get("schema"),
@@ -9190,6 +9333,8 @@ def _run_complete_analysis_unlocked(
                 frame_pipeline = FrameAnalysisPipeline(
                     video_path,
                     enable_object_detection=enable_object_detection,
+                    object_detector_model=parsed_model_choices.get("object_detection") or "Meta DETR ResNet-50",
+                    object_detection_confidence_threshold=object_detection_confidence_threshold,
                     enable_ocr=enable_ocr,
                     detection_interval_seconds=detection_interval_seconds,
                     ocr_interval_seconds=ocr_interval_seconds,
@@ -9257,10 +9402,24 @@ def _run_complete_analysis_unlocked(
                     "Visual sweep complete. Detection logs are in hand.",
                 )
                 
-                # Store visual results
+                # Store an append-only detector-run registry. Changing providers
+                # must not erase prior raw observations or reopen mature decisions.
+                prior_visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+                detection_registry = append_object_detection_run(prior_visual, visual_results)
+                detection_projection_files = write_object_detection_projection(
+                    analysis_output_dir,
+                    detection_registry,
+                )
+                visual_results.update(detection_projection_files)
                 results["visual_analysis"] = {
-                    "yolo_results": visual_results.get("yolo_results", []),
-                    "tracked_objects": visual_results.get("tracked_objects", []),
+                    "object_detector": visual_results.get("object_detector", {}),
+                    "object_detection_runs": detection_registry["object_detection_runs"],
+                    "object_detection_registry": {
+                        key: detection_registry[key]
+                        for key in ("schema", "active_provider_count", "run_count", "projection_policy")
+                    },
+                    "yolo_results": detection_registry["yolo_results"],
+                    "tracked_objects": detection_registry["tracked_objects"],
                     "ocr_results": visual_results.get("ocr_results", []),
                     "cinematic_clues": visual_results.get("cinematic_clues", {}),
                     "spatial_tone_scan": visual_results.get("spatial_tone_scan", {}),
@@ -9276,6 +9435,7 @@ def _run_complete_analysis_unlocked(
                     "yolo_csv": visual_results.get("yolo_csv"),
                     "tracked_objects_csv": visual_results.get("tracked_objects_csv"),
                     "tracked_objects_json": visual_results.get("tracked_objects_json"),
+                    "object_detection_run_registry": visual_results.get("object_detection_run_registry"),
                     "ocr_csv": visual_results.get("ocr_csv"),
                     "summary_json": visual_results.get("summary_json")
                 }
@@ -9334,6 +9494,7 @@ def _run_complete_analysis_unlocked(
                 output_files["yolo_csv"] = visual_results.get("yolo_csv")
                 output_files["tracked_objects_csv"] = visual_results.get("tracked_objects_csv")
                 output_files["tracked_objects_json"] = visual_results.get("tracked_objects_json")
+                output_files["object_detection_run_registry"] = visual_results.get("object_detection_run_registry")
                 output_files["ocr_csv"] = visual_results.get("ocr_csv")
                 output_files["summary_json"] = visual_results.get("summary_json")
                 face_anonymization = visual_results.get("face_anonymization")
@@ -10250,6 +10411,27 @@ async def match_evidence_proliferation_endpoint(
         output_json_path,
     )
 
+    automatic_decisions = automatic_proliferation_decisions(result)
+    if automatic_decisions:
+        corrections = status.setdefault("annotation_corrections", {})
+        existing = [
+            item for item in corrections.get("proliferation_decisions", [])
+            if isinstance(item, dict)
+        ]
+        automatic_ids = {item["decision_id"] for item in automatic_decisions}
+        corrections["proliferation_decisions"] = [
+            *automatic_decisions,
+            *[item for item in existing if item.get("decision_id") not in automatic_ids],
+        ]
+        corrections["updated_at"] = utc_now_iso()
+        corrections["updated_by"] = "datascene_constellation_engine"
+        write_annotation_corrections_file(status, strict_master_schema=True)
+        result["automatic_proliferation"] = {
+            "decision_count": len(automatic_decisions),
+            "decision_ids": sorted(automatic_ids),
+            "status": "persisted_and_projected",
+        }
+
     request_record = {
         "request_id": request_id,
         "status": result.get("status"),
@@ -10277,11 +10459,239 @@ async def match_evidence_proliferation_endpoint(
             "request_id": request_id,
             "candidate_count": result.get("candidate_count", 0),
             "output_json_path": str(output_json_path),
+            "automatic_proliferation_count": len(automatic_decisions),
         },
     )
     persist_analysis_record_for_status(status)
 
     return make_json_safe(result)
+
+
+@app.post("/api/analysis/{analysis_id}/faces/discriminate", response_model=dict)
+async def measure_narrative_agent_faces_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Measure face landmarks/embeddings without granting identity authority."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    if ANALYSIS_EXECUTION_LOCK.locked():
+        raise HTTPException(status_code=409, detail={
+            "code": "ANALYSIS_RUNTIME_BUSY",
+            "message": "Face measurement is waiting for the active heavyweight analysis to finish.",
+            "retryable": True,
+        })
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
+    request_id = str(request.get("request_id") or f"face-discriminate-{uuid.uuid4()}").strip()
+    request["request_id"] = request_id
+    safe_request_id = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in request_id
+    )[:96]
+    analysis_dir = RESULTS_DIR / analysis_id
+    output_path = analysis_dir / f"facial_landmark_embedding_{safe_request_id}.json"
+
+    def run_measurement() -> Dict[str, Any]:
+        with ANALYSIS_EXECUTION_LOCK:
+            return write_face_discrimination(analysis_id, status, request, output_path)
+
+    result = await asyncio.to_thread(run_measurement)
+    summary = {
+        "request_id": request_id,
+        "status": result.get("status"),
+        "model": (result.get("model") or {}).get("name"),
+        "candidate_count": result.get("candidate_count", 0),
+        "measured_candidate_count": result.get("measured_candidate_count", 0),
+        "eligible_candidate_count": result.get("eligible_candidate_count", 0),
+        "output_json_path": str(output_path),
+        "updated_at": utc_now_iso(),
+    }
+    status.setdefault("face_discrimination_measurements", [])
+    status["face_discrimination_measurements"] = [
+        summary,
+        *[
+            item for item in status.get("face_discrimination_measurements", [])
+            if item.get("request_id") != request_id
+        ],
+    ][:25]
+    status.setdefault("internal_artifacts", {})[
+        f"facial_landmark_embedding:{request_id}"
+    ] = str(output_path)
+    append_analysis_event(status, "facial_landmark_embedding_measured", details=summary)
+    persist_analysis_record_for_status(status)
+
+    public_result = dict(result)
+    public_result.pop("embedding_index", None)
+    public_result["embedding_storage"] = {
+        "status": "local_sidecar",
+        "embedding_count": len(result.get("embedding_index") or {}),
+        "export_default": "withheld",
+        "artifact_ref": str(output_path),
+    }
+    return make_json_safe(public_result)
+
+
+@app.post("/api/analysis/{analysis_id}/objects/appearance/measure", response_model=dict)
+async def measure_object_appearance_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Measure local object appearance without promoting a semantic claim."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    if ANALYSIS_EXECUTION_LOCK.locked():
+        raise HTTPException(status_code=409, detail={
+            "code": "ANALYSIS_RUNTIME_BUSY",
+            "message": "Object appearance measurement is waiting for the active heavyweight analysis to finish.",
+            "retryable": True,
+        })
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else payload
+    request_id = str(request.get("request_id") or f"object-appearance-{uuid.uuid4()}").strip()
+    request["request_id"] = request_id
+    safe_request_id = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in request_id
+    )[:96]
+    analysis_dir = RESULTS_DIR / analysis_id
+    output_path = analysis_dir / f"object_appearance_embedding_{safe_request_id}.json"
+
+    def run_measurement() -> Dict[str, Any]:
+        with ANALYSIS_EXECUTION_LOCK:
+            return write_object_appearance_measurement(analysis_id, status, request, output_path)
+
+    result = await asyncio.to_thread(run_measurement)
+    summary = {
+        "request_id": request_id,
+        "status": result.get("status"),
+        "model": (result.get("model") or {}).get("name"),
+        "family_count": result.get("family_count", 0),
+        "member_count": result.get("member_count", 0),
+        "measured_member_count": result.get("measured_member_count", 0),
+        "output_json_path": str(output_path),
+        "updated_at": utc_now_iso(),
+    }
+    status.setdefault("object_appearance_measurements", [])
+    status["object_appearance_measurements"] = [
+        summary,
+        *[
+            item for item in status.get("object_appearance_measurements", [])
+            if item.get("request_id") != request_id
+        ],
+    ][:25]
+    status.setdefault("internal_artifacts", {})[
+        f"object_appearance_embedding:{request_id}"
+    ] = str(output_path)
+    append_analysis_event(status, "object_appearance_embedding_measured", details=summary)
+    persist_analysis_record_for_status(status)
+
+    public_result = dict(result)
+    public_result.pop("embedding_index", None)
+    public_result["embedding_storage"] = {
+        "status": "local_sidecar",
+        "embedding_count": len(result.get("embedding_index") or {}),
+        "export_default": "withheld",
+        "artifact_ref": str(output_path),
+    }
+    return make_json_safe(public_result)
+
+
+@app.post("/api/analysis/{analysis_id}/clusters/explore", response_model=dict)
+async def explore_empirical_clusters_endpoint(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    """Build a non-writing, source-linked cluster preview for any empirical family."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    samples = payload.get("samples") if isinstance(payload.get("samples"), list) else []
+    if len(samples) > 5000:
+        raise HTTPException(status_code=422, detail={
+            "code": "CLUSTER_PREVIEW_TOO_LARGE",
+            "message": "A single exploratory preview is limited to 5,000 samples.",
+        })
+    result = await asyncio.to_thread(
+        explore_constellational_clusters,
+        samples,
+        cosine_distance_threshold=payload.get("cosine_distance_threshold", 0.25),
+        minimum_quality=payload.get("minimum_quality", 0.0),
+        minimum_size=payload.get("minimum_size", 0.0),
+        adjustments=payload.get("adjustments") if isinstance(payload.get("adjustments"), list) else [],
+    )
+    result["analysis_id"] = analysis_id
+    result["cluster_family"] = payload.get("cluster_family")
+    result["domain"] = payload.get("domain")
+    result["write_effect"] = "none_preview_only"
+    result["canonical_analysis_revision"] = status.get("revision") or status.get("analysis_revision")
+    return make_json_safe(result)
+
+
+@app.get("/api/analysis/{analysis_id}/objects/source-crop")
+async def get_object_source_crop(
+    analysis_id: str,
+    timestamp: float,
+    x1: Optional[float] = None,
+    y1: Optional[float] = None,
+    x2: Optional[float] = None,
+    y2: Optional[float] = None,
+) -> Response:
+    """Return a bounded source-frame crop for an object-cluster thumbnail."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="Source media is unavailable")
+
+    def extract() -> bytes:
+        import cv2
+
+        capture = cv2.VideoCapture(str(source))
+        try:
+            capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(timestamp)) * 1000.0)
+            ok, frame = capture.read()
+        finally:
+            capture.release()
+        if not ok or frame is None:
+            raise ValueError("Source frame could not be decoded")
+        height, width = frame.shape[:2]
+        coordinates = [x1, y1, x2, y2]
+        if all(value is not None and math.isfinite(float(value)) for value in coordinates):
+            left, top, right, bottom = [float(value) for value in coordinates]
+            if max(abs(left), abs(top), abs(right), abs(bottom)) <= 1.5:
+                left, right = left * width, right * width
+                top, bottom = top * height, bottom * height
+            left, right = sorted((left, right))
+            top, bottom = sorted((top, bottom))
+            pad_x = max(4.0, (right - left) * 0.12)
+            pad_y = max(4.0, (bottom - top) * 0.12)
+            left = max(0, min(width - 1, int(round(left - pad_x))))
+            top = max(0, min(height - 1, int(round(top - pad_y))))
+            right = max(left + 1, min(width, int(round(right + pad_x))))
+            bottom = max(top + 1, min(height, int(round(bottom + pad_y))))
+            frame = frame[top:bottom, left:right]
+        if frame.size == 0:
+            raise ValueError("Object crop is empty")
+        preview_width = min(240, frame.shape[1])
+        if preview_width < frame.shape[1]:
+            scale = preview_width / frame.shape[1]
+            frame = cv2.resize(frame, (preview_width, max(1, int(frame.shape[0] * scale))))
+        encoded, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+        if not encoded:
+            raise ValueError("Object crop encoding failed")
+        return bytes(buffer)
+
+    try:
+        content = await asyncio.to_thread(extract)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.post("/api/analysis/{analysis_id}/proliferation/refresh", response_model=dict)
@@ -11118,6 +11528,9 @@ async def get_analysis_status(analysis_id: str) -> dict:
             response_data["summary"]["spatial_tone_scan"] = va.get("spatial_tone_scan", {})
             response_data["summary"]["adaptive_visual_scan"] = va.get(
                 "adaptive_visual_scan", {}
+            )
+            response_data["summary"]["set_location_recognition"] = va.get(
+                "set_location_recognition", {}
             )
             response_data["summary"]["motion_evidence"] = va.get("motion_evidence", {})
             response_data["summary"]["scene_segments"] = va.get("scene_segments", {})
@@ -12265,6 +12678,7 @@ async def download_file(analysis_id: str, file_type: str):
         "shot_boundaries": ("shot_boundaries.json", "application/json"),
         "spatial_tone_scan": ("spatial_tone_scan.json", "application/json"),
         "adaptive_visual_scan": ("adaptive_visual_scan.json", "application/json"),
+        "set_location_recognition": ("set_location_recognition.json", "application/json"),
         "native_statistical_interpretation": (
             "native_statistical_interpretation.json",
             "application/json",
@@ -12385,6 +12799,7 @@ async def download_bundle(analysis_id: str):
         "shot_boundaries": "shot_boundaries.json",
         "spatial_tone_scan": "spatial_tone_scan.json",
         "adaptive_visual_scan": "adaptive_visual_scan.json",
+        "set_location_recognition": "set_location_recognition.json",
         "native_statistical_interpretation": "native_statistical_interpretation.json",
         "live_mature_data_proliferation_audit": "live_mature_data_proliferation_audit.json",
         "narrative_agent_continuity_projection": "narrative_agent_continuity_projection.json",
@@ -13345,6 +13760,326 @@ async def get_analysis_source_clock(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/analysis/{analysis_id}/parsimonious-workflow/plan", response_model=dict)
+async def plan_parsimonious_analysis_workflow(
+    analysis_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> dict:
+    """Persist a source-bound, reuse-first Quick/Science work plan.
+
+    This endpoint deliberately plans only candidate-producing work. It neither
+    promotes machine proposals to canonical knowledge nor disguises scheduled
+    classifier jobs as completed results.
+    """
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    for field in ("compatible_results",):
+        if field in payload and not isinstance(payload[field], dict):
+            raise HTTPException(status_code=400, detail=f"{field} must be an object")
+    for field in ("uncertainty_hotspots", "researcher_priorities"):
+        if field in payload and not isinstance(payload[field], list):
+            raise HTTPException(status_code=400, detail=f"{field} must be a list")
+
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    try:
+        clock_context = await asyncio.to_thread(
+            build_source_clock_context, analysis_id, status, metadata
+        )
+        if clock_context.get("binding_status") != "content_bound":
+            raise ClockRevisionConflict(
+                "Source media is unavailable; economical work cannot be planned without a source-clock binding"
+            )
+        corrections = canonical_clock_corrections(analysis_id, status)
+        plan = build_parsimonious_workflow_plan(
+            analysis_id=analysis_id,
+            source_fingerprint=clock_context["source_fingerprint"],
+            clock_revision=clock_context["clock_revision"],
+            correction_generation=str(
+                corrections.get("correction_generation") or "uncorrected:initial"
+            ),
+            requested_tier=str(
+                payload.get("requested_tier")
+                or status.get("analysis_tier")
+                or "quick_sweep"
+            ),
+            compatible_results=payload.get("compatible_results") or {},
+            uncertainty_hotspots=payload.get("uncertainty_hotspots") or [],
+            researcher_priorities=payload.get("researcher_priorities") or [],
+        )
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    output_path = RESULTS_DIR / analysis_id / "parsimonious_workflow_plan.json"
+    atomic_write_json(output_path, plan)
+    status.setdefault("output_files", {})["parsimonious_workflow_plan"] = str(output_path)
+    status["parsimonious_workflow_plan"] = {
+        "plan_id": plan["plan_id"],
+        "requested_tier": plan["requested_tier"],
+        "summary": plan["summary"],
+        "artifact_ref": str(output_path),
+    }
+    append_analysis_event(
+        status,
+        "parsimonious_workflow_planned",
+        details=status["parsimonious_workflow_plan"],
+    )
+    persist_analysis_record_for_status(status)
+    return {
+        "status": "planned",
+        "execution_status": "jobs_declared_not_yet_executed",
+        "analysis_id": analysis_id,
+        "artifact_ref": str(output_path),
+        "plan": plan,
+    }
+
+
+@app.get("/api/analysis/{analysis_id}/parsimonious-workflow/plan", response_model=dict)
+async def get_parsimonious_analysis_workflow(analysis_id: str) -> dict:
+    """Return the last persisted economical workflow plan."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    path = RESULTS_DIR / analysis_id / "parsimonious_workflow_plan.json"
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No parsimonious workflow plan exists") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="Stored workflow plan is unreadable") from exc
+    return {"status": "available", "analysis_id": analysis_id, "plan": plan}
+
+
+def parsimonious_runtime_for_analysis(analysis_id: str) -> ParsimoniousRuntime:
+    return ParsimoniousRuntime(RESULTS_DIR / analysis_id, analysis_id)
+
+
+async def validate_current_parsimonious_compatibility(
+    analysis_id: str,
+    status: Dict[str, Any],
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Reject analytically cheap but stale reuse at the API boundary."""
+    normalized = normalize_parsimonious_compatibility(payload)
+    metadata = status.get("source_media_metadata") or build_source_media_metadata_payload(status)
+    context = await asyncio.to_thread(build_source_clock_context, analysis_id, status, metadata)
+    if context.get("binding_status") != "content_bound":
+        raise ClockRevisionConflict("Source media is unavailable; runtime compatibility cannot be verified")
+    if normalized["source_fingerprint"] != context["source_fingerprint"]:
+        raise ClockRevisionConflict("Source fingerprint changed; recompute or retrieve a compatible result")
+    if normalized["clock_revision"] != context["clock_revision"]:
+        raise ClockRevisionConflict("Source clock changed; recompute or retrieve a compatible result")
+    corrections = canonical_clock_corrections(analysis_id, status)
+    current_generation = str(corrections.get("correction_generation") or "uncorrected:initial")
+    if normalized["correction_generation"] != current_generation:
+        raise ClockRevisionConflict("Corrections changed; dependent features and decisions require selective recomputation")
+    return normalized
+
+
+@app.get("/api/analysis/{analysis_id}/parsimonious-runtime", response_model=dict)
+async def get_parsimonious_runtime_summary(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+    return {
+        "status": "available",
+        "summary": await asyncio.to_thread(runtime.summary),
+        "capsules": await asyncio.to_thread(runtime.capsules),
+        "recent_traces": await asyncio.to_thread(runtime.traces, 50),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/features", response_model=dict)
+async def persist_parsimonious_feature(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        compatibility = await validate_current_parsimonious_compatibility(
+            analysis_id, status, payload.get("compatibility") or {}
+        )
+        feature = payload.get("feature")
+        if not isinstance(feature, dict):
+            raise ValueError("feature must be an object")
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        stored = await asyncio.to_thread(runtime.put_feature, compatibility, feature)
+        return {"status": "persisted", "feature": stored}
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/evidence", response_model=dict)
+async def persist_parsimonious_evidence(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        compatibility = await validate_current_parsimonious_compatibility(
+            analysis_id, status, payload.get("compatibility") or {}
+        )
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            raise ValueError("evidence must be an object")
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        stored = await asyncio.to_thread(runtime.put_evidence_slice, compatibility, evidence)
+        return {"status": "persisted", "evidence": stored}
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/manifests", response_model=dict)
+async def persist_parsimonious_manifest(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        raise HTTPException(status_code=400, detail="manifest must be an object")
+    try:
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        stored = await asyncio.to_thread(
+            runtime.put_manifest, str(payload.get("manifest_type") or ""), manifest
+        )
+        return {"status": "persisted", "manifest": stored}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/results", response_model=dict)
+async def persist_parsimonious_result(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        compatibility = await validate_current_parsimonious_compatibility(
+            analysis_id, status, payload.get("compatibility") or {}
+        )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("result must be an object")
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        stored = await asyncio.to_thread(
+            runtime.put_result,
+            compatibility,
+            result,
+            canonical=bool(payload.get("canonical", False)),
+        )
+        return {"status": "persisted", "result": stored}
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/route", response_model=dict)
+async def route_parsimonious_decision(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        compatibility = await validate_current_parsimonious_compatibility(
+            analysis_id, status, payload.get("compatibility") or {}
+        )
+        providers = payload.get("providers") or []
+        if not isinstance(providers, list):
+            raise ValueError("providers must be a list")
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        trace = await asyncio.to_thread(
+            runtime.route,
+            str(payload.get("capsule_id") or ""),
+            compatibility,
+            providers,
+            payload.get("deterministic_rule")
+            if isinstance(payload.get("deterministic_rule"), dict)
+            else None,
+        )
+        return {"status": "routed", "trace": trace}
+    except ClockRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/invalidate", response_model=dict)
+async def invalidate_parsimonious_dependency(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        event = await asyncio.to_thread(
+            runtime.invalidate,
+            str(payload.get("dependency_ref") or ""),
+            str(payload.get("reason") or ""),
+        )
+        return {"status": "invalidated", "event": event}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/learning", response_model=dict)
+async def capture_parsimonious_learning_item(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    correction = payload.get("correction")
+    if not isinstance(correction, dict):
+        raise HTTPException(status_code=400, detail="correction must be an object")
+    runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+    item = await asyncio.to_thread(runtime.capture_correction_for_learning, correction)
+    return {
+        "status": "captured",
+        "training_effect": "none_quarantined_from_training",
+        "learning_item": item,
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/parsimonious-runtime/learning/{learning_id}/transition", response_model=dict)
+async def transition_parsimonious_learning_item(
+    analysis_id: str,
+    learning_id: str,
+    payload: Dict[str, Any] = Body(...),
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        event = await asyncio.to_thread(
+            runtime.transition_learning,
+            learning_id,
+            str(payload.get("to_state") or ""),
+            manifest_name=payload.get("manifest_name"),
+            authority=str(payload.get("authority") or "analyst"),
+        )
+        return {"status": "transitioned", "event": event}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Learning item not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/analysis/{analysis_id}/source-clock/resolve", response_model=dict)
 def resolve_analysis_source_clock(
     analysis_id: str,
@@ -13609,6 +14344,58 @@ async def measure_analysis_adaptive_visual(
         "persisted": persist,
         "adaptive_visual_scan": measured,
     }
+
+
+@app.post("/api/analysis/{analysis_id}/set-location-recurrence/measure", response_model=dict)
+async def measure_analysis_set_location_recurrence(
+    analysis_id: str, payload: Dict[str, Any] = Body(default={})
+) -> dict:
+    """Measure recurring wide-frame environments without asserting location identity."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    source = Path(str(status.get("source_video_path") or status.get("file_path") or ""))
+    persist = bool(payload.get("persist", True))
+    output_path = RESULTS_DIR / analysis_id / "set_location_recognition.json" if persist else None
+    try:
+        measured = measure_set_location_recurrence(
+            source,
+            analysis_id=analysis_id,
+            sample_interval_seconds=float(payload.get("sample_interval_seconds", 1.0)),
+            similarity_threshold=float(payload.get("similarity_threshold", 0.82)),
+            minimum_cluster_size=int(payload.get("minimum_cluster_size", 2)),
+            output_path=output_path,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if persist:
+        status.setdefault("output_files", {})["set_location_recognition"] = str(output_path)
+        status.setdefault("results", {}).setdefault("visual_analysis", {})[
+            "set_location_recognition"
+        ] = measured
+        status.setdefault("summary", {})["set_location_recognition"] = measured
+        refresh_master_schema_metadata_surfaces(status)
+        write_second_order_meaning_artifacts_for_status(status)
+        persist_analysis_record_for_status(status)
+    return {
+        "analysis_id": analysis_id,
+        "persisted": persist,
+        "set_location_recognition": measured,
+    }
+
+
+@app.get("/api/analysis/{analysis_id}/set-location-recurrence/thumbnails/{sample_id}")
+async def get_set_location_thumbnail(analysis_id: str, sample_id: str):
+    """Serve a generated set/location review thumbnail inside its analysis boundary."""
+    if get_analysis_entry(analysis_id) is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    safe_sample_id = str(sample_id).replace(":", "-")
+    if not re.fullmatch(r"set-frame-[0-9]{6}", safe_sample_id):
+        raise HTTPException(status_code=400, detail="Invalid set/location sample id")
+    path = RESULTS_DIR / analysis_id / "set_location_thumbnails" / f"{safe_sample_id}.jpg"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Set/location thumbnail not found")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)
 
 
 def interpretation_registry_for_analysis(analysis_id: str) -> InterpretationRegistry:
@@ -14662,7 +15449,20 @@ async def create_canonical_decision(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     status["canonical_decision_ledger"] = ledger
     write_decision_ledger_file(status)
+    learning_item = None
     if appended:
+        # The decision governs the current analysis immediately through the
+        # canonical ledger, while a separate immutable snapshot enters the
+        # learning quarantine with no automatic training effect.
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        learning_item = await asyncio.to_thread(
+            runtime.capture_correction_for_learning,
+            {
+                "canonical_decision_id": decision["decision_id"],
+                "decision": decision,
+                "authority": decision.get("authority"),
+            },
+        )
         append_analysis_event(
             status,
             "canonical_decision_appended",
@@ -14674,6 +15474,8 @@ async def create_canonical_decision(
         "analysis_id": analysis_id,
         "decision": decision,
         "decision_count": len(ledger.get("decisions", [])),
+        "learning_quarantine": learning_item,
+        "training_effect": "none_quarantined_from_training",
     }
 
 
@@ -14733,7 +15535,14 @@ async def invalidate_decisions_for_dependency_change(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     status["canonical_decision_ledger"] = ledger
     write_decision_ledger_file(status)
+    runtime_invalidation = None
     if appended:
+        runtime = await asyncio.to_thread(parsimonious_runtime_for_analysis, analysis_id)
+        runtime_invalidation = await asyncio.to_thread(
+            runtime.invalidate,
+            dependency_ref,
+            str(payload.get("reason") or payload.get("reason_code") or "canonical dependency changed"),
+        )
         append_analysis_event(
             status,
             "canonical_dependency_invalidation",
@@ -14748,6 +15557,7 @@ async def invalidate_decisions_for_dependency_change(
         "status": "appended" if appended else "unchanged",
         "analysis_id": analysis_id,
         "invalidation": event,
+        "parsimonious_runtime_invalidation": runtime_invalidation,
     }
 
 
@@ -14804,6 +15614,167 @@ def refresh_annotation_dependent_surfaces_when_idle(status: Dict[str, Any]) -> N
         logger.exception(
             "Deferred annotation projection failed for analysis %s",
             status.get("analysis_id"),
+        )
+
+
+def backfill_confirmed_narrative_agent_presence_intervals(
+    corrections: Dict[str, Any],
+) -> int:
+    """Restore the canonical presence projection for prior lineup confirmations."""
+
+    intervals = corrections.setdefault("master_schema_presence_intervals", [])
+    existing_ids = {
+        str(item.get("id") or "")
+        for item in intervals
+        if isinstance(item, dict)
+    }
+    placeholder_labels = {
+        "character present",
+        "confirm narrative agent",
+        "person",
+        "unknown character",
+        "unknown person",
+        "unidentified person",
+    }
+    added = 0
+    for annotation in corrections.get("manual_visual_annotations") or []:
+        if not isinstance(annotation, dict) or annotation.get("category") != "Identification":
+            continue
+        correlation = annotation.get("metadata_correlation") or {}
+        confirmation = correlation.get("manual_confirmation_event") or {}
+        is_confirmed = (
+            correlation.get("authority_state") == "explicit_user_confirmation"
+            or confirmation.get("event_type") == "narrative_agent_visual_lineup_confirmation"
+        )
+        label = str(
+            annotation.get("narrative_agent_affirmation")
+            or annotation.get("identity_affirmation")
+            or annotation.get("custom_label")
+            or annotation.get("label")
+            or ""
+        ).strip()
+        if not is_confirmed or not label or label.lower() in placeholder_labels:
+            continue
+        annotation_id = str(annotation.get("id") or "").strip()
+        if not annotation_id:
+            continue
+        node_id = f"master:manual_annotation:{annotation_id}"
+        interval_id = f"meaning-network-presence:{node_id}"
+        if interval_id in existing_ids:
+            continue
+        start = float(
+            annotation.get("start_seconds")
+            if annotation.get("start_seconds") is not None
+            else annotation.get("timestamp_seconds") or 0
+        )
+        raw_end = annotation.get("end_seconds")
+        end = max(start + 0.001, float(raw_end if raw_end is not None else start))
+        traceback_ref = f"traceback:{annotation_id}"
+        intervals.append({
+            "id": interval_id,
+            "node_id": node_id,
+            "node_type": "narrative_agent",
+            "label": label,
+            "master_schema_surface": "manual_visual_annotations",
+            "lane_id": "on_camera_agents",
+            "presence_mode": "on_camera",
+            "start_seconds": round(start, 3),
+            "end_seconds": round(end, 3),
+            "authority_level": "manual_confirmation",
+            "source_panel": "NarrativeAgentPanel",
+            "source_verification_status": "source_time_resolved",
+            "source_range_source": "manual_interval",
+            "source_evidence_refs": [{
+                "evidence_id": annotation_id,
+                "source_type": "manual_visual_annotation",
+                "time_range": {"start": round(start, 3), "end": round(end, 3)},
+                "traceback_record_id": traceback_ref,
+                "confidence": 1,
+            }],
+            "source_traceback_refs": [traceback_ref],
+            "propagation_required": True,
+            "partial_propagation_allowed": False,
+            "proliferates_to": [
+                "master_schema",
+                "meaning_network",
+                "video_panel",
+                "bbox_roi_panel",
+                "scene_card_panel",
+                "traceback",
+            ],
+            "updated_at": annotation.get("updated_at") or corrections.get("updated_at"),
+            "updated_by": annotation.get("updated_by") or "analyst",
+        })
+        existing_ids.add(interval_id)
+        added += 1
+    return added
+
+
+@app.post("/api/analysis/{analysis_id}/annotation-projections/refresh", response_model=dict)
+def refresh_saved_annotation_projections(analysis_id: str) -> dict:
+    """Project the canonical correction sidecar through existing consumers.
+
+    The dashboard owns the durable foreground write. This endpoint is the
+    explicit saloon-doors boundary that hydrates that committed generation
+    into the backend status and rebuilds the already-delivered projection
+    regimes instead of introducing another analytical tool.
+    """
+
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+
+    with correction_write_lock(RESULTS_DIR.parent.parent, analysis_id):
+        corrections = canonical_clock_corrections(analysis_id, status)
+        status["annotation_corrections"] = json.loads(json.dumps(corrections))
+        backfilled_presence_intervals = backfill_confirmed_narrative_agent_presence_intervals(
+            status["annotation_corrections"]
+        )
+        if backfilled_presence_intervals:
+            write_annotation_corrections_file(status, refresh_master_schema=True)
+        corrections = status["annotation_corrections"]
+
+    threading.Thread(
+        target=refresh_saved_annotation_projection_regimes_when_idle,
+        args=(status,),
+        daemon=True,
+        name=f"saved-annotation-projection-{analysis_id[:8]}",
+    ).start()
+
+    return {
+        "status": "queued",
+        "analysis_id": analysis_id,
+        "correction_generation": corrections.get("correction_generation"),
+        "backfilled_presence_intervals": backfilled_presence_intervals,
+        "dependent_projection": "queued",
+    }
+
+
+def refresh_saved_annotation_projection_regimes_when_idle(status: Dict[str, Any]) -> None:
+    """Run the existing heavy projection regimes after foreground commit."""
+
+    analysis_id = str(status.get("analysis_id") or "")
+    try:
+        with ANALYSIS_EXECUTION_LOCK:
+            write_identity_triangulation_artifact_for_status(
+                status,
+                reviewed_by="annotation_projection_refresh",
+            )
+            synchrony = build_active_speaker_synchrony_artifact(status)
+            synchrony_path = RESULTS_DIR / analysis_id / "active_speaker_synchrony.json"
+            synchrony_path.write_text(
+                json.dumps(synchrony, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            status["active_speaker_synchrony"] = synchrony
+            status.setdefault("output_files", {})["active_speaker_synchrony"] = str(
+                synchrony_path
+            )
+            refresh_annotation_dependent_surfaces(status)
+    except Exception:
+        logger.exception(
+            "Saved annotation projection refresh failed for analysis %s",
+            analysis_id,
         )
 
 

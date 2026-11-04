@@ -13,7 +13,8 @@ The primary objective is to harden VAA1 into a controlled evidence system where 
 This work begins with a mandatory discovery sprint to create a comprehensive inventory of the system's data attributes and their operational semantics.
 
 -   **Governing Sprint Plan:** [`docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md`](./docs/sprint_program_empirical_taxonomy_discovery_2026-07-12.md)
--   **Architectural Context:** `docs/architecture/vaa1_data_attribute_inventory_report_2026-07-12.md`
+-   **Authoritative Software Architecture Map:** [`docs/datascene_software_architecture_map.md`](./docs/datascene_software_architecture_map.md)
+-   **Historical Architectural Context:** `docs/architecture/vaa1_data_attribute_inventory_report_2026-07-12.md` (legacy reference; not present in the current tree)
 
 All subsequent work on the Data Maturation Proliferation Regime v2 depends on the successful completion of this empirical audit.
 

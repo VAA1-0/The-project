@@ -19,6 +19,107 @@ meaning_network = load_module()
 
 
 class DatasceneMeaningNetworkContractTest(unittest.TestCase):
+    def test_objects_and_manual_object_corrections_project_to_objects_lane(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-object-projection",
+            {
+                "annotation_corrections": {
+                    "manual_visual_annotations": [
+                        {
+                            "id": "manual-weapon",
+                            "category": "OBJ",
+                            "label": "Weapon",
+                            "start_seconds": 2.0,
+                            "end_seconds": 3.0,
+                        }
+                    ]
+                }
+            },
+            visual_analysis={
+                "scene_segments": [{"scene_id": "s1", "start": 0.0, "end": 5.0}],
+                "tracked_objects": [
+                    {"track_id": "person-1", "class_name": "person", "start": 1.0, "end": 2.0},
+                    {"track_id": "car-1", "class_name": "car", "display_label": "car track 1", "start": 1.0, "end": 4.0, "confidence": 0.91},
+                ],
+            },
+        )
+        objects = [
+            node for node in artifact["meaning_network"]["nodes"]
+            if node["node_type"] == "object"
+        ]
+        self.assertEqual({node["label"] for node in objects}, {"car", "Weapon"})
+        weapon = next(node for node in objects if node["label"] == "Weapon")
+        self.assertEqual(weapon["maturity"]["level"], "analyst_confirmed")
+        self.assertEqual(weapon["ui"]["display_group"], "objects_in_scene")
+
+    def test_explicit_visual_speaking_confirmation_resolves_unknown_line(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-speaker-resolution",
+            {
+                "annotation_corrections": {
+                    "manual_visual_annotations": [
+                        {
+                            "id": "madeleine-speaking",
+                            "category": "Identification",
+                            "identity_affirmation": "Dr. Madeleine Swann",
+                            "start_seconds": 6.27,
+                            "end_seconds": 7.51,
+                            "metadata_correlation": {
+                                "quick_annotations": ["speaking to", "looking at"]
+                            },
+                        }
+                    ]
+                }
+            },
+            transcript={
+                "segments": [
+                    {
+                        "id": "line-1",
+                        "speaker": "UNKNOWN",
+                        "text": "Why would I betray you?",
+                        "start": 6.28,
+                        "end": 7.6,
+                    }
+                ]
+            },
+            visual_analysis={
+                "scene_segments": [{"scene_id": "s1", "start": 0.0, "end": 24.0}],
+                "tracked_objects": [],
+            },
+        )
+        line = next(
+            node for node in artifact["meaning_network"]["nodes"]
+            if node["node_id"] == "transcript:line-1"
+        )
+        self.assertEqual(line["label"], "Dr. Madeleine Swann")
+        self.assertEqual(line["attributes"]["source_speaker_label"], "UNKNOWN")
+        self.assertEqual(line["attributes"]["speaker_resolution"], "resolved")
+        spoken_by = [
+            edge for edge in artifact["meaning_network"]["edges"]
+            if edge["edge_type"] == "spoken_by" and edge["target_node_id"] == "transcript:line-1"
+        ]
+        self.assertEqual(len(spoken_by), 1)
+        self.assertEqual(spoken_by[0]["maturity"]["level"], "analyst_confirmed")
+
+    def test_lane_registry_and_epistemic_fields_are_explicit(self):
+        artifact = meaning_network.build_datascene_meaning_network(
+            "analysis-information-architecture",
+            {},
+            scene_cards={"scene_cards": [{"scene_id": "s1", "start": 0.0, "end": 4.0}]},
+        )
+        network = artifact["meaning_network"]
+        registry = network["lane_registry"]
+        self.assertEqual(registry["schema"], "vaa1.meaning_network_lane_registry.v1")
+        self.assertEqual(registry["version"], "1.0.0")
+        structural_group = next(group for group in registry["groups"] if group["group_id"] == "structural_scope")
+        self.assertEqual(structural_group["lane_ids"][:4], ["act", "sequence", "scene", "shot"])
+        self.assertEqual(registry["compatibility_aliases"]["open_topology_som_matcher"], "matcher_review")
+
+        scene_node = next(node for node in network["nodes"] if node["node_type"] == "scene")
+        self.assertEqual(scene_node["domain"], "structure")
+        self.assertEqual(scene_node["epistemic_role"], "structural_unit")
+        self.assertEqual(scene_node["structural_scope"]["scene_id"], "s1")
+
     def test_master_schema_candidate_scene_timing_provides_provisional_membership(self):
         artifact = meaning_network.build_datascene_meaning_network(
             "analysis-scene-timing",
@@ -378,7 +479,7 @@ class DatasceneMeaningNetworkContractTest(unittest.TestCase):
         network = artifact["meaning_network"]
         matcher_nodes = [
             node for node in network["nodes"]
-            if node["ui"]["display_group"] == "open_topology_som_matcher"
+            if node["ui"]["display_group"] == "matcher_review"
         ]
         matcher_edges = [
             edge for edge in network["edges"]
@@ -395,12 +496,7 @@ class DatasceneMeaningNetworkContractTest(unittest.TestCase):
         self.assertTrue(candidate_node["attributes"]["linked_data_principle"]["source_time_resolved"])
         self.assertTrue(candidate_node["attributes"]["linked_data_principle"]["bbox_resolved"])
         self.assertEqual(matcher_edges[0]["evidence_refs"][0]["time_range"]["start"], 96.0)
-        self.assertTrue(
-            any(
-                anchor["anchor_type"] == "open_topology_som_cluster"
-                for anchor in network["continuity_anchors"]
-            )
-        )
+        self.assertTrue(any(anchor["anchor_type"] == "matcher_review_cluster" for anchor in network["continuity_anchors"]))
         self.assertTrue(
             any(
                 confirmation["confirmation_type"] == "matcher_topology_review"

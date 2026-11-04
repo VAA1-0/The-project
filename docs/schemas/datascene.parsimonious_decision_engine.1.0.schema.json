@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datascene.local/schemas/datascene.parsimonious_decision_engine.1.0.schema.json",
+  "title": "Datascene Parsimonious Decision Engine 1.0 Runtime Contract",
+  "description": "Runtime workflow, capsule, tracking and decision contract. Training and roadmap contracts are deliberately separate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "engine", "workflowProfiles", "trackingPrograms", "decisionCapsules", "runtimePolicy", "persistentStores", "runtimeTrace", "learningGovernance"],
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engineId", "authorityPolicy", "operatingPrinciples"],
+      "properties": {
+        "engineId": {"const": "datascene-pde"},
+        "authorityPolicy": {"const": "manual-correction-wins-everywhere"},
+        "operatingPrinciples": {
+          "type": "array",
+          "contains": {"const": "compute-parsimony"},
+          "items": {"enum": ["standalone-first", "offline-capable", "typed-decisions", "explicit-abstention", "traceable-inputs", "immutable-raw-evidence", "human-authoritative-review", "replaceable-models", "compute-parsimony", "no-silent-retraining"]}
+        }
+      }
+    },
+    "workflowProfiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quick_sweep", "science_sweep"],
+      "properties": {
+        "quick_sweep": {"$ref": "#/$defs/workflowProfile"},
+        "science_sweep": {"$ref": "#/$defs/workflowProfile"}
+      }
+    },
+    "trackingPrograms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["narrative_agents", "actions_movements", "episodic_scene_continuums"],
+      "properties": {
+        "narrative_agents": {"$ref": "#/$defs/trackingProgram"},
+        "actions_movements": {"$ref": "#/$defs/trackingProgram"},
+        "episodic_scene_continuums": {"$ref": "#/$defs/trackingProgram"}
+      }
+    },
+    "decisionCapsules": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/decisionCapsule"}},
+    "persistentStores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "immutableArtifacts", "recordFamilies"],
+      "properties": {
+        "index": {"const": "sqlite-wal"},
+        "immutableArtifacts": {"const": "sha256-content-addressed-json"},
+        "recordFamilies": {
+          "type": "array",
+          "allOf": [
+            {"contains": {"const": "evidence-slices"}},
+            {"contains": {"const": "feature-snapshots"}},
+            {"contains": {"const": "candidate-results"}},
+            {"contains": {"const": "canonical-analyst-decisions"}},
+            {"contains": {"const": "invalidation-events"}},
+            {"contains": {"const": "model-ontology-manifests"}}
+          ],
+          "items": {"enum": ["evidence-slices", "feature-snapshots", "candidate-results", "canonical-analyst-decisions", "invalidation-events", "model-ontology-manifests", "runtime-traces", "learning-state-events"]}
+        }
+      }
+    },
+    "runtimeTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["persistence", "displayPolicy", "actions"],
+      "properties": {
+        "persistence": {"const": "immutable-artifact-plus-sqlite-index"},
+        "displayPolicy": {"const": "inspectable-on-demand-not-permanent-graph-space"},
+        "actions": {
+          "type": "array",
+          "items": {"enum": ["reused-existing-result", "reused-cached-features", "applied-deterministic-rule", "ran-local-capsule", "escalated-to-specialist-model", "abstained", "sent-to-analyst-review", "proliferated-after-confirmation"]}
+        }
+      }
+    },
+    "learningGovernance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automaticTraining", "states"],
+      "properties": {
+        "automaticTraining": {"const": false},
+        "states": {
+          "const": ["captured", "consent-pending", "quarantined", "eligible", "included-in-named-training-manifest", "evaluated", "approved-for-deployment"]
+        }
+      }
+    },
+    "runtimePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionOrder", "compatibilityKeyFields", "selectiveRecomputation", "scoreSemantics", "telemetry"],
+      "properties": {
+        "executionOrder": {
+          "const": ["manual-authority", "exact-result-reuse", "compatible-feature-reuse", "deterministic-rules", "lightweight-local-capsule", "bounded-specialist-deepening", "analyst-review-or-abstention"]
+        },
+        "compatibilityKeyFields": {
+          "type": "array",
+          "allOf": [
+            {"contains": {"const": "source-fingerprint"}},
+            {"contains": {"const": "clock-revision"}},
+            {"contains": {"const": "correction-generation"}},
+            {"contains": {"const": "model-artifact-hash"}},
+            {"contains": {"const": "label-definition-version"}}
+          ],
+          "items": {"enum": ["source-fingerprint", "clock-revision", "temporal-spatial-text-scope", "evidence-dependencies", "correction-generation", "feature-schema-version", "preprocessing-version", "model-artifact-hash", "calibration-version", "label-definition-version", "parameter-hash"]}
+        },
+        "selectiveRecomputation": {"const": true},
+        "scoreSemantics": {
+          "type": "array",
+          "items": {"enum": ["deterministic-rule", "similarity-score", "uncalibrated-model-score", "calibrated-probability", "conformal-prediction-set", "analyst-decision"]}
+        },
+        "telemetry": {
+          "type": "array",
+          "items": {"enum": ["exact-result-reuse-rate", "feature-reuse-rate", "rule-resolution-rate", "capsule-resolution-rate", "escalation-rate", "abstention-rate", "analyst-review-rate", "cpu-seconds-per-media-hour", "gpu-seconds-per-media-hour", "peak-memory", "energy-per-accepted-decision"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "workflowProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "scopePolicy", "samplingPolicy", "inputPriority", "output", "promotionRule"],
+      "properties": {
+        "purpose": {"type": "string", "minLength": 1},
+        "scopePolicy": {"enum": ["source-wide-sparse", "bounded-interval-selective"]},
+        "samplingPolicy": {"enum": ["sparse-adaptive", "dense-only-where-justified"]},
+        "inputPriority": {"const": ["manual-confirmations", "compatible-results", "compatible-features", "raw-evidence"]},
+        "output": {"enum": ["candidate-map-and-hotspots", "research-grade-bounded-decisions"]},
+        "promotionRule": {"const": "analyst-confirmation-or-governed-maturity-gate"}
+      }
+    },
+    "trackingProgram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "quickCapsules", "scienceCapsules", "continuityKey", "unknownPolicy", "masterSchemaProjection"],
+      "properties": {
+        "purpose": {"type": "string"},
+        "quickCapsules": {"type": "array", "items": {"type": "string"}},
+        "scienceCapsules": {"type": "array", "items": {"type": "string"}},
+        "continuityKey": {"type": "array", "items": {"type": "string"}},
+        "unknownPolicy": {"const": "preserve-and-prioritize-for-review"},
+        "masterSchemaProjection": {"const": "only-after-governed-acceptance"}
+      }
+    },
+    "decisionCapsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capsuleId", "task", "version", "trackingProgram", "workflowStages", "features", "provider", "costClass", "outputAuthority", "abstention", "dependencies"],
+      "properties": {
+        "capsuleId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+        "task": {"enum": ["narrative-agent-resolution", "speaker-resolution", "action-candidate", "movement-measurement", "interaction-resolution", "scene-boundary", "episode-continuity", "situation-transition", "constellation-match", "cluster-label", "outlier-review", "contextual-classification"]},
+        "version": {"type": "string"},
+        "trackingProgram": {"enum": ["narrative_agents", "actions_movements", "episodic_scene_continuums"]},
+        "workflowStages": {"type": "array", "items": {"enum": ["quick_sweep", "science_sweep"]}},
+        "features": {"type": "array", "items": {"type": "string"}},
+        "provider": {"type": "string"},
+        "costClass": {"enum": ["negligible", "low", "medium", "high"]},
+        "outputAuthority": {"const": "candidate-only"},
+        "abstention": {"const": true},
+        "dependencies": {"type": "array", "items": {"type": "string"}},
+        "calibrationArtifact": {"type": ["string", "null"]},
+        "proliferationAllowed": {"const": false}
+      }
+    }
+  }
+}

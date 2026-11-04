@@ -812,6 +812,126 @@ export interface EvidenceProliferationMatchSummary {
   updated_at?: string;
 }
 
+export interface FaceDiscriminationCandidate {
+  evidence_id: string;
+  occurrence_id?: string;
+  source_time?: number;
+  measurement_state: "measured" | "excluded" | string;
+  face_confidence?: number;
+  face_geometry?: Record<string, unknown>;
+  landmarks?: Record<string, { x: number; y: number }>;
+  landmark_count?: number;
+  embedding_dimensions?: number;
+  embedding_sha256?: string;
+  scores?: Array<{ family_key: string; cosine_similarity: number }>;
+  best_family_key?: string | null;
+  cosine_similarity?: number | null;
+  runner_up_similarity?: number | null;
+  ambiguity_margin?: number | null;
+  eligible_for_family_review?: boolean;
+  review_state?: string;
+  exclusion_reason?: string | null;
+}
+
+export interface FaceDiscriminationResult {
+  schema: "datascene.measured_face_discrimination.v1" | string;
+  analysis_id?: string;
+  request_id?: string;
+  status: string;
+  message?: string;
+  model?: Record<string, unknown>;
+  settings?: Record<string, number>;
+  runtime?: { available?: boolean; missing?: string[]; installation_command?: string } & Record<string, unknown>;
+  governance?: Record<string, unknown>;
+  family_count?: number;
+  candidate_count?: number;
+  measured_candidate_count?: number;
+  eligible_candidate_count?: number;
+  families?: Array<Record<string, unknown>>;
+  candidates?: FaceDiscriminationCandidate[];
+  embedding_storage?: Record<string, unknown>;
+}
+
+export interface EmpiricalClusterExplorationResult {
+  schema: "vaa1.constellational_cluster_exploration.v1" | string;
+  analysis_id?: string;
+  cluster_family?: string;
+  domain?: "visual" | "audio" | "textual" | string;
+  status: string;
+  authority?: string;
+  write_effect?: "none_preview_only" | string;
+  parameters?: Record<string, number>;
+  counts?: { input?: number; accepted?: number; rejected?: number; clusters?: number };
+  clusters?: Array<Record<string, unknown>>;
+  rejected_samples?: Array<Record<string, unknown>>;
+  human_adjustments?: Array<Record<string, unknown>>;
+}
+
+export interface ObjectAppearanceMeasurementResult {
+  schema: "datascene.measured_object_appearance.v1";
+  analysis_id: string;
+  request_id?: string;
+  status: string;
+  message?: string;
+  family_count?: number;
+  member_count?: number;
+  measured_member_count?: number;
+  model?: {
+    name?: string;
+    provider?: string;
+    distance_metric?: string;
+  };
+  governance?: {
+    score_is_not_calibrated_probability?: boolean;
+    detector_confidence_is_not_embedding_similarity?: boolean;
+    embedding_export_default?: string;
+    genre_and_situation_do_not_change_similarity?: boolean;
+    context_cannot_create_semantic_object_truth?: boolean;
+    ontology_relations_require_separate_governed_decisions?: boolean;
+  };
+  review_context?: {
+    axes?: Partial<Record<
+      "media_genre" | "media_subgenre" | "situational_genre" | "situational_subgenre" | "privacy" | "expertise",
+      string
+    >>;
+    effect?: string;
+    measurement_effect?: string;
+    semantic_effect?: string;
+    genre_detection_state?: string;
+    situational_claim_state?: string;
+  };
+  families: Array<{
+    key: string;
+    label: string;
+    member_count: number;
+    measured_member_count: number;
+    measurement_state: string;
+    cohesion: number | null;
+    representative_evidence_id: string | null;
+    boundary_evidence_id: string | null;
+    nearest_competing_family_key?: string | null;
+    nearest_competing_family_label?: string | null;
+    nearest_competing_similarity?: number | null;
+    ambiguity_margin?: number | null;
+    eligible_for_review?: boolean;
+    members: Array<{
+      evidence_id: string;
+      track_id?: string;
+      measurement_state: string;
+      family_cosine_similarity?: number | null;
+      sample_cohesion?: number;
+      sample_count?: number;
+      exclusion_reasons?: string[];
+    }>;
+  }>;
+  embedding_storage?: {
+    status: string;
+    embedding_count: number;
+    export_default: string;
+    artifact_ref: string;
+  };
+}
+
 export interface AudioDiarizationScaffold {
   analysis_id?: string;
   status?: string;
@@ -1070,6 +1190,18 @@ export interface AiAgentFeatureCandidate {
   integration_policy: string;
   license_policy: string;
   core_compatible: boolean;
+  literature: Array<{
+    title: string;
+    url: string;
+    peer_reviewed: boolean;
+  }>;
+  runtime?: {
+    available?: boolean;
+    model_dir?: string;
+    missing?: string[];
+    installation_command?: string;
+    network_access?: string;
+  };
 }
 
 export interface AiAgentFeatureStarter {
@@ -1510,6 +1642,16 @@ export interface ManualVisualAnnotation {
     target_type?: string;
     target_id?: string;
     target_label?: string;
+    cluster_member_ids?: string[];
+    object_cluster_schema?: string;
+    object_cluster_family?: string;
+    object_cluster_lineage_id?: string;
+    object_cluster_operation?: "confirm" | "reassign" | "merge" | "split" | string;
+    object_cluster_source_families?: string[];
+    detector_label_retained_as_provenance?: string;
+    taxonomy_term_state?: "existing_analysis_family" | "analyst_proposed_local_term" | string;
+    ontology_effect?: string;
+    genre_situation_effect?: string;
     source_expression_key?: string;
     source_expression_label?: string;
     source_expression_timestamp?: number;
@@ -1942,6 +2084,34 @@ class ApiService {
     }
     this.invalidateReadCaches(analysisId);
     return response.json();
+  }
+
+  async measureSetLocationRecurrence(
+    analysisId: string,
+    parameters: {
+      sample_interval_seconds?: number;
+      similarity_threshold?: number;
+      minimum_cluster_size?: number;
+    } = {},
+  ): Promise<Record<string, unknown>> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/set-location-recurrence/measure`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persist: true, ...parameters }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Set/location recurrence measurement failed (${response.status})`);
+    }
+    this.invalidateReadCaches(analysisId);
+    return response.json();
+  }
+
+  setLocationThumbnailUrl(analysisId: string, sampleId: string): string {
+    return `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/set-location-recurrence/thumbnails/${encodeURIComponent(sampleId)}`;
   }
 
   /**
@@ -2398,6 +2568,82 @@ class ApiService {
     return response.json();
   }
 
+  async measureNarrativeAgentFaces(
+    analysisId: string,
+    request: Record<string, unknown>,
+  ): Promise<FaceDiscriminationResult> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/faces/discriminate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Facial landmark/embedding measurement failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async exploreEmpiricalClusters(
+    analysisId: string,
+    request: Record<string, unknown>,
+  ): Promise<EmpiricalClusterExplorationResult> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/clusters/explore`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Empirical cluster preview failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
+  }
+
+  async measureObjectAppearance(
+    analysisId: string,
+    request: Record<string, unknown>,
+  ): Promise<ObjectAppearanceMeasurementResult> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/objects/appearance/measure`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request }),
+      },
+    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Object appearance measurement failed: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+    }
+    return response.json();
+  }
+
+  objectSourceCropUrl(
+    analysisId: string,
+    timestamp: number,
+    bbox?: { x1?: number; y1?: number; x2?: number; y2?: number },
+  ): string {
+    const params = new URLSearchParams({ timestamp: String(timestamp) });
+    for (const key of ["x1", "y1", "x2", "y2"] as const) {
+      const value = bbox?.[key];
+      if (typeof value === "number" && Number.isFinite(value)) params.set(key, String(value));
+    }
+    return `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/objects/source-crop?${params.toString()}`;
+  }
+
   async refreshEvidenceProliferationMatcher(
     analysisId: string,
     options: { request_limit?: number; candidate_limit?: number } = {},
@@ -2418,6 +2664,18 @@ class ApiService {
       );
     }
 
+    return response.json();
+  }
+
+  async refreshAnnotationDependentSurfaces(analysisId: string): Promise<Record<string, any>> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${analysisId}/annotation-projections/refresh`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    );
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.detail || `Annotation projection refresh failed (${response.status})`);
+    }
     return response.json();
   }
 
@@ -3372,6 +3630,54 @@ class ApiService {
     const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}/source-clock?${context}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`Source-clock context failed: ${response.status} - ${await response.text()}`);
+    }
+    return response.json();
+  }
+
+  async getParsimoniousRuntime(analysisId: string): Promise<any> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/parsimonious-runtime`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      throw new Error(`Parsimonious runtime fetch failed: ${response.status} - ${await response.text()}`);
+    }
+    return response.json();
+  }
+
+  async routeParsimoniousDecision(
+    analysisId: string,
+    payload: Record<string, unknown>,
+  ): Promise<any> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/parsimonious-runtime/route`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Parsimonious routing failed: ${response.status} - ${await response.text()}`);
+    }
+    return response.json();
+  }
+
+  async transitionParsimoniousLearningItem(
+    analysisId: string,
+    learningId: string,
+    payload: Record<string, unknown>,
+  ): Promise<any> {
+    const response = await fetch(
+      `${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/parsimonious-runtime/learning/${encodeURIComponent(learningId)}/transition`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Learning transition failed: ${response.status} - ${await response.text()}`);
     }
     return response.json();
   }

@@ -89,15 +89,26 @@ def _confirmed_audio_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]
 
 
 def _interval(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    nested = item.get("time_interval") if isinstance(item.get("time_interval"), dict) else {}
     start = _safe_float(
         _first_present(
             item,
             ("start", "start_time", "start_seconds", "time_start", "timestamp", "timestamp_seconds"),
         )
     )
+    if start is None:
+        start = _safe_float(_first_present(nested, ("start", "start_seconds")))
+    if start is None:
+        start_ms = _safe_float(nested.get("start_ms"))
+        start = start_ms / 1000.0 if start_ms is not None else None
     end = _safe_float(
         _first_present(item, ("end", "end_time", "end_seconds", "time_end"))
     )
+    if end is None:
+        end = _safe_float(_first_present(nested, ("end", "end_seconds")))
+    if end is None:
+        end_ms = _safe_float(nested.get("end_ms"))
+        end = end_ms / 1000.0 if end_ms is not None else None
     if end is None:
         end = start
     return {"start": start, "end": end}
@@ -111,6 +122,16 @@ def _overlaps(left: Dict[str, Optional[float]], right: Dict[str, Optional[float]
     left_end = left.get("end") if left.get("end") is not None else left_start
     right_end = right.get("end") if right.get("end") is not None else right_start
     return max(left_start, right_start) <= min(left_end, right_end)
+
+
+def _overlap_seconds(left: Dict[str, Optional[float]], right: Dict[str, Optional[float]]) -> float:
+    if not _overlaps(left, right):
+        return 0.0
+    left_start = left.get("start") or 0.0
+    right_start = right.get("start") or 0.0
+    left_end = left.get("end") if left.get("end") is not None else left_start
+    right_end = right.get("end") if right.get("end") is not None else right_start
+    return max(0.0, min(left_end, right_end) - max(left_start, right_start))
 
 
 def _gap_seconds(left: Dict[str, Optional[float]], right: Dict[str, Optional[float]]) -> Optional[float]:
@@ -225,6 +246,65 @@ def _maturity(level: str, authority: str, confidence: Optional[float] = None) ->
     return payload
 
 
+MEANING_NETWORK_LANE_REGISTRY = {
+    "schema": "vaa1.meaning_network_lane_registry.v1",
+    "version": "1.0.0",
+    "compatibility_aliases": {
+        "open_topology_som_matcher": "matcher_review",
+        "evidence": "source_evidence",
+        "other": "unresolved",
+    },
+    "groups": [
+        {"group_id": "structural_scope", "label": "Structural scope", "lane_ids": ["act", "sequence", "scene", "shot", "transition", "mise_en_scene"]},
+        {"group_id": "participants_actions_relations", "label": "Participants, actions and relations", "lane_ids": ["on_camera_agents", "off_camera_presence", "action_event", "relations", "body_affect"]},
+        {"group_id": "language_voice", "label": "Language and voice", "lane_ids": ["spoken_word", "written_language", "language_analysis", "prosody"]},
+        {"group_id": "material_spatial_visual", "label": "Material, spatial and visual world", "lane_ids": ["objects", "location", "visual_form"]},
+        {"group_id": "sound_world", "label": "Sound world", "lane_ids": ["music", "foley_sound_event", "ambience"]},
+        {"group_id": "interpretive_perspectives", "label": "Interpretive perspectives", "lane_ids": ["theory_projection", "genre_situation", "report_claim"]},
+        {"group_id": "evidence_review", "label": "Evidence and review", "lane_ids": ["source_evidence", "matcher_review", "conflict_exclusion", "unresolved"]},
+    ],
+}
+
+
+def _node_domain_and_role(node_type: str, display_group: str, maturity: Dict[str, Any]) -> tuple[str, str]:
+    canonical_type = _safe_text(node_type).lower()
+    group = _safe_text(display_group).lower()
+    if canonical_type in {"act", "sequence", "scene", "shot", "continuity_anchor"}:
+        return "structure", "structural_unit"
+    if canonical_type in {"narrative_agent", "character", "speaker", "identity", "off_camera_presence"}:
+        return "participant", "governed_entity"
+    if canonical_type in {"action", "event", "body_movement"}:
+        return "action", "observation"
+    if canonical_type in {"relation"}:
+        return "relation", "interpretation"
+    if canonical_type in {"transcript", "spoken_word", "ocr", "written_language"}:
+        return "language", "source_evidence"
+    if canonical_type in {"prosody", "voice"}:
+        return "voice", "observation"
+    if canonical_type == "object":
+        return "object", "governed_entity"
+    if canonical_type in {"location", "setting", "time_context"}:
+        return "space", "governed_entity"
+    if canonical_type in {"framing_mode", "visual_form", "mise_en_scene", "expression", "emotion"}:
+        return "visual_form", "observation"
+    if canonical_type == "music":
+        return "music", "observation"
+    if canonical_type in {"sound_event", "foley"}:
+        return "sound_event", "observation"
+    if canonical_type in {"ambience", "sonic_field"}:
+        return "ambience", "observation"
+    if canonical_type.startswith("matcher_") or group in {"matcher_review", "open_topology_som_matcher"}:
+        return "interpretation", "candidate"
+    if canonical_type in {"evidence_fragment", "manual_annotation", "annotation"}:
+        return "interpretation", "source_evidence"
+    if canonical_type in {"claim", "concept", "theme", "situation", "genre", "boje_5b", "sfl_judgement", "virtue_strength", "vice_antithesis"}:
+        return "interpretation", "interpretation"
+    level = _safe_text(maturity.get("level")).lower()
+    if "conflict" in level or "reject" in level:
+        return "interpretation", "conflict"
+    return "interpretation", "candidate"
+
+
 def _node(
     node_id: str,
     node_type: str,
@@ -236,13 +316,24 @@ def _node(
     evidence_refs: Optional[List[Dict[str, Any]]] = None,
     display_group: str = "",
 ) -> Dict[str, Any]:
+    resolved_maturity = maturity or _maturity("candidate", "schema_rule", 0.5)
+    domain, epistemic_role = _node_domain_and_role(node_type, display_group, resolved_maturity)
+    resolved_attributes = attributes or {}
+    structural_scope = {
+        key: resolved_attributes[key]
+        for key in ("act_id", "sequence_id", "scene_id", "shot_id")
+        if resolved_attributes.get(key) not in (None, "")
+    }
     return {
         "node_id": node_id,
         "node_type": node_type,
         "label": label,
         "description": description,
-        "attributes": attributes or {},
-        "maturity": maturity or _maturity("candidate", "schema_rule", 0.5),
+        "attributes": resolved_attributes,
+        "domain": domain,
+        "epistemic_role": epistemic_role,
+        "structural_scope": structural_scope,
+        "maturity": resolved_maturity,
         "evidence_refs": evidence_refs or [],
         "ui": {
             "display_group": display_group or node_type,
@@ -362,7 +453,7 @@ def _project_matcher_topology_to_meaning_network(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Project scanner/matcher topology into the Meaning Network graph.
 
-    The projection is diagnostic: it exposes open-topology SOM nodes and edges
+    The projection is diagnostic: it exposes matcher-review nodes and edges
     as graph material while leaving promotion authority with governed decisions.
     """
     nodes: List[Dict[str, Any]] = []
@@ -397,7 +488,7 @@ def _project_matcher_topology_to_meaning_network(
                 _projection_node_type(raw_node.get("node_type")),
                 _safe_text(raw_node.get("label"), "Matcher candidate"),
                 description=(
-                    "Open-topology SOM matcher projection. Candidate support only; "
+                    "Matcher review projection. Candidate support only; "
                     "confirm, defer, or reject before mature proliferation."
                 ),
                 attributes={
@@ -408,7 +499,7 @@ def _project_matcher_topology_to_meaning_network(
                     "source_verification_class": raw_node.get("source_verification_class"),
                     "review_required": raw_node.get("review_required", True),
                     "source_navigation": raw_node.get("source_navigation") or {},
-                    "open_topology_som": True,
+                    "matcher_review_projection": True,
                     "fixed_grid": False,
                     "lane_id": "matcher",
                     "linked_data_principle": {
@@ -420,7 +511,7 @@ def _project_matcher_topology_to_meaning_network(
                 },
                 maturity=_maturity("candidate", "matcher_agent", confidence),
                 evidence_refs=[evidence_ref],
-                display_group="open_topology_som_matcher",
+                display_group="matcher_review",
             )
         )
         return node_id
@@ -468,7 +559,7 @@ def _project_matcher_topology_to_meaning_network(
             "run_id": run_id,
             "match_basis": raw_edge.get("match_basis"),
             "review_required": raw_edge.get("review_required", True),
-            "open_topology_som": True,
+            "matcher_review_projection": True,
             "manual_confirmation_required_for_promotion": True,
         }
 
@@ -483,7 +574,7 @@ def _project_matcher_topology_to_meaning_network(
             anchors.append(
                 {
                     "anchor_id": f"matcher-cluster:{_safe_text(cluster.get('cluster_id'), run_id)}",
-                    "anchor_type": "open_topology_som_cluster",
+                    "anchor_type": "matcher_review_cluster",
                     "label": _safe_text(cluster.get("cluster_id"), "Matcher cluster"),
                     "applies_to_node_ids": [
                         f"matcher:{candidate_id}"
@@ -527,12 +618,12 @@ def _project_matcher_topology_to_meaning_network(
                     "matcher_anchor",
                     _safe_text(pattern.get("seed_label"), "Known pattern seed"),
                     attributes={
-                        "open_topology_som": True,
+                        "matcher_review_projection": True,
                         "pattern_scanner_agent": True,
                         "lane_id": "matcher",
                     },
                     maturity=_maturity("candidate", "matcher_agent", _safe_float(support.get("confidence"), 0.5)),
-                    display_group="open_topology_som_matcher",
+                    display_group="matcher_review",
                 )
             )
         if candidate_id not in seen_nodes:
@@ -550,7 +641,7 @@ def _project_matcher_topology_to_meaning_network(
                     "matcher_candidate",
                     _safe_text(pattern.get("candidate_label") or candidate_support.get("label"), "Pattern candidate"),
                     attributes={
-                        "open_topology_som": True,
+                        "matcher_review_projection": True,
                         "pattern_scanner_agent": True,
                         "lane_id": "matcher",
                         "support_panels": support.get("support_panels") or [],
@@ -567,7 +658,7 @@ def _project_matcher_topology_to_meaning_network(
                             confidence=_safe_float(support.get("confidence"), 0.5),
                         )
                     ],
-                    display_group="open_topology_som_matcher",
+                    display_group="matcher_review",
                 )
             )
         edge_id = f"matcher:edge:{seed_id}:pattern:{candidate_id}"
@@ -588,7 +679,7 @@ def _project_matcher_topology_to_meaning_network(
     if nodes or edges:
         confirmations.append(
             {
-                "confirmation_id": "confirmation:open-topology-som-matcher-review",
+                "confirmation_id": "confirmation:matcher-review",
                 "confirmation_type": "matcher_topology_review",
                 "target_ids": [node["node_id"] for node in nodes[:200]],
                 "maturity_result": _maturity("candidate", "matcher_agent", 0.5),
@@ -600,7 +691,7 @@ def _project_matcher_topology_to_meaning_network(
                     "narrative_agent_panel",
                     "master_schema",
                 ],
-                "notes": "Matcher/SOM projections are source-linked candidate topology. Promote only through analyst or governed decision ledger.",
+                "notes": "Matcher projections are source-linked review candidates. Promote only through an analyst or governed decision ledger.",
             }
         )
 
@@ -686,6 +777,89 @@ def _tracked_persons(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     return people
 
 
+def _tracked_objects(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return non-person detector evidence and governed manual object labels."""
+    results = status.get("results") if isinstance(status.get("results"), dict) else {}
+    visual = results.get("visual_analysis") if isinstance(results.get("visual_analysis"), dict) else {}
+    objects: List[Dict[str, Any]] = []
+    for item in _as_items(visual.get("tracked_objects")):
+        label = _safe_text(
+            item.get("label")
+            or item.get("class_name")
+            or item.get("class")
+            or item.get("display_label")
+            or item.get("displayLabel")
+        ).lower()
+        if label and label != "person" and "person" not in label:
+            objects.append({**item, "object_authority": "detector"})
+
+    corrections = status.get("annotation_corrections") if isinstance(status.get("annotation_corrections"), dict) else {}
+    for item in corrections.get("manual_visual_annotations") or []:
+        if not isinstance(item, dict) or _safe_text(item.get("category")).casefold() != "obj":
+            continue
+        objects.append({**item, "object_authority": "analyst"})
+    return objects
+
+
+def _manual_visual_agent_annotations(status: Dict[str, Any]) -> List[Dict[str, Any]]:
+    corrections = status.get("annotation_corrections") if isinstance(status.get("annotation_corrections"), dict) else {}
+    candidates: List[Dict[str, Any]] = []
+    for item in corrections.get("manual_visual_annotations") or []:
+        if not isinstance(item, dict):
+            continue
+        label = _safe_text(item.get("identity_affirmation") or item.get("custom_label"))
+        if not label or "," in label or " and " in label.casefold():
+            continue
+        category = _safe_text(item.get("category")).casefold()
+        if category not in {"identification", "character", "narrative agent"}:
+            continue
+        candidates.append(item)
+    return candidates
+
+
+def _quick_annotations(item: Dict[str, Any]) -> List[str]:
+    metadata = item.get("metadata_correlation") if isinstance(item.get("metadata_correlation"), dict) else {}
+    values = metadata.get("quick_annotations") or item.get("quick_annotations") or []
+    return [_safe_text(value).casefold() for value in values if _safe_text(value)]
+
+
+def _resolve_constellational_speaker(
+    transcript: Dict[str, Any],
+    visual_agents: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Resolve only deterministic analyst-governed visual speech evidence.
+
+    General visual presence and co-occurrence are deliberately insufficient.
+    A first-slice resolution requires exactly one named, temporally overlapping
+    analyst annotation carrying an explicit speaking activity.
+    """
+    transcript_interval = _interval(transcript)
+    speaking = []
+    for item in visual_agents:
+        item_interval = _interval(item)
+        # Ignore tiny boundary contact from the next turn. A visual speaking
+        # annotation must support a meaningful portion of this utterance.
+        if _overlap_seconds(transcript_interval, item_interval) < 0.1:
+            continue
+        if not any(value == "speaking" or value.startswith("speaking to") for value in _quick_annotations(item)):
+            continue
+        speaking.append(item)
+    labels = {
+        _safe_text(item.get("identity_affirmation") or item.get("custom_label")): item
+        for item in speaking
+    }
+    labels.pop("", None)
+    if len(labels) != 1:
+        return None
+    label, evidence = next(iter(labels.items()))
+    return {
+        "label": label,
+        "evidence": evidence,
+        "authority": "analyst_constellation_rule",
+        "confidence": 1.0,
+    }
+
+
 def _transcript_segments(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     results = status.get("results") if isinstance(status.get("results"), dict) else {}
     sources = [
@@ -743,11 +917,13 @@ def build_datascene_meaning_network(
 
     scenes = _scene_segments(network_status)
     persons = _tracked_persons(network_status)
+    objects = _tracked_objects(network_status)
     transcripts = _transcript_segments(network_status)
     audio_events = _audio_event_intervals(network_status)
     speaker_turns = _speaker_turns(network_status)
     confirmed_audio = _confirmed_audio_annotations(network_status)
     manual_labels = _manual_agent_labels(network_status)
+    visual_agents = _manual_visual_agent_annotations(network_status)
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
     confirmations: List[Dict[str, Any]] = []
@@ -757,6 +933,8 @@ def build_datascene_meaning_network(
     projected_speaker_turn_ids: set[str] = set()
     projected_confirmed_audio_ids: set[str] = set()
     projected_person_source_ids: set[str] = set()
+    projected_object_source_ids: set[str] = set()
+    projected_resolved_agent_ids: set[str] = set()
     projected_transcript_source_ids: set[str] = set()
     audio_event_source_ids = {
         id(item): _safe_text(
@@ -776,6 +954,13 @@ def build_datascene_meaning_network(
     transcript_source_ids = {
         id(item): _safe_text(item.get("id"), f"transcript:{index + 1:04d}")
         for index, item in enumerate(transcripts)
+    }
+    object_source_ids = {
+        id(item): _safe_text(
+            item.get("id") or item.get("track_id"),
+            f"object:{index + 1:04d}",
+        )
+        for index, item in enumerate(objects)
     }
 
     if not scenes:
@@ -801,6 +986,7 @@ def build_datascene_meaning_network(
                 "scene",
                 _safe_text(scene.get("label") or scene.get("title"), f"Scene {scene_index + 1}"),
                 attributes={
+                    "scene_id": scene_id,
                     "time_range": interval,
                     "scene_index": scene_index,
                     "scene_timing_source": scene.get("scene_timing_source"),
@@ -830,6 +1016,11 @@ def build_datascene_meaning_network(
             person
             for person in persons
             if _best_scene_index(scenes, _interval(person)) == scene_index
+        ]
+        scene_objects = [
+            item
+            for item in objects
+            if _best_scene_index(scenes, _interval(item)) == scene_index
         ]
         scene_transcripts = [
             transcript
@@ -1039,13 +1230,76 @@ def build_datascene_meaning_network(
                 )
             )
 
+        for object_index, item in enumerate(scene_objects):
+            object_interval = _interval(item)
+            source_id = object_source_ids[id(item)]
+            object_node_id = f"object:{source_id}"
+            if object_node_id in projected_object_source_ids:
+                continue
+            projected_object_source_ids.add(object_node_id)
+            label = _safe_text(
+                item.get("identity_affirmation")
+                or item.get("custom_label")
+                or item.get("label")
+                or item.get("class_name")
+                or item.get("display_label"),
+                f"Object candidate {object_index + 1}",
+            )
+            analyst = item.get("object_authority") == "analyst"
+            confidence = 1.0 if analyst else _safe_float(item.get("confidence"), 0.5)
+            evidence_type = "manual_object_confirmation" if analyst else "object_detection"
+            evidence = _evidence_ref(source_id, evidence_type, object_interval, confidence=confidence)
+            nodes.append(
+                _node(
+                    object_node_id,
+                    "object",
+                    label,
+                    description="Scene-bounded object or prop evidence.",
+                    attributes={
+                        "scene_id": scene_id,
+                        "scene_membership_status": "provisional_resolved",
+                        "scene_membership_method": "maximum_temporal_overlap",
+                        "scene_timing_authority": scene.get("scene_timing_authority"),
+                        "track_id": item.get("track_id"),
+                        "object_class": item.get("class_name") or item.get("class"),
+                        "authority": item.get("object_authority"),
+                    },
+                    maturity=_maturity(
+                        "analyst_confirmed" if analyst else "machine_inferred",
+                        "analyst" if analyst else "detector",
+                        confidence,
+                    ),
+                    evidence_refs=[evidence],
+                    display_group="objects_in_scene",
+                )
+            )
+            edges.append(
+                _edge(
+                    f"edge:{object_node_id}:belongs:{scene_node_id}",
+                    object_node_id,
+                    scene_node_id,
+                    "belongs_to_scene",
+                    weight=confidence,
+                    maturity=_maturity(
+                        "analyst_confirmed" if analyst else "machine_inferred",
+                        "analyst" if analyst else "detector",
+                        confidence,
+                    ),
+                    evidence_refs=[evidence],
+                )
+            )
+
         for transcript_index, transcript in enumerate(scene_transcripts):
             transcript_interval = _interval(transcript)
             transcript_id = transcript_source_ids[id(transcript)]
             transcript_node_id = f"transcript:{transcript_id}"
             projected_transcript_source_ids.add(transcript_id)
-            speaker = _safe_text(transcript.get("speaker") or transcript.get("speaker_label"), "Unknown speaker")
+            source_speaker = _safe_text(transcript.get("speaker") or transcript.get("speaker_label"), "Unknown speaker")
+            resolution = _resolve_constellational_speaker(transcript, visual_agents)
+            speaker = resolution["label"] if resolution else source_speaker
             text = _safe_text(transcript.get("text") or transcript.get("transcript_text"), "Transcript segment")
+            speaker_confidence = resolution["confidence"] if resolution else 0.6
+            speaker_authority = resolution["authority"] if resolution else "model"
             nodes.append(
                 _node(
                     transcript_node_id,
@@ -1058,9 +1312,16 @@ def build_datascene_meaning_network(
                         "scene_membership_method": "maximum_temporal_overlap",
                         "scene_timing_authority": scene.get("scene_timing_authority"),
                         "text_excerpt": text[:240],
+                        "source_speaker_label": source_speaker,
+                        "speaker_resolution": "resolved" if resolution else "unresolved",
+                        "speaker_resolution_authority": speaker_authority,
                     },
-                    maturity=_maturity("machine_inferred", "model", 0.6),
-                    evidence_refs=[_evidence_ref(transcript_node_id, "transcript", transcript_interval, confidence=0.6)],
+                    maturity=_maturity(
+                        "analyst_confirmed" if resolution else "machine_inferred",
+                        "analyst" if resolution else "model",
+                        speaker_confidence,
+                    ),
+                    evidence_refs=[_evidence_ref(transcript_node_id, "transcript", transcript_interval, confidence=speaker_confidence)],
                     display_group="scene_speakers",
                 )
             )
@@ -1074,6 +1335,49 @@ def build_datascene_meaning_network(
                     evidence_refs=[_evidence_ref(transcript_node_id, "transcript", transcript_interval, confidence=0.65)],
                 )
             )
+            if resolution:
+                evidence_item = resolution["evidence"]
+                evidence_id = _safe_text(evidence_item.get("id"), f"visual-agent:{transcript_id}")
+                agent_key = "".join(character if character.isalnum() else "-" for character in speaker.casefold()).strip("-")
+                agent_node_id = f"narrative-agent-visual:{agent_key}"
+                visual_evidence = _evidence_ref(
+                    evidence_id,
+                    "manual_visual_speaking_confirmation",
+                    _interval(evidence_item),
+                    confidence=1.0,
+                )
+                if agent_node_id not in projected_resolved_agent_ids:
+                    projected_resolved_agent_ids.add(agent_node_id)
+                    nodes.append(
+                        _node(
+                            agent_node_id,
+                            "narrative_agent",
+                            speaker,
+                            description="Narrative Agent resolved from analyst-governed visual speaking evidence.",
+                            attributes={
+                                "scene_id": scene_id,
+                                "scene_membership_status": "provisional_resolved",
+                                "speaker_resolution_authority": speaker_authority,
+                            },
+                            maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                            evidence_refs=[visual_evidence],
+                            display_group="narrative_agents",
+                        )
+                    )
+                edges.append(
+                    _edge(
+                        f"edge:{agent_node_id}:spoken-line:{transcript_node_id}",
+                        agent_node_id,
+                        transcript_node_id,
+                        "spoken_by",
+                        weight=1.0,
+                        maturity=_maturity("analyst_confirmed", "analyst", 1.0),
+                        evidence_refs=[
+                            visual_evidence,
+                            _evidence_ref(transcript_id, "transcript", transcript_interval, confidence=1.0),
+                        ],
+                    )
+                )
 
         for person_index, person in enumerate(scene_persons[:12]):
             person_interval = _interval(person)
@@ -1458,6 +1762,7 @@ def build_datascene_meaning_network(
                     for index, scene in enumerate(scenes)
                 ],
             },
+            "lane_registry": MEANING_NETWORK_LANE_REGISTRY,
             "nodes": nodes,
             "edges": edges,
             "confirmations": confirmations,

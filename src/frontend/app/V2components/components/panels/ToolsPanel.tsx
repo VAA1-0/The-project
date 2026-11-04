@@ -57,6 +57,7 @@ import {
   matureSceneSegmentSourceLabel,
 } from "@/lib/scene-governance";
 import { apiService } from "@/lib/api-service";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import type {
   AnalysisEvent,
   AiAgentFeatureStarterManifest,
@@ -184,6 +185,32 @@ const CINEMATIC_SHOT_SIZE_OPTIONS = [
 
 const SINGLE_SOURCE_MARKS_KEY_PREFIX = "vaa1.video.marks.";
 const ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX = "vaa1.analysis.model-selections.v1";
+const MAX_MODEL_SELECTION_ENTRIES = 64;
+const MAX_MODEL_SELECTION_VALUE_LENGTH = 512;
+
+function compactModelSelections(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const compact: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(compact).length >= MAX_MODEL_SELECTION_ENTRIES) break;
+    if (
+      typeof entry === "string" &&
+      key.length <= 128 &&
+      entry.length <= MAX_MODEL_SELECTION_VALUE_LENGTH
+    ) {
+      compact[key] = entry;
+    }
+  }
+  return compact;
+}
+
+function persistModelSelections(
+  key: string,
+  selections: Record<string, string>,
+): "local" | "session" | "memory" {
+  const payload = JSON.stringify(compactModelSelections(selections));
+  return setBrowserStorageItem(key, payload);
+}
 
 const MANUAL_LEAF_NAV_OPTIONS: Array<{
   category: ManualVisualAnnotation["category"];
@@ -566,6 +593,8 @@ export default function ToolsPanel() {
   const [analysisModelSelections, setAnalysisModelSelections] = useState<
     Record<string, string>
   >({});
+  const [modelSelectionPersistenceNote, setModelSelectionPersistenceNote] =
+    useState("");
   const [applyFaceAnonymization, setApplyFaceAnonymization] = useState(false);
   const [faceMessageStyle, setFaceMessageStyle] = useState<
     "plain" | "starfleet"
@@ -579,6 +608,9 @@ export default function ToolsPanel() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
+  const [parsimoniousRuntime, setParsimoniousRuntime] = useState<any | null>(null);
+  const [parsimoniousRuntimeLoading, setParsimoniousRuntimeLoading] = useState(false);
+  const [parsimoniousRuntimeError, setParsimoniousRuntimeError] = useState("");
   const [activeVisualView, setActiveVisualView] =
     useState<VisualWorkspaceView>("cinematic");
   const [activeVisualCueInspector, setActiveVisualCueInspector] =
@@ -701,10 +733,11 @@ export default function ToolsPanel() {
   useEffect(() => {
     try {
       const projectId = activeProjectScopeId() || "catalogue";
-      const raw = window.localStorage.getItem(
-        `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`,
+      const key = `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`;
+      const raw = getBrowserStorageItem(key);
+      setAnalysisModelSelections(
+        compactModelSelections(raw ? JSON.parse(raw) : {}),
       );
-      setAnalysisModelSelections(raw ? JSON.parse(raw) : {});
     } catch {
       setAnalysisModelSelections({});
     }
@@ -714,10 +747,27 @@ export default function ToolsPanel() {
     (featureId: string, candidateName: string) => {
       setAnalysisModelSelections((current) => {
         const next = { ...current, [featureId]: candidateName };
+        if (featureId === "object_detection") {
+          const analystLicensedChoice = ["Ultralytics YOLOv8n", "YOLO-NAS"].includes(candidateName);
+          if (analystLicensedChoice) {
+            next.object_detection_license_choice = candidateName;
+            next.object_detection_license_authority = "analyst_explicit_selection";
+            next.object_detection_selection_source = "analyst_research_choice";
+          } else {
+            delete next.object_detection_license_choice;
+            delete next.object_detection_license_authority;
+            next.object_detection_selection_source = "analyst_explicit_selection";
+          }
+        }
         const projectId = activeProjectScopeId() || "catalogue";
-        window.localStorage.setItem(
-          `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`,
-          JSON.stringify(next),
+        const key = `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`;
+        const persistence = persistModelSelections(key, next);
+        setModelSelectionPersistenceNote(
+          persistence === "local"
+            ? ""
+            : persistence === "session"
+              ? "Browser storage is full. Model choices remain active for this tab and the Tools panel remains operational."
+              : "Browser storage is full. Model choices remain active in this panel until it is closed.",
         );
         return next;
       });
@@ -2491,7 +2541,7 @@ export default function ToolsPanel() {
       return;
     }
     try {
-      const raw = window.localStorage.getItem(
+      const raw = getBrowserStorageItem(
         `${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`,
       );
       setForensicSourceMarks(raw ? JSON.parse(raw) : {});
@@ -2665,6 +2715,41 @@ export default function ToolsPanel() {
       void loadAiAgentFeatureStarters();
     }
   }, [activeWorkspace, aiAgentManifest, aiAgentManifestLoading, loadAiAgentFeatureStarters]);
+
+  useEffect(() => {
+    if (!aiAgentManifest) return;
+    setAnalysisModelSelections((current) => {
+      const next = { ...current };
+      let changed = false;
+      if (!next.object_detection_selection_source) {
+        next.object_detection = "Ultralytics YOLOv8n";
+        next.object_detection_license_choice = "Ultralytics YOLOv8n";
+        next.object_detection_license_authority = "analyst_explicit_selection";
+        next.object_detection_selection_source = "analyst_authorized_development_profile_2026_10_25";
+        changed = true;
+      }
+      if (!next.object_detection_confidence_threshold) {
+        next.object_detection_confidence_threshold = "0.15";
+        changed = true;
+      }
+      if (!next.object_appearance_embedding) {
+        next.object_appearance_embedding = "Datascene Native Object Appearance v1";
+        changed = true;
+      }
+      if (!changed) return current;
+      const projectId = activeProjectScopeId() || "catalogue";
+      const key = `${ANALYSIS_MODEL_SELECTIONS_KEY_PREFIX}.${encodeURIComponent(projectId)}`;
+      const persistence = persistModelSelections(key, next);
+      setModelSelectionPersistenceNote(
+        persistence === "local"
+          ? ""
+          : persistence === "session"
+            ? "Browser storage is full. Model choices remain active for this tab and the Tools panel remains operational."
+            : "Browser storage is full. Model choices remain active in this panel until it is closed.",
+      );
+      return next;
+    });
+  }, [aiAgentManifest]);
 
   const persistAiAgentFeatureStarters = React.useCallback(async () => {
     try {
@@ -3159,6 +3244,21 @@ export default function ToolsPanel() {
     window.open(`/annotate/${videoId}`);
     console.log("Selected Job:", metadata?.cvatID ?? taskID ?? null);
     //window.open(`http://localhost:8080/tasks/${metadata.cvatID}`, "_blank");
+  };
+
+  const inspectParsimoniousRuntime = async () => {
+    if (!videoId || parsimoniousRuntimeLoading) return;
+    setParsimoniousRuntimeLoading(true);
+    setParsimoniousRuntimeError("");
+    try {
+      setParsimoniousRuntime(await apiService.getParsimoniousRuntime(videoId));
+    } catch (error) {
+      setParsimoniousRuntimeError(
+        error instanceof Error ? error.message : "Decision runtime could not be opened.",
+      );
+    } finally {
+      setParsimoniousRuntimeLoading(false);
+    }
   };
 
   return (
@@ -5541,9 +5641,12 @@ export default function ToolsPanel() {
                     <div className="text-sm text-slate-200">
                       3. Model choice matrix and licence record
                     </div>
-                    <div className="text-xs text-slate-500">
+                  <div className="text-xs text-slate-500">
                       Select one recorded preference per analysis function. A selection
                       does not install, license, or activate a missing runtime.
+                    </div>
+                    <div className="text-[11px] text-slate-500" data-vaa1-licensed-model-analyst-authority="true">
+                      The release-safe fallback remains a permissive local provider. This development workspace uses YOLOv8 because the analyst explicitly authorized it for research; that authority is written to the analysis traceback and may be changed here.
                     </div>
                   </div>
 
@@ -5552,6 +5655,15 @@ export default function ToolsPanel() {
                   )}
                   {aiAgentManifestError && (
                     <div className="text-xs text-amber-300">{aiAgentManifestError}</div>
+                  )}
+                  {modelSelectionPersistenceNote && (
+                    <div
+                      className="rounded border border-amber-700/40 bg-amber-950/20 px-2 py-1 text-xs text-amber-200"
+                      role="status"
+                      data-vaa1-model-selection-storage-fallback="true"
+                    >
+                      {modelSelectionPersistenceNote}
+                    </div>
                   )}
                   <div className="grid gap-2">
                     {(aiAgentManifest?.features ?? []).map((feature) => (
@@ -5565,27 +5677,75 @@ export default function ToolsPanel() {
                             {feature.status.replaceAll("_", " ")}
                           </div>
                         </div>
-                        <Select
-                          value={analysisModelSelections[feature.feature_id] || ""}
-                          onValueChange={(value: string) =>
-                            updateAnalysisModelSelection(feature.feature_id, value)
-                          }
-                          disabled={isAnalyzing}
-                        >
-                          <SelectTrigger className="h-8 border-white/12 bg-[#202020] text-xs text-slate-200">
-                            <SelectValue placeholder="Choose a model preference" />
-                          </SelectTrigger>
-                          <SelectContent className={selectContentClassName}>
-                            {feature.candidates.map((candidate) => (
-                              <SelectItem
-                                key={`${feature.feature_id}-${candidate.name}`}
-                                value={candidate.name}
-                              >
-                                {candidate.name} · {candidate.license} · {candidate.core_compatible ? "core compatible" : "isolated/deferred"}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <div className="grid gap-2">
+                          <Select
+                            value={analysisModelSelections[feature.feature_id] || ""}
+                            onValueChange={(value: string) =>
+                              updateAnalysisModelSelection(feature.feature_id, value)
+                            }
+                            disabled={isAnalyzing}
+                          >
+                            <SelectTrigger className="h-8 border-white/12 bg-[#202020] text-xs text-slate-200">
+                              <SelectValue placeholder="Choose a model preference" />
+                            </SelectTrigger>
+                            <SelectContent className={selectContentClassName}>
+                              {feature.candidates.map((candidate) => (
+                                <SelectItem
+                                  key={`${feature.feature_id}-${candidate.name}`}
+                                  value={candidate.name}
+                                >
+                                  {candidate.name} · {candidate.license} · {candidate.core_compatible ? "core compatible" : "isolated/deferred"}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {feature.feature_id === "object_detection" ? (
+                            <div className="grid gap-1 rounded border border-white/8 bg-black/20 p-2" data-vaa1-object-detection-threshold="analyst-configurable">
+                              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Detection confidence threshold</span>
+                                <span>{Math.round(Number(analysisModelSelections.object_detection_confidence_threshold || "0.15") * 100)}%</span>
+                              </div>
+                              <input
+                                aria-label="Object detection confidence threshold"
+                                type="range"
+                                min="0.05"
+                                max="0.75"
+                                step="0.05"
+                                value={analysisModelSelections.object_detection_confidence_threshold || "0.15"}
+                                onChange={(event) => updateAnalysisModelSelection("object_detection_confidence_threshold", event.target.value)}
+                                disabled={isAnalyzing}
+                                className="w-full accent-cyan-600"
+                              />
+                              <div className="text-[9px] text-slate-500">
+                                The development profile uses analyst-authorized YOLOv8 at 15%. Lower thresholds increase recall and review labour; raw detections remain candidates.
+                              </div>
+                            </div>
+                          ) : null}
+                          <div className="grid gap-1" data-vaa1-model-license-literature="true">
+                            {feature.candidates.map((candidate) => {
+                              const references = candidate.literature || [];
+                              return (
+                                <div key={`${feature.feature_id}-${candidate.name}-disclosure`} className="text-[10px] text-slate-500">
+                                  <span className="text-slate-300">{candidate.name}</span>
+                                  {" · "}{candidate.role}{" · licence "}{candidate.license}{" · "}
+                                  {references.length ? references.map((reference, index) => (
+                                    <React.Fragment key={reference.url}>
+                                      {index > 0 ? ", " : ""}
+                                      <a className="text-cyan-300 underline decoration-cyan-900 underline-offset-2" href={reference.url} target="_blank" rel="noreferrer" title={reference.peer_reviewed ? "Peer-reviewed literature" : "Technical reference"}>
+                                        {reference.title}
+                                      </a>
+                                    </React.Fragment>
+                                  )) : <span>no peer-reviewed literature declared</span>}
+                                  {candidate.runtime ? (
+                                    <span className={candidate.runtime.available ? "text-emerald-300" : "text-amber-300"}>
+                                      {" · runtime "}{candidate.runtime.available ? "installed and ready" : "model files missing"}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -5627,6 +5787,18 @@ export default function ToolsPanel() {
                   </div>
 
                   <CollapsibleContent className="space-y-3 pt-3">
+                    {(aiAgentManifest?.features ?? [])
+                      .filter((feature) => feature.feature_id === "facial_landmark_embedding")
+                      .flatMap((feature) => feature.candidates)
+                      .map((candidate) => (
+                        <div key={`face-runtime-${candidate.name}`} className="rounded border border-white/8 bg-[#141414] p-2 text-xs text-slate-400" data-vaa1-face-measurement-runtime="true">
+                          <div className="text-slate-200">{candidate.name}</div>
+                          <div>{candidate.role} · licence {candidate.license}</div>
+                          <div className={candidate.runtime?.available ? "text-emerald-300" : "text-amber-300"}>
+                            {candidate.runtime?.available ? "Installed and ready for local measurement" : `Unavailable · ${candidate.runtime?.installation_command || "install model files"}`}
+                          </div>
+                        </div>
+                      ))}
                     <div className="flex items-center justify-between gap-3">
                       <div className="space-y-1">
                         <Label htmlFor="face-anonymization-switch">
@@ -5776,6 +5948,55 @@ export default function ToolsPanel() {
                   <div>Quant lens note: {analysisData.metadata.quantError}</div>
                 )}
               </div>
+              )}
+
+              {activeWorkspace === "analysis" && (
+                <div className="space-y-2 rounded-md border border-white/10 bg-[#151515] p-3 text-xs text-slate-300">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-slate-200">Decision runtime trace</div>
+                      <div className="text-[10px] text-slate-500">
+                        Reuse, computation, escalation, abstention and review receipts. Kept outside the knowledge graph.
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!videoId || parsimoniousRuntimeLoading}
+                      onClick={() => void inspectParsimoniousRuntime()}
+                    >
+                      {parsimoniousRuntimeLoading ? "Opening…" : "Inspect"}
+                    </Button>
+                  </div>
+                  {parsimoniousRuntimeError && (
+                    <div className="text-amber-300">{parsimoniousRuntimeError}</div>
+                  )}
+                  {parsimoniousRuntime?.summary?.counts && (
+                    <div className="flex flex-wrap gap-2 text-[10px] text-slate-400">
+                      <span>{parsimoniousRuntime.summary.counts.artifacts ?? 0} artifacts</span>
+                      <span>{parsimoniousRuntime.summary.counts.feature_index ?? 0} reusable features</span>
+                      <span>{parsimoniousRuntime.summary.counts.compatibility_results ?? 0} reusable results</span>
+                      <span>{parsimoniousRuntime.summary.counts.runtime_traces ?? 0} traces</span>
+                      <span>{parsimoniousRuntime.summary.counts.learning_items ?? 0} quarantined learning items</span>
+                    </div>
+                  )}
+                  {Array.isArray(parsimoniousRuntime?.recent_traces) &&
+                    parsimoniousRuntime.recent_traces.slice(0, 10).map((trace: any) => (
+                      <div
+                        key={trace.trace_id}
+                        className="rounded border border-white/8 bg-black/20 px-2 py-1.5 text-[10px]"
+                      >
+                        <span className="text-cyan-200">{trace.route_state}</span>
+                        <span className="ml-2 text-slate-400">{trace.capsule_id}</span>
+                        {trace.selected_provider?.provider_id && (
+                          <span className="ml-2 text-slate-500">
+                            {trace.selected_provider.provider_id}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
               )}
 
               {activeWorkspace === "language" &&
