@@ -9,6 +9,7 @@ provenance, and analyst authority explicit.
 from __future__ import annotations
 
 import difflib
+import importlib.util
 import json
 import re
 from dataclasses import dataclass
@@ -18,9 +19,121 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlencode
 
+from src.backend.analysis.object_appearance_embedding import model_runtime_state as object_appearance_runtime_state
 
 PERMISSIVE_LICENSES = {"mit", "apache-2.0", "apache 2.0", "bsd", "bsd-3-clause", "cc0"}
 ISOLATE_LICENSES = {"gpl", "gpl-2.0", "gpl-3.0", "agpl", "agpl-3.0", "mpl", "mpl-2.0"}
+
+
+def face_model_runtime_state() -> Dict[str, Any]:
+    root = Path(__file__).resolve().parents[3] / "models" / "face"
+    filenames = (
+        "face_detection_yunet_2023mar.onnx",
+        "face_recognition_sface_2021dec.onnx",
+    )
+    missing = [str(root / filename) for filename in filenames if not (root / filename).is_file()]
+    return {
+        "available": not missing,
+        "model_dir": str(root),
+        "missing": missing,
+        "network_access": "disabled_by_design",
+        "installation_command": "python scripts/install_face_measurement_models.py",
+    }
+
+
+def _module_runtime(module: str, *, model_files: Iterable[Path] = (), installation_command: str = "") -> Dict[str, Any]:
+    files = [Path(path) for path in model_files]
+    missing_files = [str(path) for path in files if not path.is_file()]
+    try:
+        package_ready = importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        package_ready = False
+    available = package_ready and not missing_files
+    missing = ([] if package_ready else [f"python package: {module}"]) + missing_files
+    return {
+        "available": available,
+        "package_available": package_ready,
+        "model_files": [str(path) for path in files],
+        "missing": missing,
+        "network_access": "disabled_by_design",
+        "installation_command": installation_command or None,
+        "readiness": "installed_and_ready" if available else ("weights_required" if package_ready else "package_and_weights_required"),
+    }
+
+
+def component_runtime_state(candidate_name: str) -> Optional[Dict[str, Any]]:
+    root = Path(__file__).resolve().parents[3]
+    cache = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+    if candidate_name == "OpenCV YuNet + SFace":
+        return face_model_runtime_state()
+    if candidate_name == "pyannote.audio Community-1":
+        state = _module_runtime(
+            "pyannote.audio",
+            installation_command="install pyannote.audio in an isolated compatible runtime, accept the selected gated model terms, and configure a user-owned Hugging Face token",
+        )
+        state.update({
+            "activation_required": True,
+            "external_model_terms_required": True,
+            "user_owned_hugging_face_token_required": True,
+            "readiness": "installed_activation_required" if state["available"] else state["readiness"],
+        })
+        return state
+    if candidate_name == "Datascene native diarization scaffold":
+        return {
+            "available": True,
+            "package_available": True,
+            "model_files": [],
+            "missing": [],
+            "network_access": "disabled_by_design",
+            "installation_command": None,
+            "readiness": "installed_and_ready",
+        }
+    if candidate_name == "Datascene Native Object Appearance v1":
+        return object_appearance_runtime_state()
+    if candidate_name == "Ultralytics YOLOv8n":
+        state = _module_runtime("ultralytics", model_files=[root / "models" / "yolov8n.pt"])
+        state.update({"activation_required": True, "readiness": "installed_activation_required" if state["available"] else state["readiness"]})
+        return state
+    if candidate_name == "Torchvision Faster R-CNN MobileNetV3":
+        return _module_runtime(
+            "torchvision",
+            model_files=[cache / "fasterrcnn_mobilenet_v3_large_320_fpn-907ea3f9.pth"],
+            installation_command="install/checksum-pin FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.COCO_V1",
+        )
+    if candidate_name == "Detectron2 Faster R-CNN":
+        return _module_runtime("detectron2", installation_command="install Detectron2 and explicitly licensed/checksum-pinned weights")
+    if candidate_name == "IDEA-Research DINO detector":
+        return _module_runtime("detrex", installation_command="install the DINO/detrex provider and explicitly licensed/checksum-pinned weights")
+    if candidate_name == "YOLO-NAS":
+        return _module_runtime("super_gradients", installation_command="install SuperGradients and activate weights under their separate licence")
+    if candidate_name == "TensorFlow EfficientDet D0":
+        return _module_runtime("official", installation_command="install TensorFlow Model Garden and checksum-pin its Apache-2.0 EfficientDet D0 checkpoint")
+    if candidate_name == "Meta DETR ResNet-50":
+        state = _module_runtime(
+            "transformers",
+            model_files=[
+                root / "models" / "object" / "detr-resnet-50" / "config.json",
+                root / "models" / "object" / "detr-resnet-50" / "preprocessor_config.json",
+                root / "models" / "object" / "detr-resnet-50" / "model.safetensors",
+                root / "models" / "object" / "detr-resnet-50" / "datascene_model_manifest.json",
+            ],
+            installation_command="install/checksum-pin the Apache-2.0 DETR ResNet-50 repository checkpoint into models/object/detr-resnet-50",
+        )
+        state["timm_available"] = importlib.util.find_spec("timm") is not None
+        state["available"] = bool(state["available"] and state["timm_available"])
+        if not state["timm_available"]:
+            state["missing"].append("python package: timm")
+            state["readiness"] = "package_required"
+        return state
+    if candidate_name == "DINOv2 ViT-S/14":
+        return _module_runtime("dinov2", installation_command="install and checksum-pin the Apache-2.0 DINOv2 ViT-S/14 weights")
+    if candidate_name == "Torchvision ResNet-18 appearance features":
+        return _module_runtime(
+            "torchvision",
+            model_files=[cache / "resnet18-f37072fd.pth"],
+            installation_command="review ImageNet weight terms, then install/checksum-pin ResNet18_Weights.IMAGENET1K_V1",
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -29,6 +142,107 @@ class ComponentCandidate:
     license: str
     role: str
     integration_policy: str = "core_allowed"
+
+
+COMPONENT_LITERATURE: Dict[str, List[Dict[str, Any]]] = {
+    "pyannote.audio Community-1": [{
+        "title": "pyannote.audio: neural building blocks for speaker diarization",
+        "url": "https://doi.org/10.1109/ICASSP40776.2020.9052974",
+        "peer_reviewed": True,
+    }],
+    "OpenCV YuNet + SFace": [
+        {
+            "title": "YuNet: A Tiny Millisecond-level Face Detector",
+            "url": "https://doi.org/10.1007/s11633-023-1423-y",
+            "peer_reviewed": True,
+        },
+        {
+            "title": "SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition",
+            "url": "https://doi.org/10.1109/TIP.2020.3048632",
+            "peer_reviewed": True,
+        },
+    ],
+    "Datascene Native Object Appearance v1": [{
+        "title": "Histograms of Oriented Gradients for Human Detection",
+        "url": "https://doi.org/10.1109/CVPR.2005.177",
+        "peer_reviewed": True,
+    }],
+    "Ultralytics YOLOv8n": [{
+        "title": "Ultralytics YOLO documentation and licence",
+        "url": "https://docs.ultralytics.com/",
+        "peer_reviewed": False,
+    }],
+    "Torchvision Faster R-CNN MobileNetV3": [{
+        "title": "Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks",
+        "url": "https://proceedings.neurips.cc/paper/2015/hash/14bfa6bb14875e45bba028a21ed38046-Abstract.html",
+        "peer_reviewed": True,
+    }],
+    "Detectron2 Faster R-CNN": [{
+        "title": "Detectron2 model zoo and documentation",
+        "url": "https://github.com/facebookresearch/detectron2/blob/main/MODEL_ZOO.md",
+        "peer_reviewed": False,
+    }],
+    "IDEA-Research DINO detector": [{
+        "title": "DINO: DETR with Improved DeNoising Anchor Boxes for End-to-End Object Detection",
+        "url": "https://openreview.net/forum?id=3mRwyG5one",
+        "peer_reviewed": True,
+    }],
+    "YOLO-NAS": [{
+        "title": "SuperGradients model repository and YOLO-NAS technical record",
+        "url": "https://doi.org/10.5281/zenodo.7789328",
+        "peer_reviewed": False,
+    }],
+    "TensorFlow EfficientDet D0": [{
+        "title": "EfficientDet: Scalable and Efficient Object Detection",
+        "url": "https://doi.org/10.1109/CVPR42600.2020.01081",
+        "peer_reviewed": True,
+    }],
+    "Meta DETR ResNet-50": [{
+        "title": "End-to-End Object Detection with Transformers",
+        "url": "https://doi.org/10.1007/978-3-030-58452-8_13",
+        "peer_reviewed": True,
+    }],
+    "DINOv2 ViT-S/14": [{
+        "title": "DINOv2: Learning Robust Visual Features without Supervision",
+        "url": "https://openreview.net/forum?id=a68SUt6zFt",
+        "peer_reviewed": True,
+    }],
+    "Torchvision ResNet-18 appearance features": [{
+        "title": "Deep Residual Learning for Image Recognition",
+        "url": "https://doi.org/10.1109/CVPR.2016.90",
+        "peer_reviewed": True,
+    }],
+    "Wikidata structured data": [{
+        "title": "Wikidata: a free collaborative knowledgebase",
+        "url": "https://doi.org/10.1145/2629489",
+        "peer_reviewed": True,
+    }],
+    "Haystack": [{
+        "title": "Haystack: A Framework for Scalable End-to-End Question Answering",
+        "url": "https://aclanthology.org/2020.emnlp-demos.30/",
+        "peer_reviewed": True,
+    }],
+    "FAISS": [{
+        "title": "Billion-scale similarity search with GPUs",
+        "url": "https://doi.org/10.1109/BigData.2017.8251892",
+        "peer_reviewed": True,
+    }],
+    "scikit-learn": [{
+        "title": "Scikit-learn: Machine Learning in Python",
+        "url": "https://jmlr.org/papers/v12/pedregosa11a.html",
+        "peer_reviewed": True,
+    }],
+    "PyTorch": [{
+        "title": "PyTorch: An Imperative Style, High-Performance Deep Learning Library",
+        "url": "https://proceedings.neurips.cc/paper/2019/hash/bdbca288fee7f92f2bfa9f7012727740-Abstract.html",
+        "peer_reviewed": True,
+    }],
+    "TensorFlow": [{
+        "title": "TensorFlow: A System for Large-Scale Machine Learning",
+        "url": "https://www.usenix.org/conference/osdi16/technical-sessions/presentation/abadi",
+        "peer_reviewed": True,
+    }],
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +256,59 @@ class FeatureStarter:
 
 
 FEATURE_STARTERS: List[FeatureStarter] = [
+    FeatureStarter(
+        feature_id="speaker_diarization",
+        title="Speaker diarization provider",
+        purpose="Measure source-linked speech turns and acoustic speaker clusters without treating technical speaker labels as Narrative Agents.",
+        starter_boundary="Provider selection is explicit. pyannote code is permissive, while gated pretrained pipelines require analyst-owned model acceptance and credentials; missing runtimes fail closed and existing diarization evidence remains readable.",
+        candidates=[
+            ComponentCandidate("pyannote.audio Community-1", "MIT code / gated model terms", "optional high-quality local speaker diarization", "explicit_activation_isolated"),
+            ComponentCandidate("Datascene native diarization scaffold", "Apache-2.0 / BSD-3-Clause", "current local VAD, acoustic clustering and provenance-safe fallback"),
+        ],
+        immediate_action="Keep the native scaffold active; expose pyannote.audio as an analyst-selected optional provider and mitigate dependency, token, model-terms, timing-parity and packaged-runtime requirements before activation.",
+    ),
+    FeatureStarter(
+        feature_id="object_detection",
+        title="Object detection provider",
+        purpose="Create source-linked object boxes and raw detector observations without treating a detector label as analyst truth.",
+        starter_boundary="Provider selection is explicit. Missing, unactivated, or licence-sensitive detectors fail closed and existing observations remain readable.",
+        candidates=[
+            ComponentCandidate("Ultralytics YOLOv8n", "AGPL-3.0 / Enterprise", "currently installed COCO object detector", "explicit_activation_isolated"),
+            ComponentCandidate("Torchvision Faster R-CNN MobileNetV3", "BSD-3-Clause / pretrained-weights-review-required", "permissive-framework CPU detector alternative", "weights_review_required"),
+            ComponentCandidate("Detectron2 Faster R-CNN", "Apache-2.0 / weights-review-required", "second-iteration configurable detector", "weights_review_required"),
+            ComponentCandidate("IDEA-Research DINO detector", "Apache-2.0 / checkpoint-review-required", "higher-accuracy non-real-time detector", "weights_review_required"),
+            ComponentCandidate("YOLO-NAS", "Apache-2.0 code / restricted pretrained weights", "second-iteration speed/accuracy alternative", "isolate_service_only"),
+            ComponentCandidate("TensorFlow EfficientDet D0", "Apache-2.0", "documented efficient permissive code-and-checkpoint detector alternative"),
+            ComponentCandidate("Meta DETR ResNet-50", "Apache-2.0", "permissive code-and-checkpoint end-to-end transformer detector alternative"),
+        ],
+        immediate_action="Run the checksum-pinned Meta DETR adapter by default; keep YOLOv8 and other licence-sensitive providers visible but activated only by explicit analyst choice.",
+    ),
+    FeatureStarter(
+        feature_id="object_appearance_embedding",
+        title="Measured object appearance embedding",
+        purpose="Measure colour, structure and texture resemblance across source-linked object tracks for cluster exploration.",
+        starter_boundary="Similarity creates candidates only. Detector confidence is not appearance similarity, and only analyst confirmation creates mature semantic object data.",
+        candidates=[
+            ComponentCandidate("Datascene Native Object Appearance v1", "Apache-2.0 / BSD-3-Clause", "operational local HSV/Lab/HOG/luminance appearance measurement"),
+            ComponentCandidate("DINOv2 ViT-S/14", "Apache-2.0", "second-iteration learned visual retrieval embedding", "weights_review_required"),
+            ComponentCandidate("Torchvision ResNet-18 appearance features", "BSD-3-Clause / pretrained-weights-review-required", "second-iteration compact learned appearance baseline", "weights_review_required"),
+        ],
+        immediate_action="Run the native measured motor now; install and calibrate learned providers only through explicit model setup.",
+    ),
+    FeatureStarter(
+        feature_id="facial_landmark_embedding",
+        title="Facial landmark and embedding measurement",
+        purpose="Measure five-point facial landmarks and local embeddings for Narrative Agent candidate discrimination.",
+        starter_boundary="Local measurements remain candidates until analyst confirmation; biometric derivatives are withheld from export by default.",
+        candidates=[
+            ComponentCandidate(
+                "OpenCV YuNet + SFace",
+                "MIT / Apache-2.0",
+                "five-point face localisation and SFace embedding discrimination",
+            ),
+        ],
+        immediate_action="Install checksum-verified local weights, measure source-linked crops, and retain ambiguous candidates for review.",
+    ),
     FeatureStarter(
         feature_id="metadata_harvesting",
         title="Automated metadata harvesting",
@@ -159,6 +426,9 @@ def utc_now_iso() -> str:
 
 def license_policy(license_name: str) -> Dict[str, Any]:
     normalized = re.sub(r"\s+", " ", str(license_name or "").strip().lower())
+    components = [item.strip() for item in re.split(r"\s*(?:/|\+)\s*", normalized) if item.strip()]
+    if components and all(component in PERMISSIVE_LICENSES for component in components):
+        return {"compatible": True, "policy": "core_allowed"}
     if normalized in PERMISSIVE_LICENSES:
         return {"compatible": True, "policy": "core_allowed"}
     if normalized in ISOLATE_LICENSES or any(item in normalized for item in ISOLATE_LICENSES):
@@ -172,6 +442,7 @@ def build_feature_starter_manifest() -> Dict[str, Any]:
         candidates = []
         for candidate in feature.candidates:
             policy = license_policy(candidate.license)
+            runtime = component_runtime_state(candidate.name)
             candidates.append(
                 {
                     "name": candidate.name,
@@ -181,6 +452,8 @@ def build_feature_starter_manifest() -> Dict[str, Any]:
                     "license_policy": policy["policy"],
                     "core_compatible": policy["compatible"]
                     and candidate.integration_policy == "core_allowed",
+                    "literature": COMPONENT_LITERATURE.get(candidate.name, []),
+                    "runtime": runtime,
                 }
             )
         features.append(

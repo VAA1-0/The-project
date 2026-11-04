@@ -1,5 +1,6 @@
 import type { MorphologyPackPolicy } from "@/lib/morphology-language-packs";
 import { activeProjectScopeId } from "@/lib/active-project-scope";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 export const MORPHOLOGY_CONFIGURATION_KEY = "vaa1.analysis.morphology-configuration.v1";
 
@@ -17,7 +18,7 @@ export type MorphologyConfiguration = {
 export function readMorphologyConfiguration(): MorphologyConfiguration | null {
   if (typeof window === "undefined") return null;
   try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey()) || "null");
+    const value = JSON.parse(getBrowserStorageItem(storageKey()) || "null");
     if (!value || !["core_only", "plus_1", "plus_2", "plus_3"].includes(value.policy)) {
       if (activeProjectScopeId() === "research-test-2-20226-cop30-vids") {
         return {
@@ -42,5 +43,5 @@ export function readMorphologyConfiguration(): MorphologyConfiguration | null {
 
 export function writeMorphologyConfiguration(value: MorphologyConfiguration): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(storageKey(), JSON.stringify(value));
+  setBrowserStorageItem(storageKey(), JSON.stringify(value));
 }

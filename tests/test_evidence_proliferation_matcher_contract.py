@@ -115,6 +115,119 @@ class EvidenceProliferationMatcherContractTest(unittest.TestCase):
         self.assertTrue(proof["qualified"])
         self.assertEqual(proof["authority_level"], "mature_triangulated_evidence")
 
+    def test_imperfect_individual_match_can_mature_from_99_percent_constellation(self):
+        candidate = {
+            "source_kind": "tracked_object",
+            "source_panel": "objects_panel",
+            "analysis_id": "analysis-1",
+            "geometry": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+            "constellational_proof": {
+                "proof_score": 0.995,
+                "calibrated": True,
+                "independent_modalities": ["visual", "textual", "scene_context"],
+                "source_time_anchored": True,
+                "visual_geometry_anchored": True,
+                "analysis_id": "analysis-1",
+                "unresolved_conflicts": [],
+            },
+        }
+
+        proof = matcher.evaluate_constellational_proof(
+            candidate,
+            probability=0.82,
+            source_anchors=[{"anchor_type": "bbox"}, {"anchor_type": "time_range"}],
+            expected_analysis_id="analysis-1",
+        )
+
+        self.assertTrue(proof["qualified"])
+        self.assertEqual(proof["individual_match_probability"], 0.82)
+
+    def test_independent_match_channels_accumulate_without_each_reaching_99_percent(self):
+        candidate = {
+            "analysis_id": "analysis-1",
+            "time": {"start": 61.0, "end": 61.5},
+            "geometry": {"x": 0.4, "y": 0.2, "w": 0.2, "h": 0.4},
+        }
+        closest = {
+            "components": {
+                "sample_cloud_support": 0.94,
+                "spatial_consistency": 0.88,
+                "track_continuity": 0.91,
+                "text_semantic": 0.86,
+                "contextual_modality": 0.82,
+                "cross_scene_continuity": 0.9,
+            },
+            "constellation_memory": {"positive_support": 0.88, "negative_support": 0.0},
+        }
+
+        proof = matcher._constellational_proof_from_match("analysis-1", candidate, closest)
+
+        self.assertGreaterEqual(proof["proof_score"], 0.99)
+        self.assertTrue(all(value < 0.99 for value in proof["channel_support"].values()))
+        self.assertEqual(proof["unresolved_conflicts"], [])
+
+    def test_governed_candidate_auto_proliferates_from_accumulated_proof(self):
+        item = {
+            "evidence_id": "person-at-61",
+            "analysis_id": "analysis-1",
+            "label": "person",
+            "category": "person",
+            "source_kind": "tracked_object",
+            "source_panel": "objects_panel",
+            "time": {"start": 61.0, "end": 61.5},
+            "geometry": {"x": 0.4, "y": 0.2, "width": 0.2, "height": 0.4},
+            "raw": {},
+        }
+        closest = {
+            "match_probability": 0.82,
+            "components": {
+                "sample_cloud_support": 0.94,
+                "spatial_consistency": 0.88,
+                "track_continuity": 0.91,
+                "text_semantic": 0.86,
+                "contextual_modality": 0.82,
+                "cross_scene_continuity": 0.9,
+            },
+            "constellation_memory": {"positive_support": 0.88, "negative_support": 0.0},
+            "source_timesphere": {},
+            "seed_timesphere": {},
+        }
+        request = {
+            "request_id": "bond-at-61",
+            "target": "character_continuity",
+            "evidence": {"label": "James Bond", "interval": {"start": 61.0, "end": 61.5}},
+        }
+
+        governed = matcher._govern_candidate(
+            analysis_id="analysis-1",
+            request=request,
+            item=item,
+            score=0.82,
+            closest_match=closest,
+        )
+
+        self.assertIsNotNone(governed)
+        self.assertTrue(governed["proliferation_allowed"])
+        self.assertFalse(governed["review_required"])
+        self.assertEqual(
+            governed["master_object_projection"]["authority_level"],
+            "mature_triangulated_evidence",
+        )
+        self.assertEqual(governed["master_object_projection"]["maturity_state"], "mature")
+        self.assertEqual(governed["narrative_agent_label"], "James Bond")
+        self.assertEqual(governed["master_object_projection"]["current_label"], "James Bond")
+
+        decisions = matcher.automatic_proliferation_decisions({
+            "request_id": "bond-at-61",
+            "created_at": "2026-10-27T16:00:00Z",
+            "request": {"evidence": {"interval": {"start": 61.0, "end": 61.5}}},
+            "candidates": [governed],
+        })
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["applied_label"], "James Bond")
+        self.assertEqual(decisions[0]["authority_level"], "mature_triangulated_evidence")
+        self.assertTrue(decisions[0]["governance_status"]["automatic_constellational_deduction"])
+
     def test_constellational_proof_is_blocked_across_project_boundary(self):
         candidate = {
             "source_kind": "tracked_object",

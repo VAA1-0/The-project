@@ -94,11 +94,17 @@ export function motionSceneSegmentsFromAnalysis(
 export function matureSceneSegmentsFromAnalysis(
   analysisData: any,
 ): GovernedSceneSegment[] {
+  // A visual/motion boundary is not automatically a semantic Scene boundary.
+  // Explicit governed Scene segments therefore outrank motion segmentation.
   const masterSegments = masterSchemaTemporalSegmentsFromAnalysis(analysisData);
   if (masterSegments.length) {
     return masterSegments;
   }
-  return motionSceneSegmentsFromAnalysis(analysisData);
+  const motionSegments = motionSceneSegmentsFromAnalysis(analysisData);
+  if (motionSegments.length) {
+    return motionSegments;
+  }
+  return [];
 }
 
 export function matureSceneSegmentSourceLabel(analysisData: any): string {
@@ -106,7 +112,7 @@ export function matureSceneSegmentSourceLabel(analysisData: any): string {
     return "Master Schema temporal segments";
   }
   if (motionSceneSegmentsFromAnalysis(analysisData).length) {
-    return "Motion scene basis";
+    return "Motion scene basis (fallback)";
   }
   return "Derived scene windows";
 }

@@ -27,7 +27,9 @@ Tools owns a first-class `Analysis setup` category containing:
 
 1. scan choice;
 2. morphology choice;
-3. a model-choice matrix with license and isolation information; and
+3. a model-choice matrix with model/script name, role, license, isolation
+   information and linked peer-reviewed literature where a verified reference
+   is declared; and
 4. navigation to other setup controls.
 
 The matrix records project-scoped preferences. Selection does not silently
@@ -138,7 +140,13 @@ The release gate then runs backend, frontend, governance, persistence,
 publication and representative packaged workflows; records manual acceptance;
 documents limitations; and delivers only the coherent verified Git scope.
 
-## Explicit optional deferrals
+## Pre-freeze disposition register (formerly optional deferrals)
+
+These items are not permitted to disappear behind an `optional` label. Before
+the 1.0 configuration freeze, each item must be implemented and accepted, or
+receive an explicit product-authority disposition with its runtime consequence,
+fallback, evidence impact and visible disabled state. An unexamined item or an
+open mitigation blocks the freeze.
 
 - Golden Retriever and other remote acquisition connectors;
 - CVAT round-trip expansion;
@@ -150,12 +158,51 @@ documents limitations; and delivers only the coherent verified Git scope.
 - licensed or remote providers outside the local evidence core; and
 - runtime-environment feature upgrades not required by the frozen release core.
 
+The same freeze gate applies to every open bug report and mitigation schema.
+Runtime-environment updates must be inventoried, versioned and exercised in the
+Mac and Windows target environments before clean-location installation begins.
+
+## Mandatory pre-9.6/9.7/9.8 operational audit
+
+Before the remaining representative-workflow, completion and packaged-release
+slices are accepted, revisit the delivered Stage 1–8 patches as running
+features. The audit must include frontend/backend restart, canonical save and
+reopen, reciprocal source navigation, detached-panel return, export/restore and
+project isolation. Residual dependency work explicitly includes:
+
+- Meaning Knowledge Graph and Narrative Agent graph hydration, editing and
+  parity;
+- all associated perspectives and interpretation lenses;
+- Narrative Agent evidence-clustering practice, source boundaries and review
+  state;
+- Mature Data Proliferation from one user confirmation through Master Schema to
+  every eligible consumer without a second confirmation request; and
+- all recorded bug-report mitigations and runtime dependency upgrades.
+
+Cluster exploration is judged by analyst usability, not by the presence of a
+clustering function. Purity, representatives and problems, threshold preview,
+merge/split/reassignment, temporal distribution, exclusions, batch-review
+economics, representative quality, propagation reliability and correction
+impact must pass the
+`datascene_cluster_exploration_usability_contract_2026-10-24.md` contract.
+
+The first empirical taxonomy increment is rendered in Data Maturation for all
+currently registered Visual, Audio and Textual detection families. Audio owns
+the first detailed cluster-review implementation. This is an iteration of the
+existing sample-cloud, matcher and proliferation tooling; it is not a new truth
+store. Interpretive clustering remains a later, separately governed stage.
+
+A passing source-code contract is supporting evidence, not a substitute for the
+rendered operational checks.
+
 ## First delivered Stage 9 increment
 
 The Tools panel now promotes `Analysis setup` as a primary workspace. Its scan,
 modality and morphology configuration is joined by a project-scoped model-choice
-matrix that exposes candidate license and core/isolation status. The matrix is a
-configuration record, not a false activation claim.
+matrix that exposes candidate name, analytical role, license, core/isolation
+status and literature. Peer-reviewed links are labelled as such; candidates
+without a declared peer-reviewed reference say so instead of receiving a false
+citation. The matrix is a configuration record, not a false activation claim.
 
 The surface is protected by a focused frontend contract covering the four
 Analysis setup groups, project-scoped persistence, licence disclosure and the
@@ -316,3 +363,14 @@ analyst explicitly selects rows and compares confirmed, candidate, withheld and
 artifact counts without treating those counts as normalized effect sizes. The
 design contract is recorded in
 `docs/datascene_analysis_report_panel_design_2026-10-23.md`.
+
+## Object provider and measured appearance increment — 25 October 2026
+
+The former implicit YOLOv8 dependency now has an operational permissive path.
+Meta DETR ResNet-50 is the local default and Datascene Native Object Appearance
+v1 provides measured source-crop similarity for object-cluster exploration.
+Licensed or restricted providers may be used for research only by explicit
+analyst selection; the backend rejects licence-sensitive choices without the
+analyst-authority receipt. Delivery boundaries and remaining packaged-runtime
+work are recorded in
+`docs/datascene_object_appearance_detector_delivery_2026-10-25.md`.

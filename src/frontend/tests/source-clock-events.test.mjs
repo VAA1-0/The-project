@@ -94,3 +94,21 @@ test('source-unavailable contexts remain inspectable but never authorize navigat
   assert.deepEqual(times,[]);
   assert.equal(unavailable.at(-1)?.analysis_id,'a');
 });
+
+test('a transient backend restart clears the clock issue without weakening validation', async () => {
+  let attempts = 0;
+  const m = await fixture(async id => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('backend restarting');
+    return context(id, 'recovered');
+  });
+  const unavailable = [];
+  const available = [];
+  m.eventBus.on('sourceClockNavigationUnavailable', event => unavailable.push(event));
+  m.eventBus.on('sourceClockContextChanged', value => { if (value) available.push(value); });
+  m.eventBus.emit('videoIdChanged', 'a');
+  await new Promise(resolve => setTimeout(resolve, 900));
+  assert.equal(unavailable.length, 1);
+  assert.equal(available.at(-1)?.clock_revision, 'recovered');
+  assert.equal(m.publishSourceTime('a', 12), true);
+});

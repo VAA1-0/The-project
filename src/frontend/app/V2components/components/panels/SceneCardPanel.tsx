@@ -229,7 +229,7 @@ type SceneCard = {
 };
 
 type EvidenceContextPayload = {
-  kind: "scene_account" | "utterance" | "meaning_plot" | "facet" | "evidence_item";
+  kind: "scene_account" | "utterance" | "meaning_plot" | "facet" | "evidence_item" | "set_location_cluster";
   label: string;
   value?: string;
   evidenceId?: string;
@@ -439,6 +439,7 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
   const [saveMessage, setSaveMessage] = useState("");
   const [reportDraftWriting, setReportDraftWriting] = useState(false);
   const [reportDraftMessage, setReportDraftMessage] = useState("");
+  const [measuringSets, setMeasuringSets] = useState(false);
   const [evidenceMenu, setEvidenceMenu] = useState<EvidenceContextMenuState | null>(null);
   const sceneButtonRefs = React.useRef(new Map<string, HTMLButtonElement>());
 
@@ -520,7 +521,41 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
     };
   }, [selectedVideoId, refreshNonce]);
 
-  const cards = useMemo(() => bundle?.scene_cards || [], [bundle?.scene_cards]);
+  const matureSceneSegments = useMemo(
+    () => matureSceneSegmentsFromAnalysis(analysisData),
+    [analysisData],
+  );
+  const cards = useMemo(() => {
+    const artifactCards = bundle?.scene_cards || [];
+    if (!matureSceneSegments.length) return artifactCards;
+    return matureSceneSegments.map((segment, index): SceneCard => {
+      const nearest = artifactCards
+        .map((card) => {
+          const start = secondsFromMs(card.time_interval?.start_ms);
+          const end = secondsFromMs(card.time_interval?.end_ms);
+          return { card, overlap: Math.max(0, Math.min(segment.end, end) - Math.max(segment.start, start)) };
+        })
+        .sort((left, right) => right.overlap - left.overlap)[0];
+      const inherited = nearest?.overlap ? nearest.card : undefined;
+      return {
+        ...(inherited || {}),
+        scene_id: segment.scene_id || `detected-scene-${segment.scene_index || index + 1}`,
+        title: inherited?.title || `Detected Scene ${segment.scene_index || index + 1}`,
+        display_title: inherited?.display_title || `Detected Scene ${segment.scene_index || index + 1}`,
+        scene_boundary_source: segment.source || "measured scene detection",
+        time_interval: {
+          start_ms: Math.round(segment.start * 1000),
+          end_ms: Math.round(segment.end * 1000),
+        },
+      };
+    });
+  }, [bundle?.scene_cards, matureSceneSegments]);
+  useEffect(() => {
+    if (!cards.length) return;
+    setSelectedSceneId((previous) => cards.some((card) => card.scene_id === previous)
+      ? previous
+      : (cards[0]?.scene_id || ""));
+  }, [cards]);
   useEffect(() => {
     if (!selectedVideoId || !cards.length) return;
     return subscribeSourceTime(selectedVideoId, (time) => {
@@ -538,10 +573,6 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
       });
     });
   }, [cards, selectedVideoId]);
-  const matureSceneSegments = useMemo(
-    () => matureSceneSegmentsFromAnalysis(analysisData),
-    [analysisData],
-  );
   const sceneSegmentSourceLabel = matureSceneSegmentSourceLabel(analysisData);
   const governedSceneCount = matureSceneSegments.length || cards.length;
   const sceneCardCoverageMismatch =
@@ -552,6 +583,55 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
 
   const sceneStart = secondsFromMs(selectedCard?.time_interval?.start_ms);
   const sceneEnd = secondsFromMs(selectedCard?.time_interval?.end_ms);
+  const setLocationEvidence = useMemo(() => {
+    const raw = (analysisData as any)?.rawJson || {};
+    const artifact =
+      raw?.results?.visual_analysis?.set_location_recognition ||
+      raw?.summary?.set_location_recognition ||
+      raw?.set_location_recognition ||
+      {};
+    const clusters = Array.isArray(artifact?.clusters) ? artifact.clusters : [];
+    const corrections = (analysisData as any)?.annotationCorrections?.manual_visual_annotations || [];
+    const overlapping = clusters.filter((cluster: any) =>
+      (Array.isArray(cluster?.temporal_distribution) ? cluster.temporal_distribution : [])
+        .some((timestamp: unknown) => Number(timestamp) >= sceneStart && Number(timestamp) <= sceneEnd),
+    ).map((cluster: any) => {
+      const confirmation = corrections.find((item: any) =>
+        item?.subcategory === "set / location confirmation" &&
+        item?.metadata_correlation?.target_id === cluster.cluster_id,
+      );
+      return { ...cluster, confirmedLabel: confirmation?.custom_label || confirmation?.label || null };
+    });
+    const annotations = (analysisData as any)?.metadata?.sourceMediaMetadata?.user_annotations || {};
+    const proposals = [
+      ["Country", annotations.location_country],
+      ["City", annotations.location_city],
+      ["Place", annotations.location_place],
+      ["Room / set", annotations.location_room],
+    ].filter(([, value]) => String(value || "").trim());
+    const sceneAnnotationProposals = corrections
+      .filter((item: any) => {
+        const category = String(item?.category || "").trim().toLowerCase();
+        const subcategory = String(item?.subcategory || "").trim().toLowerCase();
+        if (category !== "scene" && !subcategory.includes("location")) return false;
+        const start = Number(item?.start_seconds ?? item?.timestamp_seconds ?? 0);
+        const end = Number(item?.end_seconds ?? start);
+        return intervalsOverlap(sceneStart, sceneEnd, start, end);
+      })
+      .map((item: any) => [
+        "Scene annotation",
+        item?.custom_label || item?.label || item?.note,
+      ])
+      .filter(([, value]: any) => String(value || "").trim());
+    const sceneCardPlaceProposals = (selectedCard?.tags?.places || [])
+      .map((value) => ["Scene Card", String(value).replace(/^[✓●○◐]\s*/, "")])
+      .filter(([, value]) => String(value || "").trim());
+    const sceneProposals = Array.from(new Map(
+      [...sceneAnnotationProposals, ...sceneCardPlaceProposals]
+        .map(([level, value]) => [String(value).trim().toLowerCase(), [level, String(value).trim()]]),
+    ).values());
+    return { artifact, clusters: overlapping, proposals, sceneProposals };
+  }, [analysisData, sceneEnd, sceneStart, selectedCard]);
   const matureSpeech = useMemo<SceneCardSpeech[]>(() => {
     if (!selectedCard || !analysisData?.transcript?.length) {
       return selectedCard?.said_in_scene || [];
@@ -1110,6 +1190,49 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
     }
   };
 
+  const runSetLocationMeasurement = async () => {
+    if (!selectedVideoId || measuringSets) return;
+    setMeasuringSets(true);
+    setSaveMessage("");
+    try {
+      const response = await apiService.measureSetLocationRecurrence(selectedVideoId);
+      const artifact = (response as any)?.set_location_recognition || {};
+      setSaveMessage(`Measured ${artifact?.summary?.recurring_cluster_count || 0} recurring environment clusters from ${artifact?.summary?.measured_sample_count || 0} source frames.`);
+      setRefreshNonce((value) => value + 1);
+    } catch (measurementError) {
+      setSaveMessage(measurementError instanceof Error ? measurementError.message : "Set/location measurement failed.");
+    } finally {
+      setMeasuringSets(false);
+    }
+  };
+
+  const confirmSetLocationCluster = async (cluster: any) => {
+    const proposal = setLocationEvidence.proposals.map(([, value]: any) => String(value)).join(" / ");
+    const label = window.prompt(
+      "Confirm the semantic set, location, or environment represented by this recurring visual cluster:",
+      cluster.confirmedLabel || proposal || "",
+    );
+    if (!label?.trim()) return;
+    const representative = cluster.representative || {};
+    await saveGovernedEvidenceAnnotation({
+      kind: "set_location_cluster",
+      label: label.trim(),
+      value: label.trim(),
+      evidenceId: cluster.cluster_id,
+      category: "set / location recurrence",
+      sourcePanel: "Scene Cards",
+      timeSeconds: Number(representative.timestamp || sceneStart),
+    }, {
+      category: "Metadata",
+      subcategory: "set / location confirmation",
+      label: label.trim(),
+      relation: "matches",
+      note: `Analyst confirmed recurring environment cluster ${cluster.cluster_id} as "${label.trim()}". Visual recurrence and metadata proposals remain separately traceable.`,
+    });
+    setSaveMessage(`Confirmed set/location "${label.trim()}" as mature governed evidence.`);
+    setRefreshNonce((value) => value + 1);
+  };
+
   return (
     <div className="flex h-full flex-col bg-[#0f0f0f] text-slate-200">
       <header className="border-b border-slate-800 px-4 py-3">
@@ -1389,6 +1512,110 @@ export default function SceneCardPanel({ videoId: initialVideoId = "" }: { video
                       initialSceneCards={[selectedCard]}
                     />
                   </div>
+                  <details
+                    className="mt-2 rounded border border-slate-800 bg-slate-950/20"
+                    data-vaa1-set-location-recurrence="true"
+                  >
+                    <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-cyan-300 marker:hidden">
+                      Set / location recurrence · {setLocationEvidence.clusters.length} in this scene · {Array.isArray(setLocationEvidence.artifact?.clusters) ? setLocationEvidence.artifact.clusters.length : 0} measured total · {setLocationEvidence.proposals.length} Source Media proposals · {setLocationEvidence.sceneProposals.length} scene proposals
+                    </summary>
+                    <div className="space-y-3 border-t border-slate-800 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="max-w-2xl text-[10px] leading-4 text-slate-400">
+                          Wide-frame colour, layout and edge recurrence is measured evidence—not a geographic identity. Metadata proposals remain separately attributed until governed.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={runSetLocationMeasurement}
+                          disabled={measuringSets}
+                          className="rounded border border-cyan-800 px-2 py-1 text-[10px] text-cyan-100 hover:bg-cyan-950/30 disabled:opacity-50"
+                        >
+                          {measuringSets ? "Measuring…" : "Measure recurrence"}
+                        </button>
+                      </div>
+                      {setLocationEvidence.proposals.length > 0 && (
+                        <div>
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Source Media proposals</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {setLocationEvidence.proposals.map(([level, value]: any) => (
+                              <button
+                                key={`${level}:${value}`}
+                                type="button"
+                                onClick={() => openPanel("SourceMediaMetadata", { videoId: selectedVideoId })}
+                                className="rounded border border-amber-900/60 bg-amber-950/10 px-2 py-1 text-[10px] text-amber-100"
+                                title="Proposed location; inspect authority in Source Media"
+                              >
+                                {level}: {String(value)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {setLocationEvidence.sceneProposals.length > 0 && (
+                        <div data-vaa1-scene-location-proposals="true">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Scene evidence proposals</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {setLocationEvidence.sceneProposals.map(([level, value]: any) => (
+                              <button
+                                key={`${level}:${value}`}
+                                type="button"
+                                onClick={() => navigateToTime(sceneStart)}
+                                className="rounded border border-violet-900/60 bg-violet-950/10 px-2 py-1 text-[10px] text-violet-100"
+                                title="Scene-scoped location evidence; not Source Media metadata"
+                              >
+                                {level}: {String(value)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {setLocationEvidence.clusters.length > 0 ? (
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {setLocationEvidence.clusters.map((cluster: any) => {
+                            const representative = cluster.representative || {};
+                            const boundary = cluster.boundary_sample || {};
+                            return (
+                              <div key={cluster.cluster_id} className="rounded border border-cyan-900/60 bg-[#0d1417] p-2 text-[10px]">
+                                <div className="mb-2 grid grid-cols-2 gap-1.5">
+                                  {[representative, boundary].map((sample: any, sampleIndex: number) => (
+                                    <button
+                                      key={`${cluster.cluster_id}:${sampleIndex}`}
+                                      type="button"
+                                      onClick={() => navigateToTime(Number(sample.timestamp || sceneStart))}
+                                      className="overflow-hidden rounded border border-slate-700 bg-black text-left"
+                                      title={sampleIndex === 0 ? "Representative source frame" : "Problematic boundary source frame"}
+                                    >
+                                      {sample.sample_id ? (
+                                        <img
+                                          src={apiService.setLocationThumbnailUrl(selectedVideoId, sample.sample_id)}
+                                          alt={`${sampleIndex === 0 ? "Representative" : "Boundary"} frame for ${cluster.cluster_id}`}
+                                          className="aspect-video w-full object-cover"
+                                          loading="lazy"
+                                        />
+                                      ) : null}
+                                      <span className="block px-1.5 py-1 text-[9px] text-slate-300">{sampleIndex === 0 ? "Representative" : "Boundary"}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-cyan-200">{cluster.confirmedLabel || cluster.semantic_label || cluster.cluster_id}</span>
+                                  <span className="text-slate-500">{cluster.sample_count} samples</span>
+                                </div>
+                                <div className="mt-1 text-slate-400">Cohesion {Number(cluster.cohesion || 0).toFixed(3)} · {cluster.confirmedLabel ? "Confirmed · mature" : "candidate"}</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  <button type="button" onClick={() => navigateToTime(Number(representative.timestamp || sceneStart))} className="rounded border border-slate-700 px-2 py-1 text-slate-200">Representative {formatPreciseSourceTime(Number(representative.timestamp || 0))}</button>
+                                  <button type="button" onClick={() => navigateToTime(Number(boundary.timestamp || sceneStart))} className="rounded border border-slate-700 px-2 py-1 text-slate-200">Boundary {formatPreciseSourceTime(Number(boundary.timestamp || 0))}</button>
+                                  {!cluster.confirmedLabel && <button type="button" onClick={() => confirmSetLocationCluster(cluster)} className="rounded border border-emerald-800 bg-emerald-950/20 px-2 py-1 text-emerald-100">Confirm set / location</button>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="rounded border border-slate-800 p-2 text-[10px] text-slate-500">No measured recurring environment overlaps this Scene Card yet.</div>
+                      )}
+                    </div>
+                  </details>
                   {showNoteEditor && (
                     <div className="mt-3 border border-slate-800 bg-[#111] p-3">
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">

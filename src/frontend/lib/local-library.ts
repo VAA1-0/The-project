@@ -1,6 +1,8 @@
 // src/frontend/lib/local-library.ts
 
-// Key used in localStorage
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
+
+// Key used in browser preference storage
 const LIB_KEY = "local_video_library";
 
 // ---- Data structures ----
@@ -27,12 +29,16 @@ export interface LibraryState {
 function load(): LibraryState {
   if (typeof window === "undefined") return { videos: [], folders: [] };
 
-  const raw = localStorage.getItem(LIB_KEY);
-  return raw ? JSON.parse(raw) : { videos: [], folders: [] };
+  try {
+    const raw = getBrowserStorageItem(LIB_KEY);
+    return raw ? JSON.parse(raw) : { videos: [], folders: [] };
+  } catch {
+    return { videos: [], folders: [] };
+  }
 }
 
 function save(state: LibraryState) {
-  localStorage.setItem(LIB_KEY, JSON.stringify(state));
+  setBrowserStorageItem(LIB_KEY, JSON.stringify(state));
 }
 
 // ---- CRUD operations (backend-like) ----

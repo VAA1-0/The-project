@@ -143,6 +143,17 @@ This checklist is now gated by the broader sprint ladder. The `.exe` should not 
 - Confirm accepted/corrected evidence remains traceable to raw source evidence.
 - Confirm BBox/ROI overlays prefer user-confirmed and Master Schema mature agent/sample-profile labels before raw tracker labels.
 
+## Object Detector Run Persistence And Model Switching
+
+- Run the No Time To Die object-analysis acceptance with the analyst-authorized YOLOv8 development profile and confirm that detections continue beyond `1:21.000` through the remaining source duration.
+- Record the active provider, model, run id, threshold, parameters, licence/authorization state, source anchors, and generated-at time in the object-run provenance.
+- Change the selected object detector or its threshold and confirm Datascene appends a new evidence run instead of replacing the earlier YOLOv8 observations.
+- Confirm Objects can filter by provider and run, and that the combined view retains source-linked detections from every registered run.
+- Confirm previously matured object claims remain visible in Objects, Video/BBox, Master Schema, Scene Cards, Meaning/Knowledge, Search, Traceback, Data Book, report, and export consumers after the model change.
+- Confirm a provider change triggers only the targeted visual/object recomputation path and does not reopen, demote, or delete a mature analyst decision.
+- Save and reopen the analysis; verify the run registry, materialized union, model filters, mature claims, and traceback remain stable.
+- Repeat the model-switch portion when the DETR runtime is installed and calibrated; until then record it as a deferred environment-dependent acceptance, not as delivered DETR parity.
+
 ## Agent Persistence Across Scene Cuts
 
 - Run a clip where a confirmed narrative agent disappears before a cut and reappears after the cut.
@@ -179,6 +190,8 @@ This checklist is now gated by the broader sprint ladder. The `.exe` should not 
 ## Mise-En-Scene And Reports
 
 - Confirm Scene Cards surface mature transcript/object/person/metadata where available.
+- In set/location cluster review, confirm proposed locations from Source Media metadata (`location_country`, `location_city`, `location_place`, and `location_room`) are shown alongside measured visual recurrence and Scene Card setting evidence, with their authority and provenance clearly distinguished.
+- Confirm analyst-confirmed Source Media locations enter Master Schema as mature source metadata and hydrate Scene Cards, set/location clusters, Meaning/Knowledge, Search, reports, and exports without a second confirmation request.
 - Confirm meaning/plot candidates are visible from scene-level context.
 - Confirm source metadata and scene understanding can feed report/export surfaces.
 - Export a single analysis package and verify corrected data, raw data, and governance artifacts are included.

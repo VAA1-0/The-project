@@ -13,10 +13,12 @@ import {
 import { apiService } from "@/lib/api-service";
 import type {
   AnnotationCorrections,
+  EvidenceProliferationCandidate,
   EvidenceProliferationMatchSummary,
   IdentityCandidate,
   IdentityCandidateLedger,
   ManualVisualAnnotation,
+  ProliferationDecision,
   ProjectedCanonicalClaim,
   SecondOrderLabelInstruction,
 } from "@/lib/api-service";
@@ -27,6 +29,7 @@ import {
   retimeManualVisualAnnotationsFromPresenceInterval,
   upsertManualVisualAnnotation,
   upsertMasterSchemaPresenceInterval,
+  upsertMasterSchemaPresenceIntervalForManualAnnotation,
 } from "@/lib/annotation-corrections";
 import {
   closeManualAnnotationInVideo,
@@ -34,7 +37,11 @@ import {
   openVideoAtTime,
 } from "@/lib/video-navigation";
 import { matureSceneSegmentsFromAnalysis } from "@/lib/scene-governance";
-import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
+import {
+  governedNarrativeAgentLabels,
+  visualLineupNarrativeAgentLabels,
+} from "@/lib/narrative-agent-registry";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import { useLayoutHost } from "../LayoutHost";
 import NativeStatisticalInterpretationStrip from "../NativeStatisticalInterpretationStrip";
 import NarrativeAgentContinuityWorkbench from "../NarrativeAgentContinuityWorkbench";
@@ -158,6 +165,18 @@ type NarrativeAgentTimelineHandle = {
 type NarrativeAgentTimelineHandleCommit = {
   row: NarrativeAgentPathRow;
   handle: NarrativeAgentTimelineHandle;
+};
+
+type NarrativeAgentVisualLineupAssignment = {
+  candidate: EvidenceProliferationCandidate;
+  agentLabel: string;
+  sourceAgentLabel: string;
+};
+
+type NarrativeAgentFamilyGovernanceAction = {
+  operation: "create" | "rename" | "merge";
+  sourceLabel?: string;
+  targetLabel: string;
 };
 
 type NarrativeAgentGraphNode = {
@@ -1101,18 +1120,8 @@ function narrativeAgentMemoryMatchesRow(
     memory.canonical_label,
     ...arrayStringsFromUnknown(memory.aliases),
   ].map(normalizeAgentKey).filter(Boolean);
-  const rowLabels = [
-    row.label,
-    ...row.aliases,
-    ...row.sourceLabels,
-  ].map(normalizeAgentKey).filter(Boolean);
-  return memoryLabels.some((memoryLabel) =>
-    rowLabels.some((rowLabel) =>
-      memoryLabel === rowLabel ||
-      memoryLabel.includes(rowLabel) ||
-      rowLabel.includes(memoryLabel),
-    ),
-  );
+  const canonicalRowLabel = normalizeAgentKey(row.label);
+  return Boolean(canonicalRowLabel && memoryLabels.includes(canonicalRowLabel));
 }
 
 function narrativeAgentIdentityMemoryForRow(
@@ -1125,7 +1134,7 @@ function narrativeAgentIdentityMemoryForRow(
   const continuityProjection = asRecord(asRecord(analysisData).narrativeAgentContinuityProjection);
   const collection = asRecord(continuityProjection.canonical_collection);
   const projectionLabel = normalizeAgentKey(collection.narrative_agent_label);
-  const rowLabels = [row.label, ...row.aliases, ...row.sourceLabels].map(normalizeAgentKey);
+  const rowLabels = [row.label].map(normalizeAgentKey);
   const matchesProjection = Boolean(projectionLabel && rowLabels.includes(projectionLabel));
   if (!matchesProjection) return existing;
   const continuityAudioSlots = narrativeAgentContinuityMembers(analysisData)
@@ -1159,6 +1168,1212 @@ function narrativeAgentIdentityMemoryForRow(
     continuity_revision: stringFrom(continuityProjection.revision),
     continuity_hydrated: continuityAudioSlots.length > 0,
   };
+}
+
+function confirmedVisualLineupSlotsForRow(
+  analysisData: unknown,
+  row: NarrativeAgentPathRow,
+): Record<string, unknown>[] {
+  const data = analysisData as AnalysisData;
+  // Mature projection is identity authority. Only the canonical governed row
+  // label may receive it; broad descriptive/source aliases are discovery aids
+  // and must never distribute one confirmation across several families.
+  const rowKeys = [row.label].map(normalizeAgentKey).filter(Boolean);
+  const latestByCandidate = new Map<string, ProliferationDecision>();
+  (data?.annotationCorrections?.proliferation_decisions || []).forEach((decision) => {
+    if (
+      decision.decision === "confirmed" &&
+      String(decision.decision_id || "").startsWith("narrative-agent-visual-lineup:")
+    ) latestByCandidate.set(decision.candidate_id || decision.target_evidence_id || decision.decision_id, decision);
+  });
+  return [...latestByCandidate.values()].flatMap((decision) => {
+    if (
+      decision.decision !== "confirmed" ||
+      !String(decision.decision_id || "").startsWith("narrative-agent-visual-lineup:") ||
+      !rowKeys.includes(normalizeAgentKey(decision.applied_label || decision.cluster_key))
+    ) return [];
+    const anchor = asRecord(decision.source_anchors?.[0]);
+    const start = numberFrom(anchor.start_seconds);
+    if (start === undefined) return [];
+    return [{
+      sample_id: decision.candidate_id || decision.target_evidence_id || decision.decision_id,
+      sample_state: "mature_user_confirmation",
+      authority: decision.authority_level || "manual_confirmation",
+      modality: "visual",
+      analysis_id: data.analysisId,
+      time: {
+        start,
+        end: numberFrom(anchor.end_seconds) ?? start,
+      },
+      bbox: anchor.geometry,
+      traceback_refs: decision.source_traceback_refs || [],
+      confirmation_receipt: {
+        decision_id: decision.decision_id,
+        created_at: decision.created_at,
+        decision_reason: decision.decision_reason,
+        confirmed_narrative_agent: decision.applied_label,
+      },
+    }];
+  });
+}
+
+function confirmedManualVisualSlotsForRow(
+  analysisData: unknown,
+  row: NarrativeAgentPathRow,
+): Record<string, unknown>[] {
+  const data = analysisData as AnalysisData;
+  const rowKeys = [row.label].map(normalizeAgentKey).filter(Boolean);
+  return (data?.manualAnnotationsByCategory?.Identification || []).flatMap((annotation) => {
+    const annotationKeys = [
+      annotation.identity_affirmation,
+      annotation.narrative_agent_affirmation,
+      annotation.custom_label,
+      annotation.label,
+    ].map(normalizeAgentKey).filter(Boolean);
+    if (!annotationKeys.some((key) => rowKeys.includes(key))) return [];
+    const start = numberFrom(annotation.start_seconds ?? annotation.timestamp_seconds);
+    if (start === undefined) return [];
+    const correlation = asRecord(annotation.metadata_correlation);
+    return [{
+      sample_id: annotation.id,
+      sample_state: "mature_user_confirmation",
+      authority: "manual_confirmation",
+      modality: "visual",
+      analysis_id: data.analysisId,
+      time: {
+        start,
+        end: numberFrom(annotation.end_seconds) ?? start,
+      },
+      bbox: annotation.coordinates,
+      traceback_refs: [annotation.id],
+      confirmation_receipt: {
+        decision_id: annotation.id,
+        confirmed_narrative_agent: annotation.identity_affirmation || annotation.narrative_agent_affirmation || annotation.custom_label || annotation.label,
+        detector_track_id: correlation.target_id || correlation.geometry_track_id || correlation.track_id,
+        detector_track_label: correlation.target_label,
+        authority_source: "manual_visual_annotation",
+      },
+    }];
+  });
+}
+
+function narrativeAgentVisualSlotsForRow(
+  analysisData: unknown,
+  row: NarrativeAgentPathRow,
+): Record<string, unknown>[] {
+  const memory = narrativeAgentIdentityMemoryForRow(analysisData, row);
+  const slots = [
+    ...arrayFromUnknown(memory?.visual_sample_slots).map(asRecord),
+    ...confirmedManualVisualSlotsForRow(analysisData, row),
+    ...confirmedVisualLineupSlotsForRow(analysisData, row),
+  ];
+  return [...new Map(slots.map((slot, index) => {
+    const record = asRecord(slot);
+    const time = asRecord(record.time);
+    const start = numberFrom(time.start ?? time.time_start);
+    const end = numberFrom(time.end ?? time.time_end) ?? start;
+    const box = narrativeAgentVisualBbox(record.bbox);
+    // A decision receipt and its materialized Master Schema annotation have
+    // different IDs but represent one governed occurrence. Deduplicate by the
+    // source-time/BBox identity that the analyst actually confirmed.
+    const occurrenceKey = start === undefined || !box
+      ? stringFrom(record.sample_id) || `visual-slot:${index}`
+      : [start.toFixed(3), end?.toFixed(3), box.x.toFixed(3), box.y.toFixed(3), box.width.toFixed(3), box.height.toFixed(3)].join(":");
+    return [occurrenceKey, slot];
+  })).values()];
+}
+
+function narrativeAgentFamilyGovernance(
+  analysisData: unknown,
+): { aliases: Map<string, string>; createdLabels: string[] } {
+  const data = analysisData as AnalysisData;
+  const aliases = new Map<string, string>();
+  const createdLabels: string[] = [];
+  (data?.annotationCorrections?.proliferation_decisions || []).forEach((decision) => {
+    if (decision.decision !== "confirmed" || !String(decision.decision_id || "").startsWith("narrative-agent-family-governance:")) return;
+    const target = stringFrom(decision.applied_label);
+    const source = stringFrom(decision.candidate_label);
+    if (!target) return;
+    createdLabels.push(target);
+    if (source && normalizeAgentKey(source) !== normalizeAgentKey(target)) aliases.set(normalizeAgentKey(source), target);
+  });
+  return { aliases, createdLabels: uniqueStrings(createdLabels) };
+}
+
+function narrativeAgentVisualTrackKey(value: unknown): string | undefined {
+  const source = String(value || "").toLowerCase();
+  const match = source.match(/(?:person|track)(?::|\s|-)*(\d+)/);
+  return match?.[1] ? `person-track:${match[1]}` : undefined;
+}
+
+function narrativeAgentVisualIntervalAndGeometryMatch(
+  candidate: EvidenceProliferationCandidate,
+  startValue: unknown,
+  endValue: unknown,
+  geometryValue: unknown,
+): boolean {
+  const candidateStart = numberFrom(candidate.time?.start);
+  const candidateEnd = numberFrom(candidate.time?.end) ?? candidateStart;
+  const confirmedStart = numberFrom(startValue);
+  const confirmedEnd = numberFrom(endValue) ?? confirmedStart;
+  if (candidateStart === undefined || confirmedStart === undefined) return false;
+  const timeOverlaps = candidateStart <= (confirmedEnd ?? confirmedStart) + 0.2
+    && confirmedStart <= (candidateEnd ?? candidateStart) + 0.2;
+  if (!timeOverlaps) return false;
+  const candidateBox = narrativeAgentVisualBbox(candidate.geometry);
+  const confirmedBox = narrativeAgentVisualBbox(geometryValue);
+  if (!candidateBox || !confirmedBox) return false;
+  const left = Math.max(candidateBox.x, confirmedBox.x);
+  const top = Math.max(candidateBox.y, confirmedBox.y);
+  const right = Math.min(candidateBox.x + candidateBox.width, confirmedBox.x + confirmedBox.width);
+  const bottom = Math.min(candidateBox.y + candidateBox.height, confirmedBox.y + confirmedBox.height);
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  const smallerArea = Math.min(
+    candidateBox.width * candidateBox.height,
+    confirmedBox.width * confirmedBox.height,
+  );
+  return smallerArea > 0 && intersection / smallerArea >= 0.45;
+}
+
+function confirmedNarrativeAgentRowForCandidate(
+  analysisData: unknown,
+  rows: NarrativeAgentPathRow[],
+  candidate: EvidenceProliferationCandidate,
+  exactOccurrenceOnly = false,
+): NarrativeAgentPathRow | undefined {
+  const candidateTrackKeys = uniqueStrings([
+    narrativeAgentVisualTrackKey(candidate.evidence_id),
+    narrativeAgentVisualTrackKey(candidate.candidate_id),
+    narrativeAgentVisualTrackKey(candidate.provenance?.detector_track_uid),
+    narrativeAgentVisualTrackKey(candidate.label),
+  ]);
+  const data = analysisData as AnalysisData;
+  const stableCandidateIds = new Set(uniqueStrings([candidate.evidence_id, candidate.candidate_id]));
+  return rows.find((row) => {
+    const rowKeys = [row.label].map(normalizeAgentKey).filter(Boolean);
+    const confirmedByManualBbox = (data?.manualAnnotationsByCategory?.Identification || []).some((annotation) => {
+      const labelKeys = [annotation.identity_affirmation, annotation.custom_label, annotation.label].map(normalizeAgentKey).filter(Boolean);
+      if (!labelKeys.some((key) => rowKeys.includes(key))) return false;
+      const correlation = asRecord(annotation.metadata_correlation);
+      const annotationTrackKeys = uniqueStrings([
+        narrativeAgentVisualTrackKey(correlation.geometry_track_id),
+        narrativeAgentVisualTrackKey(correlation.detector_track_uid),
+        narrativeAgentVisualTrackKey(correlation.track_id),
+        narrativeAgentVisualTrackKey(correlation.target_id),
+        narrativeAgentVisualTrackKey(correlation.target_label),
+        narrativeAgentVisualTrackKey(annotation.id),
+        narrativeAgentVisualTrackKey(annotation.label),
+      ]);
+      const trackMatches = annotationTrackKeys.some((key) => candidateTrackKeys.includes(key));
+      const intervalAndGeometryMatch = narrativeAgentVisualIntervalAndGeometryMatch(
+        candidate,
+        annotation.start_seconds ?? annotation.timestamp_seconds,
+        annotation.end_seconds ?? annotation.timestamp_seconds,
+        annotation.coordinates,
+      );
+      return intervalAndGeometryMatch || (!exactOccurrenceOnly && trackMatches);
+    });
+    if (confirmedByManualBbox) return true;
+    const confirmedByDecision = (data?.annotationCorrections?.proliferation_decisions || []).some((decision) => {
+      if (decision.decision !== "confirmed" || !rowKeys.includes(normalizeAgentKey(decision.applied_label || decision.cluster_key))) return false;
+      const decisionIds = uniqueStrings([decision.candidate_id, decision.target_evidence_id]);
+      if (decisionIds.some((id) => stableCandidateIds.has(id))) return true;
+      const anchor = asRecord(decision.source_anchors?.[0]);
+      return narrativeAgentVisualIntervalAndGeometryMatch(
+        candidate,
+        anchor.start_seconds,
+        anchor.end_seconds,
+        anchor.geometry,
+      );
+    });
+    if (confirmedByDecision) return true;
+    return narrativeAgentVisualSlotsForRow(analysisData, row).some((slot) => {
+      const record = asRecord(slot);
+      const receipt = asRecord(record.confirmation_receipt);
+      const slotId = stringFrom(record.sample_id);
+      if (slotId && stableCandidateIds.has(slotId)) return true;
+      const slotTrackKeys = uniqueStrings([
+        narrativeAgentVisualTrackKey(record.sample_id),
+        narrativeAgentVisualTrackKey(receipt.decision_id),
+      ]);
+      if (!exactOccurrenceOnly && slotTrackKeys.some((key) => candidateTrackKeys.includes(key))) return true;
+      const time = asRecord(record.time);
+      return narrativeAgentVisualIntervalAndGeometryMatch(
+        candidate,
+        time.start ?? time.time_start,
+        time.end ?? time.time_end,
+        record.bbox,
+      );
+    });
+  });
+}
+
+function narrativeAgentVisualBbox(value: unknown): { x: number; y: number; width: number; height: number } | null {
+  const raw = asRecord(value);
+  const source = asRecord(raw.bbox || raw.roi || raw);
+  const x = numberFrom(source.x ?? source.left ?? source.x1);
+  const y = numberFrom(source.y ?? source.top ?? source.y1);
+  const width = numberFrom(
+    source.width ?? source.w ?? (
+      x !== undefined && numberFrom(source.x2) !== undefined
+        ? (numberFrom(source.x2) as number) - x
+        : undefined
+    ),
+  );
+  const height = numberFrom(
+    source.height ?? source.h ?? (
+      y !== undefined && numberFrom(source.y2) !== undefined
+        ? (numberFrom(source.y2) as number) - y
+        : undefined
+    ),
+  );
+  if (x === undefined || y === undefined || width === undefined || height === undefined) return null;
+  if (Math.max(x, y, width, height) > 1.5 || width <= 0 || height <= 0) return null;
+  return {
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y)),
+    width: Math.max(0.01, Math.min(1, width)),
+    height: Math.max(0.01, Math.min(1, height)),
+  };
+}
+
+function isUnresolvedNarrativeAgentLabel(value: unknown): boolean {
+  const label = normalizeAgentKey(value);
+  return !label || [
+    "character present",
+    "unidentified person",
+    "unknown character",
+    "unknown person",
+    "person",
+    "confirm narrative agent",
+  ].includes(label) || label.startsWith("confirm narrative agent ");
+}
+
+function rawNarrativeAgentVisualCandidates(analysisData: unknown): EvidenceProliferationCandidate[] {
+  const data = analysisData as AnalysisData;
+  const metadata = asRecord(data?.metadata?.sourceMediaMetadata);
+  const frameWidth = numberFrom(metadata.width) || 1280;
+  const frameHeight = numberFrom(metadata.height) || 720;
+  const representatives = new Map<string, (typeof data.rawDetectedObjects)[number]>();
+  // Every measured occurrence must face lineup governance. JPEG crops are
+  // lazy-loaded, so retaining distinct source-time/BBox observations no longer
+  // creates the live-decoder failure caused by the former video thumbnails.
+  const objects = [...(data?.detectedObjects || []), ...(data?.rawDetectedObjects || [])]
+    .filter((object) => String(object.raw_class_name || object.class_name || "").toLowerCase() === "person")
+    // A visible person occurrence must not disappear merely because a detector
+    // did not assign a track. Manual/native Identification boxes and untracked
+    // detections are first-class review labour too.
+    .filter((object) => !object.identityAffirmation);
+  objects.forEach((object) => {
+    const start = numberFrom(object.startTimestamp ?? object.timestamp) ?? 0;
+    const box = object.bbox;
+    const occurrenceKey = [
+      object.sourceAnnotationId,
+      object.detectorTrackUid,
+      object.trackId,
+      start.toFixed(3),
+      box?.x1, box?.y1, box?.x2, box?.y2,
+    ].filter((value) => value !== undefined && value !== null).join(":");
+    const key = `occurrence:${occurrenceKey}`;
+    const existing = representatives.get(key);
+    if (!existing || Number(object.confidence || 0) > Number(existing.confidence || 0)) representatives.set(key, object);
+  });
+  const objectCandidates = [...representatives.entries()].flatMap(([trackKey, object]) => {
+    const bbox = object.bbox;
+    if (!bbox) return [];
+    const x1 = numberFrom(bbox.x1);
+    const y1 = numberFrom(bbox.y1);
+    const x2 = numberFrom(bbox.x2);
+    const y2 = numberFrom(bbox.y2);
+    if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) return [];
+    const start = numberFrom(object.startTimestamp ?? object.timestamp) ?? 0;
+    const end = numberFrom(object.endTimestamp) ?? start + 0.5;
+    const evidenceId = `raw-person-candidate:${trackKey}`;
+    const alreadyNormalized = Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) <= 1.5;
+    return [{
+      candidate_id: evidenceId,
+      evidence_id: evidenceId,
+      label: object.displayLabel || `Unconfirmed person ${trackKey.replace("track:", "track ")}`,
+      category: "person",
+      candidate_role: "identity_candidate",
+      source_panel: "objects_panel",
+      time: { start, end },
+      geometry: {
+        geometry_type: "bbox",
+        coordinate_system: "normalized",
+        bbox: {
+          x: Math.max(0, Math.min(1, alreadyNormalized ? x1 : x1 / frameWidth)),
+          y: Math.max(0, Math.min(1, alreadyNormalized ? y1 : y1 / frameHeight)),
+          width: Math.max(0.001, Math.min(1, alreadyNormalized ? x2 - x1 : (x2 - x1) / frameWidth)),
+          height: Math.max(0.001, Math.min(1, alreadyNormalized ? y2 - y1 : (y2 - y1) / frameHeight)),
+        },
+      },
+      match_score: Number(object.confidence || 0),
+      review_state: "candidate_review_required",
+      provenance: {
+        source: object.sourceType === "manual_visual" ? "manual_visual_annotations" : "rawDetectedObjects",
+        source_annotation_id: object.sourceAnnotationId,
+        detector_provider: object.detectorProvider,
+        detector_run_id: object.detectorRunId,
+        detector_track_uid: object.detectorTrackUid,
+        raw_detection_preserved: true,
+      },
+    } as EvidenceProliferationCandidate];
+  });
+  const manualCandidates = (data?.manualAnnotationsByCategory?.Identification || []).flatMap((annotation) => {
+    const governedLabel = annotation.identity_affirmation || annotation.narrative_agent_affirmation;
+    if (!isUnresolvedNarrativeAgentLabel(governedLabel)) return [];
+    const bbox = narrativeAgentVisualBbox(annotation.coordinates);
+    const start = numberFrom(annotation.start_seconds ?? annotation.timestamp_seconds);
+    if (!bbox || start === undefined) return [];
+    const end = numberFrom(annotation.end_seconds) ?? start;
+    const correlation = asRecord(annotation.metadata_correlation);
+    const evidenceId = `manual-visual-candidate:${annotation.id}`;
+    return [{
+      candidate_id: evidenceId,
+      evidence_id: evidenceId,
+      label: isUnresolvedNarrativeAgentLabel(annotation.label) ? "Unidentified Narrative Agent" : annotation.label,
+      category: "person",
+      candidate_role: "identity_candidate",
+      source_panel: "manual_visual_annotations",
+      time: { start, end },
+      geometry: { geometry_type: "bbox", coordinate_system: "normalized", bbox },
+      match_score: numberFrom(correlation.match_score) ?? 0,
+      review_state: "candidate_review_required",
+      evidence_refs: [{ source_type: "manual_visual_annotation", source_id: annotation.id }],
+      provenance: {
+        source: "manual_visual_annotations",
+        source_annotation_id: annotation.id,
+        detector_track_uid: correlation.detector_track_uid || correlation.geometry_track_id || correlation.track_id,
+        traceback_ref: annotation.id,
+        raw_detection_preserved: true,
+      },
+    } as EvidenceProliferationCandidate];
+  });
+  return [...new Map([...objectCandidates, ...manualCandidates].map((candidate) => [
+    String(candidate.evidence_id || candidate.candidate_id),
+    candidate,
+  ])).values()];
+}
+
+function NarrativeAgentFaceThumbnail({
+  videoId,
+  start,
+  bbox,
+  label,
+  state,
+  reviewSize = false,
+  onOpen,
+}: {
+  videoId: string;
+  start: number;
+  end?: number;
+  bbox?: unknown;
+  label: string;
+  state: "mature" | "candidate" | "selected";
+  reviewSize?: boolean;
+  onOpen: () => void;
+}) {
+  const [isInspecting, setIsInspecting] = useState(false);
+  const normalized = narrativeAgentVisualBbox(bbox);
+  const cropUrl = apiService.objectSourceCropUrl(videoId, start, normalized ? {
+    x1: normalized.x,
+    y1: normalized.y,
+    x2: normalized.x + normalized.width,
+    y2: normalized.y + normalized.height,
+  } : undefined);
+  return (
+    <div className={`group relative shrink-0 ${reviewSize ? "h-16 w-16" : "h-14 w-14"}`} data-vaa1-narrative-agent-thumbnail-shell="true">
+      <button
+        type="button"
+        className={`group relative overflow-hidden rounded border bg-black text-left ${reviewSize ? "h-16 w-16" : "h-14 w-14"} ${
+        state === "mature"
+          ? "border-emerald-700/70"
+          : state === "selected"
+            ? "border-cyan-300 ring-1 ring-cyan-400/60"
+            : "border-slate-700 hover:border-cyan-700"
+      }`}
+      title={`${label} · ${formatSeconds(start)} · open source`}
+      aria-label={`Open ${label} visual occurrence at ${formatSeconds(start)}`}
+      onClick={onOpen}
+        data-vaa1-narrative-agent-face-thumbnail="true"
+      >
+        {/* A bounded, authenticated API crop cannot use Next Image's static loader. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={cropUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="pointer-events-none h-full w-full object-cover"
+          data-vaa1-source-linked-jpeg-crop="true"
+        />
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/80 px-1 py-0.5 text-[8px] text-slate-100">
+          {formatSeconds(start)}
+        </span>
+        {state === "mature" ? (
+          <span className="pointer-events-none absolute right-0.5 top-0.5 rounded bg-emerald-900/90 px-1 text-[8px] text-emerald-100">mature</span>
+        ) : null}
+      </button>
+      <button
+        type="button"
+        className="absolute bottom-3.5 right-0.5 rounded bg-black/75 px-1 text-[9px] text-slate-200 opacity-0 transition-opacity hover:bg-slate-800 group-hover:opacity-100 focus:opacity-100"
+        aria-label={`Inspect larger still for ${label} at ${formatSeconds(start)}`}
+        title="Inspect larger still"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsInspecting(true);
+        }}
+        data-vaa1-narrative-agent-thumbnail-inspect="true"
+      >
+        ⤢
+      </button>
+      {isInspecting ? (
+        <div
+          className="fixed inset-0 z-[1000] grid place-items-center bg-black/70 p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${label} source still`}
+          onClick={() => setIsInspecting(false)}
+          data-vaa1-narrative-agent-thumbnail-lightbox="true"
+        >
+          <div className="w-[min(420px,90vw)] rounded border border-slate-600 bg-[#111] p-3 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={cropUrl} alt={`${label} at ${formatSeconds(start)}`} className="max-h-[65vh] w-full rounded bg-black object-contain" />
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="truncate text-[11px] text-slate-200">{label} · {formatSeconds(start)}</span>
+              <div className="flex gap-1">
+                <button type="button" className="rounded border border-cyan-800 px-2 py-1 text-[10px] text-cyan-100" onClick={() => { setIsInspecting(false); onOpen(); }}>
+                  Open in video
+                </button>
+                <button type="button" className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300" onClick={() => setIsInspecting(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NarrativeAgentVisualClusterLineup({
+  analysisData,
+  rows,
+  videoId,
+  onCommit,
+  onGovernFamilies,
+}: {
+  analysisData: unknown;
+  rows: NarrativeAgentPathRow[];
+  selectedRow?: NarrativeAgentPathRow;
+  videoId: string;
+  onCommit: (assignments: NarrativeAgentVisualLineupAssignment[]) => Promise<void>;
+  onGovernFamilies: (action: NarrativeAgentFamilyGovernanceAction) => Promise<void>;
+}) {
+  const [assignments, setAssignments] = useState<Record<string, {
+    candidate: EvidenceProliferationCandidate;
+    rowKey: string;
+    sourceRowKey: string;
+    score: number;
+    analystStaged?: boolean;
+  }>>({});
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Record<string, boolean>>({});
+  const [isScanning, setIsScanning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState("Ready to compare source-linked visual candidates.");
+  const [newFamilyLabel, setNewFamilyLabel] = useState("");
+  const [editingRowKey, setEditingRowKey] = useState("");
+  const [rowLabelDraft, setRowLabelDraft] = useState("");
+  const [mergeTargetKey, setMergeTargetKey] = useState("");
+  const [stagedMatureIds, setStagedMatureIds] = useState<Record<string, boolean>>({});
+  const [lineupRowOrder, setLineupRowOrder] = useState<string[]>([]);
+  const [collapsedLineupRows, setCollapsedLineupRows] = useState<Record<string, boolean>>({});
+  const [loadedLineupPreferenceKey, setLoadedLineupPreferenceKey] = useState("");
+  const automaticScanKey = useRef("");
+
+  const lineupRows = useMemo(() => {
+    const unique = new Map<string, NarrativeAgentPathRow>();
+    const familyGovernance = narrativeAgentFamilyGovernance(analysisData);
+    const canonicalLabel = (label: string) => {
+      let resolved = label;
+      const visited = new Set<string>();
+      while (familyGovernance.aliases.has(normalizeAgentKey(resolved)) && !visited.has(normalizeAgentKey(resolved))) {
+        visited.add(normalizeAgentKey(resolved));
+        resolved = familyGovernance.aliases.get(normalizeAgentKey(resolved)) || resolved;
+      }
+      return resolved;
+    };
+    const governedLabels = uniqueStrings([
+      ...visualLineupNarrativeAgentLabels(analysisData as AnalysisData).map(canonicalLabel),
+      ...familyGovernance.createdLabels,
+    ]);
+    const governedKeys = new Set(governedLabels.map(normalizeAgentKey));
+    const preferred = [...rows].sort((left, right) => {
+      const leftGoverned = governedKeys.has(normalizeAgentKey(left.label)) ? 1 : 0;
+      const rightGoverned = governedKeys.has(normalizeAgentKey(right.label)) ? 1 : 0;
+      return rightGoverned - leftGoverned || left.label.localeCompare(right.label);
+    });
+    preferred.forEach((row) => {
+      const label = canonicalLabel(row.label);
+      const key = normalizeAgentKey(label);
+      if (key && governedKeys.has(key)) {
+        const existing = unique.get(key);
+        unique.set(key, existing ? {
+          ...existing,
+          aliases: uniqueStrings([...existing.aliases, row.label, ...row.aliases]),
+          sourceLabels: uniqueStrings([...existing.sourceLabels, row.label, ...row.sourceLabels]),
+        } : {
+          ...row,
+          key: `governed-agent:${key}`,
+          label,
+          aliases: uniqueStrings([row.label, ...row.aliases].filter((value) => normalizeAgentKey(value) !== key)),
+          sourceLabels: uniqueStrings([row.label, ...row.sourceLabels]),
+        });
+      }
+    });
+    governedLabels.forEach((label) => {
+      const key = normalizeAgentKey(label);
+      if (!key || unique.has(key)) return;
+      unique.set(key, {
+        key: `governed-agent:${key}`,
+        label,
+        aliases: [], sourceLabels: [], profileIds: [],
+        source: "Shared Narrative Agent registry",
+        sceneCount: 0, manualCount: 0, cueCount: 0,
+        evidenceChips: ["governed registry"], cues: [], sceneRefs: [],
+        scenePresence: [], sourceItems: [],
+      });
+    });
+    return [...unique.values()];
+  }, [analysisData, rows]);
+  const unresolvedRow: NarrativeAgentPathRow = {
+    key: "__unresolved__",
+    label: "Unresolved / competing",
+    aliases: [],
+    sourceLabels: [],
+    profileIds: [],
+    source: "No Narrative Agent family has a sufficient lead",
+    sceneCount: 0,
+    manualCount: 0,
+    cueCount: 0,
+    evidenceChips: [],
+    cues: [],
+    sceneRefs: [],
+    scenePresence: [],
+    sourceItems: [],
+  };
+  const lineupPreferenceKey = `vaa1.narrative-agent-visual-lineup:${videoId || "unselected"}`;
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(getBrowserStorageItem(lineupPreferenceKey) || "{}");
+      setLineupRowOrder(Array.isArray(saved.order) ? saved.order.filter((key: unknown) => typeof key === "string") : []);
+      setCollapsedLineupRows(saved.collapsed && typeof saved.collapsed === "object" ? saved.collapsed : {});
+    } catch {
+      setLineupRowOrder([]);
+      setCollapsedLineupRows({});
+    }
+    setLoadedLineupPreferenceKey(lineupPreferenceKey);
+  }, [lineupPreferenceKey]);
+  useEffect(() => {
+    if (loadedLineupPreferenceKey !== lineupPreferenceKey) return;
+    setBrowserStorageItem(lineupPreferenceKey, JSON.stringify({
+      order: lineupRowOrder,
+      collapsed: collapsedLineupRows,
+    }));
+  }, [collapsedLineupRows, lineupPreferenceKey, lineupRowOrder, loadedLineupPreferenceKey]);
+  const orderedLineupRows = useMemo(() => {
+    const position = new Map(lineupRowOrder.map((key, index) => [key, index]));
+    return [...lineupRows].sort((left, right) => {
+      const leftPosition = position.get(left.key);
+      const rightPosition = position.get(right.key);
+      if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
+      if (leftPosition !== undefined) return -1;
+      if (rightPosition !== undefined) return 1;
+      return 0;
+    });
+  }, [lineupRowOrder, lineupRows]);
+  // Keep the unassigned review queue fixed above the analyst-ordered governed
+  // families so candidates never appear absent while discrimination runs.
+  const displayRows = [unresolvedRow, ...orderedLineupRows];
+  const immediateCandidates = useMemo(
+    () => rawNarrativeAgentVisualCandidates(analysisData),
+    [analysisData],
+  );
+
+  useEffect(() => {
+    // GoldenLayout can retain this panel instance while the analyst opens a
+    // different saved video. Review state is analysis-local and must never
+    // carry candidates or selections across that source boundary.
+    setAssignments({});
+    setSelectedCandidateIds({});
+    setStagedMatureIds({});
+    automaticScanKey.current = "";
+    setMessage("Ready to compare source-linked visual candidates.");
+  }, [videoId]);
+
+  useEffect(() => {
+    if (!immediateCandidates.length) return;
+    setAssignments((current) => {
+      const next = { ...current };
+      immediateCandidates.forEach((candidate) => {
+        const id = String(candidate.evidence_id || candidate.candidate_id);
+        const exactConfirmedRow = confirmedNarrativeAgentRowForCandidate(analysisData, lineupRows, candidate, true);
+        const authorityRow = confirmedNarrativeAgentRowForCandidate(analysisData, lineupRows, candidate);
+        if (exactConfirmedRow) {
+          delete next[id];
+        } else if (!next[id]) next[id] = {
+          candidate,
+          rowKey: authorityRow?.key || unresolvedRow.key,
+          sourceRowKey: authorityRow?.key || unresolvedRow.key,
+          score: authorityRow ? 1 : Number(candidate.match_score ?? -1),
+        };
+      });
+      return next;
+    });
+  }, [analysisData, immediateCandidates, lineupRows, unresolvedRow.key]);
+
+  const scanLineups = async () => {
+    if (!videoId || lineupRows.length === 0) return;
+    setIsScanning(true);
+    setMessage(`Comparing visual evidence for ${lineupRows.length} Narrative Agent families...`);
+    try {
+      // Candidate harvesting is artifact-wide. Running the same open-topology
+      // query once per family delayed the work queue by roughly one backend
+      // round trip per character while returning the same person occurrences.
+      const harvestRow = lineupRows.find((row) =>
+        narrativeAgentVisualSlotsForRow(analysisData, row).length > 0,
+      ) || lineupRows[0];
+      const harvestAnchor = asRecord(narrativeAgentVisualSlotsForRow(analysisData, harvestRow)[0]);
+      const harvestTime = asRecord(harvestAnchor.time);
+      const harvestStart = numberFrom(harvestTime.start ?? harvestTime.time_start ?? harvestRow.start);
+      const harvestEnd = numberFrom(harvestTime.end ?? harvestTime.time_end ?? harvestRow.end ?? harvestStart);
+      const result = await apiService.matchEvidenceProliferation(videoId, {
+        request_id: `narrative-agent-visual-lineup:artifact-candidates:${Date.now()}`,
+        created_at: new Date().toISOString(),
+        video_id: videoId,
+        evidence: {
+          overlay_key: stringFrom(harvestAnchor.sample_id) || harvestRow.key,
+          label: harvestRow.label,
+          source_label: harvestRow.label,
+          category: "narrative_agent_profile",
+          source_panel: "NarrativeAgentPanel",
+          interval: harvestStart === undefined ? undefined : { start: harvestStart, end: harvestEnd ?? harvestStart },
+          geometry: harvestAnchor.bbox,
+          evidence_refs: arrayFromUnknown(harvestAnchor.traceback_refs),
+        },
+        scope: "same_video_open_topology",
+        target: "character_continuity",
+        governance: {
+          manual_correction_wins: true,
+          source_anchor_required_for_promotion: true,
+          candidate_only_until_decision: true,
+          visual_cluster_lineup: true,
+          artifact_wide_candidate_harvest: true,
+        },
+      });
+      const candidatesByEvidence = new Map<string, EvidenceProliferationCandidate>();
+      const matureEvidenceIds = new Set(lineupRows.flatMap((row) => {
+        return narrativeAgentVisualSlotsForRow(analysisData, row)
+          .map((slot) => stringFrom(asRecord(slot).sample_id))
+          .filter(Boolean);
+      }));
+      immediateCandidates.forEach((candidate) => {
+        const stableEvidenceId = String(candidate.evidence_id || candidate.candidate_id);
+        if (
+          !matureEvidenceIds.has(stableEvidenceId)
+          && !confirmedNarrativeAgentRowForCandidate(analysisData, lineupRows, candidate, true)
+        ) candidatesByEvidence.set(stableEvidenceId, candidate);
+      });
+      (result.candidates || [])
+          .filter((candidate) => candidate.candidate_role === "identity_candidate")
+          .filter((candidate) => numberFrom(candidate.time?.start) !== undefined)
+          .filter((candidate) => narrativeAgentVisualBbox(candidate.geometry))
+          .forEach((candidate) => {
+            const stableEvidenceId = String(candidate.evidence_id || candidate.candidate_id);
+            if (matureEvidenceIds.has(stableEvidenceId)) return;
+            if (confirmedNarrativeAgentRowForCandidate(analysisData, lineupRows, candidate, true)) return;
+            if (!candidatesByEvidence.has(stableEvidenceId)) {
+              candidatesByEvidence.set(stableEvidenceId, candidate);
+            }
+          });
+      // Surface the review labour immediately. Facial discrimination may be
+      // slower or unavailable; neither condition is permission to hide valid
+      // source-linked candidates from the analyst.
+      setAssignments((current) => {
+        const harvested = Object.fromEntries([...candidatesByEvidence.entries()].map(([id, candidate]) => [id, {
+          candidate,
+          rowKey: unresolvedRow.key,
+          sourceRowKey: unresolvedRow.key,
+          score: -1,
+        }]));
+        // Background comparison is advisory. It must never overwrite an
+        // analyst move made while the asynchronous motor is still running.
+        Object.entries(current).forEach(([id, assignment]) => {
+          if (assignment.analystStaged) harvested[id] = assignment;
+        });
+        return harvested;
+      });
+      setMessage(`${candidatesByEvidence.size} unconfirmed visual candidates harvested; measuring their best prospective Narrative Agent rows...`);
+      const faceMeasurement = await apiService.measureNarrativeAgentFaces(videoId, {
+        request_id: `narrative-agent-face-discrimination:${videoId}:${Date.now()}`,
+        families: lineupRows.map((row) => {
+          return {
+            // The measurement motor must return semantic family keys. UI row
+            // keys may be occurrence identifiers and are not identity labels.
+            key: normalizeAgentKey(row.label),
+            label: row.label,
+            seeds: narrativeAgentVisualSlotsForRow(analysisData, row).map((slot, index) => {
+              const anchor = asRecord(slot);
+              const time = asRecord(anchor.time);
+              return {
+                evidence_id: stringFrom(anchor.sample_id) || `${row.key}:visual-seed:${index}`,
+                time: {
+                  start: numberFrom(time.start ?? time.time_start),
+                  end: numberFrom(time.end ?? time.time_end),
+                },
+                geometry: anchor.bbox,
+              };
+            }),
+          };
+        }),
+        candidates: [...candidatesByEvidence.entries()].map(([evidenceId, candidate]) => ({
+          evidence_id: evidenceId,
+          time: candidate.time,
+          geometry: candidate.geometry,
+        })),
+      });
+      const bestByCandidate = new Map<string, {
+        candidate: EvidenceProliferationCandidate;
+        rowKey: string;
+        sourceRowKey: string;
+        score: number;
+      }>();
+      let unresolvedCount = 0;
+      const measurements = new Map(
+        (faceMeasurement.candidates || []).map((measurement) => [measurement.evidence_id, measurement]),
+      );
+      candidatesByEvidence.forEach((candidate, stableEvidenceId) => {
+        const measurement = measurements.get(stableEvidenceId);
+        const measuredFamilyKey = normalizeAgentKey(stringFrom(measurement?.best_family_key));
+        const prospectiveRow = lineupRows.find((row) => normalizeAgentKey(row.label) === measuredFamilyKey);
+        const authorityRow = confirmedNarrativeAgentRowForCandidate(analysisData, lineupRows, candidate);
+        // A measured best match belongs on its prospective row even when it
+        // is below the confirmation threshold. Thresholds govern maturity,
+        // not whether the analyst may inspect and correct a probability-led
+        // candidate placement.
+        const rowKey: string = authorityRow?.key || prospectiveRow?.key || unresolvedRow.key;
+        if (rowKey === unresolvedRow.key) unresolvedCount += 1;
+        const measuredCandidate: EvidenceProliferationCandidate = {
+          ...candidate,
+          geometry: measurement?.face_geometry || candidate.geometry,
+          match_score: measurement?.cosine_similarity ?? undefined,
+          provenance: {
+            ...(candidate.provenance || {}),
+            face_measurement_state: measurement?.measurement_state || faceMeasurement.status,
+            face_embedding_dimensions: measurement?.embedding_dimensions,
+            face_embedding_sha256: measurement?.embedding_sha256,
+            facial_landmarks: measurement?.landmarks,
+            similarity_metric: "cosine_similarity_not_probability",
+            exclusion_reason: measurement?.exclusion_reason,
+            placement_authority: authorityRow ? "user_confirmed_narrative_agent_track" : "measured_face_similarity",
+          },
+        };
+        bestByCandidate.set(stableEvidenceId, {
+          candidate: measuredCandidate,
+          rowKey,
+          sourceRowKey: authorityRow?.key || prospectiveRow?.key || unresolvedRow.key,
+          score: authorityRow ? 1 : (measurement?.cosine_similarity ?? -1),
+        });
+      });
+      setAssignments((current) => {
+        const measured = Object.fromEntries([...bestByCandidate.entries()].map(([id, item]) => [id, item]));
+        Object.entries(current).forEach(([id, assignment]) => {
+          if (assignment.analystStaged) measured[id] = assignment;
+        });
+        return measured;
+      });
+      setMessage(
+        faceMeasurement.status === "completed_measured"
+          ? `${faceMeasurement.measured_candidate_count || 0}/${bestByCandidate.size} candidates received measured landmarks and embeddings; ${faceMeasurement.eligible_candidate_count || 0} discriminate a Narrative Agent family and ${unresolvedCount} remain unresolved.`
+          : `${faceMeasurement.message || "Facial measurement is unavailable."} ${faceMeasurement.runtime?.installation_command || ""}`.trim(),
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? `Visual lineup failed: ${error.message}` : "Visual lineup failed.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const scanSignature = `${videoId}:${lineupRows.map((row) => row.key).join("|")}`;
+  useEffect(() => {
+    if (!videoId || !lineupRows.length || automaticScanKey.current === scanSignature) return;
+    automaticScanKey.current = scanSignature;
+    void scanLineups();
+    // The signature deliberately governs one automatic scan per artifact and
+    // canonical family set; the visible button remains an explicit rescan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanSignature]);
+
+  const persistAssignments = async (
+    candidateIds: string[],
+    toCommit: NarrativeAgentVisualLineupAssignment[],
+    actionLabel = "confirmation",
+  ) => {
+    if (!toCommit.length) return;
+    setIsSaving(true);
+    setMessage(`Saving ${toCommit.length} governed Narrative Agent ${actionLabel}${toCommit.length === 1 ? "" : "s"}...`);
+    try {
+      await onCommit(toCommit);
+      setAssignments((current) => {
+        const next = { ...current };
+        candidateIds.forEach((candidateId) => delete next[candidateId]);
+        return next;
+      });
+      setStagedMatureIds((current) => {
+        const next = { ...current };
+        candidateIds.forEach((candidateId) => {
+          const confirmedId = String(assignments[candidateId]?.candidate.evidence_id || assignments[candidateId]?.candidate.candidate_id || candidateId.replace(/^mature-revision:/, ""));
+          if (confirmedId) delete next[confirmedId];
+        });
+        return next;
+      });
+      setSelectedCandidateIds({});
+      setMessage(`${toCommit.length} ${actionLabel}${toCommit.length === 1 ? "" : "s"} saved to Master Schema and associated consumers.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? `Visual confirmation failed: ${error.message}` : "Visual confirmation failed.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const confirmAssignments = async (candidateIds: string[]) => {
+    const toCommit = candidateIds.flatMap((candidateId) => {
+      const assignment = assignments[candidateId];
+      const row = lineupRows.find((item) => item.key === assignment?.rowKey);
+      const sourceRow = lineupRows.find((item) => item.key === assignment?.sourceRowKey);
+      return assignment && row ? [{
+        candidate: assignment.candidate,
+        agentLabel: row.label,
+        sourceAgentLabel: sourceRow?.label || row.label,
+      }] : [];
+    });
+    await persistAssignments(candidateIds, toCommit);
+  };
+
+  return (
+    <div data-vaa1-narrative-agent-visual-cluster-lineup="true">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[10px] leading-relaxed text-slate-400">
+          Compact source-linked face/person crops are compared by expected Narrative Agent. Dropping a candidate onto a Narrative Agent row confirms it immediately; checkbox selection remains available for batch confirmation. Competing matches remain unresolved.
+        </div>
+        <button
+          type="button"
+          disabled={isScanning || isSaving || lineupRows.length === 0}
+          className="rounded border border-cyan-800/70 bg-cyan-950/20 px-2 py-1 text-[9px] text-cyan-100 hover:bg-cyan-950/35 disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={() => void scanLineups()}
+          data-vaa1-narrative-agent-visual-lineup-scan="true"
+        >
+          {isScanning ? "Comparing..." : "Explore visual lineups"}
+        </button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1" data-vaa1-narrative-agent-family-governance="true">
+        <input
+          value={newFamilyLabel}
+          onChange={(event) => setNewFamilyLabel(event.target.value)}
+          placeholder="New Narrative Agent, e.g. Police officer"
+          className="min-w-64 flex-1 rounded border border-slate-700 bg-black px-2 py-1 text-[10px] text-slate-100 placeholder:text-slate-600"
+          aria-label="New Narrative Agent row title"
+        />
+        <button
+          type="button"
+          disabled={!newFamilyLabel.trim() || isSaving}
+          className="rounded border border-cyan-800 px-2 py-1 text-[9px] text-cyan-100 disabled:opacity-40"
+          onClick={() => {
+            const targetLabel = newFamilyLabel.trim();
+            void onGovernFamilies({ operation: "create", targetLabel }).then(() => {
+              setNewFamilyLabel("");
+              setMessage(`Created governed Narrative Agent row ${targetLabel}; it is available to associated panels.`);
+            });
+          }}
+        >
+          Add Narrative Agent row
+        </button>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {displayRows.map((row) => {
+          const anchors = Array.from(new Map(
+            narrativeAgentVisualSlotsForRow(analysisData, row)
+              .map(asRecord)
+              .map((anchor, index) => [stringFrom(anchor.sample_id) || JSON.stringify(anchor.time) || String(index), anchor]),
+          ).values());
+          const candidates = Object.entries(assignments).filter(([, assignment]) => assignment.rowKey === row.key);
+          const selectedInRow = candidates
+            .filter(([candidateId]) => selectedCandidateIds[candidateId])
+            .map(([candidateId]) => candidateId);
+          const rowCollapsed = Boolean(collapsedLineupRows[row.key]);
+          return (
+            <div
+              key={`visual-lineup:${row.key}`}
+              className="rounded border border-white/8 bg-[#111] px-2 py-2"
+              data-vaa1-narrative-agent-visual-lineup-row={row.label}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const lineupRowPayload = event.dataTransfer.getData("application/x-datascene-narrative-agent-lineup-row");
+                if (lineupRowPayload && row.key !== unresolvedRow.key) {
+                  const sourceKey = lineupRowPayload;
+                  if (sourceKey !== row.key && lineupRows.some((item) => item.key === sourceKey)) {
+                    const currentOrder = orderedLineupRows.map((item) => item.key);
+                    const sourceIndex = currentOrder.indexOf(sourceKey);
+                    const targetIndex = currentOrder.indexOf(row.key);
+                    if (sourceIndex >= 0 && targetIndex >= 0) {
+                      currentOrder.splice(sourceIndex, 1);
+                      currentOrder.splice(targetIndex, 0, sourceKey);
+                      setLineupRowOrder(currentOrder);
+                      setMessage("Narrative Agent lineup order saved for this analysis.");
+                    }
+                  }
+                  return;
+                }
+                const maturePayload = event.dataTransfer.getData("application/x-datascene-narrative-agent-mature");
+                if (maturePayload && row.key !== unresolvedRow.key) {
+                  try {
+                    const payload = JSON.parse(maturePayload) as { id: string; sourceRowKey: string; start: number; end: number; geometry?: Record<string, unknown>; label: string };
+                    const revisionId = `mature-revision:${payload.id}`;
+                    const sourceRow = lineupRows.find((item) => item.key === payload.sourceRowKey);
+                    void persistAssignments([revisionId], [{
+                      candidate: {
+                          candidate_id: payload.id,
+                          evidence_id: payload.id,
+                          label: payload.label,
+                          category: "person",
+                          candidate_role: "identity_candidate",
+                          source_panel: "NarrativeAgentPanel",
+                          time: { start: payload.start, end: payload.end },
+                          geometry: payload.geometry,
+                          review_state: "candidate_review_required",
+                          provenance: { mature_revision: true, prior_confirmation_preserved: true, source_annotation_id: payload.id },
+                      },
+                      agentLabel: row.label,
+                      sourceAgentLabel: sourceRow?.label || payload.label,
+                    }], "drag correction");
+                  } catch {
+                    setMessage("The mature confirmation could not be corrected.");
+                  }
+                  return;
+                }
+                const batchPayload = event.dataTransfer.getData("application/x-datascene-narrative-agent-candidate-batch");
+                let candidateIds: string[] = [];
+                if (batchPayload) {
+                  try {
+                    candidateIds = (JSON.parse(batchPayload) as string[]).filter((candidateId) => assignments[candidateId]);
+                  } catch {
+                    candidateIds = [];
+                  }
+                }
+                const candidateId = event.dataTransfer.getData("application/x-datascene-narrative-agent-candidate");
+                if (!candidateIds.length && candidateId && assignments[candidateId]) candidateIds = [candidateId];
+                if (!candidateIds.length) return;
+                if (row.key !== unresolvedRow.key) {
+                  const droppedAssignments = candidateIds.flatMap((id) => {
+                    const assignment = assignments[id];
+                    const sourceRow = lineupRows.find((item) => item.key === assignment?.rowKey);
+                    return assignment ? [{
+                      candidate: assignment.candidate,
+                      agentLabel: row.label,
+                      sourceAgentLabel: sourceRow?.label || row.label,
+                    }] : [];
+                  });
+                  void persistAssignments(candidateIds, droppedAssignments, "drag confirmation");
+                  return;
+                }
+                setAssignments((current) => ({
+                  ...current,
+                  ...Object.fromEntries(candidateIds.map((id) => [id, {
+                    ...current[id],
+                    rowKey: row.key,
+                    analystStaged: true,
+                  }])),
+                }));
+                setSelectedCandidateIds((current) => {
+                  const next = { ...current };
+                  candidateIds.forEach((id) => {
+                    next[id] = row.key !== unresolvedRow.key;
+                  });
+                  return next;
+                });
+                setMessage(
+                  `${candidateIds.length} candidate${candidateIds.length === 1 ? "" : "s"} returned to the unresolved row; assign them to a Narrative Agent family before confirmation.`,
+                );
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {row.key !== unresolvedRow.key ? (
+                    <button
+                      type="button"
+                      draggable
+                      className="cursor-grab rounded border border-slate-700 px-1 py-0.5 text-[9px] text-slate-400 hover:border-cyan-700 hover:text-cyan-200 active:cursor-grabbing"
+                      aria-label={`Drag ${row.label} lineup row to reorder`}
+                      title="Drag to reorder this lineup row"
+                      onDragStart={(event) => {
+                        event.stopPropagation();
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("application/x-datascene-narrative-agent-lineup-row", row.key);
+                      }}
+                      data-vaa1-narrative-agent-lineup-row-drag-handle="true"
+                    >
+                      ⋮⋮
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded border border-slate-700 text-[10px] text-slate-300 hover:border-cyan-700 hover:text-cyan-100"
+                    onClick={() => setCollapsedLineupRows((current) => ({ ...current, [row.key]: !current[row.key] }))}
+                    aria-expanded={!rowCollapsed}
+                    aria-label={`${rowCollapsed ? "Expand" : "Collapse"} ${row.label} lineup row`}
+                    data-vaa1-narrative-agent-lineup-row-collapse="true"
+                  >
+                    {rowCollapsed ? "▸" : "▾"}
+                  </button>
+                  <div className="min-w-0">
+                  {row.key !== unresolvedRow.key && editingRowKey === row.key ? (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <input value={rowLabelDraft} onChange={(event) => setRowLabelDraft(event.target.value)} className="min-w-36 rounded border border-slate-700 bg-black px-1.5 py-1 text-[10px] text-slate-100" aria-label={`Edit ${row.label} Narrative Agent row title`} />
+                      <button type="button" className="rounded border border-cyan-800 px-1.5 py-1 text-[9px] text-cyan-100" onClick={() => void onGovernFamilies({ operation: "rename", sourceLabel: row.label, targetLabel: rowLabelDraft }).then(() => { setEditingRowKey(""); setMessage(`Renamed ${row.label} to ${rowLabelDraft}; aliases and associated consumers retained.`); })}>Save title</button>
+                      <select value={mergeTargetKey} onChange={(event) => setMergeTargetKey(event.target.value)} className="rounded border border-slate-700 bg-black px-1 py-1 text-[9px] text-slate-200" aria-label={`Merge ${row.label} into another Narrative Agent`}>
+                        <option value="">Merge into…</option>
+                        {lineupRows.filter((item) => item.key !== row.key).map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                      </select>
+                      <button type="button" disabled={!mergeTargetKey} className="rounded border border-amber-800 px-1.5 py-1 text-[9px] text-amber-100 disabled:opacity-40" onClick={() => {
+                        const target = lineupRows.find((item) => item.key === mergeTargetKey);
+                        if (target) void onGovernFamilies({ operation: "merge", sourceLabel: row.label, targetLabel: target.label }).then(() => { setEditingRowKey(""); setMergeTargetKey(""); setMessage(`Merged ${row.label} into ${target.label}; the former title remains an alias.`); });
+                      }}>Merge</button>
+                      <button type="button" className="px-1 text-[9px] text-slate-400" onClick={() => setEditingRowKey("")}>Cancel</button>
+                    </div>
+                  ) : (
+                    <button type="button" disabled={row.key === unresolvedRow.key} className="truncate text-left text-[10px] font-medium text-slate-100 hover:text-cyan-200 disabled:text-slate-100" onClick={() => { setEditingRowKey(row.key); setRowLabelDraft(row.label); setMergeTargetKey(""); }} title={row.key === unresolvedRow.key ? undefined : "Rename or merge this Narrative Agent row"}>{row.label}</button>
+                  )}
+                  <div className="text-[8px] text-slate-500">{anchors.length} mature · {candidates.length} candidate</div>
+                  </div>
+                </div>
+                {row.key === unresolvedRow.key ? (
+                  <div className="flex items-center gap-1 text-[9px] text-slate-400">
+                    <span>{selectedInRow.length} active</span>
+                    <button type="button" disabled={!selectedInRow.length} className="rounded border border-slate-700 px-2 py-1 disabled:opacity-35" onClick={() => setSelectedCandidateIds((current) => Object.fromEntries(Object.entries(current).map(([id, active]) => [id, selectedInRow.includes(id) ? false : active])))}>Clear</button>
+                  </div>
+                ) : <button
+                  type="button"
+                  disabled={!selectedInRow.length || isSaving}
+                  className="rounded border border-emerald-800/70 px-2 py-1 text-[9px] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-35"
+                  onClick={() => void confirmAssignments(selectedInRow)}
+                >
+                  Confirm selected ({selectedInRow.length})
+                </button>}
+              </div>
+              {!rowCollapsed ? <div className="mt-1.5 grid min-h-16 grid-cols-[repeat(auto-fill,4rem)] content-start gap-1.5 pb-1" data-vaa1-narrative-agent-visual-thumbnail-row="true" data-vaa1-lineup-volume-layout="wrapping-grid">
+                {anchors.filter((anchor) => !stagedMatureIds[stringFrom(anchor.sample_id) || ""]).map((anchor, index) => {
+                  const time = asRecord(anchor.time);
+                  const start = numberFrom(time.start ?? time.time_start);
+                  const end = numberFrom(time.end ?? time.time_end);
+                  return start === undefined ? null : (
+                    <div
+                      key={stringFrom(anchor.sample_id) || `${row.key}:anchor:${index}`}
+                      draggable
+                      className="cursor-grab active:cursor-grabbing"
+                      title="Drag this mature confirmation to another Narrative Agent row to confirm the correction immediately"
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("application/x-datascene-narrative-agent-mature", JSON.stringify({ id: stringFrom(anchor.sample_id) || `${row.key}:anchor:${index}`, sourceRowKey: row.key, start, end: end ?? start, geometry: anchor.bbox, label: row.label }));
+                      }}
+                      data-vaa1-revisable-mature-narrative-agent="true"
+                    >
+                      <NarrativeAgentFaceThumbnail videoId={videoId} start={start} end={end} bbox={anchor.bbox} label={`${row.label} mature visual sample`} state="mature" onOpen={() => openVideoAtTime(videoId, start)} />
+                    </div>
+                  );
+                })}
+                {candidates.map(([candidateId, assignment]) => {
+                  const start = numberFrom(assignment.candidate.time?.start);
+                  const end = numberFrom(assignment.candidate.time?.end);
+                  if (start === undefined) return null;
+                  const selected = Boolean(selectedCandidateIds[candidateId]);
+                  return (
+                    <div
+                      key={candidateId}
+                      draggable
+                      className="relative shrink-0 cursor-grab active:cursor-grabbing"
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        const activeIds = selectedCandidateIds[candidateId]
+                          ? Object.keys(selectedCandidateIds).filter((id) => selectedCandidateIds[id] && assignments[id]?.rowKey === row.key)
+                          : [candidateId];
+                        event.dataTransfer.setData("application/x-datascene-narrative-agent-candidate", candidateId);
+                        event.dataTransfer.setData("application/x-datascene-narrative-agent-candidate-batch", JSON.stringify(activeIds));
+                      }}
+                      data-vaa1-narrative-agent-visual-draggable-candidate="true"
+                    >
+                      <NarrativeAgentFaceThumbnail
+                        videoId={videoId}
+                        start={start}
+                        end={end}
+                        bbox={assignment.candidate.geometry}
+                        label={`${row.label} candidate`}
+                        state={selected ? "selected" : "candidate"}
+                        reviewSize={row.key === unresolvedRow.key}
+                        onOpen={() => openVideoAtTime(videoId, start)}
+                      />
+                      <button
+                        type="button"
+                        className={`absolute left-0.5 top-0.5 grid h-4 w-4 place-items-center rounded border text-[9px] ${
+                          selected
+                            ? "border-cyan-200 bg-cyan-700 text-white"
+                            : "border-slate-400 bg-black/75 text-transparent"
+                        }`}
+                        aria-label={`${selected ? "Unselect" : "Select"} ${row.label} candidate at ${formatSeconds(start)}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedCandidateIds((current) => ({ ...current, [candidateId]: !current[candidateId] }));
+                        }}
+                      >
+                        ✓
+                      </button>
+                      {assignment.score >= -0.5 ? (
+                        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/85 px-1 text-[7px] text-slate-200" title="Measured SFace cosine similarity; not a calibrated probability">
+                          cos {assignment.score.toFixed(3)}
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {!anchors.length && !candidates.length ? (
+                  <div className="flex items-center rounded border border-dashed border-slate-800 px-2 text-[9px] text-slate-600">
+                    No source-linked visual samples yet.
+                  </div>
+                ) : null}
+              </div> : null}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[9px] text-slate-500">
+        <span role="status">{message}</span>
+        <button
+          type="button"
+          disabled={!Object.values(selectedCandidateIds).some(Boolean) || isSaving}
+          className="rounded border border-emerald-800/70 bg-emerald-950/15 px-2 py-1 text-emerald-100 disabled:cursor-not-allowed disabled:opacity-35"
+          onClick={() => void confirmAssignments(Object.keys(selectedCandidateIds).filter((id) => selectedCandidateIds[id]))}
+          data-vaa1-narrative-agent-visual-lineup-confirm-all="true"
+        >
+          Confirm all selected ({Object.values(selectedCandidateIds).filter(Boolean).length})
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function narrativeAgentContinuityCandidatesForMemory(
@@ -2792,12 +4007,16 @@ function NarrativeAgentCharacterPathsHome({
   videoId,
   openPanel,
   onCommitTimelineHandle,
+  onCommitVisualLineup,
+  onGovernVisualFamilies,
 }: {
   analysisData: any;
   canonicalClaims: ProjectedCanonicalClaim[];
   videoId: string;
   openPanel: (panelType: string, panelProps?: any) => void;
   onCommitTimelineHandle: (commit: NarrativeAgentTimelineHandleCommit) => void;
+  onCommitVisualLineup: (assignments: NarrativeAgentVisualLineupAssignment[]) => Promise<void>;
+  onGovernVisualFamilies: (action: NarrativeAgentFamilyGovernanceAction) => Promise<void>;
 }) {
   const rows = useMemo(
     () => buildNarrativeAgentPathRows(analysisData, canonicalClaims, videoId),
@@ -3254,6 +4473,24 @@ function NarrativeAgentCharacterPathsHome({
       </PanelDropdownSection>
 
       <PanelDropdownSection
+        title="Visual Narrative Agent lineups"
+        summary="Compare compact source-linked facial occurrences across several expected Narrative Agent families; drag mistakes between rows and confirm in batches."
+        count={`${rows.length} families`}
+        sectionId="narrative-agent-visual-cluster-lineups"
+        layoutOrder="order-2"
+        quiet
+      >
+        <NarrativeAgentVisualClusterLineup
+          analysisData={analysisData}
+          rows={rows}
+          selectedRow={selectedRow}
+          videoId={videoId}
+          onCommit={onCommitVisualLineup}
+          onGovernFamilies={onGovernVisualFamilies}
+        />
+      </PanelDropdownSection>
+
+      <PanelDropdownSection
         title="StatsKit + Significance + Relevance"
         summary="Ranks this character's source-linked evidence for the current analyst task."
         count={selectedRelevanceSurface ? `${formatNarrativeAgentScore(selectedRelevanceSurface.overallScore)} relevance` : "pending"}
@@ -3654,6 +4891,30 @@ function NarrativeAgentCharacterPathsHome({
                   </span>
                 ))}
               </div>
+              {selectedVisualSampleSlots.length > 0 ? (
+                <div
+                  className="mt-2 flex gap-1 overflow-x-auto pb-1"
+                  data-vaa1-narrative-agent-graph-visual-thumbnail-strip="true"
+                >
+                  {selectedVisualSampleSlots.slice(0, 8).map((slot, index) => {
+                    const time = asRecord(slot.time);
+                    const start = numberFrom(time.start ?? time.time_start);
+                    const end = numberFrom(time.end ?? time.time_end);
+                    return start === undefined ? null : (
+                      <NarrativeAgentFaceThumbnail
+                        key={stringFrom(slot.sample_id) || `${selectedRow.key}:graph-visual:${index}`}
+                        videoId={videoId}
+                        start={start}
+                        end={end}
+                        bbox={slot.bbox}
+                        label={`${selectedRow.label} graph evidence`}
+                        state="mature"
+                        onOpen={() => seekNarrativeAgentGraphSource(videoId, start)}
+                      />
+                    );
+                  })}
+                </div>
+              ) : null}
               <div
                 className="mt-2 rounded border border-white/8 bg-[#151515] px-3 py-3"
                 data-vaa1-narrative-agent-timeline-strip="true"
@@ -4333,6 +5594,280 @@ export default function MasterSchemaPanel({
     }
   }
 
+  async function commitNarrativeAgentVisualLineup(
+    assignments: NarrativeAgentVisualLineupAssignment[],
+  ) {
+    if (!videoId || assignments.length === 0) return;
+    const now = new Date().toISOString();
+    const roundId = `narrative-agent-visual-lineup:${videoId}:${Date.now()}`;
+    const projectionTargets = [
+      "master_schema",
+      "narrative_agent_cards",
+      "narrative_agent_graph",
+      "meaning_knowledge_graph",
+      "video_panel",
+      "audio_panel",
+      "transcript_panel",
+      "bbox_roi_panel",
+      "content_search",
+      "traceback",
+    ];
+    const decisions: ProliferationDecision[] = assignments.map((assignment) => {
+      const candidate = assignment.candidate;
+      const canonicalCandidateId = String(candidate.evidence_id || candidate.candidate_id);
+      const start = numberFrom(candidate.time?.start);
+      const end = numberFrom(candidate.time?.end) ?? start;
+      const sourceAnchors = start === undefined ? [] : [{
+        start_seconds: Number(start.toFixed(3)),
+        end_seconds: Number((end ?? start).toFixed(3)),
+        range_source: "visual_cluster_lineup",
+        geometry: candidate.geometry || undefined,
+      }];
+      const reassigned = normalizeAgentKey(assignment.agentLabel) !== normalizeAgentKey(assignment.sourceAgentLabel);
+      const faceProvenance = asRecord(candidate.provenance);
+      const revisesMatureConfirmation = Boolean(faceProvenance.mature_revision);
+      return {
+        decision_id: `narrative-agent-visual-lineup:${canonicalCandidateId}${revisesMatureConfirmation ? `:revision:${Date.now()}` : ""}`,
+        candidate_id: canonicalCandidateId,
+        request_id: roundId,
+        decision_scope: "candidate",
+        cluster_key: normalizeAgentKey(assignment.agentLabel),
+        decision: "confirmed",
+        authority_level: "manual_confirmation",
+        source_panel: "NarrativeAgentPanel",
+        source_verification_status: start === undefined ? "source_anchor_missing" : "source_time_resolved",
+        source_range_source: start === undefined ? undefined : "evidence_ref",
+        candidate_label: String(candidate.label || canonicalCandidateId),
+        applied_label: assignment.agentLabel,
+        target_evidence_id: candidate.evidence_id || candidate.candidate_id,
+        source_anchors: sourceAnchors,
+        evidence_refs: candidate.evidence_refs || candidate.master_object_projection?.evidence_refs || [],
+        source_traceback_refs: [
+          candidate.master_object_projection?.traceback_ref,
+          stringFrom(candidate.provenance?.traceback_ref),
+        ].filter(Boolean) as string[],
+        projection_targets: projectionTargets,
+        proliferates_to: projectionTargets,
+        governance_status: {
+          maturity_result: "user_confirmed_truth",
+          confirmation_kind: "visual_narrative_agent_occurrence",
+          visual_cluster_lineup_round_id: roundId,
+          expected_narrative_agent: assignment.sourceAgentLabel,
+          confirmed_narrative_agent: assignment.agentLabel,
+          reassigned_between_lineups: reassigned,
+          raw_detector_evidence_preserved: true,
+          duplicate_confirmation_suppressed: true,
+          thumbnail_projection_required: true,
+          associated_audio_text_projection_required: true,
+          face_measurement_state: stringFrom(faceProvenance.face_measurement_state),
+          face_embedding_dimensions: numberFrom(faceProvenance.face_embedding_dimensions),
+          face_embedding_sha256: stringFrom(faceProvenance.face_embedding_sha256),
+          facial_landmarks: faceProvenance.facial_landmarks,
+          similarity_metric: "cosine_similarity_not_probability",
+          face_model: "OpenCV YuNet + SFace",
+          propagation_required: true,
+          partial_propagation_allowed: false,
+          revises_mature_confirmation: revisesMatureConfirmation,
+          prior_confirmation_preserved: Boolean(faceProvenance.prior_confirmation_preserved),
+        },
+        proliferation_allowed: start !== undefined,
+        decision_reason: reassigned
+          ? "analyst_drag_reassignment_between_visual_narrative_agent_lineups"
+          : "analyst_batch_confirmation_in_visual_narrative_agent_lineup",
+        created_at: now,
+        created_by: "analyst",
+      };
+    });
+    const existing: AnnotationCorrections = analysisData?.annotationCorrections || {};
+    const candidateIds = new Set(decisions.map((decision) => decision.candidate_id));
+    const revisionCandidateIds = new Set(assignments.filter((assignment) => Boolean(assignment.candidate.provenance?.mature_revision)).map((assignment) => String(assignment.candidate.evidence_id || assignment.candidate.candidate_id)));
+    // A lineup confirmation is Master Schema authority, not panel-local UI
+    // state. Materialize the governed Identification occurrence as well as its
+    // decision receipt so every consumer sees the same source-time/BBox truth.
+    const governedManualVisualAnnotations = [...(existing.manual_visual_annotations || [])];
+    assignments.forEach((assignment, index) => {
+      const candidate = assignment.candidate;
+      const candidateId = String(candidate.evidence_id || candidate.candidate_id);
+      const sourceAnnotationId = stringFrom(candidate.provenance?.source_annotation_id);
+      const bbox = narrativeAgentVisualBbox(candidate.geometry);
+      const start = numberFrom(candidate.time?.start);
+      if (!bbox || start === undefined) return;
+      const end = numberFrom(candidate.time?.end) ?? start;
+      const annotationId = sourceAnnotationId || `narrative-agent-lineup:${candidateId}`;
+      const existingIndex = governedManualVisualAnnotations.findIndex((annotation) => (
+        annotation.id === annotationId ||
+        stringFrom(annotation.metadata_correlation?.target_id) === candidateId
+      ));
+      const prior = existingIndex >= 0 ? governedManualVisualAnnotations[existingIndex] : undefined;
+      const governedAnnotationId = prior?.id || annotationId;
+      const decision = decisions[index];
+      const governed: ManualVisualAnnotation = {
+        ...(prior || {}),
+        id: governedAnnotationId,
+        category: "Identification",
+        subcategory: "Character",
+        label: assignment.agentLabel,
+        custom_label: assignment.agentLabel,
+        identity_affirmation: assignment.agentLabel,
+        narrative_agent_affirmation: assignment.agentLabel,
+        geometry_type: "box",
+        coordinates: { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height },
+        timestamp_seconds: Number(start.toFixed(3)),
+        start_seconds: Number(start.toFixed(3)),
+        end_seconds: Number(end.toFixed(3)),
+        interpretation_is_candidate_only: false,
+        metadata_correlation: {
+          ...(prior?.metadata_correlation || {}),
+          evidence_modality: "visual",
+          target_type: "narrative_agent_occurrence",
+          target_id: candidateId,
+          target_label: assignment.agentLabel,
+          coordinate_system: "normalized_video",
+          authority_state: "explicit_user_confirmation",
+          maturity_state: "mature",
+          manual_confirmation_event: {
+            event_type: "narrative_agent_visual_lineup_confirmation",
+            event_id: decision.decision_id,
+            analysis_id: videoId,
+            bbox_roi_id: governedAnnotationId,
+            authority_level: "manual_confirmation",
+            confirmed_fields: { narrative_agent: true, identity: true, source_interval: true, bbox: true },
+            active_state_after_save: { narrative_agent: assignment.agentLabel, maturity: "mature" },
+            old_states_retained_as: "provenance",
+            propagation_required: true,
+            partial_propagation_allowed: false,
+          },
+        },
+        updated_at: now,
+        updated_by: "analyst",
+        created_at: prior?.created_at || now,
+      };
+      if (existingIndex >= 0) governedManualVisualAnnotations[existingIndex] = governed;
+      else governedManualVisualAnnotations.push(governed);
+    });
+    let nextCorrections: AnnotationCorrections = {
+      ...existing,
+      analysis_id: videoId,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: existing.text_substitutions || [],
+      label_overrides: existing.label_overrides || [],
+      manual_transcript_entries: existing.manual_transcript_entries || [],
+      manual_visual_annotations: governedManualVisualAnnotations,
+      master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+      proliferation_decisions: [
+        ...(existing.proliferation_decisions || []).filter((decision) => !candidateIds.has(decision.candidate_id) || revisionCandidateIds.has(decision.candidate_id)),
+        ...decisions,
+      ],
+    };
+    assignments.forEach((assignment) => {
+      const candidateId = stringFrom(assignment.candidate.candidate_id);
+      const annotation = governedManualVisualAnnotations.find((item) => (
+        item.id === `narrative-agent-lineup:${candidateId}` ||
+        stringFrom(item.metadata_correlation?.target_id) === candidateId
+      ));
+      if (annotation) {
+        nextCorrections = upsertMasterSchemaPresenceIntervalForManualAnnotation(
+          nextCorrections,
+          annotation,
+          { now, sourcePanel: "NarrativeAgentPanel" },
+        );
+      }
+    });
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections, {
+      before: existing,
+    });
+    setAnalysisData((current: any) => current ? {
+      ...current,
+      annotationCorrections: savedCorrections,
+    } : current);
+    eventBus.emit("narrativeAgentVisualLineupCommitted", {
+      videoId,
+      review_round_id: roundId,
+      decisions,
+      affected_panels: projectionTargets,
+    });
+    eventBus.emit("analysisCorrectionsChanged", { analysisId: videoId, corrections: savedCorrections });
+  }
+
+  async function commitNarrativeAgentFamilyGovernance(action: NarrativeAgentFamilyGovernanceAction) {
+    if (!videoId || !action.targetLabel.trim()) return;
+    const now = new Date().toISOString();
+    const sourceLabel = action.sourceLabel?.trim();
+    const targetLabel = action.targetLabel.trim();
+    const decision: ProliferationDecision = {
+      decision_id: `narrative-agent-family-governance:${normalizeAgentKey(sourceLabel || targetLabel)}:${Date.now()}`,
+      candidate_id: `narrative-agent-family:${normalizeAgentKey(sourceLabel || targetLabel)}`,
+      decision_scope: "cluster",
+      cluster_key: normalizeAgentKey(targetLabel),
+      decision: "confirmed",
+      authority_level: "manual_confirmation",
+      source_panel: "NarrativeAgentPanel",
+      candidate_label: sourceLabel,
+      applied_label: targetLabel,
+      projection_targets: ["master_schema", "narrative_agent_cards", "narrative_agent_graph", "meaning_knowledge_graph", "video_panel", "bbox_roi_panel", "audio_panel", "transcript_panel"],
+      proliferation_allowed: true,
+      decision_reason: `analyst_narrative_agent_family_${action.operation}`,
+      governance_status: {
+        maturity_result: "user_confirmed_truth",
+        operation: action.operation,
+        alias_lineage_preserved: true,
+        saloon_doors_refresh_required: true,
+      },
+      created_at: now,
+      created_by: "analyst",
+    };
+    const existing: AnnotationCorrections = analysisData?.annotationCorrections || {};
+    const sourceKey = normalizeAgentKey(sourceLabel);
+    const governedVisualAnnotations = (existing.manual_visual_annotations || []).map((annotation) => {
+      if (!sourceKey || annotation.category !== "Identification") return annotation;
+      const matches = [annotation.identity_affirmation, annotation.custom_label, annotation.label]
+        .some((value) => normalizeAgentKey(value) === sourceKey);
+      if (!matches) return annotation;
+      return {
+        ...annotation,
+        label: normalizeAgentKey(annotation.label) === sourceKey ? targetLabel : annotation.label,
+        custom_label: normalizeAgentKey(annotation.custom_label) === sourceKey ? targetLabel : annotation.custom_label,
+        identity_affirmation: targetLabel,
+        metadata_correlation: {
+          ...(annotation.metadata_correlation || {}),
+          narrative_agent_family_governance: {
+            previous_label: sourceLabel,
+            canonical_label: targetLabel,
+            operation: action.operation,
+            decision_id: decision.decision_id,
+            prior_annotation_preserved_in_decision_ledger: true,
+          },
+        },
+      };
+    });
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      analysis_id: videoId,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: existing.text_substitutions || [],
+      label_overrides: existing.label_overrides || [],
+      manual_transcript_entries: existing.manual_transcript_entries || [],
+      manual_visual_annotations: governedVisualAnnotations,
+      master_schema_presence_intervals: existing.master_schema_presence_intervals || [],
+      meaning_network_custom_lanes: existing.meaning_network_custom_lanes || [],
+      proliferation_decisions: [...(existing.proliferation_decisions || []), decision],
+    };
+    const savedCorrections = await VideoService.saveAnnotationCorrections(videoId, nextCorrections, {
+      before: existing,
+    });
+    setAnalysisData((current: any) => current ? {
+      ...current,
+      annotationCorrections: savedCorrections,
+    } : current);
+    eventBus.emit("narrativeAgentFamilyGovernanceChanged", { videoId, action, decision });
+    eventBus.emit("analysisCorrectionsChanged", { analysisId: videoId, corrections: savedCorrections });
+  }
+
   function activateVideoForAnnotation(item: ManualVisualAnnotation) {
     openManualAnnotationInVideo(videoId, item);
   }
@@ -4687,6 +6222,8 @@ export default function MasterSchemaPanel({
                   onCommitTimelineHandle={(commit) => {
                     void commitNarrativeAgentTimelineHandle(commit);
                   }}
+                  onCommitVisualLineup={commitNarrativeAgentVisualLineup}
+                  onGovernVisualFamilies={commitNarrativeAgentFamilyGovernance}
                 />
               </>
             )}

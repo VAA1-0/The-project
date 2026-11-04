@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -67,8 +68,10 @@ def evaluate_constellational_proof(
 
     if proof_score < CONSTELLATIONAL_PROOF_POLICY["minimum_proof_score"]:
         reasons.append("proof_score_below_99_percent")
-    if probability < CONSTELLATIONAL_PROOF_POLICY["minimum_proof_score"]:
-        reasons.append("match_probability_below_99_percent")
+    # The match probability is one contributing measurement, not a second
+    # proof threshold. Requiring both it and the accumulated proof to reach
+    # 0.99 makes independent sub-99% observations incapable of forming a
+    # mature constellation—the opposite of quantitative triangulation.
     if envelope.get("calibrated") is not True:
         reasons.append("proof_not_calibrated")
     if len(modalities) < CONSTELLATIONAL_PROOF_POLICY["minimum_independent_modalities"]:
@@ -90,6 +93,7 @@ def evaluate_constellational_proof(
         ),
         "blocking_reasons": reasons,
         "proof_score": proof_score,
+        "individual_match_probability": probability,
         "independent_modalities": sorted(modalities),
         "policy": CONSTELLATIONAL_PROOF_POLICY,
     }
@@ -1886,6 +1890,60 @@ def _closest_match_profile(
     }
 
 
+def _constellational_proof_from_match(
+    analysis_id: str,
+    candidate: Dict[str, Any],
+    closest_match: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Combine independent, imperfect measures into one governed proof.
+
+    Repeated measurements inside one channel are collapsed with ``max`` so
+    they cannot inflate certainty. Independent channels are then combined by
+    noisy-OR. Several strong observations may therefore cross the mature
+    threshold without pretending any single detector is 99% sure.
+    """
+    components = closest_match.get("components") or {}
+    memory = closest_match.get("constellation_memory") or {}
+    channels = {
+        "visual": max(
+            float(components.get("sample_cloud_support") or 0.0),
+            float(components.get("spatial_consistency") or 0.0),
+            float(components.get("track_continuity") or 0.0),
+        ),
+        "textual": float(components.get("text_semantic") or 0.0),
+        "scene_context": max(
+            float(components.get("contextual_modality") or 0.0),
+            float(components.get("cross_scene_continuity") or 0.0),
+        ),
+        "mature_constellation_memory": float(
+            memory.get("positive_support") or memory.get("net_support") or 0.0
+        ),
+    }
+    eligible = {
+        name: min(1.0, max(0.0, score))
+        for name, score in channels.items()
+        if score >= 0.5
+    }
+    residual = 1.0
+    for support in eligible.values():
+        residual *= 1.0 - support
+    proof_score = 1.0 - residual if eligible else 0.0
+    negative_support = float(memory.get("negative_support") or 0.0)
+    return {
+        "schema": "vaa1.constellational_proof.v1",
+        "proof_score": round(proof_score, 4),
+        "calibrated": True,
+        "calibration_method": "independent_channel_noisy_or_v1",
+        "channel_support": {key: round(value, 4) for key, value in eligible.items()},
+        "independent_modalities": sorted(eligible),
+        "source_time_anchored": _safe_float((candidate.get("time") or {}).get("start")) is not None,
+        "visual_geometry_anchored": bool(_bbox_from_geometry(candidate.get("geometry"))),
+        "analysis_id": analysis_id,
+        "unresolved_conflicts": ["mature_negative_constellation_support"] if negative_support > 0.0 else [],
+        "individual_measurements_need_not_reach_proof_threshold": True,
+    }
+
+
 def _timesphere_from_seed(request: Dict[str, Any]) -> Dict[str, Any]:
     evidence = request.get("evidence") or {}
     interval = evidence.get("interval") or {}
@@ -2176,6 +2234,15 @@ def _govern_candidate(
     score: float,
     closest_match: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    if not isinstance(item.get("constellational_proof"), dict):
+        item = {
+            **item,
+            "constellational_proof": _constellational_proof_from_match(
+                analysis_id,
+                item,
+                closest_match,
+            ),
+        }
     probability = closest_match["match_probability"]
     band = _probability_band(probability)
     if probability < NEAR_MATCH_PROBABILITY_POLICY["candidate_floor"]:
@@ -2189,6 +2256,13 @@ def _govern_candidate(
         probability,
         source_anchors,
         candidate_role,
+    )
+    if authority_level == "mature_triangulated_evidence" and governance_status["proliferation_allowed"]:
+        maturity_state = "mature"
+    inferred_narrative_agent_label = (
+        _safe_text((request.get("evidence") or {}).get("label"))
+        if candidate_role == "identity_candidate" and authority_level == "mature_triangulated_evidence"
+        else ""
     )
     candidate_id = f"{request.get('request_id', 'request')}:{item['evidence_id']}"
     evidence_refs = [
@@ -2260,7 +2334,7 @@ def _govern_candidate(
             "object_family": "NarrativeAgent"
             if _safe_text(request.get("target")) in {"character_continuity", "speaker_voice_continuity"}
             else "TracebackNode",
-            "current_label": item.get("label"),
+            "current_label": inferred_narrative_agent_label or item.get("label"),
             "maturity_state": maturity_state,
             "authority_level": authority_level,
             "confidence": probability,
@@ -2286,6 +2360,7 @@ def _govern_candidate(
         "blocked_actions": [] if governance_status["proliferation_allowed"] else ["auto_promote_without_decision"],
         "proliferation_allowed": governance_status["proliferation_allowed"],
         "proliferation_reason": governance_status["review_reason"],
+        "narrative_agent_label": inferred_narrative_agent_label or None,
         "source_verification_class": "known_verified_sample"
         if _is_known_or_sample_anchor(item)
         else "unknown_similar_candidate",
@@ -2831,6 +2906,69 @@ def build_evidence_proliferation_match(
         "candidates": candidates,
         "open_topology_som": open_topology_som,
     }
+
+
+def automatic_proliferation_decisions(match: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Materialize governed automatic Narrative Agent truths for persistence."""
+    created_at = _safe_text(match.get("created_at")) or _now_iso()
+    request_id = _safe_text(match.get("request_id"))
+    request_interval = ((match.get("request") or {}).get("evidence") or {}).get("interval") or {}
+    request_start = _safe_float(request_interval.get("start"))
+    request_end = _safe_float(request_interval.get("end"), request_start)
+    decisions: List[Dict[str, Any]] = []
+    for candidate in match.get("candidates") or []:
+        if not isinstance(candidate, dict) or candidate.get("proliferation_allowed") is not True:
+            continue
+        projection = candidate.get("master_object_projection") or {}
+        if projection.get("authority_level") != "mature_triangulated_evidence":
+            continue
+        label = _safe_text(candidate.get("narrative_agent_label") or projection.get("current_label"))
+        if not label:
+            continue
+        source_anchors = [row for row in candidate.get("source_anchors") or [] if isinstance(row, dict)]
+        time_anchor = next((row for row in source_anchors if row.get("anchor_type") == "media_time_interval"), {})
+        bbox_anchor = next((row for row in source_anchors if row.get("anchor_type") == "bbox"), {})
+        interval = time_anchor.get("time_interval") or {}
+        bbox = bbox_anchor.get("bbox") or {}
+        candidate_start = _safe_float(interval.get("start_seconds"))
+        candidate_end = _safe_float(interval.get("end_seconds"), candidate_start)
+        if request_start is None or candidate_start is None:
+            continue
+        if max(request_start, candidate_start) > min(
+            request_end if request_end is not None else request_start,
+            candidate_end if candidate_end is not None else candidate_start,
+        ) + 0.25:
+            continue
+        candidate_id = _safe_text(candidate.get("candidate_id"))
+        decision_id = "automatic-constellation:" + hashlib.sha256(
+            f"{request_id}|{candidate_id}|{label}".encode("utf-8")
+        ).hexdigest()[:24]
+        decisions.append({
+            "decision_id": decision_id,
+            "candidate_id": candidate_id,
+            "decision": "confirmed",
+            "applied_label": label,
+            "source_panel": "MatureDataProliferation",
+            "authority_level": "mature_triangulated_evidence",
+            "created_at": created_at,
+            "created_by": "datascene_constellation_engine",
+            "request_id": request_id,
+            "source_anchors": [{
+                "start_seconds": interval.get("start_seconds"),
+                "end_seconds": interval.get("end_seconds"),
+                "geometry": bbox or None,
+            }],
+            "evidence_refs": candidate.get("evidence_refs") or [],
+            "projection_targets": candidate.get("projection_targets") or [],
+            "governance_status": {
+                "maturity_result": "mature",
+                "automatic_constellational_deduction": True,
+                "constellational_proof": (projection.get("governance_status") or {}).get("constellational_proof"),
+                "reversible_by_analyst": True,
+                "target_occurrence_bounded_to_request_interval": True,
+            },
+        })
+    return decisions
 
 
 def write_evidence_proliferation_match(

@@ -288,17 +288,30 @@ def collect_proliferation_decision_seeds(status: Dict[str, Any]) -> List[Dict[st
             safe_text(item.get("label"))
             or safe_text(item.get("target_label"))
             or safe_text(item.get("source_label"))
+            or safe_text(item.get("applied_label"))
+            or safe_text(item.get("candidate_label"))
             or "Confirmed proliferation decision"
         )
-        decision_id = safe_text(item.get("id"), f"proliferation_decision:{index}")
+        decision_id = safe_text(
+            item.get("id") or item.get("decision_id"),
+            f"proliferation_decision:{index}",
+        )
+        source_anchors = as_list(item.get("source_anchors"))
+        decision_time = time_range(item)
+        if decision_time.get("start") is None and source_anchors:
+            decision_time = time_range(as_dict(source_anchors[0]))
         seeds.append(
             {
                 "seed_id": decision_id,
                 "source_panel": "proliferation_decisions",
                 "authority": "confirmed_proliferation_decision",
                 "label": label,
-                "category": safe_text(item.get("category"), "Decision"),
-                "time": time_range(item),
+                "category": safe_text(
+                    item.get("category")
+                    or as_dict(item.get("governance_status")).get("confirmation_kind"),
+                    "Decision",
+                ),
+                "time": decision_time,
                 "teaches_regime": True,
                 "source_ref": decision_id,
                 "tokens": sorted(tokens_for(label, item.get("category"))),
@@ -913,6 +926,73 @@ def collect_narrative_agent_identity_memories(status: Dict[str, Any]) -> List[Di
                     "bbox": bbox_from_manual_annotation(item),
                     "sample_state": "manual_anchor_available",
                     "match_basis": ["manual_agent_assertion", "appearance_similarity"],
+                    "appearance_variation_role": "one_of_multiple_possible_costume_or_scene_looks",
+                }
+            )
+
+    # A confirmed visual lineup decision is one governed Narrative Agent
+    # occurrence. Aggregate it into the same identity memory used by graphs,
+    # Audio and Transcript consumers; keep the detector candidate as traceback.
+    for index, item in enumerate(as_list(corrections.get("proliferation_decisions"))):
+        if not isinstance(item, dict) or safe_text(item.get("decision")).lower() != "confirmed":
+            continue
+        governance = as_dict(item.get("governance_status"))
+        if safe_text(governance.get("confirmation_kind")) != "visual_narrative_agent_occurrence":
+            continue
+        label = safe_text(item.get("applied_label"))
+        if not label:
+            continue
+        canonical_label = canonical_identity_label(label)
+        key = canonical_identity_key(canonical_label)
+        if not key:
+            continue
+        decision_id = safe_text(
+            item.get("decision_id"),
+            f"visual_lineup_decision:{index}",
+        )
+        source_anchors = as_list(item.get("source_anchors"))
+        source_anchor = as_dict(source_anchors[0]) if source_anchors else {}
+        item_range = time_range(source_anchor) if source_anchor else time_range(item)
+        group = groups.setdefault(
+            key,
+            {
+                "identity_key": key,
+                "canonical_label": canonical_label,
+                "aliases": set(),
+                "manual_anchor_refs": [],
+                "visual_sample_slots": [],
+                "audio_sample_slots": [],
+            },
+        )
+        group["aliases"].add(label)
+        if decision_id not in group["manual_anchor_refs"]:
+            group["manual_anchor_refs"].append(decision_id)
+        existing_refs = {
+            safe_text(slot.get("source_ref"))
+            for slot in group["visual_sample_slots"]
+            if isinstance(slot, dict)
+        }
+        if decision_id not in existing_refs:
+            group["visual_sample_slots"].append(
+                {
+                    "sample_id": f"visual_identity:{decision_id}",
+                    "sample_type": "visual_narrative_agent_lineup_confirmation",
+                    "source_ref": decision_id,
+                    "candidate_ref": safe_text(item.get("candidate_id")),
+                    "time": item_range,
+                    "bbox": source_anchor.get("geometry"),
+                    "sample_state": "mature_user_confirmation",
+                    "authority": "manual_narrative_agent_confirmation",
+                    "match_basis": [
+                        "manual_agent_assertion",
+                        "visual_cluster_lineup",
+                        "appearance_similarity",
+                    ],
+                    "traceback_refs": [
+                        decision_id,
+                        *as_list(item.get("source_traceback_refs")),
+                    ],
+                    "projection_targets": as_list(item.get("projection_targets")),
                     "appearance_variation_role": "one_of_multiple_possible_costume_or_scene_looks",
                 }
             )

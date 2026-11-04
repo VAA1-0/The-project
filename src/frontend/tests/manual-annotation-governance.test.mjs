@@ -28,6 +28,44 @@ const posAnalyzePanel = read("app/V2components/components/panels/POSAnalyzePanel
 const posMatrixPanel = read("app/V2components/components/panels/POSMatrixPanel.tsx");
 const quantAnalysisPanel = read("app/V2components/components/panels/QuantitativeAnalysisPanel.tsx");
 const quantMatrixPanel = read("app/V2components/components/panels/QuantMatrixPanel.tsx");
+
+test("named Narrative Agent authority outranks a newer generic BBox placeholder", () => {
+  assert.match(videoPanel, /function manualNarrativeAgentAuthorityRank/);
+  assert.match(videoPanel, /"character present"/);
+  assert.match(videoPanel, /A placeholder is review labour, never a revision of explicit human/);
+  assert.match(videoPanel, /manualNarrativeAgentAuthorityRank\(right\)[\s\S]*manualNarrativeAgentAuthorityRank\(left\)/);
+  assert.match(
+    videoPanel,
+    /function narrativeAgentOccurrenceBelongsToObjectBox[\s\S]*centreX >= objectBox\.x/,
+    "a smaller confirmed Narrative Agent occurrence must associate with its containing person track",
+  );
+  assert.match(
+    videoPanel,
+    /spatialNarrativeAgentOverlayLabel \|\|[\s\S]*manualOverrideOverlayLabel/,
+    "a named source-linked Narrative Agent occurrence must outrank a generic manual person placeholder",
+  );
+  assert.match(
+    videoPanel,
+    /manualNarrativeAgentAuthorityRank\(item\) === 0[\s\S]*namedNarrativeAgentAuthority[\s\S]*label: renderedManualLabel/,
+    "the manual overlay layer must replace a generic placeholder label with the named mature occurrence",
+  );
+});
+
+test("a named Narrative Agent occurrence relabels its overlapping person BBox", () => {
+  assert.match(videoPanel, /const namedNarrativeAgentAuthority = manualNarrativeAgentAuthorityRank\(item\) === 0/);
+  assert.match(videoPanel, /narrativeAgentOccurrenceBelongsToObjectBox\(resolvedBox, candidateBox\)/);
+  assert.match(videoPanel, /const renderedManualLabel = resolveManualVisualDisplayLabel/);
+  assert.match(videoPanel, /label: renderedManualLabel/);
+  assert.match(videoPanel, /narrative_agent_recognition: namedNarrativeAgentAuthority/);
+  assert.match(
+    videoPanel,
+    /const matureNarrativeAgentSuppliesTitle = Boolean\([\s\S]*?master_schema_mature_label[\s\S]*?narrative_agent_recognition/,
+  );
+  assert.match(
+    videoPanel,
+    /const compactOverlayLabel =\s*!matureNarrativeAgentSuppliesTitle &&/,
+  );
+});
 const speechPanel = read("app/V2components/components/panels/SpeechToTextPanel.tsx");
 const timeBankPanel = read("app/V2components/components/panels/TimeBankPanel.tsx");
 const meaningPlotPanel = read("app/V2components/components/panels/MeaningPlotPanel.tsx");
@@ -45,7 +83,7 @@ const nativeStatisticalStrip = read("app/V2components/components/NativeStatistic
 test("native statistical interpretations retain precise terms across governed panels", () => {
   assert.match(statsKitPanel, /data-vaa1-run-statistical-interpretation="true"/);
   assert.match(statsKitPanel, /Find statistical patterns/);
-  assert.match(statsKitPanel, /runNativeStatisticalInterpretation/);
+  assert.match(statsKitPanel, /runStatisticalInterpretation/);
   assert.match(nativeStatisticalStrip, /data-vaa1-open-statistical-pattern-in-workbench/);
   assert.match(nativeStatisticalStrip, /Cross-signal associations/);
   assert.match(nativeStatisticalStrip, /Baseline median/);
@@ -472,7 +510,7 @@ test("forensic ROI intent options stay aligned across Tools and Video panels", (
 test("Objects panel remains a leaf, not the master schema sink", () => {
   assert.match(
     videoService,
-    /entry\.category === "OBJ" \|\| isExpressionOwnerPersonRequest\(entry\)/,
+    /entry\.category === "OBJ" \|\| entry\.category === "Movement" \|\| isExpressionOwnerPersonRequest\(entry\)/,
     "manual OBJ annotations and explicit expression-owner person requests should be converted into DetectedObject rows",
   );
 
@@ -2252,7 +2290,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     audioPanel,
-    /data-vaa1-panel="audio-workbench"[\s\S]*data-vaa1-audio-section="speech-diarization"[\s\S]*data-vaa1-audio-section="prosody"[\s\S]*data-vaa1-audio-section="music-sound"[\s\S]*data-vaa1-audio-section="lyrics"[\s\S]*data-vaa1-audio-section="foley-sampling"[\s\S]*data-vaa1-audio-section="recognition-governance"/,
+    /data-vaa1-panel="audio-workbench"[\s\S]*data-vaa1-audio-section="speech-activity"[\s\S]*data-vaa1-audio-section="prosody"[\s\S]*data-vaa1-audio-section="music-sound"[\s\S]*data-vaa1-audio-section="lyrics"[\s\S]*data-vaa1-audio-section="foley-sampling"[\s\S]*data-vaa1-audio-section="recognition-governance"/,
     "Audio panel must be a multi-section workbench for speech, prosody, music, lyrics, foley sampling, and recognition governance",
   );
   assert.match(
@@ -2260,10 +2298,10 @@ test("Narrative Agent panel owns Character Paths home", () => {
     /data-vaa1-audio-section="governed-sound-intervals"[\s\S]*Source time|Governed music, noise, and silence intervals[\s\S]*Open source[\s\S]*Rows \{governedEventPage \* GOVERNED_AUDIO_PAGE_SIZE \+ 1\}[\s\S]*Previous[\s\S]*Next/,
     "music, noise, and silence evidence must use complete pageable governed rows with source navigation",
   );
-  assert.match(
+  assert.doesNotMatch(
     audioPanel,
-    /data-vaa1-audio-section="speaker-linked-diarization"[\s\S]*Speaker cluster[\s\S]*Timing authority[\s\S]*cluster only · identity unconfirmed[\s\S]*Open source[\s\S]*Rows \{speakerTurnPage \* GOVERNED_AUDIO_PAGE_SIZE \+ 1\}/,
-    "speaker turns must expose cluster authority, timing maturity, source navigation, and complete pagination",
+    /data-vaa1-audio-section="speaker-linked-diarization"|Speaker cluster|cluster only · (?:identity|Narrative Agent) unconfirmed/,
+    "technical diarization labels must not survive as analyst-facing analytical categories",
   );
 
   assert.match(
@@ -2292,7 +2330,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     audioPanel,
-    /audioEventsFromMatureTranscript[\s\S]*global anchor only[\s\S]*per-line sync needed[\s\S]*speaker diarization label only[\s\S]*alignSampleRowsToTranscript[\s\S]*prosodyCuesFromAnalysisData/,
+    /audioEventsFromMatureTranscript[\s\S]*global anchor only[\s\S]*per-line sync needed[\s\S]*technical speech segmentation only[\s\S]*alignSampleRowsToTranscript[\s\S]*prosodyCuesFromAnalysisData/,
     "Audio workbench must distinguish a reliable first-speech anchor from source-locked per-line timing",
   );
 
@@ -2388,7 +2426,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /data-vaa1-statskit-ordered-workbench-layout="true"[\s\S]*data-vaa1-statskit-layout-priority="workbench-visualization-support"[\s\S]*data-vaa1-statskit-layout-slot="A"[\s\S]*data-vaa1-statskit-layout-slot="B"[\s\S]*data-vaa1-statskit-layout-slot="C"/,
+    /data-vaa1-statskit-layout-slot="A"[\s\S]*data-vaa1-statskit-layout-slot="B"[\s\S]*data-vaa1-statskit-layout-slot="C"/,
     "StatsKit must declare a full-width primary sequence for the workbench, visualization, and supporting scanner",
   );
 
@@ -2448,7 +2486,7 @@ test("Narrative Agent panel owns Character Paths home", () => {
 
   assert.match(
     statsKitPanel,
-    /data-vaa1-visualization-mode-selector="true"[\s\S]*VISUALIZATION_MODE_OPTIONS\.map/,
+    /data-vaa1-visualization-mode-selector="true"[\s\S]*VISUALIZATION_MODE_OPTIONS\.filter[\s\S]*\.map/,
     "StatsKit must surface the complete visualization registry inside the Visualization disclosure",
   );
 
@@ -3997,7 +4035,7 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     dataMaturationPanel,
-    /proliferates_to:\s*confirmed[\s\S]*source_timed_panels/,
+    /projection_targets:\s*confirmed[\s\S]*"VideoPanel"[\s\S]*"Audio"[\s\S]*"Transcript"[\s\S]*proliferates_to:\s*confirmed/,
     "Confirmed proliferation must explicitly target source-timed panels as mature-data surfaces",
   );
 
@@ -4057,14 +4095,19 @@ test("Data Maturation governance panel exposes dynamic proliferation control", (
 
   assert.match(
     apiService,
-    /Backend annotation corrections save failed, trying local analysis save/,
-    "Annotation correction saves must fall back to local saved-analysis writes when the backend endpoint is unavailable",
+    /const artifactUrl = localAnalysisUrl\(analysisId, "\/download\/annotation_corrections"\)[\s\S]*method: "POST"[\s\S]*verificationResponse = await fetch\(localAnalysisUrl/,
+    "Annotation correction saves must commit and verify through the canonical project-bound local sidecar",
   );
 
   assert.match(
     read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts"),
-    /export async function POST[\s\S]*fileType !== "annotation_corrections"[\s\S]*annotation_corrections: corrections/,
+    /export async function POST[\s\S]*fileType !== "annotation_corrections"/,
     "Local saved analyses must accept annotation-corrections writes so BBox/ROI saves can close and refresh",
+  );
+  assert.match(
+    read("app/api/local-analysis/[analysisId]/download/[fileType]/route.ts"),
+    /annotation_corrections: corrections/,
+    "Local annotation-corrections writes must project the committed corrections into the response",
   );
 });
 
@@ -4991,7 +5034,7 @@ test("Datascene Meaning Network remains available for mature scene presence prol
 
   assert.match(
     sourceMediaPanel,
-    /VideoService\.refreshAnalysis\(videoId\)/,
+    /apiService\.getAnnotationCorrections\(videoId\)/,
     "Narrative Agent profile cards must read Master Schema correction intervals, not only local metadata",
   );
 
@@ -5510,7 +5553,19 @@ test("BBox/ROI object pipeline never promotes raw track labels as display truth"
   assert.match(
     videoPanel,
     /unresolvedObjectConfirmationLabel\(item\)/,
-    "unresolved detections must render as Narrative Agent/object confirmation prompts with probability",
+    "unresolved detections must render through the governed unresolved-label path",
+  );
+
+  assert.match(
+    videoPanel,
+    /return "Narrative Agent unresolved"/,
+    "an unresolved person BBox must state the unresolved Narrative Agent claim",
+  );
+
+  assert.doesNotMatch(
+    videoPanel,
+    /function unresolvedObjectConfirmationLabel[\s\S]{0,500}item\.confidence/,
+    "person-presence confidence must not masquerade as Narrative Agent attribution confidence",
   );
 
   assert.match(
@@ -5595,7 +5650,7 @@ test("expression identity saves anchor to nearby person geometry", () => {
 
   assert.match(
     videoService,
-    /entry\.category === "OBJ" \|\| isExpressionOwnerPersonRequest\(entry\)/,
+    /entry\.category === "OBJ" \|\| entry\.category === "Movement" \|\| isExpressionOwnerPersonRequest\(entry\)/,
     "manual expression-owner requests must participate in OBJ/person overlays without changing the source expression evidence",
   );
 
@@ -5765,8 +5820,8 @@ test("Traceback drawer is a calm navigable source-chain surface", () => {
 test("Video panel swaps loaded media atomically without duplicate preload frames", () => {
   assert.match(
     videoPanel,
-    /const \[mediaSource, nextAnalysis\] = await Promise\.all/,
-    "VideoPanel must wait for media and analysis before swapping visible selected-analysis state",
+    /const analysisPromise = VideoService\.getAnalysis\(videoId\);[\s\S]*const mediaSource = await loadVideoSource\(videoId\)/,
+    "VideoPanel must start analysis hydration while prioritizing the playable source shell",
   );
 
   assert.match(

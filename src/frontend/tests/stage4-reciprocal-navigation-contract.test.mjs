@@ -52,7 +52,7 @@ test("Video recovers focus only for its current analysis binding", () => {
 test("every governed Audio row family carries durable evidence identity into navigation", () => {
   const audio = read("app/V2components/components/panels/AudioPanel.tsx");
   assert.match(audio, /const audioEvidenceRowProps =/);
-  assert.match(audio, /sectionId="speech-diarization"[\s\S]*renderAudioEventRows\(categorizedEvents\.speech\)/);
+  assert.match(audio, /sectionId="speech-activity"[\s\S]*renderAudioEventRows\(categorizedEvents\.speech\)/);
   for (const sectionId of ["prosody", "music-sound", "lyrics", "foley-sampling", "recognition-governance"]) {
     const start = audio.indexOf(`sectionId="${sectionId}"`);
     assert.notEqual(start, -1, `${sectionId} section must exist`);

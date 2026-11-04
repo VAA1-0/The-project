@@ -212,6 +212,90 @@ it cannot trigger a panel-jumping loop.
 A leaf indication is not operational if its only useful action is an automatic
 redirect. Calm local evidence first, optional cross-panel drill-down second.
 
+## Cluster Exploration And Governed Aggregation Principle
+
+Datascene uses **cluster exploration** to make repeated or similar source
+evidence inspectable at scale, and **governed aggregation** to connect that
+evidence without flattening it into premature truth. Clustering is an
+exploratory evidence practice. Aggregation is a canonical linking practice.
+Neither grants interpretive authority by itself.
+
+The analyst-facing object is a meaningful Datascene family: a Narrative Agent,
+object, face, visual concept, set, Foley event, acoustic environment, textual
+pattern, or another domain-appropriate family. Detector buckets such as
+`SPEAKER_00`, model class ids, embedding partitions and arrival-order groups are
+technical substrate. They remain available in provenance but must not replace a
+known semantic family or become an unnecessary confirmation target.
+
+Every family view must make five things immediately legible:
+
+1. **what holds the family together** — method, cohesion or purity, evidence
+   volume, quality and representative samples;
+2. **where its boundary fails** — ambiguous, low-quality, contradictory and
+   nearest-competing samples;
+3. **what is absent or excluded** — every exclusion and its explicit reason;
+4. **where it occurs** — temporal, spatial, scene and artefact distribution;
+5. **what a decision will change** — affected members, canonical claims, graph
+   relations, consumer panels, freshness and invalidation.
+
+The normal evidence path is:
+
+`sample -> detect/measure -> quality gate -> represent -> compare -> group -> rank -> review -> govern -> aggregate -> proliferate`
+
+Each stage preserves its own record. A cluster does not erase its samples; an
+analytical model change likewise never erases an earlier evidence run. Earlier
+YOLO, DETR, audio, text, face, scene, or embedding observations remain active
+and source-linked when another provider is selected. Consumers may combine or
+visually deduplicate coincident observations, but they retain provider and run
+lineage. Mature Master Schema claims are not reopened by a model change; only
+an explicit analyst correction can supersede them.
+A governed aggregate does not erase modality-specific evidence; a projection does not
+create a second authority. Cross-modal constellations may strengthen or weaken
+candidate likelihoods while keeping each contributing source, method,
+uncertainty and dependency separately inspectable.
+
+Cluster operations belong inside the workbench that raised the family. The
+analyst must be able to inspect representative and problematic samples, navigate
+to source, multi-select, confirm, reject, defer, exclude, reassign, merge, split
+and correct without being tossed to another panel. Actions that are not yet
+implemented must not be rendered as if they work.
+
+Threshold adjustment is always preview-first and commit-second. Preview shows
+membership gains and losses, changed representatives and exclusions,
+purity/cohesion and coverage deltas, merge/split consequences, and downstream
+impact without writing. Commit creates a governed revision, receipt and
+correction path. It never silently overrides a mature analyst decision.
+
+Category semantics govern maturity:
+
+- confirming a Narrative Agent creates one source-linked mature Master Schema
+  claim and hydrates relevant multimodal and graph consumers;
+- speech activity is measured evidence, not a demand to reconfirm a speaker;
+- valid source-linked music and silence may mature automatically without an
+  analyst confirmation tax;
+- Foley, objects, faces, visual concepts, sets and textual patterns remain
+  reviewable when grouping or naming materially benefits from human judgment;
+- set/location exploration checks Source Media metadata proposals together with
+  measured visual recurrence and Scene Card setting evidence. Proposed metadata
+  remains visibly attributed and reviewable; analyst-confirmed metadata is
+  mature Master Schema evidence and proliferates without reconfirmation;
+- confirming recurrence does not automatically confirm interpretation: a
+  recurring visual pattern can mature while its symbolic meaning remains a
+  candidate relation.
+
+The best samples—not merely available samples—must lead review. Selection must
+consider quality, representativeness, boundary information, temporal coverage
+and diversity. Datascene should reduce hundreds of repetitive confirmations by
+letting one governed decision update associated probabilities and queues. It
+must not silently mature unconfirmed members merely because they share a
+cluster.
+
+Cluster exploration is accepted only when the analyst can understand family
+reliability, compare its strongest and weakest evidence, see excluded material,
+predict the effect of a correction, act in place, and observe the same governed
+revision across associated consumers after save/reopen. This principle applies
+to visual, audio and textual evidence and to future empirical cluster families.
+
 ## Meaning / Plot Panel
 
 ### Current Problem

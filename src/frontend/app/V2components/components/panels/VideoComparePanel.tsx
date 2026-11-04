@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService, type VideoMetadata } from "@/lib/video-service";
 import { getVideoBlob } from "@/lib/blob-store";
+import { getBrowserStorageItem } from "@/lib/browser-storage";
 
 const VIDEO_COMPARE_VIEW_KEY = "vaa1.video.compare-view";
 
@@ -119,7 +120,7 @@ export default function VideoComparePanel() {
         return;
       }
       try {
-        const raw = localStorage.getItem(VIDEO_COMPARE_VIEW_KEY);
+        const raw = getBrowserStorageItem(VIDEO_COMPARE_VIEW_KEY);
         setSelection(raw ? JSON.parse(raw) : null);
       } catch {
         setSelection(null);

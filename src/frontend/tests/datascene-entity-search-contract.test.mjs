@@ -392,8 +392,8 @@ test("Datascene Search panel reads Content Search without mutating governed data
 test("saved-analysis local fallback does not break Save Analysis or Save Project", () => {
   assert.match(
     apiServiceSource,
-    /\/api\/local-analysis\/\$\{analysisId\}\/bundle/,
-    "Save Analysis must have a local bundle fallback for surfaced saved analyses",
+    /localAnalysisUrl\(analysisId, "\/bundle"\)/,
+    "Save Analysis must use the governed local-analysis URL helper for its bundle fallback",
   );
   assert.match(
     apiServiceSource,

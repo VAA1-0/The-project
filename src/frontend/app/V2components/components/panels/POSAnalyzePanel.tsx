@@ -5,6 +5,7 @@ import { useLayoutHost } from "../LayoutHost";
 import { VideoService } from "@/lib/video-service";
 import { apiService } from "@/lib/api-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
 import LanguageParityMetaView from "../LanguageParityMetaView";
 
@@ -257,7 +258,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
 
   useEffect(() => {
     const syncMatrixSections = () => {
-      const storedAnalyses = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const storedAnalyses = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       if (!storedAnalyses) {
         setMatrixSections([]);
         return;
@@ -272,7 +273,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
         setMatrixSections([]);
         return;
       }
-      const stored = window.localStorage.getItem(MATRIX_STORAGE_KEY);
+      const stored = getBrowserStorageItem(MATRIX_STORAGE_KEY);
       if (!stored) {
         setMatrixSections([]);
         return;
@@ -299,7 +300,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
 
     syncMatrixSections();
     try {
-      const storedAnalyses = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const storedAnalyses = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       setMatrixAnalysisIds(storedAnalyses ? JSON.parse(storedAnalyses) : []);
     } catch {
       setMatrixAnalysisIds([]);
@@ -441,7 +442,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
 
   const openPOSMatrix = () => {
     if (videoId) {
-      const stored = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const stored = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       let analysisIds: string[] = [];
       if (stored) {
         try {
@@ -453,7 +454,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
       const nextIds = analysisIds.includes(videoId)
         ? analysisIds
         : [...analysisIds, videoId];
-      window.localStorage.setItem(
+      setBrowserStorageItem(
         MATRIX_ANALYSES_STORAGE_KEY,
         JSON.stringify(nextIds),
       );
@@ -468,7 +469,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
       setShowPosMenu(false);
       return;
     }
-    const stored = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+    const stored = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
     let analysisIds: string[] = [];
     if (stored) {
       try {
@@ -480,7 +481,7 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
     const nextIds = analysisIds.includes(videoId)
       ? analysisIds
       : [...analysisIds, videoId];
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       MATRIX_ANALYSES_STORAGE_KEY,
       JSON.stringify(nextIds),
     );
@@ -497,13 +498,13 @@ export default function POSAnalyzePanel({ videoId: initialVideoId = "" }: { vide
       ? matrixSections.filter((item) => item !== section)
       : [...matrixSections, section];
     setMatrixSections(next);
-    window.localStorage.setItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
+    setBrowserStorageItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
 
     if (!isRemoving && videoId) {
       const nextAnalysisIds = matrixAnalysisIds.includes(videoId)
         ? matrixAnalysisIds
         : [...matrixAnalysisIds, videoId];
-      window.localStorage.setItem(
+      setBrowserStorageItem(
         MATRIX_ANALYSES_STORAGE_KEY,
         JSON.stringify(nextAnalysisIds),
       );

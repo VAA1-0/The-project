@@ -18,7 +18,7 @@ test("drag order is scoped and persisted per host panel", () => {
   assert.match(source, /vaa1\.panel-section-order\.\$\{panelId\}/);
   assert.match(source, /application\/x-datascene-panel-section/);
   assert.match(source, /data-vaa1-panel-section-drag-handle/);
-  assert.match(source, /localStorage\.setItem/);
+  assert.match(source, /setBrowserStorageItem/);
 });
 
 test("detached live content returns to its host when the window closes", () => {

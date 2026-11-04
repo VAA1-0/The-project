@@ -74,6 +74,13 @@ recognition authority, and regeneration preserves manual evidence and traceback.
 
 ## Meaning Network Graph as a whole
 
+The publication-readiness category and navigation model is governed by
+[Datascene Meaning Knowledge Graph information-architecture contract
+(2026-11-02)](datascene_meaning_knowledge_graph_information_architecture_contract_2026-11-02.md).
+It distinguishes structural scope, represented phenomena, theoretical
+projections, and evidence/review overlays while preserving compatibility with
+the operational first draft.
+
 The Meaning Network Graph should function as a governed multimodal workspace, not merely as a visualization.
 
 It should support:

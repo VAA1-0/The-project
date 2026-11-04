@@ -34,6 +34,10 @@ class AiAgentFeatureStartersContractTest(unittest.TestCase):
         self.assertEqual(
             feature_ids,
             {
+                "speaker_diarization",
+                "object_detection",
+                "object_appearance_embedding",
+                "facial_landmark_embedding",
                 "metadata_harvesting",
                 "webpage_comparison",
                 "llm_gateway_rag",
@@ -58,6 +62,51 @@ class AiAgentFeatureStartersContractTest(unittest.TestCase):
         self.assertTrue(isolated)
         self.assertTrue(all(not candidate["core_compatible"] for candidate in isolated))
         self.assertTrue(any(candidate["name"].startswith("IMDb") for candidate in review_required))
+        face_feature = next(
+            feature for feature in manifest["features"]
+            if feature["feature_id"] == "facial_landmark_embedding"
+        )
+        self.assertEqual(face_feature["candidates"][0]["name"], "OpenCV YuNet + SFace")
+        self.assertTrue(face_feature["candidates"][0]["core_compatible"])
+        self.assertEqual(len(face_feature["candidates"][0]["literature"]), 2)
+
+        detector_feature = next(
+            feature for feature in manifest["features"]
+            if feature["feature_id"] == "object_detection"
+        )
+        detector_names = {candidate["name"] for candidate in detector_feature["candidates"]}
+        self.assertTrue({
+            "Ultralytics YOLOv8n",
+            "Torchvision Faster R-CNN MobileNetV3",
+            "Detectron2 Faster R-CNN",
+            "IDEA-Research DINO detector",
+            "YOLO-NAS",
+            "TensorFlow EfficientDet D0",
+            "Meta DETR ResNet-50",
+        }.issubset(detector_names))
+        self.assertTrue(all(candidate["runtime"] for candidate in detector_feature["candidates"]))
+        detr = next(candidate for candidate in detector_feature["candidates"] if candidate["name"] == "Meta DETR ResNet-50")
+        self.assertTrue(detr["core_compatible"])
+        self.assertEqual(detr["license"], "Apache-2.0")
+
+        appearance_feature = next(
+            feature for feature in manifest["features"]
+            if feature["feature_id"] == "object_appearance_embedding"
+        )
+        native = next(candidate for candidate in appearance_feature["candidates"] if candidate["name"] == "Datascene Native Object Appearance v1")
+        self.assertTrue(native["core_compatible"])
+        self.assertTrue(native["runtime"]["available"])
+
+        diarization_feature = next(
+            feature for feature in manifest["features"]
+            if feature["feature_id"] == "speaker_diarization"
+        )
+        pyannote = next(candidate for candidate in diarization_feature["candidates"] if candidate["name"] == "pyannote.audio Community-1")
+        self.assertFalse(pyannote["core_compatible"])
+        self.assertTrue(pyannote["runtime"]["activation_required"])
+        self.assertTrue(pyannote["runtime"]["user_owned_hugging_face_token_required"])
+        native_diarization = next(candidate for candidate in diarization_feature["candidates"] if candidate["name"] == "Datascene native diarization scaffold")
+        self.assertTrue(native_diarization["runtime"]["available"])
 
     def test_manifest_can_be_written_as_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

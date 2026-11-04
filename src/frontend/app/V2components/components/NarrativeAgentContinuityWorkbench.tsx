@@ -3,6 +3,7 @@ import { apiService } from "@/lib/api-service";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { individualNarrativeAgentLabel } from "@/lib/narrative-agent-registry";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 type Occurrence = {
   occurrence_id: string;
@@ -86,6 +87,48 @@ type AudioMatchSuggestion = {
   decision_state?: string;
   maturity?: string;
 };
+
+const MAX_REVIEW_DRAFTS = 128;
+const MAX_REVIEW_DRAFT_LENGTH = 8_000;
+
+function compactContinuityReview(value: unknown): {
+  activeRelationTicketId: string;
+  relationDrafts: Record<string, string>;
+} {
+  const record = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+  const drafts: Record<string, string> = {};
+  if (record.relationDrafts && typeof record.relationDrafts === "object") {
+    for (const [ticketId, draft] of Object.entries(
+      record.relationDrafts as Record<string, unknown>,
+    )) {
+      if (Object.keys(drafts).length >= MAX_REVIEW_DRAFTS) break;
+      if (
+        ticketId.length <= 512 &&
+        typeof draft === "string" &&
+        draft.length <= MAX_REVIEW_DRAFT_LENGTH
+      ) {
+        drafts[ticketId] = draft;
+      }
+    }
+  }
+  return {
+    activeRelationTicketId:
+      typeof record.activeRelationTicketId === "string"
+        ? record.activeRelationTicketId.slice(0, 512)
+        : "",
+    relationDrafts: drafts,
+  };
+}
+
+function persistContinuityReview(
+  key: string,
+  value: { activeRelationTicketId: string; relationDrafts: Record<string, string> },
+): "local" | "session" | "memory" {
+  const payload = JSON.stringify(compactContinuityReview(value));
+  return setBrowserStorageItem(key, payload);
+}
 
 type ContinuityPayload = {
   project_id: string;
@@ -199,6 +242,7 @@ export default function NarrativeAgentContinuityWorkbench({
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({});
   const [activeRelationTicketId, setActiveRelationTicketId] = useState("");
   const [reviewHydratedKey, setReviewHydratedKey] = useState("");
+  const [reviewPersistenceNote, setReviewPersistenceNote] = useState("");
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [selectedAudioMatches, setSelectedAudioMatches] = useState<Set<string>>(new Set());
   const [audioDecisionReceipts, setAudioDecisionReceipts] = useState<Record<string, { state: string; revision?: string }>>({});
@@ -208,9 +252,10 @@ export default function NarrativeAgentContinuityWorkbench({
   useEffect(() => {
     if (typeof window === "undefined" || !agent.trim()) return;
     try {
-      const restored = JSON.parse(window.localStorage.getItem(reviewStorageKey) || "{}");
-      setActiveRelationTicketId(String(restored.activeRelationTicketId || ""));
-      setRelationDrafts(restored.relationDrafts && typeof restored.relationDrafts === "object" ? restored.relationDrafts : {});
+      const raw = getBrowserStorageItem(reviewStorageKey);
+      const restored = compactContinuityReview(JSON.parse(raw || "{}"));
+      setActiveRelationTicketId(restored.activeRelationTicketId);
+      setRelationDrafts(restored.relationDrafts);
     } catch {
       setActiveRelationTicketId("");
       setRelationDrafts({});
@@ -220,7 +265,17 @@ export default function NarrativeAgentContinuityWorkbench({
 
   useEffect(() => {
     if (typeof window === "undefined" || reviewHydratedKey !== reviewStorageKey) return;
-    window.localStorage.setItem(reviewStorageKey, JSON.stringify({ activeRelationTicketId, relationDrafts }));
+    const persistence = persistContinuityReview(reviewStorageKey, {
+      activeRelationTicketId,
+      relationDrafts,
+    });
+    setReviewPersistenceNote(
+      persistence === "local"
+        ? ""
+        : persistence === "session"
+          ? "Browser storage is full. Review drafts remain active for this tab; Narrative Agent evidence remains hydrated."
+          : "Browser storage is full. Review drafts remain active until this panel is closed.",
+    );
   }, [activeRelationTicketId, relationDrafts, reviewHydratedKey, reviewStorageKey]);
 
   const publishAgentSelection = (label: string) => {
@@ -604,6 +659,15 @@ export default function NarrativeAgentContinuityWorkbench({
         </div>
       </div>
       <div className="border-t border-slate-800 p-3">
+        {reviewPersistenceNote ? (
+          <div
+            className="mb-2 rounded border border-amber-700/40 bg-amber-950/20 px-2 py-1 text-[10px] text-amber-200"
+            role="status"
+            data-vaa1-continuity-storage-fallback="true"
+          >
+            {reviewPersistenceNote}
+          </div>
+        ) : null}
         <div className="grid gap-2 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_auto]">
           <label className="text-[10px] uppercase tracking-wide text-slate-500">Narrative Agent
             <select

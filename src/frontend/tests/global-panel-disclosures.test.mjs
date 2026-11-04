@@ -18,7 +18,7 @@ test("global ordering preserves documented semantic exceptions", () => {
     assert.match(source, new RegExp(`"${component}"`));
   }
   assert.match(source, /localeCompare/);
-  assert.match(source, /localStorage\.setItem/);
+  assert.match(source, /setBrowserStorageItem/);
 });
 
 test("native dynamic sections are not double-enhanced", () => {

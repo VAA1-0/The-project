@@ -12,7 +12,7 @@ const matrixSource = fs.readFileSync(
 );
 
 test("POS leaf exposes a visible, local refresh control", () => {
-  assert.match(source, /eventBus\.getLast<string>\("videoIdChanged"\) \|\| ""/);
+  assert.match(source, /eventBus\.getLast<string>\("videoIdChanged"\) \|\| initialVideoId/);
   assert.match(source, /data-vaa1-pos-refresh="true"/);
   assert.match(source, /onClick=\{\(\) => void refreshPOSFromCorrectedTranscript\(\)\}/);
   assert.match(source, /disabled=\{!videoId \|\| isRefreshingPOS\}/);

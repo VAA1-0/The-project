@@ -5,6 +5,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService } from "@/lib/api-service";
 import { VideoService, type AnalysisData } from "@/lib/video-service";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 const TIMEBANK_ANALYSES_STORAGE_KEY = "vaa1.timebank.analyses";
 const TIMEBANK_SECTIONS_STORAGE_KEY = "vaa1.timebank.sections";
@@ -386,7 +387,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     if (typeof window === "undefined") {
       return initialVideoId ? [initialVideoId] : [];
     }
-    const stored = window.localStorage.getItem(TIMEBANK_ANALYSES_STORAGE_KEY);
+    const stored = getBrowserStorageItem(TIMEBANK_ANALYSES_STORAGE_KEY);
     if (!stored) {
       return initialVideoId ? [initialVideoId] : [];
     }
@@ -408,7 +409,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     if (typeof window === "undefined") {
       return DEFAULT_SECTIONS;
     }
-    const stored = window.localStorage.getItem(TIMEBANK_SECTIONS_STORAGE_KEY);
+    const stored = getBrowserStorageItem(TIMEBANK_SECTIONS_STORAGE_KEY);
     if (!stored) {
       return DEFAULT_SECTIONS;
     }
@@ -429,7 +430,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
       if (typeof window === "undefined") {
         return DEFAULT_SECTION_WIDTHS;
       }
-      const stored = window.localStorage.getItem(TIMEBANK_SECTION_WIDTHS_STORAGE_KEY);
+      const stored = getBrowserStorageItem(TIMEBANK_SECTION_WIDTHS_STORAGE_KEY);
       if (!stored) {
         return DEFAULT_SECTION_WIDTHS;
       }
@@ -471,7 +472,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       TIMEBANK_ANALYSES_STORAGE_KEY,
       JSON.stringify([...analysisIds].sort()),
     );
@@ -481,7 +482,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       TIMEBANK_SECTIONS_STORAGE_KEY,
       JSON.stringify(sections),
     );
@@ -491,7 +492,7 @@ export default function TimeBankPanel({ videoId: initialVideoId = "" }: { videoI
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       TIMEBANK_SECTION_WIDTHS_STORAGE_KEY,
       JSON.stringify(sectionWidths),
     );

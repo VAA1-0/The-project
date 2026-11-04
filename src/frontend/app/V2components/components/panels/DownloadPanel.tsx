@@ -23,6 +23,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { VideoService } from "@/lib/video-service";
 import { API_CONFIG, getFileTypeConfig, getDownloadUrl } from "@/lib/config";
 import { apiService } from "@/lib/api-service";
+import { getBrowserStorageItem } from "@/lib/browser-storage";
 import { activeProjectScopeId } from "@/lib/active-project-scope";
 import {
   Tooltip,
@@ -547,7 +548,7 @@ export default function DownloadPanel() {
 
     const quantMatrixSections = (() => {
       try {
-        const stored = window.localStorage.getItem(QUANT_MATRIX_STORAGE_KEY);
+        const stored = getBrowserStorageItem(QUANT_MATRIX_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -556,7 +557,7 @@ export default function DownloadPanel() {
 
     const quantMatrixAnalyses = (() => {
       try {
-        const stored = window.localStorage.getItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY);
+        const stored = getBrowserStorageItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -565,7 +566,7 @@ export default function DownloadPanel() {
 
     const posMatrixSections = (() => {
       try {
-        const stored = window.localStorage.getItem(POS_MATRIX_STORAGE_KEY);
+        const stored = getBrowserStorageItem(POS_MATRIX_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -574,7 +575,7 @@ export default function DownloadPanel() {
 
     const posMatrixAnalyses = (() => {
       try {
-        const stored = window.localStorage.getItem(POS_MATRIX_ANALYSES_STORAGE_KEY);
+        const stored = getBrowserStorageItem(POS_MATRIX_ANALYSES_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];

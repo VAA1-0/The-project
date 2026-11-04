@@ -11,6 +11,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 type DynamicPanelSectionProps = {
   sectionId: string;
@@ -268,7 +269,7 @@ export function DynamicPanelSectionGroup({
   }, [sections]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(storageKey);
+    const saved = getBrowserStorageItem(storageKey);
     if (!saved) {
       setOrder((current) => current.join("\u001f") === canonicalSignature ? current : canonicalIds);
       return;
@@ -307,7 +308,7 @@ export function DynamicPanelSectionGroup({
         setOrder((current) => {
           const next = current.filter((id) => id !== sourceId);
           next.splice(Math.max(0, next.indexOf(targetId)), 0, sourceId);
-          window.localStorage.setItem(storageKey, JSON.stringify(next));
+          setBrowserStorageItem(storageKey, JSON.stringify(next));
           return next;
         });
       }}

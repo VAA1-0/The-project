@@ -5,6 +5,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { apiService } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
 import { VideoService } from "@/lib/video-service";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 type ReportMode = "scan" | "review";
 
@@ -97,7 +98,7 @@ export default function AnalysisReportPanel({ videoId: initialVideoId = "" }: { 
       if (cancelled) return;
       setMatrixRows(rows);
       let saved: string[] = [];
-      try { saved = JSON.parse(window.localStorage.getItem(REPORT_MATRIX_STORAGE_KEY) || "[]"); } catch { saved = []; }
+      try { saved = JSON.parse(getBrowserStorageItem(REPORT_MATRIX_STORAGE_KEY) || "[]"); } catch { saved = []; }
       const eligible = saved.filter((id) => rows.some((row) => row.id === id));
       setSelectedMatrixIds(eligible.length ? eligible : rows.map((row) => row.id));
     });
@@ -107,7 +108,7 @@ export default function AnalysisReportPanel({ videoId: initialVideoId = "" }: { 
   const toggleMatrixRow = (id: string) => {
     setSelectedMatrixIds((previous) => {
       const next = previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id];
-      window.localStorage.setItem(REPORT_MATRIX_STORAGE_KEY, JSON.stringify(next));
+      setBrowserStorageItem(REPORT_MATRIX_STORAGE_KEY, JSON.stringify(next));
       return next;
     });
   };

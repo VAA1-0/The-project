@@ -21,6 +21,7 @@ dependencies:
   - openai-whisper
 
   - pip:
+      - timm==1.0.20
       - aiofiles==25.1.0
       - annotated-doc==0.0.4
       - annotated-types==0.7.0

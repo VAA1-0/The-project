@@ -40,6 +40,29 @@ type MaturationQueue =
   | "scanner"
   | "sampling";
 type MaturationDecision = "confirmed" | "deferred" | "canceled" | "staged_annotation";
+type EmpiricalClusterDomain = "visual" | "audio" | "textual";
+
+type EmpiricalClusterSample = {
+  id: string;
+  label: string;
+  start: number | null;
+  end: number | null;
+  quality: number | null;
+  sourceRef: string;
+  preview: string;
+  exclusionReason?: string;
+};
+
+type EmpiricalClusterFamilyRow = {
+  id: string;
+  domain: EmpiricalClusterDomain;
+  label: string;
+  count: number;
+  panel: string;
+  evidence: string;
+  preview: string;
+  samples: EmpiricalClusterSample[];
+};
 
 type DataMaturationPanelProps = {
   videoId?: string;
@@ -87,6 +110,8 @@ type GovernanceMatrixRow = {
   canDropCandidate?: boolean;
   canDropCluster?: boolean;
   queue: MaturationQueue;
+  clusterDomain?: EmpiricalClusterDomain;
+  clusterFamily?: string;
 };
 
 type MaturationContextMenu = {
@@ -213,6 +238,20 @@ function numberFrom(value: unknown): number {
 function textFrom(value: unknown, fallback = ""): string {
   const text = String(value || "").trim();
   return text || fallback;
+}
+
+function firstText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function manualAnnotationLabel(item: Record<string, unknown>): string {
@@ -496,6 +535,185 @@ function temporalCoverageAudit(source: Record<string, unknown>): {
   return { ...counts, status };
 }
 
+function empiricalClusterSamples(
+  records: unknown[],
+  prefix: string,
+  fallbackLabel: string,
+): EmpiricalClusterSample[] {
+  return records.slice(0, 500).map((value, index) => {
+    const item = asRecord(value);
+    const interval = asRecord(item.source_interval || item.interval || item.time);
+    const start = optionalNumber(
+      interval.start ?? interval.start_seconds ?? item.start ?? item.start_time ?? item.timestamp ?? item.time,
+    );
+    const end = optionalNumber(interval.end ?? interval.end_seconds ?? item.end ?? item.end_time);
+    const rawQuality = optionalNumber(item.quality ?? item.confidence ?? item.score ?? item.probability);
+    const quality = rawQuality !== null && rawQuality > 1 && rawQuality <= 100 ? rawQuality / 100 : rawQuality;
+    const label = firstText(
+      item.semantic_family,
+      item.label,
+      item.name,
+      item.class_name,
+      item.category,
+      item.text,
+      item.speaker,
+      fallbackLabel,
+    );
+    const id = firstText(
+      item.evidence_id,
+      item.sample_id,
+      item.track_id,
+      item.id,
+      `${prefix}:${index}`,
+    );
+    const sourceRef = firstText(
+      item.source_ref,
+      item.source_path,
+      item.traceback,
+      `${prefix}:${id}`,
+    );
+    const exclusionReason = firstText(item.exclusion_reason, item.missing_reason, item.reject_reason);
+    return {
+      id,
+      label,
+      start,
+      end: end ?? start,
+      quality,
+      sourceRef,
+      preview: firstText(item.preview_ref, item.thumbnail_ref, item.crop_ref, item.text, label),
+      exclusionReason: exclusionReason || undefined,
+    };
+  });
+}
+
+function empiricalClusterFamilies(analysisData: AnalysisData | null): EmpiricalClusterFamilyRow[] {
+  const source = asRecord(analysisData);
+  const raw = asRecord(source.rawJson);
+  const results = asRecord(raw.results);
+  const visual = asRecord(results.visual_analysis);
+  const audio = asRecord(results.audio_analysis);
+  const diarization = asRecord(source.audioDiarization || audio.audio_diarization);
+  const sampleClouds = asRecord(source.audioSampleClouds || audio.audio_sample_clouds);
+  const sceneCards = asArray<Record<string, unknown>>(asRecord(source.miseEnSceneSceneCards).scene_cards);
+  const sourceSamples = asArray<Record<string, unknown>>(source.sourceSamples);
+  const faceFrames = asArray<Record<string, unknown>>(asRecord(source.faceResults).frames);
+  const faceCount = faceFrames.reduce(
+    (total, frame) => total + asArray(asRecord(frame).faces).length,
+    0,
+  );
+  const audioEvents = asArray<Record<string, unknown>>(asRecord(audio.audio_event_intervals).intervals);
+  const transcript = asArray(source.transcriptTimeline).length || asArray(source.transcript).length;
+  const linkedTranscript = asArray(asRecord(audio.linked_transcript).anchors).length;
+  const entityRecords = asArray<Record<string, unknown>>(asRecord(source.entityRegistry).entities);
+  const visualSamples = sourceSamples.filter((sample) => /visual|frame|image/i.test(String(asRecord(sample).sample_type || asRecord(sample).type || ""))).length;
+  const objectRecords = asArray(source.detectedObjects);
+  const faceRecords = faceFrames.flatMap((frame, frameIndex) =>
+    asArray(asRecord(frame).faces).map((face, faceIndex) => ({
+      ...asRecord(face),
+      timestamp: asRecord(frame).timestamp ?? asRecord(frame).time,
+      id: firstText(asRecord(face).id, `face:${frameIndex}:${faceIndex}`),
+    })),
+  );
+  const expressionRecords = asArray(source.expressionResults);
+  const movementRecords = asArray(source.bodyMovementDetections);
+  const shotRecords = [...sceneCards, ...asArray(asRecord(visual.shot_boundaries).intervals)];
+  const sourceMediaMetadata = asRecord(asRecord(source.metadata).sourceMediaMetadata);
+  const sourceAnnotations = asRecord(sourceMediaMetadata.user_annotations);
+  const metadataLocationRecords = [
+    ["country", sourceAnnotations.location_country],
+    ["city", sourceAnnotations.location_city],
+    ["place", sourceAnnotations.location_place],
+    ["room", sourceAnnotations.location_room],
+  ].flatMap(([level, value]) => {
+    const label = String(value || "").trim();
+    return label ? [{
+      id: `source-location:${level}:${label.toLowerCase()}`,
+      label,
+      source_ref: `source_media_metadata:location_${level}`,
+      authority: "source_media_metadata",
+      evidence_kind: "proposed_location",
+    }] : [];
+  });
+  const sceneSettingRecords = sceneCards.flatMap((card, index) => {
+    const prose = asRecord(card.prose_sections || asRecord(card.nlp_scene_summary).prose_sections);
+    const label = firstText(card.setting_and_set_design, prose.setting_and_set_design);
+    return label ? [{
+      id: firstText(card.scene_id, `scene-setting:${index}`),
+      label,
+      start: card.start,
+      end: card.end,
+      source_ref: firstText(card.source_ref, `scene_card:${firstText(card.scene_id, index)}`),
+      authority: "scene_card_evidence",
+      evidence_kind: "setting_observation",
+    }] : [];
+  });
+  const setRecognition = asRecord(visual.set_location_recognition);
+  const measuredSetRecords = asArray<Record<string, unknown>>(setRecognition.clusters).map((cluster, index) => {
+    const representative = asRecord(cluster.representative);
+    const boundary = asRecord(cluster.boundary_sample);
+    return {
+      ...cluster,
+      id: firstText(cluster.cluster_id, `set-cluster:${index}`),
+      label: firstText(cluster.semantic_label, `Recurring environment ${index + 1}`),
+      timestamp: representative.timestamp,
+      start: representative.timestamp,
+      end: boundary.timestamp ?? representative.timestamp,
+      source_ref: firstText(representative.source_ref, `set_location_recognition:${firstText(cluster.cluster_id, index)}`),
+      quality: cluster.cohesion,
+      evidence_kind: "measured_visual_recurrence",
+    };
+  });
+  const setLocationRecords = [...measuredSetRecords, ...metadataLocationRecords, ...sceneSettingRecords];
+  const spatialToneRecords = asArray(asRecord(visual.spatial_tone_scan).samples);
+  const adaptiveVisualRecords = asArray(asRecord(visual.adaptive_visual_scan).samples);
+  const ocrRecords = asArray(source.ocr);
+  const visualSampleRecords = sourceSamples.filter((sample) => /visual|frame|image/i.test(String(asRecord(sample).sample_type || asRecord(sample).type || "")));
+  const vadRecords = asArray(diarization.vad_segments);
+  const speakerTurnRecords = asArray(diarization.speaker_turns);
+  const voiceProfileRecords = asArray(asRecord(diarization.embedding_index).items);
+  const prosodyRecords = asArray(source.audioProsody);
+  const foleyRecords = audioEvents.filter((item) => /foley|impact|shot|laugh|applause|roar|engine|door|footstep/i.test(JSON.stringify(item)));
+  const acousticEnvironmentRecords = prosodyRecords.filter((item) => Boolean(asRecord(item).sound_environment));
+  const audioSampleRecords = asArray(sampleClouds.samples).length ? asArray(sampleClouds.samples) : asArray(sampleClouds.clouds);
+  const transcriptRecords = asArray(source.transcriptTimeline).length ? asArray(source.transcriptTimeline) : asArray(source.transcript);
+  const linkedTranscriptRecords = asArray(asRecord(audio.linked_transcript).anchors);
+  const posRecords = asArray(source.posAnalysis);
+  const quantRecords = asArray(source.quantAnalysis);
+  const entityRecordsRaw = asArray(asRecord(source.entityRegistry).entities);
+  const speakerAssignmentRecords = asArray(source.transcript).filter((item) => Boolean(asRecord(item).speaker));
+  const rows: EmpiricalClusterFamilyRow[] = [
+    { id: "object_and_object_track", domain: "visual", label: "Objects and object tracks", count: objectRecords.length, panel: "OBJDetection", evidence: "tracked objects and governed OBJ annotations", preview: "thumbnail / BBox", samples: empiricalClusterSamples(objectRecords, "object", "Object") },
+    { id: "person_face_and_identity_candidate", domain: "visual", label: "Persons, faces and Narrative Agent candidates", count: faceCount, panel: "NarrativeAgent", evidence: "face frames and person detections", preview: "face crop", samples: empiricalClusterSamples(faceRecords, "face", "Narrative Agent candidate") },
+    { id: "expression_and_micro_expression", domain: "visual", label: "Expressions and micro-expressions", count: expressionRecords.length, panel: "Expressions", evidence: "expression samples", preview: "face crop", samples: empiricalClusterSamples(expressionRecords, "expression", "Expression") },
+    { id: "pose_gesture_and_body_movement", domain: "visual", label: "Pose, gesture and bodily movement", count: movementRecords.length, panel: "ManualMovement", evidence: "pose and movement measurements", preview: "frame / skeleton", samples: empiricalClusterSamples(movementRecords, "movement", "Body movement") },
+    { id: "scene_shot_and_transition", domain: "visual", label: "Scenes, shots and transitions", count: shotRecords.length, panel: "SceneCards", evidence: "scene cards and measured shot boundaries", preview: "representative frame", samples: empiricalClusterSamples(shotRecords, "scene", "Scene / shot") },
+    { id: "set_location_and_environment", domain: "visual", label: "Sets, locations and environments", count: setLocationRecords.length, panel: "SceneCards", evidence: measuredSetRecords.length ? "measured wide-frame recurrence, Source Media location proposals, and Scene Card setting evidence" : "Source Media location proposals and Scene Card setting evidence; run the measured recurrence motor for visual clusters", preview: "wide-frame contact sheet / metadata proposal", samples: empiricalClusterSamples(setLocationRecords, "set-location", "Set / location") },
+    { id: "spatial_tone_color_light_and_contrast", domain: "visual", label: "Spatial tone, colour, light and contrast", count: spatialToneRecords.length, panel: "CinematicCues", evidence: "spatial tone measurements", preview: "frame / palette", samples: empiricalClusterSamples(spatialToneRecords, "spatial-tone", "Spatial tone") },
+    { id: "adaptive_visual_change_and_motion", domain: "visual", label: "Adaptive visual change and motion", count: adaptiveVisualRecords.length, panel: "CinematicCues", evidence: "adaptive temporal visual measurements", preview: "frame sequence", samples: empiricalClusterSamples(adaptiveVisualRecords, "visual-change", "Visual change") },
+    { id: "ocr_region", domain: "visual", label: "OCR regions", count: ocrRecords.length, panel: "OCR", evidence: "source-region geometry", preview: "document region", samples: empiricalClusterSamples(ocrRecords, "ocr-region", "OCR region") },
+    { id: "visual_sample_and_sample_cloud", domain: "visual", label: "Visual samples and sample clouds", count: visualSamples, panel: "DataMaturation", evidence: "governed source samples", preview: "thumbnail contact sheet", samples: empiricalClusterSamples(visualSampleRecords, "visual-sample", "Visual sample") },
+    { id: "visual_concept_recurrence_candidate", domain: "visual", label: "Visual-concept recurrence candidates", count: 0, panel: "MeaningPlot", evidence: "shared empirical cluster projection not yet registered", preview: "contact sheet", samples: [] },
+    { id: "speech_activity_and_vad_interval", domain: "audio", label: "Speech activity and VAD intervals", count: vadRecords.length, panel: "Audio", evidence: "measured VAD intervals", preview: "waveform", samples: empiricalClusterSamples(vadRecords, "vad", "Speech activity") },
+    { id: "speaker_turn_and_diarization_cluster", domain: "audio", label: "Speaker turns and diarization clusters", count: speakerTurnRecords.length, panel: "Audio", evidence: "speaker-turn intervals", preview: "waveform / text", samples: empiricalClusterSamples(speakerTurnRecords, "speaker-turn", "Speaker turn") },
+    { id: "voice_and_speaker_profile_candidate", domain: "audio", label: "Voice and Narrative Agent profile candidates", count: voiceProfileRecords.length, panel: "Audio", evidence: "acoustic embeddings", preview: "waveform / spectrogram", samples: empiricalClusterSamples(voiceProfileRecords, "voice-profile", "Narrative Agent voice candidate") },
+    { id: "prosody_delivery_and_turn_structure", domain: "audio", label: "Prosody, delivery and turn structure", count: prosodyRecords.length, panel: "Audio", evidence: "measured prosody cues", preview: "waveform / contour", samples: empiricalClusterSamples(prosodyRecords, "prosody", "Prosody cue") },
+    { id: "music_noise_silence_and_sound_event", domain: "audio", label: "Music, noise, silence and sound events", count: audioEvents.length, panel: "Audio", evidence: "governed audio event intervals", preview: "waveform", samples: empiricalClusterSamples(audioEvents, "audio-event", "Audio event") },
+    { id: "foley_and_recurring_acoustic_event", domain: "audio", label: "Foley and recurring acoustic events", count: foleyRecords.length, panel: "Audio", evidence: "classified point-sound candidates", preview: "waveform / spectrogram", samples: empiricalClusterSamples(foleyRecords, "foley", "Foley event") },
+    { id: "acoustic_environment", domain: "audio", label: "Acoustic environments", count: acousticEnvironmentRecords.length, panel: "Audio", evidence: "sound-environment measurements", preview: "spectrogram", samples: empiricalClusterSamples(acousticEnvironmentRecords, "acoustic-environment", "Acoustic environment") },
+    { id: "audio_sample_and_sample_cloud", domain: "audio", label: "Audio samples and sample clouds", count: audioSampleRecords.length, panel: "Audio", evidence: "governed audio sample clouds", preview: "waveform / spectrogram", samples: empiricalClusterSamples(audioSampleRecords, "audio-sample", "Audio sample") },
+    { id: "waveform_energy_pitch_and_spectral_measurement", domain: "audio", label: "Waveform, energy, pitch and spectral measurements", count: prosodyRecords.length + audioEvents.length, panel: "Audio", evidence: "measured acoustic windows", preview: "waveform / contour", samples: empiricalClusterSamples([...prosodyRecords, ...audioEvents], "acoustic-measurement", "Acoustic measurement") },
+    { id: "transcript_segment_and_word", domain: "textual", label: "Transcript segments and words", count: transcript, panel: "Transcript", evidence: "source-timed transcript", preview: "text excerpt", samples: empiricalClusterSamples(transcriptRecords, "transcript", "Transcript segment") },
+    { id: "linked_transcript_anchor", domain: "textual", label: "Linked-transcript anchors", count: linkedTranscript, panel: "Transcript", evidence: "linked evidence anchors", preview: "text excerpt", samples: empiricalClusterSamples(linkedTranscriptRecords, "linked-transcript", "Linked transcript") },
+    { id: "ocr_text", domain: "textual", label: "OCR text", count: ocrRecords.length, panel: "OCR", evidence: "recognized text linked to OCR regions", preview: "text / region", samples: empiricalClusterSamples(ocrRecords, "ocr-text", "OCR text") },
+    { id: "token_lemma_and_pos", domain: "textual", label: "Tokens, lemmas and POS", count: posRecords.length, panel: "POS", evidence: "POS analysis", preview: "token context", samples: empiricalClusterSamples(posRecords, "pos", "Token / POS") },
+    { id: "quant_frequency_and_repetition", domain: "textual", label: "Quant frequency and repetition", count: quantRecords.length, panel: "Quant", evidence: "Quant analysis", preview: "term context", samples: empiricalClusterSamples(quantRecords, "quant", "Quant pattern") },
+    { id: "named_entity_and_reference", domain: "textual", label: "Named entities and references", count: entityRecords.length, panel: "Search", evidence: "Datascene Entity Registry", preview: "source excerpt", samples: empiricalClusterSamples(entityRecordsRaw, "entity", "Named entity") },
+    { id: "speaker_label_and_assignment", domain: "textual", label: "Narrative Agent labels and assignments", count: speakerAssignmentRecords.length, panel: "Transcript", evidence: "transcript Narrative Agent assignments", preview: "text / waveform", samples: empiricalClusterSamples(speakerAssignmentRecords, "speaker-assignment", "Narrative Agent assignment") },
+    { id: "language_and_morphology_signal", domain: "textual", label: "Language and morphology signals", count: transcript ? 1 : 0, panel: "Tools", evidence: "language profile and morphology routing", preview: "language record", samples: transcript ? [{ id: "language-profile", label: "Language and morphology profile", start: null, end: null, quality: null, sourceRef: "analysis:language-profile", preview: "Language profile" }] : [] },
+    { id: "phrase_keyword_and_lexical_pattern", domain: "textual", label: "Phrase, keyword and lexical patterns", count: posRecords.length + quantRecords.length, panel: "Search", evidence: "POS and Quant pattern substrate", preview: "text excerpt", samples: empiricalClusterSamples([...posRecords, ...quantRecords], "lexical-pattern", "Lexical pattern") },
+  ];
+  return rows;
+}
 function countMatureSurfaces(audit: unknown): number {
   const record = asRecord(audit);
   const direct = numberFrom(record.mature_surface_count);
@@ -1191,6 +1409,11 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
   const [digitalTwinMessage, setDigitalTwinMessage] = useState("Loading Digital Twin samples...");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ProliferationMode>("dynamic");
+  const [clusterDomain, setClusterDomain] = useState<EmpiricalClusterDomain>("visual");
+  const [activeClusterFamilyId, setActiveClusterFamilyId] = useState("");
+  const [clusterThresholdPreview, setClusterThresholdPreview] = useState(65);
+  const [selectedClusterSamples, setSelectedClusterSamples] = useState<string[]>([]);
+  const [clusterReassignment, setClusterReassignment] = useState("");
   const [activeQueue, setActiveQueue] = useState<MaturationQueue>("confirmations");
   const [saveMessage, setSaveMessage] = useState("");
   const [contextMenu, setContextMenu] = useState<MaturationContextMenu | null>(null);
@@ -1206,11 +1429,42 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     issueFromPosture("dynamic"),
   );
   const governedNarrativeAgents = useMemo(() => governedNarrativeAgentLabels(analysisData), [analysisData]);
+  const clusterTaxonomyRows = useMemo(() => empiricalClusterFamilies(analysisData), [analysisData]);
+  const visibleClusterTaxonomyRows = clusterTaxonomyRows.filter((row) => row.domain === clusterDomain);
+  const activeClusterFamily = clusterTaxonomyRows.find((row) => row.id === activeClusterFamilyId) || null;
+  const activeClusterIncluded = activeClusterFamily?.samples.filter((sample) =>
+    !sample.exclusionReason && (sample.quality === null || sample.quality * 100 >= clusterThresholdPreview),
+  ) || [];
+  const activeClusterExcluded = activeClusterFamily?.samples.filter((sample) =>
+    Boolean(sample.exclusionReason) || (sample.quality !== null && sample.quality * 100 < clusterThresholdPreview),
+  ) || [];
+  const activeClusterRepresentative = [...activeClusterIncluded].sort((left, right) =>
+    (right.quality ?? 0.5) - (left.quality ?? 0.5),
+  )[0] || null;
+  const activeClusterBoundary = [...activeClusterIncluded].sort((left, right) =>
+    (left.quality ?? 0.5) - (right.quality ?? 0.5),
+  )[0] || null;
+  const activeClusterMaxTime = Math.max(
+    1,
+    ...(activeClusterFamily?.samples.map((sample) => sample.end ?? sample.start ?? 0) || [1]),
+  );
+  const activeClusterScored = activeClusterIncluded.filter((sample) => sample.quality !== null);
+  const activeClusterCohesion = activeClusterScored.length
+    ? activeClusterScored.reduce((sum, sample) => sum + (sample.quality || 0), 0) / activeClusterScored.length
+    : null;
+  const activeClusterTemporalCoverage = activeClusterFamily?.samples.filter((sample) => sample.start !== null).length || 0;
+  const activeClusterAutomaticMaturity = activeClusterFamily?.id === "speech_activity_and_vad_interval";
+  const activeClusterMixedMaturity = activeClusterFamily?.id === "music_noise_silence_and_sound_event";
 
   useEffect(() => {
     eventBus.emit("maturationWorkbenchActive", true);
     return () => eventBus.emit("maturationWorkbenchActive", false);
   }, []);
+
+  useEffect(() => {
+    setSelectedClusterSamples([]);
+    setClusterReassignment("");
+  }, [activeClusterFamilyId, videoId]);
 
   useEffect(() => {
     let canceled = false;
@@ -1920,6 +2174,97 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
     }
   };
 
+  const persistEmpiricalClusterBatch = async (
+    family: EmpiricalClusterFamilyRow,
+    decisionKind: "confirmed" | "deferred" | "canceled",
+  ) => {
+    if (!videoId || selectedClusterSamples.length === 0) return;
+    const selected = family.samples.filter((sample) => selectedClusterSamples.includes(sample.id));
+    if (decisionKind === "confirmed" && selected.some((sample) => sample.start === null)) {
+      setSaveMessage("Confirmation blocked: every selected sample must retain an exact source coordinate.");
+      return;
+    }
+    const baseTargets = ["MasterSchema", family.panel, "DataMaturation", "Search", "TracebackDrawer", "DataBook", "ScientificReport", "Export"];
+    const modalityTargets = family.domain === "visual"
+      ? ["VideoPanel", "BBox/ROI"]
+      : family.domain === "audio"
+        ? ["Audio"]
+        : ["Transcript"];
+    const semanticTargets = /person_face|voice_and_speaker|speaker_label/.test(family.id)
+      ? ["NarrativeAgent", "MeaningNetwork"]
+      : [];
+    const projectionTargets = [...new Set([...baseTargets, ...modalityTargets, ...semanticTargets])];
+    const existing = analysisData?.annotationCorrections || {};
+    const now = new Date().toISOString();
+    const newDecisions: ProliferationDecision[] = selected.map((sample) => ({
+      decision_id: `${decisionKind}:empirical-cluster:${family.id}:${sample.id}`,
+      candidate_id: sample.id,
+      decision_scope: "candidate",
+      cluster_key: `empirical:${family.id}`,
+      decision: decisionKind,
+      authority_level: decisionKind === "confirmed" ? "explicit_user_confirmation" : "manual_annotation_review",
+      candidate_label: sample.label,
+      applied_label: clusterReassignment.trim() || sample.label,
+      source_panel: "DataMaturation",
+      source_verification_status: sample.start === null ? "source_anchor_missing" : "source_time_resolved",
+      source_range_source: sample.start === null ? undefined : "evidence_ref",
+      source_anchors: [{
+        source_ref: sample.sourceRef,
+        source_time: { start: sample.start, end: sample.end ?? sample.start },
+        source_panel: family.panel,
+      }],
+      evidence_refs: [{
+        id: sample.id,
+        family: family.id,
+        domain: family.domain,
+        preview: sample.preview,
+        threshold_preview: clusterThresholdPreview / 100,
+      }],
+      source_traceback_refs: [sample.sourceRef],
+      projection_targets: decisionKind === "confirmed" ? projectionTargets : [],
+      proliferates_to: decisionKind === "confirmed" ? projectionTargets.map((target) => target.toLowerCase()) : [],
+      governance_status: {
+        empirical_cluster_family: family.id,
+        maturity: decisionKind === "confirmed" ? "mature" : "candidate",
+        confirmation_is_absolute_user_authority: decisionKind === "confirmed",
+        threshold_is_preview_only: true,
+      },
+      proliferation_allowed: decisionKind === "confirmed",
+      decision_reason: decisionKind === "confirmed"
+        ? "Analyst confirmed this source-linked empirical cluster sample; it is mature for its domain family."
+        : decisionKind === "canceled"
+          ? "Analyst excluded this sample from the empirical family."
+          : "Analyst deferred this sample for later empirical-family review.",
+      created_at: now,
+      created_by: "analyst",
+    }));
+    const decisionIds = new Set(newDecisions.map((decision) => decision.decision_id));
+    const nextCorrections: AnnotationCorrections = {
+      ...existing,
+      version: 1,
+      updated_at: now,
+      updated_by: "analyst",
+      text_substitutions: [...(existing.text_substitutions || [])],
+      label_overrides: [...(existing.label_overrides || [])],
+      manual_transcript_entries: [...(existing.manual_transcript_entries || [])],
+      manual_visual_annotations: [...(existing.manual_visual_annotations || [])],
+      proliferation_decisions: [
+        ...(existing.proliferation_decisions || []).filter((decision) => !decisionIds.has(decision.decision_id)),
+        ...newDecisions,
+      ],
+    };
+    setSaveMessage(`Saving ${selected.length} ${family.label.toLowerCase()} decision${selected.length === 1 ? "" : "s"}...`);
+    try {
+      const saved = await VideoService.saveAnnotationCorrections(videoId, nextCorrections);
+      setAnalysisData((current) => current ? { ...current, annotationCorrections: saved } : current);
+      eventBus.emit("analysisCorrectionsChanged", videoId);
+      setSelectedClusterSamples([]);
+      setSaveMessage(`${selected.length} governed decision${selected.length === 1 ? "" : "s"} recorded. Associated consumers will hydrate from the canonical correction record.`);
+    } catch (error) {
+      setSaveMessage(`Cluster decision failed: ${error instanceof Error ? error.message : "unknown persistence error"}`);
+    }
+  };
+
   const persistIssueDecision = async (
     issue: GovernanceIssue,
     decisionKind: MaturationDecision,
@@ -2004,6 +2349,130 @@ export default function DataMaturationPanel({ videoId: initialVideoId }: DataMat
         source-time anchoring, project agreement, required visual geometry, and no unresolved conflict.
         Raw detector, VAD, diarization, tracking, or duplicated derived confidence remains a candidate.
       </div>
+
+      <details open className="border-b border-white/8 bg-[#1b1b1b]" data-vaa1-empirical-cluster-taxonomy="true">
+        <summary className="cursor-pointer list-none px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-slate-400 marker:hidden hover:bg-white/[0.03]">
+          Cluster exploration · empirical detection families
+        </summary>
+        <div className="border-t border-white/8 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex gap-1" data-vaa1-cluster-domain-selector="true">
+              {(["visual", "audio", "textual"] as EmpiricalClusterDomain[]).map((domain) => {
+                const total = clusterTaxonomyRows.filter((row) => row.domain === domain).reduce((sum, row) => sum + row.count, 0);
+                return (
+                  <button key={domain} type="button" className={`rounded border px-3 py-1 text-[10px] ${clusterDomain === domain ? "border-cyan-500/60 bg-cyan-950/30 text-cyan-100" : "border-white/10 bg-[#222] text-slate-400"}`} onClick={() => { setClusterDomain(domain); setActiveClusterFamilyId(""); }}>
+                    {domain === "textual" ? "Textual" : domain[0].toUpperCase() + domain.slice(1)} · {total}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-slate-500">Existing evidence projections only · interpretation deferred</div>
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+            {visibleClusterTaxonomyRows.map((row) => (
+              <article key={row.id} className="rounded border border-white/8 bg-[#222] p-2" data-vaa1-cluster-family={row.id} data-vaa1-cluster-family-state={row.count > 0 ? "evidence_available" : "not_available"}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[11px] font-medium text-slate-200">{row.label}</div>
+                  <span className={`rounded px-1.5 py-0.5 text-[9px] ${row.count > 0 ? "bg-cyan-950 text-cyan-200" : "bg-slate-800 text-slate-500"}`}>{row.count > 0 ? `${row.count} evidence` : "not available"}</span>
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">{row.evidence}</div>
+                <div className="mt-1 text-[9px] text-slate-600">Preview: {row.preview}</div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <button type="button" className="rounded border border-cyan-900/70 px-2 py-1 text-[10px] text-cyan-200" onClick={() => setActiveClusterFamilyId(row.id)}>
+                    Explore cluster
+                  </button>
+                  <button type="button" className="rounded border border-white/10 px-2 py-1 text-[10px] text-slate-300 disabled:cursor-not-allowed disabled:text-slate-600" disabled={row.count === 0} onClick={() => openPanel(row.panel, { videoId })}>
+                    Open {row.panel}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+          {activeClusterFamily ? (
+            <section className="mt-3 rounded border border-cyan-900/60 bg-[#181d20] p-3" data-vaa1-shared-empirical-cluster-workbench="true" data-vaa1-active-cluster-family={activeClusterFamily.id}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-medium text-cyan-100">{activeClusterFamily.label}</div>
+                  <div className="mt-0.5 text-[10px] text-slate-500">{activeClusterFamily.domain} · {activeClusterFamily.evidence} · source panel {activeClusterFamily.panel}</div>
+                </div>
+                <button type="button" className="rounded border border-white/10 px-2 py-1 text-[10px] text-slate-400" onClick={() => setActiveClusterFamilyId("")}>Close</button>
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" data-vaa1-cluster-quality-header="true">
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Included</div><div className="text-sm text-slate-200">{activeClusterIncluded.length}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Excluded</div><div className="text-sm text-slate-200">{activeClusterExcluded.length}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Reviewed</div><div className="text-sm text-slate-200">{selectedClusterSamples.length}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Cohesion / purity proxy</div><div className="text-sm text-slate-200">{activeClusterCohesion === null ? "not measured" : `${Math.round(activeClusterCohesion * 100)}%`}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Source-time coverage</div><div className="text-sm text-slate-200">{activeClusterTemporalCoverage}/{activeClusterFamily.samples.length}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Nearest competitor</div><div className="truncate text-[10px] text-slate-200">category matcher not registered</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Representative</div><div className="truncate text-[10px] text-slate-200">{activeClusterRepresentative?.label || "not measurable"}</div></div>
+                <div className="rounded bg-black/20 p-2"><div className="text-[9px] uppercase text-slate-500">Boundary/problematic</div><div className="truncate text-[10px] text-slate-200">{activeClusterBoundary?.label || activeClusterExcluded[0]?.label || "not measurable"}</div></div>
+              </div>
+
+              <div className="mt-3 rounded border border-white/8 bg-black/15 p-2" data-vaa1-cluster-threshold-preview="non-writing">
+                <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400"><span>Threshold preview · {clusterThresholdPreview}%</span><span>Preview only—does not write</span></div>
+                <input aria-label="Cluster threshold preview" className="mt-2 w-full accent-cyan-600" type="range" min="0" max="100" value={clusterThresholdPreview} onChange={(event) => setClusterThresholdPreview(Number(event.target.value))} />
+                <div className="mt-1 text-[9px] text-slate-500">Membership impact: {activeClusterIncluded.length} included · {activeClusterExcluded.length} excluded. Samples without a comparable quality score remain visible and included for review.</div>
+              </div>
+
+              <div className="mt-3" data-vaa1-cluster-temporal-distribution="true">
+                <div className="mb-1 text-[9px] uppercase tracking-[0.12em] text-slate-500">Temporal distribution</div>
+                <div className="relative h-6 overflow-hidden rounded border border-white/8 bg-black/30">
+                  {activeClusterFamily.samples.filter((sample) => sample.start !== null).map((sample) => (
+                    <button key={`timeline-${sample.id}`} type="button" title={`${sample.label} @ ${formatPreciseSourceTime(sample.start || 0)}`} className={`absolute top-1 h-4 min-w-[3px] rounded-sm ${selectedClusterSamples.includes(sample.id) ? "bg-cyan-300" : "bg-cyan-800"}`} style={{ left: `${Math.min(99, ((sample.start || 0) / activeClusterMaxTime) * 100)}%`, width: `${Math.max(0.4, (((sample.end ?? sample.start ?? 0) - (sample.start || 0)) / activeClusterMaxTime) * 100)}%` }} onClick={() => { if (videoId && sample.start !== null) openVideoAtTime(videoId, sample.start); }} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2 lg:grid-cols-2" data-vaa1-cluster-representative-problematic="true">
+                {[{ title: "Best representative", sample: activeClusterRepresentative }, { title: "Problematic / boundary", sample: activeClusterBoundary || activeClusterExcluded[0] }].map(({ title, sample }) => (
+                  <div key={title} className="rounded border border-white/8 bg-[#202020] p-2">
+                    <div className="text-[9px] uppercase text-slate-500">{title}</div>
+                    <div className="mt-1 truncate text-[11px] text-slate-200">{sample?.label || "No measurable sample"}</div>
+                    {sample ? <button type="button" className="mt-1 text-[10px] text-cyan-300 underline" onClick={() => { if (videoId && sample.start !== null) openVideoAtTime(videoId, sample.start); else openPanel(activeClusterFamily.panel, { videoId }); }}>Open exact source</button> : null}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 max-h-72 space-y-1 overflow-auto" data-vaa1-cluster-sample-list="true">
+                {activeClusterFamily.samples.map((sample) => {
+                  const excluded = activeClusterExcluded.some((item) => item.id === sample.id);
+                  return (
+                    <label key={sample.id} className={`grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded border p-2 ${excluded ? "border-amber-950/70 bg-amber-950/10" : "border-white/8 bg-[#202020]"}`}>
+                      <input type="checkbox" checked={selectedClusterSamples.includes(sample.id)} onChange={(event) => setSelectedClusterSamples((current) => event.target.checked ? [...new Set([...current, sample.id])] : current.filter((id) => id !== sample.id))} />
+                      <span className="min-w-0"><span className="block truncate text-[10px] text-slate-200">{sample.label}</span><span className="block truncate text-[9px] text-slate-500">{sample.preview} · {sample.start === null ? "source time missing" : formatPreciseSourceTime(sample.start)}</span></span>
+                      <span className="text-right text-[9px] text-slate-500">{sample.quality === null ? "unscored" : `${Math.round(sample.quality * 100)}%`}{excluded ? <span className="block text-amber-300">{sample.exclusionReason || "below preview threshold"}</span> : null}</span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 rounded border border-white/8 bg-black/15 p-2" data-vaa1-cluster-adjustment-bench="true">
+                {activeClusterAutomaticMaturity ? <div className="mb-2 text-[10px] text-cyan-200">Valid source-linked speech activity matures as measured evidence automatically; no analyst confirmation tax is imposed.</div> : null}
+                {activeClusterMixedMaturity ? <div className="mb-2 text-[10px] text-cyan-200">Music and silence mature automatically when validity gates pass. Semantic noise and sound-event groupings remain reviewable here.</div> : null}
+                <div className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_auto]">
+                  <input value={clusterReassignment} onChange={(event) => setClusterReassignment(event.target.value)} placeholder="Optional semantic family reassignment" className="rounded border border-white/10 bg-[#171717] px-2 py-1.5 text-[10px] text-slate-200" />
+                  <div className="flex flex-wrap gap-1">
+                    <button type="button" className="rounded border border-white/10 px-2 py-1 text-[10px] text-slate-300" onClick={() => setSelectedClusterSamples(activeClusterIncluded.map((sample) => sample.id))}>Select included</button>
+                    <button type="button" className="rounded border border-emerald-900/70 bg-emerald-950/20 px-2 py-1 text-[10px] text-emerald-200 disabled:opacity-40" disabled={!selectedClusterSamples.length || activeClusterAutomaticMaturity} onClick={() => void persistEmpiricalClusterBatch(activeClusterFamily, "confirmed")}>{activeClusterAutomaticMaturity ? "No confirmation required" : "Confirm selected"}</button>
+                    <button type="button" className="rounded border border-amber-900/70 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-40" disabled={!selectedClusterSamples.length} onClick={() => void persistEmpiricalClusterBatch(activeClusterFamily, "deferred")}>Defer selected</button>
+                    <button type="button" className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 disabled:opacity-40" disabled={!selectedClusterSamples.length} onClick={() => void persistEmpiricalClusterBatch(activeClusterFamily, "canceled")}>Exclude selected</button>
+                    <button type="button" className="rounded border border-white/8 px-2 py-1 text-[10px] text-slate-600" disabled title="Requires preserved family lineage and rollback receipt">Merge</button>
+                    <button type="button" className="rounded border border-white/8 px-2 py-1 text-[10px] text-slate-600" disabled title="Requires preserved family lineage and rollback receipt">Split</button>
+                    <button type="button" className="rounded border border-white/8 px-2 py-1 text-[10px] text-slate-600" disabled title="Preview is available; commit requires impact receipt and rollback">Commit threshold</button>
+                  </div>
+                </div>
+                <div className="mt-2 text-[9px] text-slate-500" data-vaa1-cluster-propagation-impact="true">Confirmation writes one canonical decision per source sample. Master Schema, the owning evidence panel, Data Maturation, Search, Traceback and publication consumers hydrate; modality and Narrative Agent consumers are added only when relevant. Merge, split and committed threshold changes remain unavailable until their lineage and rollback receipts are implemented.</div>
+              </div>
+
+              {activeClusterFamily.samples.length === 0 ? <div className="mt-3 rounded border border-amber-900/40 bg-amber-950/10 p-2 text-[10px] text-amber-200">Structural workbench available; this analysis contains no registered evidence for the family. No synthetic samples are created.</div> : null}
+            </section>
+          ) : null}
+          <div className="mt-3 rounded border border-amber-900/30 bg-amber-950/10 px-2 py-2 text-[10px] text-amber-100/80" data-vaa1-interpretive-clusters-deferred="true">
+            Interpretive clusters—symbolic meaning, themes, narrative functions and roles, ideology, genre interpretations, lens readings and significance claims—remain outside this empirical detection slice.
+          </div>
+        </div>
+      </details>
 
       <details
         open

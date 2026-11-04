@@ -42,6 +42,7 @@ import { openManualAnnotationInVideo, openVideoAtTime } from "@/lib/video-naviga
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { governedNarrativeAgentLabels } from "@/lib/narrative-agent-registry";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
+import NarrativeAgentThumbnailProjectionStrip from "../NarrativeAgentThumbnailProjectionStrip";
 import { apiService, type SourceMediaMetadata } from "@/lib/api-service";
 
 const TRANSCRIPT_SOURCE_SPEAKERS = [
@@ -1238,6 +1239,16 @@ export default function SpeechToTextPanel({
                   ? ` · inside transcript interval ${formatSpeechSeconds(transcriptCursorMatch.row.start)}–${formatSpeechSeconds(transcriptCursorMatch.row.end)}`
                   : ` · ${transcriptCursorMatch.relation} nearest transcript interval ${formatSpeechSeconds(transcriptCursorMatch.row.start)}–${formatSpeechSeconds(transcriptCursorMatch.row.end)} (${formatSpeechSeconds(transcriptCursorMatch.distance)} away)`
                 : " · no authoritative transcript interval available at this source"}
+            </div>
+            <div className="mb-2 shrink-0">
+              <NarrativeAgentThumbnailProjectionStrip
+                analysisId={videoId}
+                decisions={analysisData?.annotationCorrections?.proliferation_decisions}
+                annotations={analysisData?.annotationCorrections?.manual_visual_annotations}
+                atTime={videoTimeLine}
+                title="Visual agent at transcript time"
+                max={6}
+              />
             </div>
             <div className="mb-3 shrink-0 rounded border border-white/8 bg-[#151515] px-3 py-3">
               <div className="flex items-center justify-between gap-3">

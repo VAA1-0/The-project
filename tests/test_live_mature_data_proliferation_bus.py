@@ -24,6 +24,52 @@ bus = load_bus_module()
 
 
 class LiveMatureDataProliferationBusTests(unittest.TestCase):
+    def test_confirmed_visual_lineup_assignment_becomes_shared_narrative_agent_memory(self):
+        status = {
+            "analysis_id": "visual-lineup",
+            "annotation_corrections": {
+                "manual_visual_annotations": [],
+                "proliferation_decisions": [
+                    {
+                        "decision_id": "narrative-agent-visual-lineup:candidate-7",
+                        "candidate_id": "candidate-7",
+                        "decision": "confirmed",
+                        "authority_level": "manual_confirmation",
+                        "applied_label": "James Bond",
+                        "source_anchors": [
+                            {
+                                "start_seconds": 41.92,
+                                "end_seconds": 43.18,
+                                "geometry": {"x": 0.3, "y": 0.1, "width": 0.2, "height": 0.4},
+                            }
+                        ],
+                        "projection_targets": [
+                            "master_schema",
+                            "narrative_agent_graph",
+                            "meaning_knowledge_graph",
+                            "audio_panel",
+                            "transcript_panel",
+                        ],
+                        "governance_status": {
+                            "confirmation_kind": "visual_narrative_agent_occurrence",
+                            "maturity_result": "user_confirmed_truth",
+                        },
+                    }
+                ],
+            },
+        }
+
+        memories = bus.collect_narrative_agent_identity_memories(status)
+        seeds = bus.collect_proliferation_decision_seeds(status)
+
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["canonical_label"], "James Bond")
+        self.assertEqual(memories[0]["visual_sample_slots"][0]["sample_state"], "mature_user_confirmation")
+        self.assertEqual(memories[0]["visual_sample_slots"][0]["time"], {"start": 41.92, "end": 43.18})
+        self.assertIn("audio_panel", memories[0]["visual_sample_slots"][0]["projection_targets"])
+        self.assertEqual(seeds[0]["label"], "James Bond")
+        self.assertEqual(seeds[0]["time"], {"start": 41.92, "end": 43.18})
+
     def test_confirmed_audio_annotation_becomes_narrative_agent_audio_memory(self):
         status = {
             "analysis_id": "audio-memory",

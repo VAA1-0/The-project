@@ -11,6 +11,34 @@ import SourceClockConcordanceRail, { type ConcordanceDisplayItem } from "./Sourc
 
 type TimedItem = ConcordanceDisplayItem & { start: number; end?: number };
 
+const GENERIC_NARRATIVE_AGENT_LABELS = new Set([
+  "character present", "confirm narrative agent", "person", "people", "human", "face", "unknown",
+]);
+
+function narrativeAgentRows(data: AnalysisData): TimedItem[] {
+  const rows = [
+    ...continuityRows("Narrative Agent", data),
+    ...masterRows(data, (row) => ["identity", "narrative_agent_profile", "character_role", "speaker_assignment", "narrative_agent_prosody"].includes(row.category)),
+    ...(data.annotationCorrections?.manual_visual_annotations || []).map((annotation, index) => {
+      const label = annotation.narrative_agent_affirmation || annotation.identity_affirmation;
+      if (!label || annotation.category !== "Identification") return null;
+      return timed(
+        annotation.id || `governed-narrative-agent:${index}`,
+        label,
+        annotation.start_seconds ?? annotation.timestamp_seconds,
+        annotation.end_seconds ?? annotation.start_seconds ?? annotation.timestamp_seconds,
+        "Narrative Agent · mature source occurrence",
+      );
+    }).filter((row): row is TimedItem => Boolean(row)),
+  ];
+  const deduplicated = new Map<string, TimedItem>();
+  rows.forEach((row) => {
+    const key = `${row.label.trim().toLocaleLowerCase()}|${row.start.toFixed(3)}|${Number(row.end ?? row.start).toFixed(3)}`;
+    if (!deduplicated.has(key)) deduplicated.set(key, row);
+  });
+  return [...deduplicated.values()];
+}
+
 const PANEL_NAMES: Record<string, string> = {
   Transcript: "Transcript",
   Audio: "Audio",
@@ -164,7 +192,7 @@ function rowsForPanel(panelName: string, data: AnalysisData): TimedItem[] {
     const mentions = (data.entityRegistry?.entities || []).flatMap((entity) => entity.source_mentions.map((mention) => timed(`meaning:${entity.entity_id}:${mention.mention_id}`, entity.canonical_name, mention.start_time, mention.end_time, `${entity.entity_type} · ${mention.source_type}`)));
     return [...continuityRows(panelName, data), ...mentions, ...masterRows(data, (row) => ["second_order", "scene_card", "organization", "place"].includes(row.category))].filter((row): row is TimedItem => Boolean(row));
   }
-  if (panelName === "Narrative Agent") return [...continuityRows(panelName, data), ...masterRows(data, (row) => ["identity", "narrative_agent_profile", "character_role", "speaker_assignment", "narrative_agent_prosody"].includes(row.category))];
+  if (panelName === "Narrative Agent") return narrativeAgentRows(data);
   if (["Master Schema", "Data Maturation", "Traceback"].includes(panelName)) return [...continuityRows(panelName, data), ...masterRows(data)];
   return [];
 }
@@ -221,7 +249,13 @@ export default function PanelSourceClockConcordance({ componentName, category }:
   }, [panelName, videoId]);
 
   const rows = useMemo(() => panelName && analysis ? rowsForPanel(panelName, analysis) : [], [analysis, panelName]);
-  const concordance = useMemo(() => cursor === null ? null : sourceClockConcordance(rows, cursor, (row) => ({ start: row.start, end: row.end })), [cursor, rows]);
+  const concordance = useMemo(() => {
+    if (cursor === null) return null;
+    const projected = sourceClockConcordance(rows, cursor, (row) => ({ start: row.start, end: row.end }));
+    if (panelName !== "Narrative Agent") return projected;
+    const named = projected.on_beat.filter((hit) => !GENERIC_NARRATIVE_AGENT_LABELS.has(hit.item.label.trim().toLocaleLowerCase()));
+    return named.length ? { ...projected, on_beat: named } : projected;
+  }, [cursor, panelName, rows]);
   if (!panelName || !concordance || !videoId) return null;
   const aggregateOnly = (panelName === "POS" || panelName === "StatsKit") && rows.length === 0;
   const transcriptAtCursor = panelName === "POS" && cursor !== null

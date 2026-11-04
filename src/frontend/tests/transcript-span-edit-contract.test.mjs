@@ -81,7 +81,8 @@ test("source metadata persons surface as individual Narrative Agents", () => {
   assert.match(registry, /const knownPersons = Array\.isArray\(annotations\?\.persons\)/);
   assert.match(registry, /if \(knownPersons\.length > 0\)[\s\S]*?addValues\(labels, knownPersons\)/);
   assert.match(registry, /split\(\/\[,;\\n\]\+\/\)/);
-  assert.match(registry, /\["Identification", "Role", "OBJ", "Audio"\]\.includes\(entry\.category\)[\s\S]*addLabel\(labels, entry\.identity_affirmation\)/);
+  assert.match(registry, /explicitNarrativeAgent[\s\S]*governedAudioAgent[\s\S]*governedVisualAgent[\s\S]*addLabel\(labels, entry\.identity_affirmation\)/);
+  assert.doesNotMatch(registry, /\["Identification", "Role", "OBJ", "Audio"\]\.includes\(entry\.category\)/);
   assert.match(registry, /analysisData\?\.transcript[\s\S]*analysisData\?\.transcriptTimeline[\s\S]*row\?\.speakerConfirmation[\s\S]*NON_AGENT_AUDIO_SOURCES\.has/);
   assert.match(service, /apiService\.getSourceMediaMetadata\(id\)/);
   assert.match(video, /eventBus\.on\("sourceMediaMetadataChanged", sourceMetadataHandler\)/);

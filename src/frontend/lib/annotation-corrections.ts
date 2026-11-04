@@ -1,4 +1,5 @@
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import type {
   AnnotationCorrectionRule,
   AnnotationCorrections,
@@ -160,10 +161,10 @@ export function pushCorrectionSnapshot(
   try {
     const storageKey = getCorrectionHistoryKey(videoId);
     const current = JSON.parse(
-      window.localStorage.getItem(storageKey) || "[]",
+      getBrowserStorageItem(storageKey) || "[]",
     ) as Array<AnnotationCorrections | null>;
     const next = [...current, cloneCorrections(corrections)].slice(-12);
-    window.localStorage.setItem(storageKey, JSON.stringify(next));
+    setBrowserStorageItem(storageKey, JSON.stringify(next));
     eventBus.emit("correctionUndoHistoryChanged", { analysisId: videoId });
   } catch (error) {
     eventBus.emit("correctionUndoUnavailable", {
@@ -180,7 +181,7 @@ export function canUndoCorrectionSnapshot(videoId: string): boolean {
   }
   try {
     const history = JSON.parse(
-      window.localStorage.getItem(getCorrectionHistoryKey(videoId)) || "[]",
+      getBrowserStorageItem(getCorrectionHistoryKey(videoId)) || "[]",
     );
     return Array.isArray(history) && history.length > 0;
   } catch {
@@ -192,7 +193,7 @@ export function canUndoCorrectionSnapshot(videoId: string): boolean {
 export function peekCorrectionSnapshot(videoId: string): { token: string; corrections: AnnotationCorrections | null } | null {
   if (!videoId || typeof window === "undefined") return null;
   try {
-    const token = window.localStorage.getItem(getCorrectionHistoryKey(videoId)) || "[]";
+    const token = getBrowserStorageItem(getCorrectionHistoryKey(videoId)) || "[]";
     const history = JSON.parse(token);
     if (!Array.isArray(history) || history.length === 0) return null;
     return { token, corrections: history[history.length - 1] ?? null };
@@ -203,10 +204,10 @@ export function acknowledgeCorrectionSnapshot(videoId: string, token: string): b
   if (!videoId || typeof window === "undefined") return false;
   try {
     const key = getCorrectionHistoryKey(videoId);
-    if (window.localStorage.getItem(key) !== token) return false;
+    if (getBrowserStorageItem(key) !== token) return false;
     const history = JSON.parse(token);
     if (!Array.isArray(history) || !history.length) return false;
-    window.localStorage.setItem(key, JSON.stringify(history.slice(0, -1)));
+    setBrowserStorageItem(key, JSON.stringify(history.slice(0, -1)));
     eventBus.emit("correctionUndoHistoryChanged", { analysisId: videoId });
     return true;
   } catch { return false; }
@@ -235,14 +236,14 @@ export function undoLastCorrectionSnapshot(
   try {
     const storageKey = getCorrectionHistoryKey(videoId);
     const history = JSON.parse(
-      window.localStorage.getItem(storageKey) || "[]",
+      getBrowserStorageItem(storageKey) || "[]",
     ) as Array<AnnotationCorrections | null>;
     if (!Array.isArray(history) || history.length === 0) {
       return null;
     }
     const restored = history[history.length - 1] ?? null;
     const nextHistory = history.slice(0, -1);
-    window.localStorage.setItem(storageKey, JSON.stringify(nextHistory));
+    setBrowserStorageItem(storageKey, JSON.stringify(nextHistory));
     return restored;
   } catch {
     return null;

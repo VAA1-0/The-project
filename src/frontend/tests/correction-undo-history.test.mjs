@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import ts from 'typescript';
 import { readFileSync } from 'node:fs';
 const compile = text => ts.transpileModule(text, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const source = readFileSync(new URL('../lib/annotation-corrections.ts', import.meta.url), 'utf8').replace(/^import \{ eventBus \}[^\n]+\n/m, 'const eventBus = { emit() {} };\n');
+const source = readFileSync(new URL('../lib/annotation-corrections.ts', import.meta.url), 'utf8')
+  .replace(/^import \{ eventBus \}[^\n]+\n/m, 'const eventBus = { emit() {} };\n')
+  .replace(/^import \{ getBrowserStorageItem, setBrowserStorageItem \}[^\n]+\n/m,
+    'const getBrowserStorageItem = key => window.sessionStorage?.getItem(key) ?? window.localStorage.getItem(key);\nconst setBrowserStorageItem = (key, value) => { window.localStorage.setItem(key, value); return "local"; };\n');
 const history = await import(`data:text/javascript;base64,${Buffer.from(compile(source)).toString('base64')}`);
 
 test('peek leaves undo history intact and acknowledgment does not consume newer entries', () => {

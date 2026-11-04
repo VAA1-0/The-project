@@ -21,6 +21,26 @@ let request = 0;
 let context: SourceClockContext | null = null;
 let pending: { ticket: SourceClockNavigationTicket; time: number } | null = null;
 let installed = false;
+let retryAttempt = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+const RETRY_DELAYS_MS = [750, 1500, 3000, 6000, 12000];
+
+function clearRetry() {
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = null;
+  retryAttempt = 0;
+}
+
+function scheduleRetry(id: string) {
+  if (!loader || selected !== id || retryTimer !== null || retryAttempt >= RETRY_DELAYS_MS.length) return;
+  const delay = RETRY_DELAYS_MS[retryAttempt];
+  retryAttempt += 1;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (loader && selected === id) void refreshSourceClock();
+  }, delay);
+  (retryTimer as any)?.unref?.();
+}
 
 function activeId(): string {
   const videoId = eventBus.getLast<string>("videoIdChanged");
@@ -32,6 +52,7 @@ function selectionChanged() {
   const id = activeId();
   if (selected === id) return;
   selected = id;
+  clearRetry();
   epoch += 1;
   context = null;
   pending = id ? {
@@ -79,6 +100,7 @@ export function startSourceClockSession(readClock: ClockLoader): () => void {
     epoch += 1;
     context = null;
     pending = null;
+    clearRetry();
   };
 }
 
@@ -99,6 +121,7 @@ export async function refreshSourceClock(): Promise<void> {
       pending = null;
     }
     context = next;
+    clearRetry();
     eventBus.emit("sourceClockContextChanged", next);
     if (next.binding_status !== "content_bound") {
       pending = null;
@@ -118,6 +141,7 @@ export async function refreshSourceClock(): Promise<void> {
     context = null;
     pending = null;
     eventBus.emit("sourceClockNavigationUnavailable", { analysis_id: id, message: String(error) });
+    scheduleRetry(id);
   }
 }
 

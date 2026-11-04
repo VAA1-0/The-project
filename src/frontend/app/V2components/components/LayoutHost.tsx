@@ -43,6 +43,7 @@ import PanelSourceClockConcordance from "./PanelSourceClockConcordance";
 import { useUniversalPanelDisclosures } from "./useUniversalPanelDisclosures";
 import { activeProjectScopeId, type ProjectScopeViolation } from "@/lib/active-project-scope";
 import { VideoService } from "@/lib/video-service";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import { RefreshCw, Save } from "lucide-react";
 
 // --- Context Setup ---
@@ -1087,11 +1088,11 @@ export default function LayoutHost({
         try {
           const resolvedConfig = layout.saveLayout();
           const restorableConfig = LayoutConfig.fromResolved(resolvedConfig);
-          window.localStorage.setItem(
+          setBrowserStorageItem(
             projectLayoutStorageKey(),
             JSON.stringify(restorableConfig),
           );
-          window.localStorage.setItem(
+          setBrowserStorageItem(
             projectLayoutVersionStorageKey(),
             SAVED_LAYOUT_VERSION,
           );
@@ -1108,11 +1109,11 @@ export default function LayoutHost({
       try {
         const resolvedConfig = layout.saveLayout();
         const restorableConfig = LayoutConfig.fromResolved(resolvedConfig);
-        window.localStorage.setItem(
+        setBrowserStorageItem(
           projectLayoutStorageKey(),
           JSON.stringify(restorableConfig),
         );
-        window.localStorage.setItem(
+        setBrowserStorageItem(
           projectLayoutVersionStorageKey(),
           SAVED_LAYOUT_VERSION,
         );
@@ -1127,8 +1128,8 @@ export default function LayoutHost({
     let requestedAnalysisId = "";
     let requestedWorkspace = "";
     try {
-      const stored = window.localStorage.getItem(projectLayoutStorageKey());
-      const storedVersion = window.localStorage.getItem(projectLayoutVersionStorageKey());
+      const stored = getBrowserStorageItem(projectLayoutStorageKey());
+      const storedVersion = getBrowserStorageItem(projectLayoutVersionStorageKey());
       if (stored && storedVersion === SAVED_LAYOUT_VERSION) {
         const restoredLayout = normalizeLegacyLayoutLabels(
           JSON.parse(stored),

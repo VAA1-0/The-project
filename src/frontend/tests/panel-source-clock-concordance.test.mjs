@@ -35,6 +35,13 @@ test("the primary on-beat lane renders every matching detection", () => {
   assert.doesNotMatch(rail, /additional on-beat detection/);
 });
 
+test("mature named Narrative Agent occurrences supersede generic on-beat placeholders", () => {
+  assert.match(adapter, /function narrativeAgentRows/);
+  assert.match(adapter, /annotationCorrections\?\.manual_visual_annotations/);
+  assert.match(adapter, /GENERIC_NARRATIVE_AGENT_LABELS/);
+  assert.match(adapter, /named\.length \? \{ \.\.\.projected, on_beat: named \} : projected/);
+});
+
 test("Meaning Plot follows the cursor and exposes associated graph nodes", () => {
   assert.match(meaningPlot, /activeMeaningNetworkNodesAtCursor/);
   assert.match(meaningPlot, /meaningNetworkGraphScrollRef/);

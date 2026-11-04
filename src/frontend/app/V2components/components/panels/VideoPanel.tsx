@@ -14,6 +14,7 @@ import {
   SkipForward,
 } from "lucide-react";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import {
   CANONICAL_SOURCE_CLOCK_ID,
   formatPreciseSourceTime,
@@ -774,18 +775,18 @@ function appendKnownNarrativeAgentValues(
 }
 
 function unresolvedObjectConfirmationLabel(item: DetectedObject): string {
-  const confidence = Number(item.confidence);
-  const probability = Number.isFinite(confidence)
-    ? ` ${Math.round(clamp(confidence, 0, 1) * 100)}%`
-    : "";
   const objectKind = String(item.class_name || item.raw_class_name || "")
     .trim()
     .toLowerCase();
-  const target =
-    objectKind === "person" || objectKind.includes("face")
-      ? "Narrative Agent"
-      : "object / agent";
-  return `Confirm ${target}${probability}`;
+  if (objectKind === "person" || objectKind.includes("face")) {
+    // A person detector's confidence only answers whether the measured region
+    // resembles a person. It is not a Narrative Agent attribution probability
+    // and must never be presented as one. Named mature/proliferated candidates
+    // are resolved before this fallback; reaching this branch means that the
+    // analytical claim is genuinely unresolved.
+    return "Narrative Agent unresolved";
+  }
+  return "Object unresolved";
 }
 
 const MASTER_SCHEMA_OVERLAY_AUTHORITY_RANK: Record<MatureEvidenceAuthority, number> = {
@@ -999,6 +1000,43 @@ function manualAnnotationUpdatedAt(item: ManualVisualAnnotation): number {
   return Date.parse(item.updated_at || item.created_at || "") || 0;
 }
 
+function manualNarrativeAgentAuthorityRank(item: ManualVisualAnnotation): number {
+  if (item.category !== "Identification") return 1;
+  const label = String(
+    item.identity_affirmation || item.narrative_agent_affirmation || item.custom_label || item.label || "",
+  ).trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const placeholder = !label || [
+    "character present",
+    "unidentified person",
+    "unknown character",
+    "unknown person",
+    "person",
+    "confirm narrative agent",
+  ].includes(label) || label.startsWith("confirm narrative agent ");
+  // A placeholder is review labour, never a revision of explicit human
+  // Narrative Agent authority. A named confirmation therefore outranks a
+  // newer generic BBox on the same source track.
+  return placeholder ? 0 : 3;
+}
+
+function narrativeAgentOccurrenceBelongsToObjectBox(
+  objectBox: DraftBox,
+  occurrenceBox: DraftBox,
+): boolean {
+  if (isSameSpaceBoxMatch(objectBox, occurrenceBox)) return true;
+  const centreX = occurrenceBox.x + occurrenceBox.w / 2;
+  const centreY = occurrenceBox.y + occurrenceBox.h / 2;
+  // A confirmed face/occurrence box is commonly smaller than the tracked
+  // person box. Its centre provides the stable source-space association while
+  // avoiding label bleed to adjacent people in the same frame.
+  return (
+    centreX >= objectBox.x &&
+    centreX <= objectBox.x + objectBox.w &&
+    centreY >= objectBox.y &&
+    centreY <= objectBox.y + objectBox.h
+  );
+}
+
 function chooseLatestManualCorrection(
   candidates: ManualVisualAnnotation[],
   currentTime: number,
@@ -1011,6 +1049,9 @@ function chooseLatestManualCorrection(
         isVisibleInWorkspace(item),
     )
     .sort((left, right) => {
+      const authorityDifference = manualNarrativeAgentAuthorityRank(right)
+        - manualNarrativeAgentAuthorityRank(left);
+      if (authorityDifference !== 0) return authorityDifference;
       const rightUpdated = manualAnnotationUpdatedAt(right);
       const leftUpdated = manualAnnotationUpdatedAt(left);
       if (rightUpdated !== leftUpdated) {
@@ -1092,7 +1133,7 @@ function loadStoredProliferationMatches(): StoredProliferationMatch[] {
   }
   try {
     const parsed = JSON.parse(
-      window.localStorage.getItem("vaa1.proliferation.matches") || "[]",
+      getBrowserStorageItem("vaa1.proliferation.matches") || "[]",
     );
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -2313,7 +2354,7 @@ export default function VideoPanel() {
       if (!videoId) {
         return;
       }
-      localStorage.setItem(
+      setBrowserStorageItem(
         `${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`,
         JSON.stringify(nextMarks),
       );
@@ -2637,7 +2678,7 @@ export default function VideoPanel() {
       name: metadata?.name || "Selected analysis",
       time: currentTime,
     };
-    localStorage.setItem(CROSS_SOURCE_COMPARE_KEY, JSON.stringify(nextAnchor));
+    setBrowserStorageItem(CROSS_SOURCE_COMPARE_KEY, JSON.stringify(nextAnchor));
     setCompareAnchor(nextAnchor);
   }, [currentTime, metadata?.name, videoId]);
 
@@ -2722,6 +2763,14 @@ export default function VideoPanel() {
       pendingSourceTimeRef.current = nextVideoTimeLine;
       navigationRequestedAtRef.current = Date.now();
       setVideoTimeLine(nextVideoTimeLine);
+      setCurrentTime(nextVideoTimeLine);
+      if (videoRef.current) {
+        setFrameReadyTime(null);
+        overlayArmedRef.current = false;
+        if (Math.abs(videoRef.current.currentTime - nextVideoTimeLine) > 0.01) {
+          videoRef.current.currentTime = nextVideoTimeLine;
+        }
+      }
     };
     const unsubscribeClock = subscribeSourceTime(videoId, handler);
     return () => {
@@ -3377,7 +3426,7 @@ export default function VideoPanel() {
       return;
     }
     try {
-      const raw = localStorage.getItem(`${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`);
+      const raw = getBrowserStorageItem(`${SINGLE_SOURCE_MARKS_KEY_PREFIX}${videoId}`);
       setSingleSourceMarks(raw ? JSON.parse(raw) : {});
     } catch {
       setSingleSourceMarks({});
@@ -3386,7 +3435,7 @@ export default function VideoPanel() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(CROSS_SOURCE_COMPARE_KEY);
+      const raw = getBrowserStorageItem(CROSS_SOURCE_COMPARE_KEY);
       setCompareAnchor(raw ? JSON.parse(raw) : null);
     } catch {
       setCompareAnchor(null);
@@ -4286,6 +4335,22 @@ export default function VideoPanel() {
         ].map(normalizeEvidenceLabel);
         const objectManualOverrideActive =
           manualOverrideActive && isObjectManualOverride(manualOverride);
+        const spatialNarrativeAgentManual = objectNormalizedBox
+          ? activeManualSpatialOverrides
+              .filter(({ item: manualItem, box }) =>
+                manualNarrativeAgentAuthorityRank(manualItem) >= 3 &&
+                narrativeAgentOccurrenceBelongsToObjectBox(objectNormalizedBox, box),
+              )
+              .sort((left, right) => {
+                const rightUpdated = manualAnnotationUpdatedAt(right.item);
+                const leftUpdated = manualAnnotationUpdatedAt(left.item);
+                if (rightUpdated !== leftUpdated) return rightUpdated - leftUpdated;
+                return (
+                  calculateDraftBoxCenterDistance(objectNormalizedBox, left.box) -
+                  calculateDraftBoxCenterDistance(objectNormalizedBox, right.box)
+                );
+              })[0]?.item
+          : undefined;
         const localOverride = (() => {
           return activeLocalObjectLabelOverrides.find((override) => {
             const sameTrack =
@@ -4481,6 +4546,9 @@ export default function VideoPanel() {
         const manualOverrideOverlayLabel = manualOverrideActive
           ? governedOverlayLabel(resolveManualVisualDisplayLabel(manualOverride))
           : undefined;
+        const spatialNarrativeAgentOverlayLabel = spatialNarrativeAgentManual
+          ? governedOverlayLabel(resolveManualVisualDisplayLabel(spatialNarrativeAgentManual))
+          : undefined;
         const behavioralOverlayLabel = item.sourceType === "behavioral_detection"
           ? governedOverlayLabel(item.displayLabel) || `${item.class_name} · behavioral candidate`
           : undefined;
@@ -4500,6 +4568,7 @@ export default function VideoPanel() {
         const unresolvedOverlayLabel = unresolvedObjectConfirmationLabel(item);
         const objectOverlayLabel =
           localOverlayLabel ||
+          spatialNarrativeAgentOverlayLabel ||
           manualOverrideOverlayLabel ||
           manualTrackOverlayLabel ||
           backendProjectionOverlayLabel ||
@@ -4514,7 +4583,7 @@ export default function VideoPanel() {
           key: `object-${index}-${item.timestamp}`,
           modality: "object",
           label: objectOverlayLabel,
-          color: localOverride || backendProjection || manualOverrideActive || manualTrackAuthority
+          color: localOverride || backendProjection || spatialNarrativeAgentManual || manualOverrideActive || manualTrackAuthority
             ? "border-emerald-300/80 bg-emerald-300/10"
             : item.sourceType === "behavioral_detection" && bodyMovementDetections.length
             ? "border-cyan-300/85 bg-cyan-300/10"
@@ -4535,7 +4604,25 @@ export default function VideoPanel() {
           w: resolvedBox.w,
           h: resolvedBox.h,
           sourceItem:
-            manualOverrideActive && manualOverride
+            spatialNarrativeAgentManual
+              ? {
+                  ...item,
+                  manual_annotation: spatialNarrativeAgentManual,
+                  master_schema_mature_label: {
+                    label: spatialNarrativeAgentOverlayLabel,
+                    authority: "manual_correction",
+                    sourcePanel: "NarrativeAgentPanel",
+                    source: "manual_visual_annotation",
+                    sourceItem: spatialNarrativeAgentManual,
+                    traceback: spatialNarrativeAgentManual.id,
+                    evidence_refs: [spatialNarrativeAgentManual.id],
+                  },
+                  narrative_agent_recognition: spatialNarrativeAgentManual,
+                  displayLabel: spatialNarrativeAgentOverlayLabel || "Narrative Agent unresolved",
+                  traceback: spatialNarrativeAgentManual.id,
+                  evidence_refs: [spatialNarrativeAgentManual.id],
+                }
+              : manualOverrideActive && manualOverride
               ? {
                   ...item,
                   manual_annotation: manualOverride,
@@ -4752,17 +4839,50 @@ export default function VideoPanel() {
         const resolvedBox = resolveManualGeometryAtTime(item, currentTime);
         if (!resolvedBox) return;
 
+        const namedNarrativeAgentAuthority = manualNarrativeAgentAuthorityRank(item) === 0
+          ? activeManualSpatialOverrides
+              .filter(({ item: candidate, box: candidateBox }) =>
+                candidate.id !== item.id &&
+                manualNarrativeAgentAuthorityRank(candidate) >= 3 &&
+                narrativeAgentOccurrenceBelongsToObjectBox(resolvedBox, candidateBox),
+              )
+              .sort((left, right) =>
+                manualNarrativeAgentAuthorityRank(right.item) - manualNarrativeAgentAuthorityRank(left.item) ||
+                manualAnnotationUpdatedAt(right.item) - manualAnnotationUpdatedAt(left.item),
+              )[0]?.item
+          : undefined;
+        const renderedManualLabel = resolveManualVisualDisplayLabel(
+          namedNarrativeAgentAuthority || item,
+        );
+
         overlays.push({
           key: `manual-${item.id || index}`,
           modality: "manual",
-          label: resolveManualVisualDisplayLabel(item),
-          color: "border-amber-300/90 bg-amber-300/10",
+          label: renderedManualLabel,
+          color: namedNarrativeAgentAuthority
+            ? "border-emerald-300/90 bg-emerald-300/10"
+            : "border-amber-300/90 bg-amber-300/10",
           normalizedBox: normalizeDraftBox(resolvedBox),
           x: resolvedBox.x * videoWidth,
           y: resolvedBox.y * videoHeight,
           w: resolvedBox.w * videoWidth,
           h: resolvedBox.h * videoHeight,
-          sourceItem: item,
+          sourceItem: namedNarrativeAgentAuthority
+            ? {
+                ...item,
+                displayLabel: renderedManualLabel,
+                narrative_agent_recognition: namedNarrativeAgentAuthority,
+                master_schema_mature_label: {
+                  label: renderedManualLabel,
+                  authority: "manual_confirmation",
+                  sourcePanel: "NarrativeAgentPanel",
+                  source: "manual_visual_annotation",
+                  sourceItem: namedNarrativeAgentAuthority,
+                  traceback: namedNarrativeAgentAuthority.id,
+                  evidence_refs: [namedNarrativeAgentAuthority.id],
+                },
+              }
+            : item,
         });
       });
       meaningNetworkPresenceManualOverlays.forEach(({ interval, item, box }, index) => {
@@ -5583,8 +5703,8 @@ export default function VideoPanel() {
 
       if (typeof window !== "undefined") {
         const storageKey = "vaa1.proliferation.requests";
-        const existing = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
-        window.localStorage.setItem(
+        const existing = JSON.parse(getBrowserStorageItem(storageKey) || "[]");
+        setBrowserStorageItem(
           storageKey,
           JSON.stringify([request, ...(Array.isArray(existing) ? existing : [])].slice(0, 25)),
         );
@@ -5610,7 +5730,7 @@ export default function VideoPanel() {
           });
           if (typeof window !== "undefined") {
             const storageKey = "vaa1.proliferation.matches";
-            const existing = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+            const existing = JSON.parse(getBrowserStorageItem(storageKey) || "[]");
             const nextMatches = [
               {
                 videoId,
@@ -5622,7 +5742,7 @@ export default function VideoPanel() {
               },
               ...(Array.isArray(existing) ? existing : []),
             ].slice(0, 25);
-            window.localStorage.setItem(storageKey, JSON.stringify(nextMatches));
+            setBrowserStorageItem(storageKey, JSON.stringify(nextMatches));
             setStoredProliferationMatches(nextMatches);
           }
           updateSelectedOverlayProliferation(overlay.key, {
@@ -8607,7 +8727,12 @@ export default function VideoPanel() {
                               }
                               return governedOverlayLabel(rawLabel) || "";
                             })();
+                      const matureNarrativeAgentSuppliesTitle = Boolean(
+                        overlay.sourceItem?.master_schema_mature_label ||
+                          overlay.sourceItem?.narrative_agent_recognition,
+                      );
                       const compactOverlayLabel =
+                        !matureNarrativeAgentSuppliesTitle &&
                         overlaySourceLabel &&
                         normalizeEvidenceLabel(overlaySourceLabel) !==
                           normalizeEvidenceLabel(overlay.label)

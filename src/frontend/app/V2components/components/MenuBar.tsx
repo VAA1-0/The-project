@@ -10,6 +10,7 @@ import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { activeProjectScopeId } from "@/lib/active-project-scope";
 import { Library } from "@/lib/local-library";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import CustomizableSelectField from "@/components/metadata/CustomizableSelectField";
 import {
   getLearnedTaxonomyLabels,
@@ -114,7 +115,7 @@ export function MenuBar() {
       setResearchProjectId(activeProjectId);
       return;
     }
-    const savedProjectId = window.localStorage.getItem(RESEARCH_PROJECT_STORAGE_KEY);
+    const savedProjectId = getBrowserStorageItem(RESEARCH_PROJECT_STORAGE_KEY);
     if (savedProjectId) setResearchProjectId(savedProjectId);
   }, []);
 
@@ -390,7 +391,7 @@ export function MenuBar() {
         totalBytes: preflight.total_bytes,
         remainingBytes: preflight.remaining_after_upload_bytes,
       });
-      window.localStorage.setItem(RESEARCH_PROJECT_STORAGE_KEY, targetProjectId);
+      setBrowserStorageItem(RESEARCH_PROJECT_STORAGE_KEY, targetProjectId);
       for (let index = 0; index < files.length; index += 1) {
         const f = files[index];
         const draft = drafts[index] || buildUploadDraft(f);
@@ -648,7 +649,7 @@ export function MenuBar() {
 
     const quantMatrixSections = (() => {
       try {
-        const stored = window.localStorage.getItem(QUANT_MATRIX_STORAGE_KEY);
+        const stored = getBrowserStorageItem(QUANT_MATRIX_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -657,7 +658,7 @@ export function MenuBar() {
 
     const quantMatrixAnalyses = (() => {
       try {
-        const stored = window.localStorage.getItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY);
+        const stored = getBrowserStorageItem(QUANT_MATRIX_ANALYSES_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -666,7 +667,7 @@ export function MenuBar() {
 
     const posMatrixSections = (() => {
       try {
-        const stored = window.localStorage.getItem(POS_MATRIX_STORAGE_KEY);
+        const stored = getBrowserStorageItem(POS_MATRIX_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];
@@ -675,7 +676,7 @@ export function MenuBar() {
 
     const posMatrixAnalyses = (() => {
       try {
-        const stored = window.localStorage.getItem(POS_MATRIX_ANALYSES_STORAGE_KEY);
+        const stored = getBrowserStorageItem(POS_MATRIX_ANALYSES_STORAGE_KEY);
         return stored ? JSON.parse(stored) : [];
       } catch {
         return [];

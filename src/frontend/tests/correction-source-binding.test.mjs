@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const code = ts.transpileModule(readFileSync(new URL('../lib/correction-source-binding.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const { readCorrectionSourceBinding, CorrectionBindingUnavailable } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 
-test('clock transport validates identity, availability and numeric timebase without fallback', async () => {
+test('clock transport validates identity and uses a local content-addressed fallback', async () => {
   const original = globalThis.fetch;
   const valid = { analysis_id: 'a', binding_status: 'content_bound', source_fingerprint: 'hash', clock_revision: 'revision', timebase: { transcript_clock_offset_seconds: 0 } };
   let payload = valid;
@@ -25,7 +25,7 @@ test('clock transport validates identity, availability and numeric timebase with
     globalThis.fetch = async () => ({ ok: false, status: 503 });
     await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), CorrectionBindingUnavailable);
     globalThis.fetch = async () => { throw new Error('timeout'); };
-    await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), /timeout/);
+    await assert.rejects(readCorrectionSourceBinding('a', 'project-a'), /backend or the local content-addressed source/);
   } finally { globalThis.fetch = original; }
 });
 

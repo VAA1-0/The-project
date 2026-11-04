@@ -158,6 +158,15 @@ export interface TranscriptSegment {
   status?: "confirmed" | "unconfirmed";
   correctionSource?: "transcript" | "manual";
   targetId?: string;
+  inferredSpeaker?: string;
+  speakerResolution?: {
+    status: "resolved" | "ambiguous" | "conflicting" | "unsupported";
+    rule: string;
+    authority: "explicit_user_confirmation" | "constellational_inference" | "unresolved";
+    candidateLabels: string[];
+    evidenceRefs: string[];
+    reversible: true;
+  };
 }
 
 export interface TranscriptDataBundle {
@@ -228,6 +237,9 @@ export interface DetectedObject {
   occurrenceCount?: number;
   trackId?: number;
   displayLabel?: string;
+  detectorProvider?: string;
+  detectorRunId?: string;
+  detectorTrackUid?: string;
   demographicSummary?: {
     ageBand?: string;
     genderPresentation?: string;
@@ -391,7 +403,7 @@ export interface AudioProsodyCue {
   confirmedSpeaker?: string;
   confirmedAudioSourceClass?: string;
   speakerAssignmentRefs?: string[];
-  speakerAssignmentAuthority?: "explicit_user_confirmation";
+  speakerAssignmentAuthority?: "explicit_user_confirmation" | "constellational_inference";
   narrativeAgentProsody?: boolean;
   assignmentConflict?: boolean;
   multimodalMotorTargets?: string[];
@@ -643,6 +655,7 @@ type LooseRecord = Record<string, unknown>;
 type NativeAnnotationRecord = {
   id?: string;
   category?: string;
+  subcategory?: string;
   custom_label?: string;
   label?: string;
   identity_affirmation?: string;
@@ -655,8 +668,125 @@ type NativeAnnotationRecord = {
     target_id?: string | number;
     target_type?: string;
     target_label?: string;
+    quick_annotations?: string[];
+    manual_confirmation_event?: {
+      active_state_after_save?: {
+        quick_annotations?: string[];
+      };
+    };
   } | null;
 };
+
+function annotationQuickRelations(annotation: NativeAnnotationRecord): string[] {
+  const metadata = annotation.metadata_correlation || {};
+  return [
+    ...(Array.isArray(metadata.quick_annotations) ? metadata.quick_annotations : []),
+    ...(Array.isArray(metadata.manual_confirmation_event?.active_state_after_save?.quick_annotations)
+      ? metadata.manual_confirmation_event.active_state_after_save.quick_annotations
+      : []),
+  ]
+    .map((value) => looseString(value).toLowerCase())
+    .filter(Boolean);
+}
+
+function intervalsOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number): boolean {
+  return Math.min(leftEnd, rightEnd) >= Math.max(leftStart, rightStart) - 0.03;
+}
+
+function intervalOverlapSeconds(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number): number {
+  return Math.max(0, Math.min(leftEnd, rightEnd) - Math.max(leftStart, rightStart));
+}
+
+/** Reiterate every transcript segment through the governed constellational hierarchy. */
+export function resolveConstellationalTranscriptSpeakers(
+  transcript: TranscriptSegment[],
+  annotations: NativeAnnotationRecord[],
+  activeSpeakerSynchrony?: unknown,
+): TranscriptSegment[] {
+  const synchronyMeasurements = looseRecordArray(asLooseRecord(activeSpeakerSynchrony)?.measurements);
+  return transcript.map((segment, index) => {
+    const explicit = looseString(segment.speakerConfirmation);
+    if (isKnownSubjectLabel(explicit)) {
+      return {
+        ...segment,
+        inferredSpeaker: explicit,
+        speakerResolution: {
+          status: "resolved", rule: "explicit_user_confirmation", authority: "explicit_user_confirmation",
+          candidateLabels: [explicit], evidenceRefs: [segment.targetId || `transcript:${index}`], reversible: true,
+        },
+      };
+    }
+    const segmentStart = finiteNumber(segment.start);
+    const segmentEnd = finiteNumber(segment.end) ?? segmentStart;
+    if (segmentStart === undefined || segmentEnd === undefined) {
+      return {
+        ...segment,
+        speakerResolution: {
+          status: "unsupported", rule: "missing_source_time", authority: "unresolved",
+          candidateLabels: [], evidenceRefs: [], reversible: true,
+        },
+      };
+    }
+    const candidates = new Map<string, { label: string; refs: Set<string>; speaking: boolean }>();
+    synchronyMeasurements.forEach((measurement, measurementIndex) => {
+      if (measurement.valid_for_constellational_support !== true || looseString(measurement.state) !== "measured") return;
+      const interval = asLooseRecord(measurement.source_interval) || {};
+      const start = finiteNumber(interval.start);
+      const end = finiteNumber(interval.end) ?? start;
+      const label = looseString(measurement.identity_label);
+      if (start === undefined || end === undefined || !isGovernedNarrativeAgentIdentity(label) || !intervalsOverlap(segmentStart, segmentEnd, start, end)) return;
+      const key = canonicalNarrativeAgentIdentity(label);
+      const current = candidates.get(key) || { label, refs: new Set<string>(), speaking: false };
+      current.refs.add(looseString(measurement.identity_annotation_id) || `active-speaker:${measurementIndex}`);
+      current.speaking = true;
+      candidates.set(key, current);
+    });
+    annotations.forEach((annotation, annotationIndex) => {
+      const label = looseString(annotation.identity_affirmation);
+      if (!isGovernedNarrativeAgentIdentity(label)) return;
+      const annotationStart = finiteNumber(annotation.start_seconds ?? annotation.timestamp_seconds);
+      const annotationEnd = finiteNumber(annotation.end_seconds ?? annotation.timestamp_seconds) ?? annotationStart;
+      if (
+        annotationStart === undefined ||
+        annotationEnd === undefined ||
+        intervalOverlapSeconds(segmentStart, segmentEnd, annotationStart, annotationEnd) < 0.12
+      ) return;
+      const key = canonicalNarrativeAgentIdentity(label);
+      if (!key) return;
+      const speaking = annotationQuickRelations(annotation).some((relation) =>
+        /\b(speak(?:ing|s)?|talk(?:ing|s)?|say(?:ing|s)?|lip[ -]?sync|active speaker)\b/i.test(relation),
+      );
+      const current = candidates.get(key) || { label, refs: new Set<string>(), speaking: false };
+      current.refs.add(annotation.id || `manual-annotation:${annotationIndex}`);
+      current.speaking = current.speaking || speaking;
+      candidates.set(key, current);
+    });
+    const all = [...candidates.values()];
+    const speaking = all.filter((candidate) => candidate.speaking);
+    const authorityCandidates = speaking.length ? speaking : all;
+    const rule = speaking.length ? "governed_source_timed_speaking_identity" : "unique_governed_on_screen_identity";
+    if (authorityCandidates.length !== 1) {
+      return {
+        ...segment,
+        speakerResolution: {
+          status: authorityCandidates.length > 1 ? (speaking.length > 1 ? "conflicting" : "ambiguous") : "unsupported",
+          rule, authority: "unresolved",
+          candidateLabels: authorityCandidates.map((candidate) => candidate.label),
+          evidenceRefs: authorityCandidates.flatMap((candidate) => [...candidate.refs]), reversible: true,
+        },
+      };
+    }
+    const winner = authorityCandidates[0];
+    return {
+      ...segment,
+      inferredSpeaker: winner.label,
+      speakerResolution: {
+        status: "resolved", rule, authority: "constellational_inference",
+        candidateLabels: [winner.label], evidenceRefs: [...winner.refs], reversible: true,
+      },
+    };
+  });
+}
 
 type IdentityResolvedCandidate = {
   candidate_id?: string;
@@ -1303,7 +1433,7 @@ function projectConfirmedSpeakersOntoProsody(
     const cueStart = Number(cue.start || 0);
     const cueEnd = Number(cue.end ?? cueStart);
     const assignments = transcript.filter((segment) => {
-      if (!segment.speakerConfirmation) return false;
+      if (!segment.speakerConfirmation && !segment.inferredSpeaker) return false;
       const segmentStart = Number(segment.start || 0);
       const segmentEnd = Number(segment.end ?? segmentStart);
       return Math.min(cueEnd, segmentEnd) >= Math.max(cueStart, segmentStart) - 0.03;
@@ -1311,7 +1441,7 @@ function projectConfirmedSpeakersOntoProsody(
     const labels = [
       ...new Set(
         assignments
-          .map((segment) => segment.speakerConfirmation)
+          .map((segment) => segment.speakerConfirmation || segment.inferredSpeaker)
           .filter((label): label is string => Boolean(label)),
       ),
     ];
@@ -1328,7 +1458,9 @@ function projectConfirmedSpeakersOntoProsody(
       speakerAssignmentRefs: assignments
         .map((segment) => segment.targetId)
         .filter((ref): ref is string => Boolean(ref)),
-      speakerAssignmentAuthority: "explicit_user_confirmation",
+      speakerAssignmentAuthority: assignments.every((segment) => Boolean(segment.speakerConfirmation))
+        ? "explicit_user_confirmation"
+        : "constellational_inference",
       narrativeAgentProsody: !conflict && speakerLabels.length === 1,
       assignmentConflict: conflict,
       multimodalMotorTargets: [...PROSODY_MULTIMODAL_MOTOR_TARGETS],
@@ -2373,6 +2505,68 @@ function sourceMetadataMasterSchemaRecords(
   return records;
 }
 
+function governedClusterDecisionRecords(
+  corrections?: AnnotationCorrections | null,
+): MasterSchemaResolvedEvidenceRecord[] {
+  return (corrections?.proliferation_decisions || []).flatMap((decision, index) => {
+    if (decision.decision !== "confirmed") return [];
+    const targets = [...(decision.proliferates_to || []), ...(decision.projection_targets || [])]
+      .map((value) => String(value).toLowerCase());
+    if (!targets.some((value) => value.includes("master_schema") || value.includes("masterschema"))) return [];
+    const governance = (decision.governance_status || {}) as Record<string, any>;
+    const isTheorySceneReading = governance.schema === "vaa1.meaning_network_theory_scene_reading.v1";
+    const scope = String(governance.semantic_scope || decision.decision_scope || "empirical_family");
+    const label = String(governance.target_family || decision.applied_label || decision.candidate_label || "Confirmed family");
+    const anchors = [...(decision.source_anchors || []), ...(decision.evidence_refs || [])] as Array<Record<string, any>>;
+    const category: MasterSchemaResolvedEvidenceRecord["category"] = /object|prop/i.test(scope)
+      ? "object"
+      : /agent|character|speaker/i.test(scope)
+        ? "narrative_agent_profile"
+        : /audio|foley|sound/i.test(`${scope} ${decision.source_panel || ""}`)
+          ? "audio_event"
+          : /scene/i.test(scope)
+            ? "scene_card"
+            : /location|setting|place/i.test(scope)
+              ? "place"
+              : "manual_annotation";
+    const sourceRows = anchors.length ? anchors : [{}];
+    return sourceRows.map((anchor, anchorIndex) => {
+      const startValue = anchor.start_seconds ?? anchor.start ?? anchor.time_range?.start ?? anchor.timestamp_seconds;
+      const endValue = anchor.end_seconds ?? anchor.end ?? anchor.time_range?.end ?? startValue;
+      const start = Number(startValue);
+      const end = Number(endValue);
+      return {
+        id: `governed-cluster:${decision.decision_id || index}:${anchorIndex}`,
+        category,
+        label,
+        authority: "manual_annotation" as const,
+        sourcePanel: String(decision.source_panel || "MasterSchema"),
+        start: Number.isFinite(start) ? start : undefined,
+        end: Number.isFinite(end) ? end : Number.isFinite(start) ? start : undefined,
+        targetId: String(anchor.evidence_id || anchor.id || decision.target_evidence_id || decision.candidate_id),
+        maturityRoute: `master_schema.review_layer.${scope}`,
+        mappingStatus: "governed_cluster_confirmation",
+        metadata: {
+          relation: isTheorySceneReading ? "governed_theory_reading_of_scene" : "member_of_governed_exploratory_family",
+          decision_id: decision.decision_id,
+          lineage_id: governance.lineage_id,
+          semantic_scope: scope,
+          theory_lens_id: governance.lens_id,
+          theory_phase: governance.theory_phase,
+          scene_key: governance.scene_key,
+          claim_prose: governance.claim_prose,
+          user_correction_stands: governance.user_correction_stands,
+          member_evidence_ids: governance.member_evidence_ids || [],
+          member_track_ids: governance.member_track_ids || [],
+          source_anchor: anchor,
+          bbox: anchor.bbox || anchor.geometry,
+          projection_origin: "annotation_corrections.proliferation_decisions",
+        },
+      };
+    });
+  });
+}
+
 function buildMasterSchemaResolvedEvidenceView({
   transcript,
   objects,
@@ -2409,6 +2603,7 @@ function buildMasterSchemaResolvedEvidenceView({
   const records: MasterSchemaResolvedEvidenceRecord[] = [];
 
   records.push(...sourceMetadataMasterSchemaRecords(sourceMediaMetadata, sceneCardSummary));
+  records.push(...governedClusterDecisionRecords(corrections));
 
   records.push(
     ...masterSchemaScopedRecords(
@@ -2446,9 +2641,10 @@ function buildMasterSchemaResolvedEvidenceView({
       rawLabel: segment.rawText,
       targetId: segment.targetId,
     });
-    if (segment.speakerConfirmation) {
+    const resolvedSpeaker = segment.speakerConfirmation || segment.inferredSpeaker;
+    if (resolvedSpeaker) {
       const duration = Math.max(0, Number(segment.end || 0) - Number(segment.start || 0));
-      const normalizedSpeaker = segment.speakerConfirmation.toLowerCase().replace(/_/g, " ");
+      const normalizedSpeaker = resolvedSpeaker.toLowerCase().replace(/_/g, " ");
       const isUnknownSpeaker =
         ["unknown", "unknown speaker", "speaker", "speaker 1"].includes(normalizedSpeaker) ||
         normalizedSpeaker.startsWith("speaker ");
@@ -2459,8 +2655,8 @@ function buildMasterSchemaResolvedEvidenceView({
       records.push({
         id: `speaker-assignment:${segment.targetId || index}:${Number(segment.start || 0).toFixed(3)}`,
         category: "speaker_assignment",
-        label: segment.speakerConfirmation,
-        authority: "manual_annotation",
+        label: resolvedSpeaker,
+        authority: segment.speakerConfirmation ? "manual_annotation" : "mature_triangulated",
         sourcePanel: "Transcript",
         start: segment.start,
         end: segment.end,
@@ -2469,13 +2665,15 @@ function buildMasterSchemaResolvedEvidenceView({
         maturityRoute: isSourceClass
           ? "canonical.audio.source_class"
           : "canonical.speaker.assignment",
-        mappingStatus: "user_confirmed",
+        mappingStatus: segment.speakerConfirmation ? "user_confirmed" : "constellational_resolved",
         metadata: {
           relation: isSourceClass ? "classified_as_audio_source" : "spoken_by",
           transcript_text: segment.text,
           duration_seconds: duration,
           eligible_for_voice_profile: !isSourceClass && duration >= 0.5,
           identity_auto_promotion_allowed: false,
+          speaker_resolution: segment.speakerResolution,
+          reversible: true,
         },
       });
       if (!isSourceClass && !isUnknownSpeaker && duration >= 0.5) {
@@ -2492,8 +2690,8 @@ function buildMasterSchemaResolvedEvidenceView({
         records.push({
           id: `speaker-audio-profile:${segment.targetId || index}:${Number(segment.start || 0).toFixed(3)}`,
           category: "speaker_audio_profile_candidate",
-          label: segment.speakerConfirmation,
-          authority: "manual_annotation",
+          label: resolvedSpeaker,
+          authority: segment.speakerConfirmation ? "manual_annotation" : "mature_triangulated",
           sourcePanel: "MasterSchema",
           start: segment.start,
           end: segment.end,
@@ -2632,6 +2830,14 @@ function buildMasterSchemaResolvedEvidenceView({
       start,
       end,
       targetId: annotationId,
+      metadata: {
+        annotation_category: item.category,
+        annotation_subcategory: item.subcategory,
+        identity_affirmation: item.identity_affirmation,
+        role_affirmation: item.role_affirmation,
+        metadata_correlation: item.metadata_correlation,
+        manual_annotation: item as unknown as Record<string, unknown>,
+      },
     });
     const confirmedIdentity = looseString(item.identity_affirmation);
     if (confirmedIdentity && !isRawObjectDisplayLabel(confirmedIdentity)) {
@@ -5716,6 +5922,7 @@ export interface AnalysisStatus {
   evidence_proliferation_matches?: EvidenceProliferationMatchSummary[];
   live_mature_data_proliferation_audit?: Record<string, unknown> | null;
   narrative_agent_continuity_projection?: Record<string, unknown> | null;
+  active_speaker_synchrony?: Record<string, unknown> | null;
   audio_diarization?: AudioDiarizationScaffold | null;
   vaa1_annotation_master_schema?: unknown;
   pipeline_type?: string; // This was missing
@@ -5945,6 +6152,7 @@ export class VideoService {
           secondOrderData,
           sourceMediaMetadataData,
           proliferationAuditData,
+          activeSpeakerSynchronyData,
         ] = await Promise.allSettled([
           apiService.getVisualFrameCheckpoint(id),
           this.loadTranscriptData(id),
@@ -5957,6 +6165,7 @@ export class VideoService {
           this.loadJsonArtifact(id, "second_order_label_proliferation"),
           apiService.getSourceMediaMetadata(id),
           this.loadJsonArtifact(id, "live_mature_data_proliferation_audit"),
+          this.loadJsonArtifact(id, "active_speaker_synchrony"),
         ]);
         const artifactValue = (result: PromiseSettledResult<any>) =>
           result.status === "fulfilled" ? result.value : null;
@@ -5968,15 +6177,26 @@ export class VideoService {
         const secondOrderStatus = artifactValue(secondOrderData);
         const sourceMediaMetadataStatus = artifactValue(sourceMediaMetadataData);
         const proliferationAuditStatus = artifactValue(proliferationAuditData);
+        const activeSpeakerSynchronyStatus = artifactValue(activeSpeakerSynchronyData);
         const transcriptBundle =
           transcriptData.status === "fulfilled" ? transcriptData.value : { segments: [] };
-        const correctedTranscript = applyAnnotationCorrectionsToTranscript(
+        const correctedTranscriptBase = applyAnnotationCorrectionsToTranscript(
           transcriptBundle.segments || [],
           correctionsPayload || null,
         );
-        const correctedTranscriptTimeline = applyAnnotationCorrectionsToTranscript(
+        const correctedTranscriptTimelineBase = applyAnnotationCorrectionsToTranscript(
           transcriptBundle.timelineSegments || transcriptBundle.segments || [],
           correctionsPayload || null,
+        );
+        const correctedTranscript = resolveConstellationalTranscriptSpeakers(
+          correctedTranscriptBase,
+          correctionsPayload?.manual_visual_annotations || [],
+          activeSpeakerSynchronyStatus,
+        );
+        const correctedTranscriptTimeline = resolveConstellationalTranscriptSpeakers(
+          correctedTranscriptTimelineBase,
+          correctionsPayload?.manual_visual_annotations || [],
+          activeSpeakerSynchronyStatus,
         );
         const correctedPosAnalysis = applyAnnotationCorrectionsToPosAnalysis(
           posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
@@ -6143,6 +6363,8 @@ export class VideoService {
               status.narrative_agent_continuity_projection || null,
             audio_diarization: audioDiarizationStatus,
             body_movement_detections: bodyMovementDetections,
+            set_location_recognition:
+              (status.summary as LooseRecord | undefined)?.set_location_recognition || null,
           },
           metadata: {
             sourceName: status.filename,
@@ -6207,6 +6429,7 @@ export class VideoService {
         adaptiveVisualData,
         nativeStatisticalInterpretationData,
         sourceMediaMetadataData,
+        activeSpeakerSynchronyData,
       ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
@@ -6233,6 +6456,7 @@ export class VideoService {
         // Source Media has a canonical, user-authored sidecar. Always read it
         // through the overlay route so generated metadata cannot hide a save.
         apiService.getSourceMediaMetadata(id),
+        this.loadJsonArtifact(id, "active_speaker_synchrony"),
       ]);
 
       const artifactValue = (result: PromiseSettledResult<any>) =>
@@ -6256,6 +6480,7 @@ export class VideoService {
         adaptive_visual_scan: artifactValue(adaptiveVisualData),
         native_statistical_interpretation: artifactValue(nativeStatisticalInterpretationData),
         source_media_metadata: artifactValue(sourceMediaMetadataData),
+        active_speaker_synchrony: artifactValue(activeSpeakerSynchronyData),
       } as AnalysisStatus;
       const hydratedSpatialToneScan = artifactValue(spatialToneData) as
         | NonNullable<AnalysisData["metadata"]>["spatialToneScan"]
@@ -6271,13 +6496,23 @@ export class VideoService {
           ? transcriptData.value.timelineSegments || transcriptData.value.segments
           : [];
       const corrections = correctionsPayload || null;
-      const correctedTranscript = applyAnnotationCorrectionsToTranscript(
+      const correctedTranscriptBase = applyAnnotationCorrectionsToTranscript(
         transcriptSegments,
         corrections,
       );
-      const correctedTranscriptTimeline = applyAnnotationCorrectionsToTranscript(
+      const correctedTranscriptTimelineBase = applyAnnotationCorrectionsToTranscript(
         transcriptTimelineSegments,
         corrections,
+      );
+      const correctedTranscript = resolveConstellationalTranscriptSpeakers(
+        correctedTranscriptBase,
+        corrections?.manual_visual_annotations || [],
+        status.active_speaker_synchrony,
+      );
+      const correctedTranscriptTimeline = resolveConstellationalTranscriptSpeakers(
+        correctedTranscriptTimelineBase,
+        corrections?.manual_visual_annotations || [],
+        status.active_speaker_synchrony,
       );
       const correctedPosAnalysis = applyAnnotationCorrectionsToPosAnalysis(
         posAnalysisData.status === "fulfilled" ? posAnalysisData.value : [],
@@ -6525,6 +6760,8 @@ export class VideoService {
           native_statistical_interpretation:
             status.native_statistical_interpretation || null,
           body_movement_detections: bodyMovementDetections,
+          set_location_recognition:
+            (status.summary as LooseRecord | undefined)?.set_location_recognition || null,
           language_analysis_parity:
             (status as unknown as LooseRecord).language_analysis_parity || null,
           narrative_agent_continuity_projection:
@@ -6699,11 +6936,26 @@ export class VideoService {
   static async saveAnnotationCorrections(
     id: string,
     corrections: AnnotationCorrections,
-    options: { recordUndo?: boolean } = {},
+    options: { recordUndo?: boolean; before?: AnnotationCorrections | null } = {},
   ): Promise<AnnotationCorrections> {
     const recordUndo = options.recordUndo !== false && !corrections._word_undo && !corrections._correction_undo;
-    const before = recordUndo ? await apiService.getAnnotationCorrections(id) : null;
+    const before = recordUndo
+      ? options.before ?? await apiService.getAnnotationCorrections(id)
+      : null;
     const saved = await apiService.saveAnnotationCorrections(id, corrections);
+    // The dashboard sidecar is the durable foreground commit. Once it exists,
+    // ask the existing backend projection regime to consume that exact
+    // generation so Master Schema, matcher/maturation, identity, graphs and
+    // BBox consumers do not remain on an older correction revision.
+    // Projection refresh is downstream work, not part of the durable commit
+    // receipt. Keeping it on the foreground promise can leave every editor
+    // disabled even though the canonical sidecar has already been written.
+    void apiService.refreshAnnotationDependentSurfaces(id).catch((error) => {
+      eventBus.emit("analysisCorrectionProjectionDeferred", {
+        analysisId: id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (before) {
       try {
         const snapshot = correctionUndoSnapshot(before, saved);
@@ -7123,6 +7375,9 @@ export class VideoService {
           row.occurrence_count !== undefined ? Number(row.occurrence_count) : undefined,
         trackId: row.track_id !== undefined ? Number(row.track_id) : undefined,
         displayLabel: row.display_label || undefined,
+        detectorProvider: row.detector_provider || undefined,
+        detectorRunId: row.detector_run_id || undefined,
+        detectorTrackUid: row.detector_track_uid || undefined,
         bbox:
           row.bbox_x1 !== undefined ||
           row.bbox_y1 !== undefined ||
@@ -7160,6 +7415,8 @@ export class VideoService {
         class_id: row.class_id ? Number(row.class_id) : 0,
         class_name: row.label || row.class_name || "",
         confidence: Number(row.confidence) ? Number(row.confidence) : 0,
+        detectorProvider: row.detector_provider || undefined,
+        detectorRunId: row.detector_run_id || undefined,
         bbox:
           row.bbox_x1 !== undefined ||
           row.bbox_y1 !== undefined ||

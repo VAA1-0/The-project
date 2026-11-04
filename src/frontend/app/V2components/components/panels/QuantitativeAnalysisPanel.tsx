@@ -3,6 +3,7 @@ import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { useLayoutHost } from "../LayoutHost";
 import { openVideoAtTime } from "@/lib/video-navigation";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import SceneLanguageSFLView from "../SceneLanguageSFLView";
 import LanguageParityMetaView from "../LanguageParityMetaView";
 
@@ -64,7 +65,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
 
   useEffect(() => {
     const syncMatrixSections = () => {
-      const storedAnalyses = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const storedAnalyses = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       if (!storedAnalyses) {
         setMatrixSections([]);
         return;
@@ -79,7 +80,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
         setMatrixSections([]);
         return;
       }
-      const stored = window.localStorage.getItem(MATRIX_STORAGE_KEY);
+      const stored = getBrowserStorageItem(MATRIX_STORAGE_KEY);
       if (!stored) {
         setMatrixSections([]);
         return;
@@ -106,7 +107,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
 
     syncMatrixSections();
     try {
-      const storedAnalyses = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const storedAnalyses = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       setMatrixAnalysisIds(storedAnalyses ? JSON.parse(storedAnalyses) : []);
     } catch {
       setMatrixAnalysisIds([]);
@@ -513,7 +514,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
   };
   const openQuantMatrix = () => {
     if (videoId) {
-      const stored = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+      const stored = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
       let analysisIds: string[] = [];
       if (stored) {
         try {
@@ -525,7 +526,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
       const nextIds = analysisIds.includes(videoId)
         ? analysisIds
         : [...analysisIds, videoId];
-      window.localStorage.setItem(
+      setBrowserStorageItem(
         MATRIX_ANALYSES_STORAGE_KEY,
         JSON.stringify(nextIds),
       );
@@ -539,7 +540,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
       setShowQuantMenu(false);
       return;
     }
-    const stored = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+    const stored = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
     let analysisIds: string[] = [];
     if (stored) {
       try {
@@ -551,7 +552,7 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
     const nextIds = analysisIds.includes(videoId)
       ? analysisIds
       : [...analysisIds, videoId];
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       MATRIX_ANALYSES_STORAGE_KEY,
       JSON.stringify(nextIds),
     );
@@ -563,12 +564,12 @@ export default function QuantitativeAnalysisPanel({ videoId: initialVideoId = ""
       const next = current.includes(section)
         ? current.filter((item) => item !== section)
         : [...current, section];
-      window.localStorage.setItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
+      setBrowserStorageItem(MATRIX_STORAGE_KEY, JSON.stringify(next));
       if (!current.includes(section) && videoId) {
         const nextAnalysisIds = matrixAnalysisIds.includes(videoId)
           ? matrixAnalysisIds
           : [...matrixAnalysisIds, videoId];
-        window.localStorage.setItem(
+        setBrowserStorageItem(
           MATRIX_ANALYSES_STORAGE_KEY,
           JSON.stringify(nextAnalysisIds),
         );

@@ -218,11 +218,49 @@ consumer. This is a delivery contract, not a claim that Stage 5 is complete.
 
 Complete StatsKit and comparison workflows using versioned real layers. Every run records input snapshots, unit of analysis, population, inclusion/exclusion, missingness, nesting, method, parameters, uncertainty and output lineage. Vocabulary and execution-graph dependencies must already be operational for the variables being delivered.
 
+Remaining exploratory-clustering comparison slice (recorded 2 November 2026):
+
+- deliver a project-bound **video-to-video exploratory cluster comparison matrix** over explicitly selected analyses;
+- deliver a project/corpus-bound **corpus-to-corpus exploratory cluster comparison matrix** over explicitly selected, versioned corpus editions;
+- compare governed cluster families without treating a shared spelling, detector class or nearest-neighbour result as automatic semantic or ontological equivalence;
+- keep mature, candidate, excluded, missing and unsupported populations separate, with their own denominators;
+- declare the unit of analysis, nesting, aggregation rule, detector/embedding/matcher and version for every matrix result;
+- preserve each source clock, evidence identity, representative/boundary samples, provider lineage and source return rather than flattening members into corpus totals;
+- expose comparable counts, coverage, cohesion/separation, temporal or spatial distribution, recurrence, exclusivity, conflicts and uncertainty only where the contributing family contracts support those measures; and
+- allow drill-down from every matrix cell to the contributing video, family, artefact and canonical decision receipt.
+
+The video matrix and corpus matrix are separate deliverables. Corpus aggregation
+may consume completed video-level cluster accounts, but it may not manufacture a
+cross-corpus family, relation, taxonomy alignment or Datascene ontology term.
+Any proposed alignment remains reviewable and analyst-governed. Acceptance must
+include save/reopen, correction invalidation, project isolation and portable
+export/reimport of the comparison definition and its exact input editions.
+
 Separate exploratory candidate measures from accepted-evidence measures and label their denominators. Feed findings, significance/relevance diagnostics and subsequent propositions with explicit scope and quality. A missing consumer response initiates the governed recovery ladder. Only an evidenced `rehydration_failed` result may surface as `not computed`; an absent producer is `unsupported`, and a stale eligible result is `recompute required`. A proxy is identified as a proxy.
 
 Gate: the same input versions reproduce results, a correction triggers only the necessary recomputation, and results navigate to their source population. Save/reopen and a minimal export fixture preserve method and input versions.
 
 ### Stage 6 — Agent continuity and graph assembly
+
+The accepted publication-readiness direction for the Meaning Knowledge Graph is
+[Datascene Meaning Knowledge Graph information-architecture contract
+(2026-11-02)](datascene_meaning_knowledge_graph_information_architecture_contract_2026-11-02.md).
+The operational first draft must be migrated without losing analyst decisions.
+Remaining work includes the versioned category/lane registry, explicit
+Act/Sequence/Scene/Shot scope, grouped navigation, missing action/relation,
+written-language, visual-form/mise-en-scène, body/affect and sound-world
+categories, and governed JPEG confirmation-artifact projections for Narrative
+Agent, object, audio and later scene/foley/location families. Matcher output
+and unresolved records remain review overlays rather than accepted semantic
+categories. Theory projections must retain native language and visible
+theoretical provenance.
+
+The registry/schema and first grouped-navigation shell were delivered on 3
+November 2026. The shell includes per-analysis state recovery, review-overlay
+separation, directed/selectable/labeled edges, stable Narrative Agent colors and
+source-linked JPEG crops for eligible Narrative Agent and object nodes. Rendered
+manual acceptance and the remaining confirmation-image families are still open;
+the first shell must not be reported as final publication readiness.
 
 Build on already-governed agent references; tracking does not decide who a person is. Record effective tracker settings, calibrate false joins, fragmentation and boundary leakage, and present proposed collection membership and gaps. Membership edits preserve each source occurrence. Confirmed collections project through the same canonical path.
 

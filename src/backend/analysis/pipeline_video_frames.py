@@ -3,7 +3,7 @@ Video Frame Analysis Pipeline
 -----------------------------
 Performs:
  - Frame extraction from video
- - Object detection (YOLOv8)
+ - Configurable object detection (Ultralytics YOLOv8 or permissive DETR)
  - Text detection (EasyOCR)
  - Annotated output video generation
  - Structured results (CSV/JSON)
@@ -13,7 +13,6 @@ import cv2
 import json
 import numpy as np
 import pandas as pd
-from ultralytics import YOLO
 import easyocr
 import os
 import re
@@ -215,7 +214,10 @@ class FrameAnalysisPipeline:
     self,
     video_path: str,
     output_dir: str = "outputs/frames",
-    yolo_model_path: str = "models/yolov8n.pt",
+        yolo_model_path: str = "models/yolov8n.pt",
+        object_detector_model: str = "Ultralytics YOLOv8n",
+        detr_model_path: str = "models/object/detr-resnet-50",
+        object_detection_confidence_threshold: float = 0.15,
     languages: list = ["en"],
     enable_object_detection: bool = True,
     enable_ocr: bool = True,
@@ -233,6 +235,11 @@ class FrameAnalysisPipeline:
         self.face_message_style = face_message_style
         self.face_requires_person_detection = face_requires_person_detection
         self.enable_object_detection = enable_object_detection
+        self.object_detector_model = object_detector_model
+        self.object_detection_confidence_threshold = max(
+            0.01,
+            min(0.99, float(object_detection_confidence_threshold)),
+        )
         self.enable_ocr = enable_ocr
         self.enable_face_sampling = enable_face_sampling
         self.detection_interval_seconds = max(0.0, float(detection_interval_seconds))
@@ -251,7 +258,52 @@ class FrameAnalysisPipeline:
         self.faces_dir.mkdir(exist_ok=True)
 
     # Initialize only the models the selected profile actually needs
-        self.yolo = YOLO(yolo_model_path) if self.enable_object_detection else None
+        self.yolo = None
+        self.detr_processor = None
+        self.detr_model = None
+        self.object_detector_receipt = {
+            "provider": self.object_detector_model if self.enable_object_detection else "disabled",
+            "execution": "local_cpu",
+            "network_access": "disabled_during_analysis",
+            "semantic_authority": "raw_detection_only",
+            "confidence_threshold": self.object_detection_confidence_threshold,
+        }
+        if self.enable_object_detection and self.object_detector_model == "Ultralytics YOLOv8n":
+            try:
+                from ultralytics import YOLO
+            except ImportError as exc:
+                raise RuntimeError("Ultralytics YOLOv8n was selected but the ultralytics package is unavailable") from exc
+            self.yolo = YOLO(yolo_model_path)
+            self.object_detector_receipt.update({
+                "model_path": str(Path(yolo_model_path)),
+                "license": "AGPL-3.0_or_enterprise",
+                "activation": "analyst_explicit_selection_required",
+            })
+        elif self.enable_object_detection and self.object_detector_model == "Meta DETR ResNet-50":
+            from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+            model_root = Path(detr_model_path)
+            if not (model_root / "config.json").is_file():
+                raise RuntimeError(f"Meta DETR ResNet-50 was selected but local weights are unavailable at {model_root}")
+            self.detr_processor = AutoImageProcessor.from_pretrained(str(model_root), local_files_only=True)
+            self.detr_model = AutoModelForObjectDetection.from_pretrained(
+                str(model_root),
+                local_files_only=True,
+                use_pretrained_backbone=False,
+            )
+            self.detr_model.to("cpu")
+            self.detr_model.eval()
+            manifest_path = model_root / "datascene_model_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+            self.object_detector_receipt.update({
+                "model_path": str(model_root),
+                "license": "Apache-2.0",
+                "resolved_revision": manifest.get("resolved_revision"),
+                "model_sha256": ((manifest.get("files") or {}).get("model.safetensors") or {}).get("sha256"),
+                "activation": "permissive_local_default",
+            })
+        elif self.enable_object_detection:
+            raise RuntimeError(f"Selected object detector is not operational in this build: {self.object_detector_model}")
         if self.yolo is not None and hasattr(self.yolo, "to"):
             # Explicit CPU placement is intentional on the local macOS runtime.
             # Concurrent decoder/model pressure has produced native MPS allocator
@@ -279,11 +331,78 @@ class FrameAnalysisPipeline:
     def _run_yolo(self, frame):
         """Run the detector on CPU while preserving adapter compatibility."""
         try:
-            return self.yolo(frame, device="cpu", verbose=False)
+            return self.yolo(
+                frame,
+                device="cpu",
+                verbose=False,
+                conf=self.object_detection_confidence_threshold,
+            )
         except TypeError as exc:
             if "unexpected keyword argument" not in str(exc):
                 raise
             return self.yolo(frame)
+
+    def _run_object_detector(self, frame) -> list[dict]:
+        if self.yolo is not None:
+            results = self._run_yolo(frame)
+            rows = []
+            for det in results[0].boxes:
+                class_id = int(det.cls)
+                bbox = det.xyxy[0].tolist()
+                rows.append({
+                    "class_id": class_id,
+                    "class_name": str(self.yolo.names[class_id]),
+                    "confidence": float(det.conf),
+                    "bbox_x1": float(bbox[0]),
+                    "bbox_y1": float(bbox[1]),
+                    "bbox_x2": float(bbox[2]),
+                    "bbox_y2": float(bbox[3]),
+                })
+            return rows
+        if self.detr_model is not None and self.detr_processor is not None:
+            import torch
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            inputs = self.detr_processor(images=rgb, return_tensors="pt")
+            with torch.no_grad():
+                outputs = self.detr_model(**inputs)
+            target_sizes = torch.tensor([frame.shape[:2]])
+            result = self.detr_processor.post_process_object_detection(
+                outputs,
+                target_sizes=target_sizes,
+                threshold=self.object_detection_confidence_threshold,
+            )[0]
+            labels = self.detr_model.config.id2label
+            return [
+                {
+                    "class_id": int(label.item()),
+                    "class_name": str(labels.get(int(label.item()), f"class_{int(label.item())}")),
+                    "confidence": float(score.item()),
+                    "bbox_x1": float(box[0].item()),
+                    "bbox_y1": float(box[1].item()),
+                    "bbox_x2": float(box[2].item()),
+                    "bbox_y2": float(box[3].item()),
+                }
+                for score, label, box in zip(result["scores"], result["labels"], result["boxes"])
+            ]
+        return []
+
+    @staticmethod
+    def _annotate_object_detections(frame, detections: list[dict]):
+        annotated = frame.copy()
+        for item in detections:
+            left, top, right, bottom = [int(round(float(item[key]))) for key in ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")]
+            cv2.rectangle(annotated, (left, top), (right, bottom), (255, 170, 0), 2)
+            cv2.putText(
+                annotated,
+                f"{item['class_name']} {item['confidence']:.2f}",
+                (left, max(12, top - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 170, 0),
+                1,
+            )
+        return annotated
 
     @staticmethod
     def _ocr_text_quality_ok(text: str, confidence: float) -> bool:
@@ -405,25 +524,10 @@ class FrameAnalysisPipeline:
             or frame_index == 0
         )
 
-        if should_detect_objects and self.yolo is not None:
-            yolo_results = self._run_yolo(frame)
-            detections = yolo_results[0].boxes
-
-            for det in detections:
-                class_id = int(det.cls)
-                class_name = self.yolo.names[class_id]
-                confidence = float(det.conf)
-                bbox = det.xyxy[0].tolist()
-                self.yolo_results_list.append({
-                    "timestamp": timestamp,
-                    "class_id": class_id,
-                    "class_name": class_name,
-                    "confidence": confidence,
-                    "bbox_x1": bbox[0],
-                    "bbox_y1": bbox[1],
-                    "bbox_x2": bbox[2],
-                    "bbox_y2": bbox[3],
-                })
+        if should_detect_objects:
+            detections = self._run_object_detector(frame)
+            for detection in detections:
+                self.yolo_results_list.append({"timestamp": timestamp, **detection, "detector_provider": self.object_detector_model})
 
             previous_detection_timestamp = timestamp
 
@@ -434,10 +538,7 @@ class FrameAnalysisPipeline:
                 ocr_results = self.run_ocr(frame, timestamp)
                 self.ocr_results_list.extend(ocr_results)
 
-            person_detected = any(
-                self.yolo is not None and self.yolo.names[int(det.cls)] == "person"
-                for det in detections
-            )
+            person_detected = any(str(item.get("class_name") or "").lower() == "person" for item in detections)
 
             if self.enable_face_sampling:
                 if self.face_requires_person_detection and not person_detected:
@@ -613,17 +714,16 @@ class FrameAnalysisPipeline:
         normalized_boxes: list[dict] = []
         for item in detections or []:
             try:
-                bbox = item.xyxy[0].tolist()
                 normalized_boxes.append(
                     {
-                        "label": str(self.yolo.names[int(item.cls)] if self.yolo is not None else "object"),
-                        "x1": float(bbox[0]),
-                        "y1": float(bbox[1]),
-                        "x2": float(bbox[2]),
-                        "y2": float(bbox[3]),
+                        "label": str(item.get("class_name") or "object"),
+                        "x1": float(item["bbox_x1"]),
+                        "y1": float(item["bbox_y1"]),
+                        "x2": float(item["bbox_x2"]),
+                        "y2": float(item["bbox_y2"]),
                     }
                 )
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 continue
 
         for item in ocr_results or []:
@@ -1509,27 +1609,12 @@ class FrameAnalysisPipeline:
                     or frame_count == 0
                 )
 
-                if should_detect_objects and self.yolo is not None:
-                    yolo_results = self._run_yolo(frame)
-                    detections = yolo_results[0].boxes
+                if should_detect_objects:
+                    detections = self._run_object_detector(frame)
+                    for detection in detections:
+                        self.yolo_results_list.append({"timestamp": timestamp, **detection, "detector_provider": self.object_detector_model})
 
-                    for det in detections:
-                        class_id = int(det.cls)
-                        class_name = self.yolo.names[class_id]
-                        confidence = float(det.conf)
-                        bbox = det.xyxy[0].tolist()
-                        self.yolo_results_list.append({
-                            "timestamp": timestamp,
-                            "class_id": class_id,
-                            "class_name": class_name,
-                            "confidence": confidence,
-                            "bbox_x1": bbox[0],
-                            "bbox_y1": bbox[1],
-                            "bbox_x2": bbox[2],
-                            "bbox_y2": bbox[3],
-                        })
-
-                    annotated_frame = yolo_results[0].plot()
+                    annotated_frame = self._annotate_object_detections(frame, detections)
                     previous_detection_timestamp = timestamp
 
                 if (timestamp - previous_ocr_timestamp) >= self.ocr_interval_seconds or frame_count == 0:
@@ -1539,10 +1624,7 @@ class FrameAnalysisPipeline:
                         ocr_results = self.run_ocr(frame, timestamp)
                         self.ocr_results_list.extend(ocr_results)
 
-                    person_detected = any(
-                        self.yolo is not None and self.yolo.names[int(det.cls)] == "person"
-                        for det in detections
-                    )
+                    person_detected = any(str(item.get("class_name") or "").lower() == "person" for item in detections)
 
                     if self.enable_face_sampling:
                         if self.face_requires_person_detection and not person_detected:
@@ -1666,6 +1748,7 @@ class FrameAnalysisPipeline:
 
         logger.info("Frame analysis complete.")
         return {
+            "object_detector": self.object_detector_receipt,
             "yolo_results": self.yolo_results_list,
             "tracked_objects": self.grouped_yolo_results_list,
             "ocr_results": self.ocr_results_list,
@@ -1767,6 +1850,7 @@ class FrameAnalysisPipeline:
             "video_name": self.video_name,
             "timestamp": timestamp_str,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "object_detector": self.object_detector_receipt,
             "num_yolo_detections": len(yolo_df),
             "num_tracked_objects": len(tracked_df),
             "num_ocr_detections": len(ocr_df),

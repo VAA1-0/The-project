@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useEffect } from "react";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 const SEMANTIC_ORDER_COMPONENTS = new Set([
   "AudioPanel",
@@ -216,7 +217,7 @@ export function useUniversalPanelDisclosures(
             .map((details) => details.dataset.vaa1GlobalDisclosureId || "");
         }
         try {
-          const saved = JSON.parse(window.localStorage.getItem(storageKey) || "null") as string[] | null;
+          const saved = JSON.parse(getBrowserStorageItem(storageKey) || "null") as string[] | null;
           if (saved && saved.length === order.length && saved.every((id) => order.includes(id))) order = saved;
         } catch {
           window.localStorage.removeItem(storageKey);
@@ -236,7 +237,7 @@ export function useUniversalPanelDisclosures(
           event.preventDefault();
           order = order.filter((id) => id !== sourceId);
           order.splice(order.indexOf(targetId), 0, sourceId);
-          window.localStorage.setItem(storageKey, JSON.stringify(order));
+          setBrowserStorageItem(storageKey, JSON.stringify(order));
           applyOrder();
         });
       }

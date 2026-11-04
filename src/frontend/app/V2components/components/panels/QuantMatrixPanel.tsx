@@ -5,6 +5,7 @@ import { apiService } from "@/lib/api-service";
 import { useLayoutHost } from "../LayoutHost";
 import { normalizeTranscriptSegmentTiming } from "@/lib/transcript-time";
 import { openVideoAtTime } from "@/lib/video-navigation";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 
 const MATRIX_STORAGE_KEY = "vaa1.quant.matrix.sections";
 const MATRIX_ANALYSES_STORAGE_KEY = "vaa1.quant.matrix.analyses";
@@ -108,7 +109,7 @@ export default function QuantMatrixPanel({
     if (typeof window === "undefined") {
       return initialVideoId ? [initialVideoId] : [];
     }
-    const stored = window.localStorage.getItem(MATRIX_ANALYSES_STORAGE_KEY);
+    const stored = getBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY);
     if (!stored) {
       return initialVideoId ? [initialVideoId] : [];
     }
@@ -136,7 +137,7 @@ export default function QuantMatrixPanel({
     if (typeof window === "undefined") {
       return [];
     }
-    const stored = window.localStorage.getItem(MATRIX_STORAGE_KEY);
+    const stored = getBrowserStorageItem(MATRIX_STORAGE_KEY);
     if (!stored) {
       return [];
     }
@@ -156,7 +157,7 @@ export default function QuantMatrixPanel({
     const normalized = normalizeSectionOrder(next);
     setSelectedSections(normalized);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(MATRIX_STORAGE_KEY, JSON.stringify(normalized));
+      setBrowserStorageItem(MATRIX_STORAGE_KEY, JSON.stringify(normalized));
     }
     eventBus.emit("quantMatrixSectionsChanged", normalized);
   };
@@ -182,7 +183,7 @@ export default function QuantMatrixPanel({
   const updateMatrixAnalysisIds = (next: string[]) => {
     setMatrixAnalysisIds(next);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(MATRIX_ANALYSES_STORAGE_KEY, JSON.stringify(next));
+      setBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY, JSON.stringify(next));
     }
     eventBus.emit("quantMatrixAnalysesChanged", next);
   };
@@ -284,7 +285,7 @@ export default function QuantMatrixPanel({
       if (validIds.length !== matrixAnalysisIds.length) {
         setMatrixAnalysisIds(validIds);
         if (typeof window !== "undefined") {
-          window.localStorage.setItem(MATRIX_ANALYSES_STORAGE_KEY, JSON.stringify(validIds));
+          setBrowserStorageItem(MATRIX_ANALYSES_STORAGE_KEY, JSON.stringify(validIds));
         }
         eventBus.emit("quantMatrixAnalysesChanged", validIds);
       }

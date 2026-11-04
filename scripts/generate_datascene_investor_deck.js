@@ -39,8 +39,8 @@ function addFooter(slide, dark = false) {
     color: dark ? COLORS.pale : COLORS.primary,
     margin: 0,
   });
-  slide.addText('Research-led multimodal intelligence for audiovisual collections', {
-    x: 5.0, y: 7.15, w: 3.8, h: 0.18,
+  slide.addText('Investor conversation deck', {
+    x: 5.1, y: 7.15, w: 3.2, h: 0.18,
     fontFace: 'Aptos', fontSize: 7,
     color: dark ? '9EB3C2' : COLORS.muted,
     margin: 0, align: 'center',
@@ -49,14 +49,13 @@ function addFooter(slide, dark = false) {
 
 function title(slide, text, x, y, w, opts = {}) {
   slide.addText(text, {
-    x, y, w, h: opts.h || 0.55,
+    x, y, w, h: opts.h || 0.75,
     fontFace: 'Aptos Display',
     fontSize: opts.size || 30,
     bold: opts.bold !== false,
     color: opts.color || COLORS.primary,
     margin: 0,
     fit: 'shrink',
-    breakLine: false,
   });
 }
 
@@ -68,7 +67,6 @@ function body(slide, text, x, y, w, h, opts = {}) {
     color: opts.color || COLORS.primary,
     bold: opts.bold || false,
     margin: opts.margin ?? 0.03,
-    breakLine: false,
     valign: opts.valign || 'top',
     fit: 'shrink',
     paraSpaceAfterPt: opts.paraSpaceAfterPt ?? 5,
@@ -88,7 +86,7 @@ function eyebrow(slide, text, x, y, color = COLORS.teal) {
   });
 }
 
-function copperRule(slide, x, y, h = 0.35) {
+function copperRule(slide, x, y, h = 0.42) {
   slide.addShape('rect', {
     x, y, w: 0.03, h,
     fill: { color: COLORS.copper },
@@ -101,7 +99,7 @@ function card(slide, x, y, w, h, opts = {}) {
     x, y, w, h,
     rectRadius: 0.05,
     fill: { color: opts.fill || COLORS.white, transparency: opts.transparency || 0 },
-    line: { color: opts.line || COLORS.border, width: 1 },
+    line: { color: opts.line || COLORS.border, width: opts.lineWidth || 1 },
   });
 }
 
@@ -113,9 +111,9 @@ function node(slide, text, x, y, w, h, opts = {}) {
     line: { color: opts.line || COLORS.border, width: opts.lineWidth || 1.2 },
   });
   slide.addText(text, {
-    x: x + 0.08, y: y + 0.06, w: w - 0.16, h: h - 0.12,
+    x: x + 0.1, y: y + 0.08, w: w - 0.2, h: h - 0.16,
     fontFace: 'Aptos',
-    fontSize: opts.size || 10,
+    fontSize: opts.size || 11,
     bold: opts.bold || false,
     color: opts.color || COLORS.primary,
     margin: 0.02,
@@ -132,37 +130,12 @@ function line(slide, x1, y1, x2, y2, color = COLORS.border, width = 1) {
   });
 }
 
-function dot(slide, x, y, color = COLORS.copper, r = 0.07) {
+function dot(slide, x, y, color = COLORS.copper, r = 0.08) {
   slide.addShape('ellipse', {
     x: x - r / 2, y: y - r / 2, w: r, h: r,
     fill: { color },
     line: { color },
   });
-}
-
-function bulletList(slide, items, x, y, w, h, opts = {}) {
-  const lines = items.map((item) => ({ text: item, options: { bullet: { type: 'ul' }, breakLine: true } }));
-  slide.addText(lines, {
-    x, y, w, h,
-    fontFace: 'Aptos',
-    fontSize: opts.size || 13,
-    color: opts.color || COLORS.primary,
-    margin: 0.04,
-    paraSpaceAfterPt: opts.paraSpaceAfterPt || 6,
-    fit: 'shrink',
-  });
-}
-
-function darkSlide() {
-  const slide = pptx.addSlide();
-  slide.background = { color: COLORS.deepNavy };
-  return slide;
-}
-
-function lightSlide() {
-  const slide = pptx.addSlide();
-  slide.background = { color: COLORS.offWhite };
-  return slide;
 }
 
 function placeholder(slide, label, x, y, w, h, dark = false) {
@@ -183,6 +156,18 @@ function placeholder(slide, label, x, y, w, h, dark = false) {
   });
 }
 
+function darkSlide() {
+  const slide = pptx.addSlide();
+  slide.background = { color: COLORS.deepNavy };
+  return slide;
+}
+
+function lightSlide() {
+  const slide = pptx.addSlide();
+  slide.background = { color: COLORS.offWhite };
+  return slide;
+}
+
 function slide1() {
   const slide = darkSlide();
   addFooter(slide, true);
@@ -194,13 +179,13 @@ function slide1() {
     color: COLORS.white, margin: 0,
   });
   slide.addText('Turning audiovisual material into traceable knowledge', {
-    x: 1.0, y: 2.42, w: 6.8, h: 0.75,
+    x: 1.0, y: 2.42, w: 7.0, h: 0.75,
     fontFace: 'Aptos Display', fontSize: 27,
     color: COLORS.white, bold: false, margin: 0,
     fit: 'shrink',
   });
   copperRule(slide, 1.0, 3.55, 0.38);
-  body(slide, 'Datascene makes audiovisual material searchable, analyzable, and reusable without losing the path back to the original evidence.', 1.18, 3.50, 6.5, 0.58, {
+  body(slide, 'Datascene makes audiovisual material searchable, analyzable, and reusable without losing the path back to the original evidence.', 1.18, 3.50, 6.7, 0.58, {
     color: COLORS.pale, size: 14.5,
   });
 
@@ -221,228 +206,128 @@ function slide1() {
 function slide2() {
   const slide = lightSlide();
   addFooter(slide);
-  copperRule(slide, 1.0, 0.75, 0.42);
-  title(slide, 'What Datascene is', 1.18, 0.72, 5.5, { size: 28 });
-  body(slide, 'Datascene is a research-led multimodal intelligence platform for audiovisual material.', 1.0, 1.55, 5.7, 0.38, { size: 14.5, color: COLORS.muted });
+  copperRule(slide, 0.85, 0.72);
+  title(slide, 'The problem', 1.05, 0.68, 5.5, { size: 31 });
 
-  node(slide, 'Audiovisual\nmaterial', 1.1, 3.0, 2.2, 0.95, { line: COLORS.border, size: 16, bold: true });
-  node(slide, 'Multimodal\nanalysis', 4.8, 2.88, 2.4, 1.18, { fill: COLORS.teal, line: COLORS.teal, color: COLORS.white, size: 16, bold: true });
-  node(slide, 'Source-linked\nknowledge', 8.8, 3.0, 2.35, 0.95, { line: COLORS.copper, lineWidth: 1.5, size: 16, bold: true });
-  line(slide, 3.35, 3.47, 4.65, 3.47, COLORS.muted, 1.5);
-  line(slide, 7.25, 3.47, 8.65, 3.47, COLORS.muted, 1.5);
-  dot(slide, 8.72, 3.47, COLORS.copper, 0.12);
+  body(slide, 'Video is becoming institutional data, but most organizations still cannot analyze it at scale.', 1.05, 1.55, 8.7, 0.55, {
+    size: 19, bold: true,
+  });
 
-  bulletList(slide, [
-    'searchable knowledge',
-    'traceable evidence',
-    'structured research data',
-    'reusable institutional memory',
-  ], 1.0, 5.05, 5.2, 1.0, { size: 14 });
-  body(slide, 'Most organizations possess more video than they can meaningfully use.', 7.2, 5.2, 4.0, 0.5, { size: 16, bold: true });
+  const cards = [
+    ['Lots of video everywhere', 'Interviews, broadcasts, hearings, meetings, archives, fieldwork, security footage, social media, production material.'],
+    ['Haphazard tooling', 'Search, transcription, annotation, metadata, and evidence handling are often split across fragile workflows.'],
+    ['Large underserved market', 'Many organizations need automated video-data analysis, but do not have usable tools for traceable, scalable work.'],
+  ];
+
+  cards.forEach(([head, text], i) => {
+    const x = 1.0 + i * 3.75;
+    card(slide, x, 3.0, 3.25, 1.55);
+    dot(slide, x + 0.24, 3.28, COLORS.copper, 0.1);
+    body(slide, head, x + 0.42, 3.16, 2.45, 0.26, { size: 13.5, bold: true });
+    body(slide, text, x + 0.42, 3.58, 2.55, 0.7, { size: 10.6, color: COLORS.muted });
+  });
+
+  node(slide, 'The gap: video is valuable, but not yet operational as reliable, reusable knowledge.', 2.1, 5.75, 8.8, 0.62, {
+    fill: COLORS.white, line: COLORS.copper, color: COLORS.primary, size: 13, bold: true,
+  });
 }
 
 function slide3() {
   const slide = darkSlide();
   addFooter(slide, true);
-  eyebrow(slide, 'already delivered', 0.75, 0.55);
-  title(slide, 'A navigable evidence workspace', 0.75, 0.85, 7.4, { size: 30, color: COLORS.white });
+  eyebrow(slide, 'solution sample', 0.75, 0.55);
+  title(slide, 'A working evidence workspace', 0.75, 0.85, 7.1, { size: 31, color: COLORS.white });
 
-  placeholder(slide, 'VAA1 screenshot placeholder\nsource video + transcript + evidence panels', 0.75, 1.62, 7.05, 4.38, true);
-  const callouts = [
-    ['Source video', 8.15, 1.72, COLORS.teal],
-    ['Transcript and timing', 8.15, 2.58, COLORS.copper],
-    ['Evidence constellation', 8.15, 3.44, COLORS.teal],
-    ['Human-confirmed knowledge', 8.15, 4.30, COLORS.copper],
+  placeholder(slide, 'VAA1 screenshot placeholder\nsource video + transcript + evidence panels', 0.75, 1.62, 7.0, 4.35, true);
+
+  const wins = [
+    ['Multimodal', 'Video, audio, transcript, objects, scenes, metadata, and meaning in one workspace.'],
+    ['Traceable', 'Claims stay linked to timestamps, frames, annotations, and source material.'],
+    ['Human-confirmed', 'Analyst corrections can cascade through the evidence model instead of being overwritten.'],
+    ['Already working', 'Datascene already delivers source-linked multimodal analysis, not only a concept.'],
   ];
-  callouts.forEach(([label, x, y, color]) => {
-    dot(slide, x, y + 0.15, color, 0.12);
-    body(slide, label, x + 0.22, y, 3.2, 0.32, { color: COLORS.white, size: 14, bold: true });
-    body(slide, 'editable callout', x + 0.22, y + 0.28, 2.8, 0.25, { color: '9EB3C2', size: 8.5 });
+
+  wins.forEach(([head, text], i) => {
+    const y = 1.66 + i * 0.94;
+    dot(slide, 8.12, y + 0.12, i === 1 || i === 2 ? COLORS.copper : COLORS.teal, 0.11);
+    body(slide, head, 8.35, y, 3.25, 0.25, { color: COLORS.white, size: 13.5, bold: true });
+    body(slide, text, 8.35, y + 0.27, 3.25, 0.44, { color: 'AFC1CD', size: 9.4 });
   });
-  body(slide, 'Datascene brings video, transcript, metadata, annotation, and interpretation into one source-linked environment.', 0.75, 6.22, 6.5, 0.38, {
-    color: COLORS.pale, size: 13,
-  });
-  node(slide, 'Datascene already delivers multimodal analysis without hallucinating away from the source.', 7.7, 6.08, 4.6, 0.62, {
-    fill: COLORS.darkNavy, line: COLORS.copper, color: COLORS.white, size: 11.5, bold: true,
+
+  node(slide, 'Why we win: Datascene does not hallucinate away from source. It turns audiovisual material into a navigable research and intelligence object.', 1.25, 6.25, 10.1, 0.58, {
+    fill: COLORS.darkNavy, line: COLORS.copper, color: COLORS.white, size: 12.1, bold: true,
   });
 }
 
 function slide4() {
   const slide = lightSlide();
   addFooter(slide);
-  copperRule(slide, 0.7, 0.55, 0.42);
-  title(slide, 'What Datascene delivers', 0.9, 0.52, 5.6, { size: 27 });
-  body(slide, 'Five customer segments, one shared problem: audiovisual collections and media environments are difficult to turn into usable, source-linked knowledge.', 0.7, 1.1, 9.5, 0.42, { size: 13.5, color: COLORS.muted });
+  copperRule(slide, 0.85, 0.72);
+  title(slide, 'Where we are heading', 1.05, 0.68, 6.5, { size: 31 });
 
-  const rows = [
-    ['Archives and memory institutions', 'Search beyond basic metadata', 'Searchable video evidence and active institutional memory'],
-    ['Research and universities', 'Scalable multimodal analysis with transparent evidence links', 'Reusable audiovisual datasets and source-linked interpretation'],
-    ['Creative industries', 'Retrieval of footage, themes, scenes, motifs, and production memory', 'Searchable production archives and story-development support'],
-    ['Public governance organizations', 'Understanding media spheres, disinformation dynamics, hybrid threats, and cross-border narratives', 'Source-linked situational understanding for policy, diplomacy, and public communication'],
-    ['Strategic enterprises', 'Interpreting strategic information environments', 'Evidence-based intelligence for communication, risk, reputation, and information operations'],
+  body(slide, 'Datascene is being developed from a working local platform into deployable audiovisual knowledge infrastructure.', 1.05, 1.5, 8.8, 0.45, {
+    size: 16, color: COLORS.muted,
+  });
+
+  const paths = [
+    ['Video search engine', 'Search speech, scenes, objects, people, meaning, metadata, and confirmed evidence.'],
+    ['Real-time analysis', 'Near-live analysis for monitoring, documentation, decision support, and media environments.'],
+    ['Standalone units', 'Web-free deployments for sensitive users and closed environments.'],
+    ['EU-compliant cloud', 'Hosted infrastructure aligned with European privacy, governance, and institutional needs.'],
+    ['AI agents and spinoffs', 'Task-specific agents and sector products for archives, research, security, governance, and enterprise intelligence.'],
   ];
-  const x = 0.7;
-  const y0 = 1.78;
-  const widths = [2.65, 4.1, 4.35];
-  ['Segment', 'What they lack today', 'What Datascene delivers'].forEach((h, i) => {
-    node(slide, h, x + widths.slice(0, i).reduce((a, b) => a + b, 0), y0, widths[i] - 0.05, 0.38, {
-      fill: i === 2 ? COLORS.teal : COLORS.deepNavy,
-      line: i === 2 ? COLORS.teal : COLORS.deepNavy,
-      color: COLORS.white,
-      size: 10.5,
-      bold: true,
-    });
-  });
-  rows.forEach((r, idx) => {
-    const y = y0 + 0.52 + idx * 0.76;
-    card(slide, x, y, 11.08, 0.62);
-    dot(slide, x + 0.18, y + 0.2, COLORS.copper, 0.07);
-    body(slide, r[0], x + 0.34, y + 0.1, widths[0] - 0.4, 0.35, { size: 9.5, bold: true });
-    body(slide, r[1], x + widths[0] + 0.1, y + 0.08, widths[1] - 0.28, 0.4, { size: 8.6, color: COLORS.muted });
-    body(slide, r[2], x + widths[0] + widths[1] + 0.1, y + 0.08, widths[2] - 0.28, 0.4, { size: 8.6, color: COLORS.primary, bold: true });
-  });
-  body(slide, 'Examples: EU-level disinformation work | foreign ministry media-sphere analysis | enterprise strategic information operations', 1.0, 6.35, 10.0, 0.28, { size: 10, color: COLORS.muted });
-}
 
-function iconNode(slide, label, x, y, kind) {
-  card(slide, x, y, 1.55, 0.78);
-  slide.addShape('ellipse', {
-    x: x + 0.12, y: y + 0.18, w: 0.34, h: 0.34,
-    fill: { color: 'FFFFFF', transparency: 100 },
-    line: { color: COLORS.primary, width: 1.2 },
+  paths.forEach(([head, text], i) => {
+    const x = i < 3 ? 0.9 + i * 3.8 : 2.85 + (i - 3) * 3.8;
+    const y = i < 3 ? 2.6 : 4.45;
+    card(slide, x, y, 3.15, 1.22);
+    dot(slide, x + 0.23, y + 0.26, i === 2 || i === 3 ? COLORS.copper : COLORS.teal, 0.1);
+    body(slide, head, x + 0.42, y + 0.16, 2.45, 0.25, { size: 12.3, bold: true });
+    body(slide, text, x + 0.42, y + 0.52, 2.45, 0.46, { size: 9.2, color: COLORS.muted });
   });
-  if (kind === 'law') {
-    slide.addShape('line', { x: x + 0.29, y: y + 0.12, w: 0, h: 0.45, line: { color: COLORS.primary, width: 1.2 } });
-    slide.addShape('line', { x: x + 0.18, y: y + 0.28, w: 0.22, h: 0, line: { color: COLORS.primary, width: 1.2 } });
-  } else if (kind === 'bank') {
-    slide.addShape('line', { x: x + 0.12, y: y + 0.52, w: 0.38, h: 0, line: { color: COLORS.primary, width: 1.2 } });
-    slide.addShape('line', { x: x + 0.18, y: y + 0.26, w: 0, h: 0.25, line: { color: COLORS.primary, width: 1.2 } });
-    slide.addShape('line', { x: x + 0.32, y: y + 0.26, w: 0, h: 0.25, line: { color: COLORS.primary, width: 1.2 } });
-  } else if (kind === 'shield') {
-    slide.addShape('arc', { x: x + 0.16, y: y + 0.16, w: 0.3, h: 0.34, line: { color: COLORS.primary, width: 1.2 } });
-  } else {
-    dot(slide, x + 0.29, y + 0.35, COLORS.copper, 0.09);
-  }
-  body(slide, label, x + 0.56, y + 0.16, 0.86, 0.38, { size: 8.5, bold: true });
+
+  node(slide, 'The same core asset scales: source-linked multimodal understanding of audiovisual material.', 2.1, 6.35, 8.8, 0.48, {
+    fill: COLORS.white, line: COLORS.copper, color: COLORS.primary, size: 11.5, bold: true,
+  });
 }
 
 function slide5() {
-  const slide = lightSlide();
-  addFooter(slide);
-  copperRule(slide, 0.75, 0.57, 0.42);
-  title(slide, 'Who Datascene serves', 0.95, 0.54, 5.5, { size: 27 });
-  body(slide, 'Datascene is relevant wherever audiovisual material becomes evidence, knowledge, or institutional memory.', 0.75, 1.1, 8.8, 0.35, { size: 13.5, color: COLORS.muted });
-
-  node(slide, 'Datascene\nsource-linked audiovisual knowledge', 5.05, 3.0, 2.15, 1.05, {
-    fill: COLORS.teal, line: COLORS.teal, color: COLORS.white, bold: true, size: 13,
-  });
-  const icons = [
-    ['Law', 1.0, 1.95, 'law'],
-    ['Journalism', 5.05, 1.65, 'press'],
-    ['Public governance', 9.0, 1.95, 'gov'],
-    ['Finance', 2.35, 3.0, 'bank'],
-    ['Security', 8.35, 3.0, 'shield'],
-    ['Academy', 1.0, 4.45, 'academy'],
-    ['Defence', 9.0, 4.45, 'shield'],
-    ['Archives', 2.35, 5.55, 'archive'],
-    ['Business intelligence', 5.05, 5.85, 'chart'],
-    ['Decision makers', 8.35, 5.55, 'decision'],
-  ];
-  icons.forEach(([label, x, y, kind]) => {
-    iconNode(slide, label, x, y, kind);
-    line(slide, x + 0.78, y + 0.39, 6.12, 3.52, COLORS.border, 0.7);
-  });
-  node(slide, 'Institutions that need audiovisual material to become inspectable, trustworthy, and reusable.', 3.65, 6.55, 5.0, 0.45, {
-    fill: COLORS.white, line: COLORS.copper, color: COLORS.primary, size: 10.5, bold: true,
-  });
-}
-
-function slide6() {
   const slide = darkSlide();
   addFooter(slide, true);
-  eyebrow(slide, 'development direction', 0.75, 0.55);
-  title(slide, 'Where Datascene is going', 0.75, 0.85, 6.4, { size: 30, color: COLORS.white });
-  body(slide, 'Datascene is being developed from a working analysis platform into broader audiovisual knowledge infrastructure.', 0.75, 1.42, 7.4, 0.34, { color: COLORS.pale, size: 12.5 });
+  eyebrow(slide, 'pre-seed plan', 0.75, 0.55);
+  title(slide, 'What we are raising', 0.75, 0.85, 6.4, { size: 31, color: COLORS.white });
 
-  node(slide, 'Datascene core\nsource-linked multimodal understanding', 0.9, 3.05, 2.35, 1.05, {
-    fill: COLORS.teal, line: COLORS.teal, color: COLORS.white, bold: true, size: 11.5,
+  slide.addText('200K', {
+    x: 0.85, y: 2.0, w: 3.1, h: 0.9,
+    fontFace: 'Aptos Display', fontSize: 52, bold: true,
+    color: COLORS.white, margin: 0,
   });
-  const branches = [
-    ['Video search engine', 4.15, 1.9, COLORS.white],
-    ['Real-time analysis', 7.15, 1.9, COLORS.white],
-    ['Secure standalone units', 9.95, 1.9, COLORS.white],
-    ['EU-compliant cloud', 4.15, 3.25, COLORS.white],
-    ['AI agent implementations', 7.15, 3.25, COLORS.white],
-    ['Situational cultures', 9.95, 3.25, COLORS.copper],
-    ['Digital human sciences skills', 4.15, 4.6, COLORS.copper],
-    ['Sector-specific spinoffs', 7.15, 4.6, COLORS.white],
-    ['Global markets', 9.95, 4.6, COLORS.white],
+  body(slide, 'pre-seed capital', 0.9, 2.9, 3.1, 0.28, { color: COLORS.pale, size: 15, bold: true });
+  body(slide, 'Topped with Business Finland funding and operational customer cases.', 0.9, 3.38, 3.7, 0.65, { color: 'AFC1CD', size: 13.2 });
+
+  card(slide, 5.0, 1.72, 2.9, 1.35, { fill: COLORS.darkNavy, line: COLORS.teal });
+  body(slide, 'Deliverable 1', 5.25, 1.98, 2.2, 0.22, { color: COLORS.teal, size: 9.5, bold: true });
+  body(slide, 'Web-free standalone units for sensitive users', 5.25, 2.32, 2.2, 0.36, { color: COLORS.white, size: 14, bold: true });
+
+  card(slide, 8.35, 1.72, 2.9, 1.35, { fill: COLORS.darkNavy, line: COLORS.copper });
+  body(slide, 'Deliverable 2', 8.6, 1.98, 2.2, 0.22, { color: COLORS.copper, size: 9.5, bold: true });
+  body(slide, 'Global EU-compliant cloud-based service', 8.6, 2.32, 2.2, 0.36, { color: COLORS.white, size: 14, bold: true });
+
+  node(slide, 'Target: by the end of the calendar year', 5.0, 3.8, 6.25, 0.55, {
+    fill: COLORS.deepNavy, line: '6F8797', color: COLORS.white, size: 14, bold: true,
+  });
+
+  const uses = [
+    ['Product hardening', 5.0, 5.18],
+    ['Deployment packaging', 7.1, 5.18],
+    ['Security-sensitive operation', 9.2, 5.18],
+    ['Customer-case delivery', 6.05, 6.0],
+    ['EU cloud readiness', 8.15, 6.0],
   ];
-  branches.forEach(([label, x, y, accent]) => {
-    line(slide, 3.3, 3.58, x - 0.15, y + 0.38, '6F8797', 0.8);
-    node(slide, label, x, y, 2.0, 0.72, {
-      fill: COLORS.darkNavy,
-      line: accent,
-      color: COLORS.white,
-      size: 10.2,
-      bold: accent === COLORS.copper,
-    });
-    dot(slide, x, y + 0.36, accent, 0.08);
+  uses.forEach(([label, x, y], i) => {
+    dot(slide, x, y + 0.12, i % 2 ? COLORS.copper : COLORS.teal, 0.09);
+    body(slide, label, x + 0.18, y, 1.65, 0.25, { color: COLORS.pale, size: 9.8, bold: true });
   });
-  node(slide, 'The reusable core: source-linked multimodal understanding of audiovisual material.', 2.35, 6.28, 7.65, 0.5, {
-    fill: COLORS.darkNavy, line: COLORS.copper, color: COLORS.white, size: 11.5, bold: true,
-  });
-}
-
-function slide7() {
-  const slide = lightSlide();
-  addFooter(slide);
-  copperRule(slide, 0.8, 0.7, 0.42);
-  title(slide, 'What we need', 1.0, 0.67, 4.6, { size: 28 });
-  body(slide, 'We are looking for the right people around the table, not generic acceleration.', 1.0, 1.28, 7.0, 0.35, { size: 14, color: COLORS.muted });
-
-  card(slide, 1.0, 2.0, 5.0, 3.95);
-  card(slide, 6.5, 2.0, 5.0, 3.95);
-  body(slide, 'People we need around the table', 1.28, 2.28, 4.2, 0.3, { size: 15, bold: true });
-  body(slide, 'Support the work needs', 6.78, 2.28, 4.2, 0.3, { size: 15, bold: true });
-  bulletList(slide, [
-    'knowledge infrastructure',
-    'research technology',
-    'institutional software',
-    'audiovisual archives',
-    'long-term defensibility',
-  ], 1.28, 2.9, 4.3, 2.2, { size: 13.2 });
-  bulletList(slide, [
-    'continued development',
-    'technical hardening',
-    'research collaborations',
-    'consulting and applied projects',
-    'deployment readiness',
-    'commercial structuring',
-  ], 6.78, 2.9, 4.3, 2.45, { size: 13.2 });
-  node(slide, 'No pilots. Research collaboration, consulting, applied work, and careful operational deployment.', 2.2, 6.28, 8.7, 0.48, {
-    fill: COLORS.white, line: COLORS.copper, color: COLORS.primary, size: 11, bold: true,
-  });
-}
-
-function slide8() {
-  const slide = darkSlide();
-  addFooter(slide, true);
-  title(slide, 'Datascene turns audiovisual collections from passive storage into active knowledge infrastructure.', 1.0, 1.05, 9.2, {
-    size: 31,
-    color: COLORS.white,
-    h: 1.15,
-  });
-  node(slide, 'Audiovisual material', 1.45, 3.5, 2.35, 0.7, { fill: COLORS.darkNavy, line: '6F8797', color: COLORS.white, size: 13, bold: true });
-  node(slide, 'Datascene', 5.05, 3.34, 2.05, 1.0, { fill: COLORS.teal, line: COLORS.teal, color: COLORS.white, size: 18, bold: true });
-  node(slide, 'Traceable institutional knowledge', 8.65, 3.5, 2.8, 0.7, { fill: COLORS.darkNavy, line: COLORS.copper, color: COLORS.white, size: 13, bold: true });
-  line(slide, 3.85, 3.85, 4.85, 3.85, COLORS.pale, 1.5);
-  line(slide, 7.15, 3.85, 8.45, 3.85, COLORS.pale, 1.5);
-  dot(slide, 7.82, 3.85, COLORS.copper, 0.12);
-
-  body(slide, 'What exists now: a functioning multimodal analysis platform.', 1.45, 5.4, 3.4, 0.35, { color: COLORS.pale, size: 12.5 });
-  body(slide, 'Where we are going: a trusted infrastructure layer for audiovisual knowledge.', 4.8, 5.4, 3.9, 0.35, { color: COLORS.pale, size: 12.5 });
-  body(slide, 'What we need: strategic support to harden, focus, and scale carefully.', 8.35, 5.4, 3.4, 0.35, { color: COLORS.pale, size: 12.5 });
 }
 
 slide1();
@@ -450,9 +335,6 @@ slide2();
 slide3();
 slide4();
 slide5();
-slide6();
-slide7();
-slide8();
 
 fs.mkdirSync(outDir, { recursive: true });
 pptx.writeFile({ fileName: outFile }).then(() => {

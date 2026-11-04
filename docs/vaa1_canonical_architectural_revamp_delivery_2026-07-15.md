@@ -3,6 +3,10 @@
 Date: 2026-07-15
 Status: operational architecture delivered
 
+> Current map: [Datascene Software Architecture Map](datascene_software_architecture_map.md).
+> It records the persistent Parsimonious Decision Runtime added on 2026-11-04
+> and separates affiliated future work under **To be made**.
+
 ## Outcome
 
 Datascene/VAA1 now has one governed route from evidence and analyst review to canonical decisions and projected operational state. The earlier BBox/ROI pilot has been generalized across manual visual assignments, object/cinematic/other label overrides, drop decisions, Narrative Agent confirmations, Meaning Network relationship reviews, and proliferation candidate decisions.

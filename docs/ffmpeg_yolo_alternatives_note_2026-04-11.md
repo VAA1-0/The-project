@@ -37,9 +37,33 @@ Reasons to consider an alternative:
 #### 1. For Higher Accuracy (at the cost of speed):
 *   **DINO (DETR with Improved Denoising Anchor Boxes):** A transformer-based model that often achieves higher accuracy than YOLO-family models, especially in complex scenes with many overlapping objects. However, it is much slower and more computationally expensive.
 
-#### 2. For Commercially-Friendly Licensing (Apache 2.0, MIT, etc.):
-*   **YOLO-NAS:** A newer YOLO-variant developed by Deci AI, released under an open-source license that is commercially permissive. It has an excellent accuracy-to-speed trade-off that is very competitive with YOLOv8.
-*   **EfficientDet:** A family of models from Google, also typically under a permissive Apache 2.0 license. They are highly optimized for efficiency (accuracy per unit of compute) and are a very popular choice for commercial applications.
+#### 2. For permissive code-and-checkpoint operation:
+*   **Meta DETR ResNet-50:** The Meta DETR repository and the published `facebook/detr-resnet-50` checkpoint declare Apache-2.0. Datascene now has an offline, checksum-pinned adapter for this combination.
+*   **EfficientDet:** TensorFlow Model Garden publishes EfficientDet code and its official checkpoints under Apache-2.0. It remains a catalogued second provider until its Datascene adapter and clean-environment test are complete.
 
-### Assessment
-YOLOv8 is an excellent tool for this project's stated goals. A switch would only be necessary if a more permissive license is required for distribution, or if you need to push accuracy to the absolute maximum in a non-real-time context.
+**Correction concerning YOLO-NAS:** SuperGradients code is Apache-2.0, but the
+published YOLO-NAS pretrained weights have separate terms restricting use. The
+weights must therefore not be described as a generally commercially permissive
+drop-in. Datascene exposes YOLO-NAS only as a licence-sensitive research choice
+requiring explicit analyst activation.
+
+### Current Datascene decision — 25 October 2026
+
+The operational default is **Meta DETR ResNet-50**, running locally from a
+checksum-pinned Apache-2.0 checkpoint. It has been exercised offline against a
+real No Time To Die source frame. Its output is raw, source-linked object
+evidence; it is not a user confirmation.
+
+The first measured grouping motor is **Datascene Native Object Appearance v1**:
+HSV and Lab histograms, HOG structure and coarse luminance are calculated from
+source-linked track crops and compared by cosine similarity. The vectors stay
+internal and the resulting clusters remain candidates until analyst review.
+
+YOLOv8 and other licence-sensitive or checkpoint-sensitive alternatives remain
+visible in Analysis setup and the working Tools panel for research. Selecting
+one is the analyst's decision, is recorded in the analysis traceback, and is
+rejected by the backend if explicit analyst licence authority is absent.
+
+This note is a technical inventory, not legal advice. Packaging must retain the
+licence texts, checkpoint manifest and reproducibility checks for the exact
+versions shipped.

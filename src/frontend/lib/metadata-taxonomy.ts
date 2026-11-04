@@ -1,3 +1,5 @@
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
+
 export const MEDIA_GENRE_OPTIONS = [
   "Television",
   "Television series",
@@ -684,7 +686,7 @@ function readCustomTaxonomyStore(): CustomTaxonomyStore {
   }
 
   try {
-    const raw = window.localStorage.getItem(CUSTOM_TAXONOMY_STORAGE_KEY);
+    const raw = getBrowserStorageItem(CUSTOM_TAXONOMY_STORAGE_KEY);
     if (!raw) {
       return {};
     }
@@ -701,7 +703,7 @@ function writeCustomTaxonomyStore(store: CustomTaxonomyStore) {
   }
 
   try {
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       CUSTOM_TAXONOMY_STORAGE_KEY,
       JSON.stringify(store),
     );

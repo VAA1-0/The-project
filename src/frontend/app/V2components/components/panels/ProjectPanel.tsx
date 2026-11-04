@@ -22,6 +22,7 @@ import {
 import VideoItem from "@/components/VideoItem";
 import { deleteVideoBlob } from "@/lib/blob-store";
 import { readMorphologyConfiguration } from "@/lib/morphology-configuration";
+import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -64,7 +65,7 @@ export default function ProjectPanel() {
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(window.localStorage.getItem(ANALYSIS_QUEUE_STORAGE_KEY) || "{}");
+      const saved = JSON.parse(getBrowserStorageItem(ANALYSIS_QUEUE_STORAGE_KEY) || "{}");
       if (Array.isArray(saved.queuedAnalysisIds)) {
         setQueuedAnalysisIds(saved.queuedAnalysisIds.filter((item: unknown) => typeof item === "string"));
       }
@@ -83,7 +84,7 @@ export default function ProjectPanel() {
 
   useEffect(() => {
     if (!queueHydrated) return;
-    window.localStorage.setItem(
+    setBrowserStorageItem(
       ANALYSIS_QUEUE_STORAGE_KEY,
       JSON.stringify({
         queuedAnalysisIds,
