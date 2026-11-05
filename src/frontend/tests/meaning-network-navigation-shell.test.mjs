@@ -110,6 +110,26 @@ test("constellational speaker reiteration and object lanes use canonical governe
   assert.match(panel, /annotationCategory === "obj"[\s\S]*\? "object"/);
 });
 
+test("explicit Master Schema speaker assignments replace unresolved transcript labels", () => {
+  assert.match(panel, /candidate\.attributes\?\.category !== "speaker_assignment"/);
+  assert.match(panel, /speaker_resolution_rule: "master_schema_speaker_assignment"/);
+  assert.match(panel, /speaker_resolution_authority: "explicit_user_confirmation"/);
+  assert.match(panel, /replace\(\/\^UNKNOWN:\\s\*\/i, ""\)/);
+});
+
+test("rendered presence bars expose lane, label and source interval for end-to-end acceptance", () => {
+  assert.match(panel, /data-vaa1-meaning-network-presence-lane=/);
+  assert.match(panel, /data-vaa1-meaning-network-presence-label=/);
+  assert.match(panel, /data-vaa1-meaning-network-presence-start=/);
+  assert.match(panel, /data-vaa1-meaning-network-presence-end=/);
+});
+
+test("lane bands and presence bars share the same packed lane index", () => {
+  assert.match(panel, /const laneBands = packedLaneNodes\.map/);
+  assert.match(panel, /packedLaneNodes\.forEach\(\(row, rowIndex\) =>/);
+  assert.doesNotMatch(panel, /laneNodes\.forEach\(\(row, rowIndex\) =>/);
+});
+
 test("normalized Datascene scenes override imported detector numbering", () => {
   assert.match(panel, /governed_scene_index: scene\.scene_index/);
   assert.match(panel, /scene_index: index \+ 1/);

@@ -1871,6 +1871,49 @@ function masterSchemaObjectRecords(masterSchema: unknown): MasterSchemaResolvedE
   return records;
 }
 
+function masterSchemaSpeakerAndProsodyRecords(masterSchema: unknown): MasterSchemaResolvedEvidenceRecord[] {
+  const schema = asLooseRecord(masterSchema);
+  if (!schema) return [];
+  const records: MasterSchemaResolvedEvidenceRecord[] = [];
+  looseRecordArray(schema.speaker_assignment_annotations).forEach((item, index) => {
+    const label = looseString(item.speaker_label);
+    if (!label) return;
+    const { start, end } = masterSchemaIntervalSeconds(item.interval);
+    records.push({
+      id: looseString(item.assignment_id) || `master-schema:speaker-assignment:${index}`,
+      category: "speaker_assignment",
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "MasterSchema",
+      start,
+      end,
+      rawLabel: looseString(item.source_speaker_label) || undefined,
+      targetId: looseString(item.target_id) || undefined,
+      maturityRoute: looseString(item.maturity_route) || "canonical.speaker.assignment",
+      mappingStatus: "user_confirmed",
+      metadata: item as Record<string, unknown>,
+    });
+  });
+  looseRecordArray(schema.prosody_annotations).forEach((item, index) => {
+    const label = looseString(item.speaker_label);
+    if (!label) return;
+    const { start, end } = masterSchemaIntervalSeconds(item.interval);
+    records.push({
+      id: looseString(item.annotation_id) || `master-schema:prosody:${index}`,
+      category: item.assignment_kind === "audio_source_class" ? "audio_source_prosody" : "narrative_agent_prosody",
+      label,
+      authority: "manual_annotation",
+      sourcePanel: "MasterSchema",
+      start,
+      end,
+      maturityRoute: looseString(item.maturity_route) || "master_schema.speaker_prosody_projection",
+      mappingStatus: "governed_source_time_join",
+      metadata: item as Record<string, unknown>,
+    });
+  });
+  return records;
+}
+
 function masterSchemaNarrativeAgentRecords(masterSchema: unknown): MasterSchemaResolvedEvidenceRecord[] {
   const schema = asLooseRecord(masterSchema);
   if (!schema) {
@@ -2615,6 +2658,13 @@ function buildMasterSchemaResolvedEvidenceView({
   records.push(
     ...masterSchemaScopedRecords(
       masterSchemaNarrativeAgentRecords(masterSchema),
+      masterSchema,
+      analysisId,
+    ),
+  );
+  records.push(
+    ...masterSchemaScopedRecords(
+      masterSchemaSpeakerAndProsodyRecords(masterSchema),
       masterSchema,
       analysisId,
     ),
@@ -7037,6 +7087,7 @@ export class VideoService {
 
   static async refreshAnalysis(id: string): Promise<AnalysisData> {
     this.invalidateAnalysisCache(id);
+    apiService.invalidateReadCaches(id);
     return this.getAnalysis(id);
   }
 

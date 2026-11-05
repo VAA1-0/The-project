@@ -19,6 +19,23 @@ meaning_network = load_module()
 
 
 class DatasceneMeaningNetworkContractTest(unittest.TestCase):
+    def test_written_artifact_has_content_addressed_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first_path = Path(directory) / "first.json"
+            second_path = Path(directory) / "second.json"
+            first = meaning_network.write_datascene_meaning_network_artifact(
+                "analysis-revision", {}, first_path
+            )
+            second = meaning_network.write_datascene_meaning_network_artifact(
+                "analysis-revision", {}, second_path
+            )
+            self.assertEqual(first["artifact_revision"], second["artifact_revision"])
+            self.assertEqual(len(first["artifact_revision"]), 64)
+            self.assertEqual(
+                json.loads(first_path.read_text(encoding="utf-8"))["artifact_revision"],
+                first["artifact_revision"],
+            )
+
     def test_objects_and_manual_object_corrections_project_to_objects_lane(self):
         artifact = meaning_network.build_datascene_meaning_network(
             "analysis-object-projection",

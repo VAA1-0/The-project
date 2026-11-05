@@ -6,6 +6,40 @@ from src.backend.analysis.speaker_prosody_projection import (
 
 
 class SpeakerProsodyProjectionContractTests(unittest.TestCase):
+    def test_visual_speaking_confirmation_receives_overlapping_prosody(self):
+        payload = project_confirmed_speaker_prosody(
+            "analysis-1",
+            corrections={
+                "manual_visual_annotations": [{
+                    "id": "madeleine-speaking",
+                    "identity_affirmation": "Dr. Madeleine Swann",
+                    "start_seconds": 6.27,
+                    "end_seconds": 7.51,
+                    "metadata_correlation": {
+                        "quick_annotations": ["speaking to", "looking at"],
+                    },
+                }],
+            },
+            audio_prosody={
+                "cues": [{
+                    "cue_id": "cue-madeleine",
+                    "start": 6.28,
+                    "end": 7.50,
+                    "pace": {"label": "measured"},
+                }],
+            },
+        )
+        self.assertEqual(payload["confirmed_span_count"], 1)
+        self.assertEqual(payload["projection_count"], 1)
+        self.assertEqual(
+            payload["projections"][0]["speaker_label"],
+            "Dr. Madeleine Swann",
+        )
+        self.assertEqual(
+            payload["projections"][0]["speaker_assignment_ref"],
+            "madeleine-speaking",
+        )
+
     def test_confirmed_agent_receives_overlapping_measured_prosody(self):
         payload = project_confirmed_speaker_prosody(
             "analysis-1",

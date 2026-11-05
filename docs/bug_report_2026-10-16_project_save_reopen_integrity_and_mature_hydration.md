@@ -8,6 +8,51 @@ Status: Incident recovered; durable product contract and complete acceptance mat
 
 Affected project: `bond-cop30-helsinki`
 
+## Recurrence addendum — 4 November 2026: duplicate No Time to Die upload lineage
+
+The analyst confirmed that the *No Time to Die* video had been uploaded to
+Datascene twice and that the other catalogue entry was later deleted. The live,
+registered analysis is:
+
+`81920e95-a0b2-4173-bc23-86db7909a0a9`
+
+A residual extracted/import store remains at:
+
+`outputs/imported_work/233bce22-d82b-4aeb-8af5-c3182c61612f`
+
+The residual store is not a live catalogue analysis, but the live analysis
+record still contains output-file references into it. A graph regenerated only
+under the residual store was consequently mistaken for proof that the live
+Meaning/Plot consumer had been repaired. It was not: the running API did not
+recognize `233bce22…`, while the live `81920e95…` graph still contained zero
+object nodes and retained the unresolved first spoken line.
+
+The two stores also carried divergent maturity generations. At audit time the
+live correction ledger was authoritative and richer: 228 manual annotations,
+139 proliferation decisions, 41 `OBJ` annotations and 26 `Audio` annotations.
+The residual store held an older September ledger with 161 manual annotations,
+no proliferation decisions, 19 `OBJ` annotations and one `Audio` annotation.
+The older ledger must therefore remain traceback/source evidence and must not
+overwrite the live canonical ledger merely because a newer derived graph was
+generated beside it.
+
+This recurrence adds the following release-blocking requirements:
+
+1. A deleted duplicate catalogue entry must not leave an ambiguous analysis
+   authority or permit its extracted directory to masquerade as a live analysis.
+2. Every derived artefact must carry and match the registered live `analysis_id`.
+3. Verification must use the live API identity, not a filesystem directory with
+   a similar filename or source hash.
+4. Duplicate-source reconciliation must compare analyst authority, correction
+   generation, validity and lineage. It must never use modification time or
+   array size alone.
+5. Reconciliation must preserve the richer live correction ledger, retain the
+   older duplicate generation as traceback, and rebuild every consumer from one
+   declared canonical generation.
+6. Acceptance requires equality between canonical ledger, Master Schema,
+   persisted Meaning Network, API download and the rendered Objects/Props and
+   spoken-word lanes for `81920e95…` after restart.
+
 ## Executive summary
 
 Datascene did not maintain a steady, professionally reliable record of the human research project across save, restart, and reopen. The analyst's project is one hermeneutic whole containing six sources:

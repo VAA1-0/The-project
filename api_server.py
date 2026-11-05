@@ -6753,6 +6753,122 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
     existing_review_layer = (
         existing.get("review_layer") if isinstance(existing.get("review_layer"), dict) else {}
     )
+    corrections = status.get("annotation_corrections") if isinstance(status.get("annotation_corrections"), dict) else {}
+    manual_object_annotations: List[Dict[str, Any]] = []
+    speaker_assignment_annotations: List[Dict[str, Any]] = []
+    for index, annotation in enumerate(corrections.get("manual_visual_annotations") or []):
+        if not isinstance(annotation, dict):
+            continue
+        category = str(annotation.get("category") or "").strip().casefold()
+        annotation_id = str(annotation.get("id") or f"manual-visual:{index}")
+        start = safe_float(
+            annotation.get("start_seconds", annotation.get("timestamp_seconds"))
+        )
+        end = safe_float(
+            annotation.get("end_seconds", annotation.get("timestamp_seconds"))
+        )
+        if start is not None and end is None:
+            end = start
+        interval = {
+            "start_seconds": start,
+            "end_seconds": max(start, end) if start is not None and end is not None else end,
+            "clock_id": "source_media.clock",
+        }
+        if category == "obj":
+            label = str(
+                annotation.get("identity_affirmation")
+                or annotation.get("custom_label")
+                or annotation.get("label")
+                or "Object"
+            ).strip()
+            manual_object_annotations.append({
+                "annotation_id": annotation_id,
+                "track_id": annotation.get("target_id") or annotation.get("track_id"),
+                "label_mapping": {
+                    "raw_label": annotation.get("original_label") or annotation.get("label"),
+                    "mapped_label": label,
+                    "mapping_family": "object",
+                    "mapping_confidence": 1.0,
+                    "mapping_status": "analyst_confirmed",
+                },
+                "interval": interval,
+                "geometry": annotation.get("geometry") or annotation.get("bbox"),
+                "maturity_route": "master_schema.manual_visual_object_confirmation",
+                "authority": "explicit_user_confirmation",
+                "maturity": "analyst_confirmed",
+                "confirmation_probability": 1.0,
+                "provenance": {
+                    "source_system": "vaa1",
+                    "source_type": "manual_annotation",
+                    "created_by": annotation.get("updated_by") or "analyst",
+                    "created_at": annotation.get("updated_at") or corrections.get("updated_at"),
+                    "correction_ref": annotation_id,
+                },
+            })
+        identity = str(annotation.get("identity_affirmation") or "").strip()
+        metadata = annotation.get("metadata_correlation") if isinstance(annotation.get("metadata_correlation"), dict) else {}
+        quick = [str(value).casefold() for value in metadata.get("quick_annotations") or []]
+        if identity and any("speak" in value for value in quick):
+            speaker_assignment_annotations.append({
+                "assignment_id": f"visual-speaker:{annotation_id}",
+                "speaker_label": identity,
+                "source_speaker_label": "UNKNOWN",
+                "interval": interval,
+                "target_id": annotation_id,
+                "authority": "explicit_user_confirmation",
+                "maturity": "analyst_confirmed",
+                "confirmation_probability": 1.0,
+                "maturity_route": "master_schema.analyst_constellation_rule",
+                "provenance": {
+                    "source_surface": "annotation_corrections.manual_visual_annotations",
+                    "correction_ref": annotation_id,
+                    "speaking_activity": quick,
+                },
+            })
+    for index, substitution in enumerate(corrections.get("text_substitutions") or []):
+        if not isinstance(substitution, dict):
+            continue
+        speaker = str(substitution.get("speaker_confirmation") or "").strip()
+        if not speaker or speaker.casefold().replace("_", " ").startswith("speaker ") or speaker.casefold() == "unknown":
+            continue
+        start = safe_float(substitution.get("corrected_start_timestamp", substitution.get("target_start_timestamp")))
+        end = safe_float(substitution.get("corrected_end_timestamp", substitution.get("target_end_timestamp")))
+        correction_ref = str(substitution.get("id") or f"text-substitution:{index}")
+        speaker_assignment_annotations.append({
+            "assignment_id": f"transcript-speaker:{correction_ref}",
+            "speaker_label": speaker,
+            "source_speaker_label": substitution.get("raw_speaker") or "UNKNOWN",
+            "interval": {
+                "start_seconds": start,
+                "end_seconds": max(start, end) if start is not None and end is not None else end or start,
+                "clock_id": "source_media.clock",
+            },
+            "target_id": correction_ref,
+            "authority": "explicit_user_confirmation",
+            "maturity": "analyst_confirmed",
+            "confirmation_probability": 1.0,
+            "maturity_route": "canonical.speaker.assignment",
+            "provenance": {
+                "source_surface": "annotation_corrections.text_substitutions",
+                "correction_ref": correction_ref,
+            },
+        })
+    prosody_annotations = []
+    projection = status.get("speaker_prosody_projection") if isinstance(status.get("speaker_prosody_projection"), dict) else {}
+    for item in projection.get("projections") or []:
+        if not isinstance(item, dict):
+            continue
+        prosody_annotations.append({
+            "annotation_id": item.get("projection_id"),
+            "speaker_label": item.get("speaker_label"),
+            "assignment_kind": item.get("assignment_kind"),
+            "interval": item.get("source_time"),
+            "prosody": item.get("prosody"),
+            "authority": item.get("authority"),
+            "maturity": item.get("maturity"),
+            "maturity_route": "master_schema.speaker_prosody_projection",
+            "evidence_refs": item.get("evidence_refs") or [],
+        })
     merged = {
         **scaffold,
         **existing,
@@ -6763,6 +6879,9 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
         "character_role_annotations": scaffold.get("character_role_annotations", []),
         "character_definition_annotations": scaffold.get("character_definition_annotations", []),
         "narrative_agent_profile_annotations": scaffold.get("narrative_agent_profile_annotations", []),
+        "object_annotations": manual_object_annotations,
+        "speaker_assignment_annotations": speaker_assignment_annotations,
+        "prosody_annotations": prosody_annotations,
         "review_layer": {
             **existing_review_layer,
             "status": existing_review_layer.get("status", "unreviewed"),
@@ -6785,6 +6904,7 @@ def refresh_master_schema_metadata_surfaces(status: Dict[str, Any]) -> None:
     master_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(master_path, merged)
     internal_artifacts["vaa1_annotation_master_schema"] = str(master_path)
+    status.setdefault("output_files", {})["vaa1_annotation_master_schema"] = str(master_path)
     status["vaa1_annotation_master_schema"] = merged
 
 
@@ -11294,6 +11414,42 @@ async def get_analysis_status(analysis_id: str) -> dict:
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    # The disk artifact is the durable publication boundary. A graph can be
+    # rebuilt by a correction worker while this process still holds an older
+    # status snapshot, so refresh that single projection before answering.
+    meaning_network_path = Path(
+        str(
+            (status.get("output_files") or {}).get("datascene_meaning_network")
+            or RESULTS_DIR / analysis_id / "datascene_meaning_network.json"
+        )
+    )
+    disk_meaning_network = read_json_artifact_if_available(str(meaning_network_path))
+    if isinstance(disk_meaning_network, dict):
+        current_meaning_network = status.get("datascene_meaning_network")
+        disk_revision = disk_meaning_network.get("artifact_revision")
+        current_revision = (
+            current_meaning_network.get("artifact_revision")
+            if isinstance(current_meaning_network, dict)
+            else None
+        )
+        disk_summary = disk_meaning_network.get("summary") or {}
+        current_summary = (
+            current_meaning_network.get("summary") or {}
+            if isinstance(current_meaning_network, dict)
+            else {}
+        )
+        if (
+            disk_revision != current_revision
+            or disk_summary.get("node_count") != current_summary.get("node_count")
+            or disk_summary.get("edge_count") != current_summary.get("edge_count")
+        ):
+            status["datascene_meaning_network"] = {
+                **disk_meaning_network,
+                "output_json_path": str(meaning_network_path),
+            }
+            status.setdefault("output_files", {})["datascene_meaning_network"] = str(
+                meaning_network_path
+            )
     write_performance_observation(status, RESULTS_DIR)
 
     canonical_ledger = decision_ledger_for_status(status)

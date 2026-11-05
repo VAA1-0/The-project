@@ -2258,6 +2258,20 @@ function meaningNetworkShortLabel(label: string, maxLength = 26): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 }
 
+function meaningNetworkDisplayLabel(
+  node: MeaningNetworkNode,
+  projectedLabels: Record<string, string>,
+): string {
+  const governedSpeaker = String(node.attributes?.speaker_confirmation || node.attributes?.inferred_speaker || "").trim();
+  const explicitlyResolved =
+    node.attributes?.speaker_resolution_status === "resolved" &&
+    node.attributes?.speaker_resolution_authority === "explicit_user_confirmation" &&
+    !isUnknownAgentLabel(governedSpeaker);
+  if (explicitlyResolved) return node.label;
+  const projected = projectedLabels[node.node_id];
+  return projected && !isUnknownAgentLabel(projected) ? projected : node.label;
+}
+
 function meaningNetworkNodeHoverText(node: MeaningNetworkNode, displayLabel?: string): string {
   const label = displayLabel || node.label;
   const kind = meaningNetworkNodeKindLabel(node.node_type);
@@ -2828,7 +2842,10 @@ function meaningNetworkGraphLayout(
     y: 38 + index * 84,
     height: index === 0 ? 74 : 66,
   }));
-  laneNodes.forEach((row, rowIndex) => {
+  // Header bands and node positions must use the same packed lane sequence.
+  // Using the unfiltered lane list here shifts every later bar upward whenever
+  // an earlier lane is empty, making populated Prosody/Object rows look blank.
+  packedLaneNodes.forEach((row, rowIndex) => {
     const visible = row.nodes.filter((node) => ordered.includes(node));
     const yBase = laneBands[rowIndex]?.y ?? 55 + rowIndex * 84;
     const laneGap = row.lane.lane_id === "scene" ? 0 : 28;
@@ -4284,7 +4301,8 @@ export default function MeaningPlotPanel({
         claim.projection_status === "projected" &&
         (claim.property === "semantic.assignment.label" ||
           claim.property === "narrative_agent.assignment") &&
-        typeof claim.projected_value === "string"
+        typeof claim.projected_value === "string" &&
+        !isUnknownAgentLabel(claim.projected_value)
       ) {
         projectedLabels[claim.subject_ref.id] = claim.projected_value;
       }
@@ -4598,6 +4616,63 @@ export default function MeaningPlotPanel({
         }
         const utteranceRange = meaningNetworkEvidenceTimeRange(node.evidence_refs);
         if (!utteranceRange) return { ...node, attributes: { ...node.attributes, speaker_resolution_status: "unsupported", speaker_resolution_reason: "missing_source_time" } };
+        const explicitAssignments = masterSchemaMeaningNodes.flatMap((candidate) => {
+          if (candidate.attributes?.category !== "speaker_assignment") return [];
+          if (isUnknownAgentLabel(candidate.label)) return [];
+          const assignmentRange = meaningNetworkEvidenceTimeRange(candidate.evidence_refs);
+          if (!assignmentRange) return [];
+          const sameTarget = Boolean(
+            candidate.attributes?.target_id &&
+            node.attributes?.target_id &&
+            candidate.attributes.target_id === node.attributes.target_id
+          );
+          const overlapSeconds = Math.max(
+            0,
+            Math.min(utteranceRange.end, assignmentRange.end) -
+              Math.max(utteranceRange.start, assignmentRange.start),
+          );
+          return sameTarget || overlapSeconds >= 0.12
+            ? [{ candidate, overlapSeconds, sameTarget }]
+            : [];
+        }).sort((left, right) =>
+          Number(right.sameTarget) - Number(left.sameTarget) || right.overlapSeconds - left.overlapSeconds,
+        );
+        const bestExplicitAssignment = explicitAssignments[0];
+        const runnerUpExplicitAssignment = explicitAssignments.find(
+          ({ candidate }) => normalizeAgentKey(candidate.label) !== normalizeAgentKey(bestExplicitAssignment?.candidate.label),
+        );
+        const hasUnambiguousExplicitWinner = Boolean(
+          bestExplicitAssignment &&
+          (
+            bestExplicitAssignment.sameTarget ||
+            !runnerUpExplicitAssignment ||
+            bestExplicitAssignment.overlapSeconds - runnerUpExplicitAssignment.overlapSeconds >= 0.08
+          ),
+        );
+        if (bestExplicitAssignment && hasUnambiguousExplicitWinner) {
+          const winner = bestExplicitAssignment.candidate.label;
+          const transcriptText = String(node.attributes?.transcript_text || node.label || "").replace(/^UNKNOWN:\s*/i, "");
+          return {
+            ...node,
+            label: meaningNetworkShortLabel(`${winner}: ${transcriptText}`, 80),
+            description: `${winner} delivers “${meaningNetworkShortLabel(transcriptText, 90)}”; speaker identity is explicitly governed in the Master Schema.`,
+            attributes: {
+              ...node.attributes,
+              speaker_confirmation: winner,
+              inferred_speaker: winner,
+              speaker_resolution_authority: "explicit_user_confirmation",
+              speaker_resolution_status: "resolved",
+              speaker_resolution_rule: "master_schema_speaker_assignment",
+              speaker_resolution_evidence: (bestExplicitAssignment.candidate.evidence_refs || [])
+                .map((reference) => reference.evidence_id),
+            },
+            maturity: {
+              level: "analyst_confirmed",
+              authority: "explicit_user_confirmation",
+              confidence: 1,
+            },
+          };
+        }
         const candidates = new Map<string, { label: string; evidence: Set<string> }>();
         const addCandidate = (label: string, evidence: string) => {
           if (isUnknownAgentLabel(label)) return;
@@ -4733,6 +4808,51 @@ export default function MeaningPlotPanel({
           if (!["transcript", "spoken_word"].includes(canonicalType)) return node;
           const range = meaningNetworkEvidenceTimeRange(node.evidence_refs);
           if (!range) return node;
+          const governedAssignment = masterSchemaMeaningNodes
+            .filter((candidate) => candidate.attributes?.category === "speaker_assignment" && !isUnknownAgentLabel(candidate.label))
+            .map((candidate) => {
+              const candidateRange = meaningNetworkEvidenceTimeRange(candidate.evidence_refs);
+              const overlapSeconds = candidateRange
+                ? Math.max(0, Math.min(range.end, candidateRange.end) - Math.max(range.start, candidateRange.start))
+                : 0;
+              const sameTarget = Boolean(
+                candidate.attributes?.target_id &&
+                node.attributes?.target_id &&
+                candidate.attributes.target_id === node.attributes.target_id,
+              );
+              return { candidate, overlapSeconds, sameTarget };
+            })
+            .filter((match) => match.sameTarget || match.overlapSeconds >= 0.12)
+            .sort((left, right) => Number(right.sameTarget) - Number(left.sameTarget) || right.overlapSeconds - left.overlapSeconds)[0];
+          if (governedAssignment) {
+            const transcriptText = String(
+              node.attributes?.transcript_text ||
+              node.attributes?.text_excerpt ||
+              node.description ||
+              node.label ||
+              "",
+            )
+              .replace(/^UNKNOWN:\s*/i, "")
+              .replace(/^Unknown speaker:\s*/i, "");
+            return {
+              ...node,
+              label: meaningNetworkShortLabel(`${governedAssignment.candidate.label}: ${transcriptText}`, 80),
+              description: `${governedAssignment.candidate.label} delivers “${meaningNetworkShortLabel(transcriptText, 90)}”; speaker identity is explicitly governed in the Master Schema.`,
+              attributes: {
+                ...node.attributes,
+                speaker_confirmation: governedAssignment.candidate.label,
+                inferred_speaker: governedAssignment.candidate.label,
+                speaker_resolution_status: "resolved",
+                speaker_resolution_authority: "explicit_user_confirmation",
+                speaker_resolution_rule: "master_schema_speaker_assignment",
+              },
+              maturity: {
+                level: "analyst_confirmed",
+                authority: "explicit_user_confirmation",
+                confidence: 1,
+              },
+            };
+          }
           const resolved = transcriptMeaningNodes.find((candidate) => {
             if (candidate.attributes?.speaker_resolution_status !== "resolved") return false;
             const candidateRange = meaningNetworkEvidenceTimeRange(candidate.evidence_refs);
@@ -8720,7 +8840,7 @@ export default function MeaningPlotPanel({
                       </g>
                     ))}
                     {meaningNetworkGraph.nodeBars.map((bar) => {
-                      const label = renamedMeaningNetworkMarkers[bar.node.node_id] || bar.node.label;
+                      const label = meaningNetworkDisplayLabel(bar.node, renamedMeaningNetworkMarkers);
                       const confirmed = confirmedMeaningNetworkMarkers[bar.node.node_id];
                       const selected = selectedMeaningNetworkNodeId === bar.node.node_id;
                       const activeAtCursor = activeMeaningNetworkNodeIdsAtCursor.has(bar.node.node_id);
@@ -8759,6 +8879,12 @@ export default function MeaningPlotPanel({
                           onPointerDown={(event) => beginMeaningNetworkPresenceDrag(bar, "move", event)}
                           className="cursor-ew-resize"
                           data-vaa1-meaning-network-node-presence-bar="true"
+                          data-vaa1-meaning-network-presence-lane={meaningNetworkLaneForNode(bar.node, meaningNetworkLanes).lane_id}
+                          data-vaa1-meaning-network-presence-node-type={meaningNetworkCanonicalNodeType(bar.node.node_type)}
+                          data-vaa1-meaning-network-presence-node-id={bar.node.node_id}
+                          data-vaa1-meaning-network-presence-label={label}
+                          data-vaa1-meaning-network-presence-start={bar.start.toFixed(3)}
+                          data-vaa1-meaning-network-presence-end={bar.end.toFixed(3)}
                           data-vaa1-meaning-network-source-verifying-click="true"
                           data-vaa1-meaning-network-stretchable-node-presence="true"
                           data-vaa1-meaning-network-draggable-node-presence="true"
@@ -8954,7 +9080,7 @@ export default function MeaningPlotPanel({
                       const confirmed = confirmedMeaningNetworkMarkers[node.node_id];
                       const selected = selectedMeaningNetworkNodeId === node.node_id;
                       const activeAtCursor = activeMeaningNetworkNodeIdsAtCursor.has(node.node_id);
-                      const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
+                      const label = meaningNetworkDisplayLabel(node, renamedMeaningNetworkMarkers);
                       const rawLike = node.node_type === "evidence_fragment";
                       const nodeAgency = meaningNetworkLensNodeScore(node, activeLens, meaningNetworkGraph.lensProfile) < 40;
                       const canonicalNodeType = meaningNetworkCanonicalNodeType(node.node_type);
@@ -9287,7 +9413,7 @@ export default function MeaningPlotPanel({
                   >
                     {meaningNetworkSheet.kind === "node" && meaningNetworkSheet.node ? (() => {
                       const node = meaningNetworkSheet.node;
-                      const label = renamedMeaningNetworkMarkers[node.node_id] || node.label;
+                      const label = meaningNetworkDisplayLabel(node, renamedMeaningNetworkMarkers);
                       const refs = node.evidence_refs || [];
                       const range = meaningNetworkVerificationRange(node);
                       const narrativeAgentAnnotationRows = isNarrativeAgentMeaningNode(node)

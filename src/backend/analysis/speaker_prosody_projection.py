@@ -64,6 +64,25 @@ def _confirmed_spans(corrections: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
             "end": max(max(0.0, start), end),
             "transcript_text": _text(rule.get("corrected_value") or rule.get("raw_value")),
         }
+    for annotation in corrections.get("manual_visual_annotations", []) or []:
+        if not isinstance(annotation, dict):
+            continue
+        speaker = _text(annotation.get("identity_affirmation"))
+        metadata = annotation.get("metadata_correlation") if isinstance(annotation.get("metadata_correlation"), dict) else {}
+        quick = [_normalized_speaker(value) for value in metadata.get("quick_annotations") or []]
+        if not _valid_speaker(speaker) or not any("speak" in value for value in quick):
+            continue
+        start = _number(annotation.get("start_seconds", annotation.get("timestamp_seconds")))
+        end = _number(annotation.get("end_seconds", annotation.get("timestamp_seconds")))
+        if start is None or end is None:
+            continue
+        yield {
+            "correction_ref": _text(annotation.get("id")),
+            "speaker_label": speaker,
+            "start": max(0.0, start),
+            "end": max(max(0.0, start), end),
+            "transcript_text": "",
+        }
 
 
 def project_confirmed_speaker_prosody(

@@ -53,6 +53,30 @@ test("analysis opening stays on bounded metadata and releases the video shell fi
   );
 });
 
+test("explicit analysis refresh invalidates view and API artifact caches", () => {
+  const service = read("lib/video-service.ts");
+  assert.match(
+    service,
+    /static async refreshAnalysis\(id: string\)[\s\S]*?invalidateAnalysisCache\(id\);[\s\S]*?apiService\.invalidateReadCaches\(id\);[\s\S]*?return this\.getAnalysis\(id\);/,
+  );
+  assert.doesNotMatch(
+    service,
+    /fetch\(\s*`\/api\/download\/\$\{encodeURIComponent\(id\)\}/,
+  );
+});
+
+test("Master Schema resolved evidence includes speaker assignments and prosody", () => {
+  const service = read("lib/video-service.ts");
+  assert.match(service, /schema\.speaker_assignment_annotations/);
+  assert.match(service, /category: "speaker_assignment"/);
+  assert.match(service, /schema\.prosody_annotations/);
+  assert.match(service, /"narrative_agent_prosody"/);
+  assert.match(
+    service,
+    /masterSchemaScopedRecords\([\s\S]*?masterSchemaSpeakerAndProsodyRecords\(masterSchema\)/,
+  );
+});
+
 test("saved-analysis catalogue uses bounded local recovery and self-heals", () => {
   const api = read("lib/api-service.ts");
   const catalogueRoute = read("app/api/local-analyses/route.ts");

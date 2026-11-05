@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -1919,6 +1920,16 @@ def write_datascene_meaning_network_artifact(
         visual_analysis=visual_analysis,
         scene_cards=scene_cards,
     )
+    revision_payload = dict(payload)
+    revision_payload.pop("created_at", None)
+    payload["artifact_revision"] = hashlib.sha256(
+        json.dumps(
+            revision_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     output_json_path.parent.mkdir(parents=True, exist_ok=True)
     output_json_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
