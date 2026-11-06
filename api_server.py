@@ -107,6 +107,7 @@ from src.backend.analysis.analysis_run_record import (
     update_resource_use,
 )
 from src.backend.analysis.source_import_contract import build_source_import_preflight
+from src.backend.analysis.release_capability_register import release_capability_account
 
 # A laptop analysis process must not admit concurrent heavyweight model runs.
 # The visual stack (PyTorch/Metal plus video decoders) can otherwise exhaust the
@@ -212,8 +213,52 @@ from src.backend.analysis.decision_ledger import (
 )
 from src.backend.analysis.canonical_adapter import sync_corrections_to_ledger
 from src.backend.analysis.claim_projection import project_canonical_claims
+from src.backend.analysis.project_format_migration import (
+    ProjectFormatError,
+    build_bundle_output_inventory,
+    build_current_project_manifest,
+    inspect_project_manifest,
+    migrate_legacy_project_manifest,
+    restore_bundle_output_inventory,
+)
+from src.backend.analysis.atomic_json_transaction import (
+    json_transaction_lock,
+    update_json_transaction,
+)
+from src.backend.analysis.background_generation_fence import (
+    correction_generation,
+    projection_admission,
+)
+from src.backend.analysis.source_integrity import (
+    SourceIntegrityError,
+    assess_source_relink,
+    build_missing_source_notice,
+    capture_source_integrity,
+)
+from src.backend.analysis.numerical_reproducibility import (
+    build_reproducibility_receipt,
+    compare_reproducibility_receipts,
+)
+from src.backend.analysis.evaluation_independence import (
+    assess_evaluation_independence,
+    evaluation_policy,
+)
+from src.backend.analysis.supply_chain_security import build_supply_chain_assessment
+from src.backend.analysis.retention_deletion import (
+    build_deletion_plan,
+    execute_deletion_plan,
+)
+from src.backend.analysis.representative_workload_qualification import (
+    build_workload_qualification,
+)
+from src.backend.analysis.release_maintenance import (
+    build_redacted_diagnostic_bundle,
+    load_maintenance_register,
+    maintenance_assessment,
+)
 from src.backend.analysis.narrative_agent_continuity import build_continuity_inventory
 from src.backend.analysis.active_speaker_synchrony import build_active_speaker_synchrony_artifact
+from src.backend.analysis.body_movement_detection import build_body_movement_detections
 from src.backend.analysis.narrative_agent_continuity_decisions import (
     append_continuity_decision,
     project_continuity_decisions,
@@ -275,8 +320,10 @@ from src.backend.analysis.research_corpus_ingestion import (
 from src.backend.analysis.golden_retriever_validation import validate_package as validate_acquisition_package
 from src.backend.analysis.analysis_recovery import (
     atomic_write_json,
+    load_recoverable_json,
     load_analysis_checkpoint,
     recover_interrupted_record,
+    write_recoverable_json,
     write_analysis_checkpoint,
 )
 from src.backend.analysis.full_analysis_manifest import (
@@ -362,6 +409,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Store analysis status and results
 analysis_status: Dict[str, Dict[str, Any]] = {}
+deletion_intents: Dict[str, Dict[str, Any]] = {}
 ALLOWED_TAXONOMY_SCOPES = {
     "media_genre",
     "media_subgenre",
@@ -374,6 +422,30 @@ ALLOWED_TAXONOMY_SCOPES = {
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def issue_deletion_intent(scope: str, analysis_id: Optional[str] = None) -> Dict[str, Any]:
+    token = uuid.uuid4().hex
+    expires_at = time.time() + 300
+    deletion_intents[token] = {
+        "scope": scope,
+        "analysis_id": analysis_id,
+        "expires_at": expires_at,
+    }
+    return {
+        "confirmation_token": token,
+        "scope": scope,
+        "analysis_id": analysis_id,
+        "expires_at": datetime.fromtimestamp(expires_at, timezone.utc).isoformat(),
+    }
+
+
+def consume_deletion_intent(token: Optional[str], scope: str, analysis_id: Optional[str] = None) -> None:
+    intent = deletion_intents.pop(str(token or ""), None)
+    if not intent or intent.get("expires_at", 0) < time.time():
+        raise HTTPException(status_code=409, detail="A valid first-step deletion confirmation is required")
+    if intent.get("scope") != scope or intent.get("analysis_id") != analysis_id:
+        raise HTTPException(status_code=409, detail="Deletion confirmation does not match this operation")
 
 
 def normalize_taxonomy_label(value: Any) -> str:
@@ -544,7 +616,8 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
         capture_resource_observation(RESULTS_DIR),
     )
     payload = json.loads(json.dumps(status, default=str))
-    atomic_write_json(record_path, payload)
+    with json_transaction_lock(record_path):
+        write_recoverable_json(record_path, payload)
     atomic_write_json(
         analysis_run_record_path(record_path.parent),
         build_analysis_run_record(payload),
@@ -554,21 +627,23 @@ def persist_analysis_record_for_status(status: Dict[str, Any]) -> None:
     # analysis record. Browser startup can then restore project boundaries
     # without parsing detector arrays or hydrating panel artifacts.
     catalogue_path = RESULTS_DIR / "catalogue_index.json"
-    catalogue: Dict[str, Any] = {"schema": "vaa1.catalogue_index.v1", "analyses": {}}
-    if catalogue_path.exists():
-        try:
-            loaded = json.loads(catalogue_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                catalogue.update(loaded)
-        except Exception:
-            pass
-    analyses = catalogue.setdefault("analyses", {})
-    analyses[str(analysis_id)] = {
-        "project_id": status.get("project_id", "local-research-project"),
-        "filename": status.get("original_filename") or status.get("filename"),
-        "updated_at": utc_now_iso(),
-    }
-    atomic_write_json(catalogue_path, catalogue)
+    def update_catalogue(catalogue: Dict[str, Any]) -> None:
+        if catalogue.get("schema") != "vaa1.catalogue_index.v1":
+            raise ValueError("Unsupported catalogue index schema")
+        analyses = catalogue.setdefault("analyses", {})
+        if not isinstance(analyses, dict):
+            raise ValueError("Catalogue analyses must be an object")
+        analyses[str(analysis_id)] = {
+            "project_id": status.get("project_id", "local-research-project"),
+            "filename": status.get("original_filename") or status.get("filename"),
+            "updated_at": utc_now_iso(),
+        }
+
+    update_json_transaction(
+        catalogue_path,
+        default={"schema": "vaa1.catalogue_index.v1", "analyses": {}},
+        mutate=update_catalogue,
+    )
 
 
 def csv_escape(value: Any) -> str:
@@ -3188,6 +3263,7 @@ def build_source_media_metadata_payload(
         "stored_filename": status.get("filename") or probe.get("stored_filename") or (path_obj.name if path_obj else None),
         "source_video_path": source_video_path,
         "source_video_exists": bool(path_obj and path_obj.exists()),
+        "source_integrity": status.get("source_integrity") or {},
         "mime_type": first_present(probe, "mime_type", "content_type"),
         "format_name": first_present(probe, "format_name", "format"),
         "container_extension": first_present(probe, "container_extension", "extension") or (path_obj.suffix.lower() if path_obj else None),
@@ -4145,6 +4221,25 @@ def write_iterative_audio_identity_artifacts_for_status(
         audio_sample_clouds = existing_audio_sample_clouds
         if audio_sample_clouds:
             audio_analysis["audio_sample_clouds"] = audio_sample_clouds
+
+    movement_path = RESULTS_DIR / analysis_id / "body_movement_detections.json"
+    movement_existing = read_json_artifact_if_available(output_files.get("body_movement_detections"))
+    movement_revision = status.get("annotations_revision") or status.get("annotation_corrections_revision") or 0
+    if (
+        not movement_existing
+        or movement_existing.get("annotation_revision") != movement_revision
+    ):
+        movement = build_body_movement_detections(status)
+        movement["annotation_revision"] = movement_revision
+        movement_path.parent.mkdir(parents=True, exist_ok=True)
+        movement_path.write_text(json.dumps(movement, indent=2, ensure_ascii=False), encoding="utf-8")
+        status["body_movement_detections"] = movement
+        results.setdefault("visual_analysis", {})["body_movement_detections"] = movement
+        output_files["body_movement_detections"] = str(movement_path)
+        created.append("body_movement_detections")
+    else:
+        status["body_movement_detections"] = movement_existing
+        results.setdefault("visual_analysis", {})["body_movement_detections"] = movement_existing
 
     synchrony_path = RESULTS_DIR / analysis_id / "active_speaker_synchrony.json"
     synchrony_existing = read_json_artifact_if_available(output_files.get("active_speaker_synchrony"))
@@ -7477,10 +7572,21 @@ def load_persisted_analysis(analysis_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        status = json.loads(record_path.read_text(encoding="utf-8"))
+        status, restore_receipt = load_recoverable_json(record_path)
+        stored_analysis_id = status.get("analysis_id")
+        if stored_analysis_id and str(stored_analysis_id) != analysis_id:
+            raise ValueError("Persisted analysis record belongs to another analysis")
     except Exception as exc:
         logger.warning("Failed to load persisted analysis %s: %s", analysis_id, exc)
         return None
+
+    if restore_receipt:
+        status.setdefault("recovery", {})["analysis_record_restore"] = restore_receipt
+        append_analysis_event(
+            status,
+            "analysis_record_restored_from_backup",
+            details=restore_receipt,
+        )
 
     status.setdefault("analysis_id", analysis_id)
     status.setdefault("event_log", [])
@@ -7558,10 +7664,21 @@ def collect_saved_analysis_records() -> Dict[str, Dict[str, Any]]:
 
     for record_path in RESULTS_DIR.glob("*/analysis_record.json"):
         try:
-            status = json.loads(record_path.read_text(encoding="utf-8"))
+            status, restore_receipt = load_recoverable_json(record_path)
+            stored_analysis_id = status.get("analysis_id")
+            if stored_analysis_id and str(stored_analysis_id) != record_path.parent.name:
+                raise ValueError("Persisted analysis record belongs to another analysis")
         except Exception as exc:
             logger.warning("Skipping unreadable analysis record %s: %s", record_path, exc)
             continue
+
+        if restore_receipt:
+            status.setdefault("recovery", {})["analysis_record_restore"] = restore_receipt
+            append_analysis_event(
+                status,
+                "analysis_record_restored_from_backup",
+                details=restore_receipt,
+            )
 
         analysis_id = status.get("analysis_id") or record_path.parent.name
         status.setdefault("analysis_id", analysis_id)
@@ -8388,41 +8505,45 @@ def regenerate_time_bank_visual_artifacts_if_needed(status: Dict[str, Any]) -> b
     return changed
 
 
-def remove_analysis_artifacts(analysis_id: str, status: Dict[str, Any]) -> None:
-    uploaded_path = status.get("file_path")
-    if uploaded_path:
-        uploaded_file = Path(uploaded_path)
-        if uploaded_file.exists():
-            if uploaded_file.is_dir():
-                shutil.rmtree(uploaded_file, ignore_errors=True)
-            else:
-                uploaded_file.unlink()
-
-    output_files = status.get("output_files", {})
-    external_source_video = (
-        status.get("source_video_path")
-        if status.get("source_video_external")
-        else None
+def remove_analysis_artifacts(analysis_id: str, status: Dict[str, Any]) -> Dict[str, Any]:
+    plan = build_deletion_plan(
+        analysis_id,
+        status,
+        upload_root=UPLOAD_DIR,
+        results_root=RESULTS_DIR,
+        imported_root=IMPORTED_WORK_DIR,
+        publication_root=PUBLICATION_DIR,
+        audio_root=AUDIO_DIR,
+        transcript_root=TRANSCRIPTS_DIR,
     )
-    for file_path in output_files.values():
-        if not file_path:
-            continue
-        result_file = Path(str(file_path))
-        if external_source_video and str(result_file) == str(external_source_video):
-            continue
-        if result_file.exists():
-            if result_file.is_dir():
-                shutil.rmtree(result_file, ignore_errors=True)
-            else:
-                result_file.unlink()
+    receipt = execute_deletion_plan(plan)
+    if receipt["status"] == "complete":
+        try:
+            remove_analysis_from_catalogue(analysis_id)
+        except (OSError, ValueError) as exc:
+            receipt["status"] = "partial_failure"
+            receipt["failures"].append({
+                "category": "catalogue_membership",
+                "path": str(RESULTS_DIR / "catalogue_index.json"),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+    return receipt
 
-    analysis_output_dir = RESULTS_DIR / analysis_id
-    if analysis_output_dir.exists():
-        shutil.rmtree(analysis_output_dir)
 
-    imported_work_dir = IMPORTED_WORK_DIR / analysis_id
-    if imported_work_dir.exists():
-        shutil.rmtree(imported_work_dir)
+def remove_analysis_from_catalogue(analysis_id: str) -> None:
+    catalogue_path = RESULTS_DIR / "catalogue_index.json"
+
+    def mutate(catalogue: Dict[str, Any]) -> None:
+        analyses = catalogue.setdefault("analyses", {})
+        if not isinstance(analyses, dict):
+            raise ValueError("Catalogue analyses must be an object")
+        analyses.pop(analysis_id, None)
+
+    update_json_transaction(
+        catalogue_path,
+        default={"schema": "vaa1.catalogue_index.v1", "analyses": {}},
+        mutate=mutate,
+    )
 
 
 def update_analysis_progress(
@@ -8460,7 +8581,9 @@ def slugify_name(value: str) -> str:
     return cleaned or "vaa1_project"
 
 
-def build_saved_work_manifest(status: Dict[str, Any]) -> Dict[str, Any]:
+def build_saved_work_manifest(
+    status: Dict[str, Any], file_mapping: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
     source_video_path = status.get("source_video_path") or status.get("file_path")
     source_video_exists = bool(source_video_path and Path(source_video_path).exists())
     output_files = status.get("output_files", {})
@@ -8470,6 +8593,15 @@ def build_saved_work_manifest(status: Dict[str, Any]) -> Dict[str, Any]:
         "original_filename": status.get("original_filename"),
         "source_video_path": source_video_path,
         "source_video_exists_at_save_time": source_video_exists,
+        "source_integrity": status.get("source_integrity"),
+        "source_locator": {
+            "analysis_id": status.get("analysis_id"),
+            "original_filename": status.get("original_filename"),
+            "last_known_path": source_video_path,
+            "source_fingerprint": (status.get("source_integrity") or {}).get(
+                "source_fingerprint"
+            ),
+        },
         "source_media_metadata": status.get("source_media_metadata", {}),
         "annotation_corrections": annotation_corrections,
         "annotation_corrections_counts": {
@@ -8487,6 +8619,9 @@ def build_saved_work_manifest(status: Dict[str, Any]) -> Dict[str, Any]:
         "matrix_files": [
             file_type for file_type in output_files.keys() if file_type.endswith("_matrix")
         ],
+        "output_file_inventory": build_bundle_output_inventory(
+            output_files, file_mapping or {}
+        ),
     })
 
 
@@ -8665,7 +8800,12 @@ def register_imported_analysis(
         else:
             original_filename = f"{import_dir.name}.zip"
 
-    source_video_path = output_files.get("source_video") or manifest.get("source_video_path")
+    source_locator = manifest.get("source_locator") if isinstance(manifest.get("source_locator"), dict) else {}
+    source_video_path = (
+        output_files.get("source_video")
+        or manifest.get("source_video_path")
+        or source_locator.get("last_known_path")
+    )
     source_video_external = False
     if source_video_path and "source_video" not in output_files and Path(source_video_path).exists():
         output_files["source_video"] = source_video_path
@@ -8688,6 +8828,14 @@ def register_imported_analysis(
         "file_path": str(marker_path),
         "source_video_path": source_video_path,
         "source_video_external": source_video_external,
+        "source_integrity": (
+            capture_source_integrity(
+                source_video_path,
+                original_filename=original_filename,
+            )
+            if source_video_path and Path(str(source_video_path)).is_file()
+            else manifest.get("source_integrity")
+        ),
         "progress": 100,
         "mission_stage": "complete",
         "mission_message": "Imported saved work is ready for review.",
@@ -8729,6 +8877,7 @@ def register_imported_analysis(
     write_source_media_metadata_files(status)
     persist_analysis_record_for_status(status)
     return status
+
 
 @app.post("/api/upload/preflight", response_model=dict)
 async def upload_preflight(payload: Dict[str, Any] = Body(...)) -> dict:
@@ -8837,6 +8986,10 @@ async def upload_video(
             "cvatID": cvatID,
             "project_id": project_id,
             "source_size_bytes": uploaded_bytes,
+            "source_integrity": capture_source_integrity(
+                file_path,
+                original_filename=file.filename,
+            ),
             "event_log": [],
             "source_media_metadata": media_probe,
             "source_media_annotations": {
@@ -11201,6 +11354,7 @@ async def get_analysis_status_summary(analysis_id: str) -> dict:
         "source_size_bytes": status.get("source_size_bytes"),
         "source_video_path": source_video_path,
         "source_video_exists": bool(source_video_path and Path(str(source_video_path)).exists()),
+        "source_integrity": status.get("source_integrity"),
         "source_media_metadata": status.get("source_media_metadata"),
         "transcript_timing_repair": status.get("transcript_timing_repair"),
         "analysis_completeness": build_analysis_completeness(status),
@@ -11517,12 +11671,15 @@ async def get_analysis_status(analysis_id: str) -> dict:
         ),
         "body_movement_detections": status.get("body_movement_detections")
         or ((status.get("results") or {}).get("visual_analysis") or {}).get("body_movement_detections")
+        or read_json_artifact_if_available((status.get("output_files") or {}).get("body_movement_detections"))
         or [],
         "pose_detections": status.get("pose_detections")
         or ((status.get("results") or {}).get("visual_analysis") or {}).get("pose_detections")
         or [],
         "audio_event_intervals": (status.get("results", {}).get("audio_analysis", {}) or {}).get("audio_event_intervals"),
         "speaker_prosody_projection": status.get("speaker_prosody_projection"),
+        "active_speaker_synchrony": status.get("active_speaker_synchrony")
+        or read_json_artifact_if_available((status.get("output_files") or {}).get("active_speaker_synchrony")),
         "language_analysis_parity": status.get("language_analysis_parity")
         or read_json_artifact_if_available(
             (status.get("output_files") or {}).get("language_analysis_parity")
@@ -12781,6 +12938,14 @@ async def download_file(analysis_id: str, file_type: str):
         "audio_event_intervals": ("audio_event_intervals.json", "application/json"),
         "audio_diarization": ("audio_diarization.json", "application/json"),
         "audio_sample_clouds": ("audio_sample_clouds.json", "application/json"),
+        "active_speaker_synchrony": (
+            "active_speaker_synchrony.json",
+            "application/json",
+        ),
+        "body_movement_detections": (
+            "body_movement_detections.json",
+            "application/json",
+        ),
         "identity_triangulation": ("identity_triangulation_bundle.json", "application/json"),
         "dependency_sfl_stage1": ("dependency_sfl_stage1.json", "application/json"),
         "multimodal_meaning_stage1": ("multimodal_meaning_stage1.json", "application/json"),
@@ -12978,7 +13143,7 @@ async def download_bundle(analysis_id: str):
             manifest_name,
             json.dumps(
                 {
-                    **build_saved_work_manifest(status),
+                    **build_saved_work_manifest(status, file_mapping),
                     "skipped_output_files": skipped_files,
                 },
                 indent=2,
@@ -13088,7 +13253,7 @@ def build_project_bundle_file(payload: Dict[str, Any]) -> Dict[str, Any]:
                 f"{folder_name}/saved_work_manifest.json",
                 json.dumps(
                     {
-                        **build_saved_work_manifest(status),
+                        **build_saved_work_manifest(status, file_mapping),
                         "skipped_output_files": skipped_files,
                     },
                     indent=2,
@@ -13104,15 +13269,16 @@ def build_project_bundle_file(payload: Dict[str, Any]) -> Dict[str, Any]:
                 }
             )
 
-        project_manifest = {
+        project_manifest = build_current_project_manifest({
             "project_type": "vaa1_project_bundle",
+            "project_id": payload.get("project_id") or project_name,
             "project_name": project_name,
             "saved_at": utc_now_iso(),
             "analysis_count": len(included_analyses),
             "included_analyses": included_analyses,
             "skipped_analyses": skipped_analyses,
             "matrices": matrices,
-        }
+        })
         archive.writestr(
             "project_manifest.json",
             json.dumps(project_manifest, indent=2, ensure_ascii=False),
@@ -13182,6 +13348,70 @@ async def workspace_info() -> dict:
             "Analysis bundles downloaded from the browser are saved to your browser or system download location."
         ),
     }
+
+
+@app.get("/api/release/capabilities", response_model=dict)
+async def release_capabilities() -> dict:
+    """Return the validated #0.1 capability boundary and freeze disposition."""
+    try:
+        return release_capability_account()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Release capability register is unavailable or invalid: {exc}",
+        ) from exc
+
+
+@app.get("/api/release/evaluation-policy", response_model=dict)
+async def get_release_evaluation_policy() -> dict:
+    return evaluation_policy()
+
+
+@app.post("/api/release/evaluation/assess", response_model=dict)
+async def assess_release_evaluation(payload: Dict[str, Any] = Body(...)) -> dict:
+    try:
+        return assess_evaluation_independence(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/release/supply-chain", response_model=dict)
+async def get_release_supply_chain() -> dict:
+    try:
+        return await asyncio.to_thread(build_supply_chain_assessment, Path(__file__).resolve().parent)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Supply-chain assessment failed: {exc}") from exc
+
+
+@app.get("/api/release/workload-qualification", response_model=dict)
+async def get_release_workload_qualification() -> dict:
+    root = Path(__file__).resolve().parent
+    try:
+        return build_workload_qualification(
+            root / "config" / "release_workload_qualification.json",
+            root / "outputs" / "release_workload_evidence",
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Workload qualification failed: {exc}") from exc
+
+
+@app.get("/api/release/maintenance", response_model=dict)
+async def get_release_maintenance() -> dict:
+    root = Path(__file__).resolve().parent
+    try:
+        return maintenance_assessment(root / "config" / "release_maintenance_register.json", root)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Release maintenance register failed: {exc}") from exc
+
+
+@app.post("/api/release/diagnostics/redact", response_model=dict)
+async def redact_release_diagnostics(payload: Dict[str, Any] = Body(...)) -> dict:
+    root = Path(__file__).resolve().parent
+    try:
+        register = load_maintenance_register(root / "config" / "release_maintenance_register.json")
+        return build_redacted_diagnostic_bundle(payload, register["diagnostic_bundle_policy"])
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Diagnostic redaction failed: {exc}") from exc
 
 
 @app.get("/api/ai-agent/feature-starters", response_model=dict)
@@ -13470,6 +13700,148 @@ async def get_source_media_metadata(analysis_id: str) -> dict:
     return {
         "analysis_id": analysis_id,
         "source_media_metadata": status.get("source_media_metadata", {}),
+    }
+
+
+def ensure_source_integrity(status: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    existing = status.get("source_integrity")
+    if isinstance(existing, dict) and existing.get("source_fingerprint"):
+        return existing
+    source_path = status.get("source_video_path") or status.get("file_path")
+    if not source_path or not Path(str(source_path)).is_file():
+        return None
+    identity = capture_source_integrity(
+        source_path,
+        original_filename=status.get("original_filename"),
+    )
+    status["source_integrity"] = identity
+    return identity
+
+
+@app.get("/api/analysis/{analysis_id}/source-integrity", response_model=dict)
+def get_source_integrity(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    try:
+        identity = ensure_source_integrity(status)
+    except (OSError, SourceIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if identity is not None:
+        persist_analysis_record_for_status(status)
+    current_path = status.get("source_video_path") or status.get("file_path")
+    available = bool(current_path and Path(str(current_path)).is_file())
+    return {
+        "analysis_id": analysis_id,
+        "source_available": available,
+        "source_integrity": identity,
+        "relink_state": (
+            "not_required"
+            if available
+            else "eligible_exact_match_only"
+            if identity
+            else "blocked_missing_governed_identity"
+        ),
+    }
+
+
+@app.post("/api/analysis/{analysis_id}/source-relink", response_model=dict)
+def relink_analysis_source(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    candidate_path = str(payload.get("candidate_path") or "").strip()
+    if not candidate_path:
+        raise HTTPException(status_code=400, detail="candidate_path is required")
+
+    try:
+        with ANALYSIS_EXECUTION_LOCK:
+            identity = ensure_source_integrity(status)
+            assessment = assess_source_relink(identity, candidate_path)
+            if not assessment["accepted"]:
+                raise HTTPException(status_code=409, detail=assessment)
+            previous_path = status.get("source_video_path") or status.get("file_path")
+            verified_path = assessment["candidate_path"]
+            status["source_video_path"] = verified_path
+            status["source_video_external"] = True
+            status.setdefault("output_files", {})["source_video"] = verified_path
+            status["source_integrity"] = {
+                **dict(identity or {}),
+                "bound_path": verified_path,
+                "identity_status": "content_verified_relink",
+                "last_relink": {
+                    "previous_path": previous_path,
+                    "candidate_path": verified_path,
+                    "source_fingerprint": assessment["candidate_fingerprint"],
+                    "verified_at": utc_now_iso(),
+                },
+            }
+            append_analysis_event(
+                status,
+                "source_relinked_after_integrity_verification",
+                details=status["source_integrity"]["last_relink"],
+            )
+            write_source_media_metadata_files(status)
+            persist_analysis_record_for_status(status)
+    except HTTPException:
+        raise
+    except (OSError, SourceIntegrityError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "status": "relinked",
+        "analysis_id": analysis_id,
+        "source_integrity": status["source_integrity"],
+        "assessment": assessment,
+        "derived_artifacts_reused": True,
+        "reason": "source content identity is unchanged",
+    }
+
+
+@app.get("/api/analysis/{analysis_id}/reproducibility", response_model=dict)
+async def get_analysis_reproducibility(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    receipt = await asyncio.to_thread(build_reproducibility_receipt, status)
+    return {"analysis_id": analysis_id, "reproducibility": receipt}
+
+
+@app.post("/api/analysis/{analysis_id}/reproducibility/compare", response_model=dict)
+async def compare_analysis_reproducibility(
+    analysis_id: str, payload: Dict[str, Any] = Body(...)
+) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    baseline = payload.get("baseline_receipt")
+    if not isinstance(baseline, dict):
+        raise HTTPException(status_code=400, detail="baseline_receipt is required")
+    try:
+        absolute_tolerance = float(payload.get("absolute_tolerance", 1e-9))
+        relative_tolerance = float(payload.get("relative_tolerance", 1e-9))
+        if not all(
+            math.isfinite(value) and value >= 0
+            for value in (absolute_tolerance, relative_tolerance)
+        ):
+            raise ValueError("tolerances must be finite and non-negative")
+        current = await asyncio.to_thread(build_reproducibility_receipt, status)
+        comparison = compare_reproducibility_receipts(
+            baseline,
+            current,
+            baseline_metrics=payload.get("baseline_metrics"),
+            current_metrics=payload.get("current_metrics"),
+            absolute_tolerance=absolute_tolerance,
+            relative_tolerance=relative_tolerance,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "analysis_id": analysis_id,
+        "current_receipt": current,
+        "comparison": comparison,
     }
 
 
@@ -15760,11 +16132,21 @@ def refresh_annotation_dependent_surfaces(status: Dict[str, Any]) -> None:
     persist_analysis_record_for_status(status)
 
 
-def refresh_annotation_dependent_surfaces_when_idle(status: Dict[str, Any]) -> None:
+def refresh_annotation_dependent_surfaces_when_idle(
+    status: Dict[str, Any], expected_generation: str
+) -> None:
     """Wait for the heavyweight analysis slot without delaying the save response."""
 
     try:
         with ANALYSIS_EXECUTION_LOCK:
+            canonical = canonical_clock_corrections(str(status.get("analysis_id") or ""), status)
+            admission = projection_admission(
+                expected_generation=expected_generation,
+                canonical_corrections=canonical,
+            )
+            if not admission["admitted"]:
+                logger.info("Discarded superseded annotation projection: %s", admission)
+                return
             refresh_annotation_dependent_surfaces(status)
     except Exception:
         logger.exception(
@@ -15892,7 +16274,7 @@ def refresh_saved_annotation_projections(analysis_id: str) -> dict:
 
     threading.Thread(
         target=refresh_saved_annotation_projection_regimes_when_idle,
-        args=(status,),
+        args=(status, correction_generation(corrections)),
         daemon=True,
         name=f"saved-annotation-projection-{analysis_id[:8]}",
     ).start()
@@ -15906,12 +16288,22 @@ def refresh_saved_annotation_projections(analysis_id: str) -> dict:
     }
 
 
-def refresh_saved_annotation_projection_regimes_when_idle(status: Dict[str, Any]) -> None:
+def refresh_saved_annotation_projection_regimes_when_idle(
+    status: Dict[str, Any], expected_generation: str
+) -> None:
     """Run the existing heavy projection regimes after foreground commit."""
 
     analysis_id = str(status.get("analysis_id") or "")
     try:
         with ANALYSIS_EXECUTION_LOCK:
+            canonical = canonical_clock_corrections(analysis_id, status)
+            admission = projection_admission(
+                expected_generation=expected_generation,
+                canonical_corrections=canonical,
+            )
+            if not admission["admitted"]:
+                logger.info("Discarded superseded saved projection: %s", admission)
+                return
             write_identity_triangulation_artifact_for_status(
                 status,
                 reviewed_by="annotation_projection_refresh",
@@ -15926,6 +16318,13 @@ def refresh_saved_annotation_projection_regimes_when_idle(status: Dict[str, Any]
             status.setdefault("output_files", {})["active_speaker_synchrony"] = str(
                 synchrony_path
             )
+            movement = build_body_movement_detections(status)
+            movement["annotation_revision"] = status.get("annotations_revision") or status.get("annotation_corrections_revision") or 0
+            movement_path = RESULTS_DIR / analysis_id / "body_movement_detections.json"
+            movement_path.write_text(json.dumps(movement, indent=2, ensure_ascii=False), encoding="utf-8")
+            status["body_movement_detections"] = movement
+            status.setdefault("results", {}).setdefault("visual_analysis", {})["body_movement_detections"] = movement
+            status.setdefault("output_files", {})["body_movement_detections"] = str(movement_path)
             refresh_annotation_dependent_surfaces(status)
     except Exception:
         logger.exception(
@@ -16115,7 +16514,7 @@ def update_annotation_corrections(
             else:
                 threading.Thread(
                     target=refresh_annotation_dependent_surfaces_when_idle,
-                    args=(status,),
+                    args=(status, correction_generation(corrections)),
                     daemon=True,
                     name=f"annotation-projection-{analysis_id[:8]}",
                 ).start()
@@ -16353,6 +16752,37 @@ async def open_corpus_publication_report(owner: str, filename: str):
     return FileResponse(candidate, media_type="text/html; charset=utf-8", filename=candidate.name)
 
 
+@app.post("/api/publication/verify-independent", response_model=dict)
+async def verify_publication_independently(payload: dict = Body(...)) -> dict:
+    """Run the standalone reader in a separate process from publication code."""
+    raw_path = str(payload.get("archive_path") or "")
+    candidate = Path(raw_path).resolve(strict=False)
+    allowed_roots = [PUBLICATION_DIR.resolve(), RESULTS_DIR.resolve()]
+    if candidate.suffix.lower() != ".zip" or not candidate.is_file() or not any(
+        root == candidate.parent or root in candidate.parents for root in allowed_roots
+    ):
+        raise HTTPException(status_code=400, detail="Archive must be a managed Datascene ZIP")
+    verifier = Path(__file__).resolve().parent / "scripts" / "independent_export_verifier.py"
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(verifier), str(candidate)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    try:
+        completed = await asyncio.to_thread(run)
+        receipt = json.loads(completed.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Independent verifier failed to execute: {exc}") from exc
+    if completed.returncode != 0:
+        raise HTTPException(status_code=409, detail=receipt)
+    return receipt
+
+
 # Keep your existing endpoints (they work well)
 @app.get("/api/analyses", response_model=dict)
 async def list_analyses(limit: int = 10, project_id: Optional[str] = None) -> dict:
@@ -16400,35 +16830,89 @@ async def list_analyses(limit: int = 10, project_id: Optional[str] = None) -> di
         }
     }
 
-@app.delete("/api/analysis/{analysis_id}")
-async def delete_analysis(analysis_id: str) -> dict:
-    """Delete analysis and associated files"""
+@app.get("/api/analysis/{analysis_id}/deletion-plan", response_model=dict)
+async def get_analysis_deletion_plan(analysis_id: str) -> dict:
+    """Preview the governed deletion boundary without changing any data."""
     status = get_analysis_entry(analysis_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Analysis ID not found")
+    return build_deletion_plan(
+        analysis_id,
+        status,
+        upload_root=UPLOAD_DIR,
+        results_root=RESULTS_DIR,
+        imported_root=IMPORTED_WORK_DIR,
+        publication_root=PUBLICATION_DIR,
+        audio_root=AUDIO_DIR,
+        transcript_root=TRANSCRIPTS_DIR,
+    )
+
+
+@app.post("/api/analysis/{analysis_id}/deletion-intent", response_model=dict)
+async def create_analysis_deletion_intent(analysis_id: str) -> dict:
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    if status.get("status") == "processing":
+        raise HTTPException(status_code=409, detail="A processing analysis cannot be deleted safely")
+    return {
+        **issue_deletion_intent("analysis", analysis_id),
+        "deletion_plan": await get_analysis_deletion_plan(analysis_id),
+    }
+
+
+@app.delete("/api/analysis/{analysis_id}")
+async def delete_analysis(analysis_id: str, confirmation_token: Optional[str] = None) -> dict:
+    """Delete an analysis and all Datascene-managed derivatives."""
+    status = get_analysis_entry(analysis_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Analysis ID not found")
+    if status.get("status") == "processing":
+        raise HTTPException(status_code=409, detail="A processing analysis cannot be deleted safely")
+    consume_deletion_intent(confirmation_token, "analysis", analysis_id)
     
     try:
-        remove_analysis_artifacts(analysis_id, status)
-        
-        # Remove from status tracking
+        receipt = remove_analysis_artifacts(analysis_id, status)
+        if receipt["status"] != "complete":
+            raise HTTPException(
+                status_code=500,
+                detail={"message": "Analysis deletion was incomplete", "receipt": receipt},
+            )
         analysis_status.pop(analysis_id, None)
-        
         logger.info(f"Analysis {analysis_id} deleted successfully")
-        
-        return {"message": "Analysis deleted successfully"}
+        return {
+            "message": "Analysis and managed derivatives deleted",
+            "deletion_receipt": receipt,
+        }
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete analysis {analysis_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete analysis")
 
 
+@app.post("/api/session/clear-intent", response_model=dict)
+async def create_clear_session_intent() -> dict:
+    records = collect_saved_analysis_records()
+    deletable = sorted(key for key, value in records.items() if value.get("status") != "processing")
+    skipped = sorted(key for key, value in records.items() if value.get("status") == "processing")
+    return {
+        **issue_deletion_intent("session"),
+        "analysis_ids": deletable,
+        "skipped_processing_ids": skipped,
+        "original_source_files_deleted": False,
+    }
+
+
 @app.post("/api/session/clear", response_model=dict)
-async def clear_session() -> dict:
+async def clear_session(confirmation_token: Optional[str] = None) -> dict:
     """
     Clear completed/uploaded/error analyses and their files from the backend.
     Processing analyses are left intact because FastAPI background tasks are not
     cancelable through the current runtime model.
     """
+    consume_deletion_intent(confirmation_token, "session")
     cleared = []
     skipped_processing = []
 
@@ -16438,7 +16922,10 @@ async def clear_session() -> dict:
             continue
 
         try:
-            remove_analysis_artifacts(analysis_id, status)
+            receipt = remove_analysis_artifacts(analysis_id, status)
+            if receipt["status"] != "complete":
+                logger.warning("Incomplete deletion during session reset: %s", receipt["failures"])
+                continue
             analysis_status.pop(analysis_id, None)
             cleared.append(analysis_id)
         except Exception as exc:
@@ -16482,8 +16969,17 @@ async def import_saved_work(
     project_manifest_path = import_dir / "project_manifest.json"
     if project_manifest_path.exists():
         try:
-            project_manifest = json.loads(project_manifest_path.read_text(encoding="utf-8"))
-        except Exception as exc:
+            original_manifest_bytes = project_manifest_path.read_bytes()
+            project_manifest = json.loads(original_manifest_bytes.decode("utf-8"))
+            format_inspection = inspect_project_manifest(project_manifest)
+            migration_receipt = None
+            if format_inspection.requires_migration:
+                project_manifest, migration_receipt = migrate_legacy_project_manifest(
+                    project_manifest,
+                    original_bytes=original_manifest_bytes,
+                    backup_root=IMPORTED_WORK_DIR / "_project_format_migrations",
+                )
+        except (UnicodeDecodeError, json.JSONDecodeError, ProjectFormatError, OSError) as exc:
             shutil.rmtree(import_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail=f"Invalid project bundle manifest: {exc}")
 
@@ -16509,6 +17005,19 @@ async def import_saved_work(
             shutil.copytree(analysis_folder, final_import_dir)
             output_files = infer_output_files_from_bundle(final_import_dir, analysis_folder.name)
             manifest = read_saved_work_manifest(final_import_dir, analysis_folder.name)
+            try:
+                output_files.update(
+                    restore_bundle_output_inventory(
+                        final_import_dir, manifest.get("output_file_inventory")
+                    )
+                )
+            except (OSError, ValueError, ProjectFormatError) as exc:
+                shutil.rmtree(final_import_dir, ignore_errors=True)
+                shutil.rmtree(import_dir, ignore_errors=True)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Project bundle output integrity failed: {exc}",
+                ) from exc
             if not output_files:
                 shutil.rmtree(final_import_dir, ignore_errors=True)
                 continue
@@ -16533,6 +17042,11 @@ async def import_saved_work(
             )
 
         first_status = imported_statuses[0]
+        missing_sources = [
+            notice
+            for imported_status in imported_statuses
+            if (notice := build_missing_source_notice(imported_status)) is not None
+        ]
         return {
             "analysis_id": first_status["analysis_id"],
             "filename": first_status["original_filename"],
@@ -16543,10 +17057,26 @@ async def import_saved_work(
             "imported_count": len(imported_statuses),
             "project_name": project_manifest.get("project_name"),
             "project_id": imported_project_id,
+            "project_format": format_inspection.as_dict(),
+            "migration_receipt": migration_receipt,
+            "missing_sources": missing_sources,
+            "source_restore_required": bool(missing_sources),
         }
 
     output_files = infer_output_files_from_bundle(import_dir, bundle_stem)
     manifest = read_saved_work_manifest(import_dir, bundle_stem)
+    try:
+        output_files.update(
+            restore_bundle_output_inventory(
+                import_dir, manifest.get("output_file_inventory")
+            )
+        )
+    except (OSError, ValueError, ProjectFormatError) as exc:
+        shutil.rmtree(import_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Saved work output integrity failed: {exc}",
+        ) from exc
     if not output_files:
         shutil.rmtree(import_dir, ignore_errors=True)
         raise HTTPException(
@@ -16565,12 +17095,16 @@ async def import_saved_work(
         project_id=project_id,
     )
 
+    missing_source = build_missing_source_notice(status)
+
     return {
         "analysis_id": status["analysis_id"],
         "filename": status["original_filename"],
         "message": "Saved work imported successfully",
         "status": "completed",
         "bundle_type": "analysis",
+        "missing_sources": [missing_source] if missing_source else [],
+        "source_restore_required": missing_source is not None,
     }
 
 @app.get("/", response_model=dict)

@@ -16,7 +16,7 @@ import {
 import { Separator } from "../components/ui/separator";
 import { VideoService } from "@/lib/video-service";
 import VideoItem from "../components/VideoItem";
-import { saveVideoBlob, deleteVideoBlob } from "@/lib/blob-store";
+import { saveVideoBlob } from "@/lib/blob-store";
 import { AnalyzeResultsPanel } from "./AnalyzeResultsPanel";
 import { createVideoTask, getCvatHealth, listJobs } from "@/cvat-api/client";
 import AnalyzePageV2 from "@/app/V2components/AnalyzePageV2";
@@ -224,16 +224,18 @@ export const Dashboard: React.FC = () => {
     await router.push(target);
   };
 
-  // Delete a video: remove blob from IndexedDB and metadata from Library
+  // Retired surface retains the same two-step analysis-only deletion boundary.
   const handleDeleteVideo = async (id: string) => {
-    if (!confirm("Delete this video? This cannot be undone.")) return;
+    if (!confirm("Delete this analysis data? First confirmation. The original media will remain.")) return;
+    const intent = await VideoService.createAnalysisDeletionIntent(id);
+    if (!confirm("Are you sure you want to delete all derived analysis data? Annotations, transcripts, thumbnails, embeddings, indexes, caches, backups and publications will be removed. Original media remains.")) return;
     try {
       // Optimistic: remove from UI immediately and keep a backup for rollback
       const backup = libraryVideos.find((v) => v.id === id);
       setLibraryVideos((prev) => prev.filter((v) => v.id !== id));
 
       try {
-        await VideoService.delete(id);
+        await VideoService.delete(id, intent.confirmation_token);
       } catch (err) {
         // rollback on failure
         console.error("Delete failed, restoring item", err);
@@ -242,12 +244,6 @@ export const Dashboard: React.FC = () => {
         return;
       }
 
-      // ensure local blob is removed
-      try {
-        await deleteVideoBlob(id);
-      } catch (e) {
-        console.warn("Failed to delete local blob", e);
-      }
     } catch (err) {
       console.error(err);
       alert("Failed to delete video: " + String(err));

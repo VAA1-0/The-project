@@ -93,6 +93,16 @@ export interface UploadResponse {
   project_name?: string;
   project_id?: string;
   source_size_bytes?: number;
+  source_restore_required?: boolean;
+  missing_sources?: Array<{
+    analysis_id: string;
+    original_filename?: string | null;
+    last_known_source_location?: string | null;
+    expected_source_fingerprint?: string | null;
+    expected_size_bytes?: number | null;
+    user_action: string;
+    relink_policy: "exact_content_match_only";
+  }>;
 }
 
 export interface ResearchCorpusUploadPreflight {
@@ -3897,17 +3907,21 @@ class ApiService {
     }
   }
 
-  /**
-   * Delete an analysis and its files
-   */
-  async deleteAnalysis(analysisId: string): Promise<void> {
+  async createAnalysisDeletionIntent(analysisId: string): Promise<{ confirmation_token: string; deletion_plan: any }> {
+    const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}/deletion-intent`, { method: "POST" });
+    if (!response.ok) throw new Error((await response.text()) || "Could not prepare analysis deletion");
+    return response.json();
+  }
+
+  /** Delete derived analysis data; source-media deletion is a separate authority. */
+  async deleteAnalysis(analysisId: string, confirmationToken: string): Promise<void> {
     // Skip for mock IDs
     if (analysisId.startsWith("mock-")) {
       console.log("Mock delete for:", analysisId);
       return;
     }
 
-    const response = await fetch(`${this.baseURL}/api/analysis/${analysisId}`, {
+    const response = await fetch(`${this.baseURL}/api/analysis/${encodeURIComponent(analysisId)}?confirmation_token=${encodeURIComponent(confirmationToken)}`, {
       method: "DELETE",
     });
 
@@ -3919,12 +3933,18 @@ class ApiService {
     }
   }
 
-  async clearSession(): Promise<{
+  async createClearSessionIntent(): Promise<{ confirmation_token: string; analysis_ids: string[]; skipped_processing_ids: string[]; original_source_files_deleted: false }> {
+    const response = await fetch(`${this.baseURL}/api/session/clear-intent`, { method: "POST" });
+    if (!response.ok) throw new Error((await response.text()) || "Could not prepare session clearing");
+    return response.json();
+  }
+
+  async clearSession(confirmationToken: string): Promise<{
     message: string;
     cleared_analysis_ids: string[];
     skipped_processing_ids: string[];
   }> {
-    const response = await fetch(`${this.baseURL}/api/session/clear`, {
+    const response = await fetch(`${this.baseURL}/api/session/clear?confirmation_token=${encodeURIComponent(confirmationToken)}`, {
       method: "POST",
     });
 

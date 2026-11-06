@@ -4769,6 +4769,7 @@ export interface AnalysisData {
   detectedObjects: DetectedObject[];
   rawDetectedObjects: DetectedObject[];
   bodyMovementDetections: BodyMovementDetection[];
+  activeSpeakerSynchrony?: Record<string, unknown> | null;
   faceResults?: AnalysisStatus["face_results"] | null;
   ocr: OCR[];
   expressionResults: ExpressionSample[];
@@ -5639,6 +5640,16 @@ export interface UploadResponse {
   project_name?: string;
   project_id?: string;
   source_size_bytes?: number;
+  source_restore_required?: boolean;
+  missing_sources?: Array<{
+    analysis_id: string;
+    original_filename?: string | null;
+    last_known_source_location?: string | null;
+    expected_source_fingerprint?: string | null;
+    expected_size_bytes?: number | null;
+    user_action: string;
+    relink_policy: "exact_content_match_only";
+  }>;
 }
 
 // Updated AnalysisStatus with pipeline_type
@@ -6203,6 +6214,7 @@ export class VideoService {
           sourceMediaMetadataData,
           proliferationAuditData,
           activeSpeakerSynchronyData,
+          bodyMovementDetectionsData,
         ] = await Promise.allSettled([
           apiService.getVisualFrameCheckpoint(id),
           this.loadTranscriptData(id),
@@ -6216,6 +6228,7 @@ export class VideoService {
           apiService.getSourceMediaMetadata(id),
           this.loadJsonArtifact(id, "live_mature_data_proliferation_audit"),
           this.loadJsonArtifact(id, "active_speaker_synchrony"),
+          this.loadJsonArtifact(id, "body_movement_detections"),
         ]);
         const artifactValue = (result: PromiseSettledResult<any>) =>
           result.status === "fulfilled" ? result.value : null;
@@ -6228,6 +6241,7 @@ export class VideoService {
         const sourceMediaMetadataStatus = artifactValue(sourceMediaMetadataData);
         const proliferationAuditStatus = artifactValue(proliferationAuditData);
         const activeSpeakerSynchronyStatus = artifactValue(activeSpeakerSynchronyData);
+        const bodyMovementDetectionsStatus = artifactValue(bodyMovementDetectionsData);
         const transcriptBundle =
           transcriptData.status === "fulfilled" ? transcriptData.value : { segments: [] };
         const correctedTranscriptBase = applyAnnotationCorrectionsToTranscript(
@@ -6277,7 +6291,10 @@ export class VideoService {
             : null;
         const manualVisualObjects = buildManualVisualObjects(correctionsPayload || null);
         const bodyMovementDetections = collectBodyMovementDetections(
-          status,
+          {
+            ...(status as unknown as LooseRecord),
+            body_movement_detections: bodyMovementDetectionsStatus,
+          },
           correctionsPayload || null,
         );
         const behavioralObjects = bodyMovementObjects(bodyMovementDetections);
@@ -6384,6 +6401,7 @@ export class VideoService {
           detectedObjects: mergedCheckpointObjects,
           rawDetectedObjects: mergedCheckpointObjects,
           bodyMovementDetections,
+          activeSpeakerSynchrony: activeSpeakerSynchronyStatus || null,
           ocr: checkpointOcr,
           expressionResults: [],
           audioProsody: correctedAudioProsody,
@@ -6413,6 +6431,7 @@ export class VideoService {
               status.narrative_agent_continuity_projection || null,
             audio_diarization: audioDiarizationStatus,
             body_movement_detections: bodyMovementDetections,
+            active_speaker_synchrony: activeSpeakerSynchronyStatus,
             set_location_recognition:
               (status.summary as LooseRecord | undefined)?.set_location_recognition || null,
           },
@@ -6480,6 +6499,7 @@ export class VideoService {
         nativeStatisticalInterpretationData,
         sourceMediaMetadataData,
         activeSpeakerSynchronyData,
+        bodyMovementDetectionsData,
       ] = await Promise.allSettled([
         this.loadCsvData(id),
         this.loadTranscriptData(id),
@@ -6507,6 +6527,7 @@ export class VideoService {
         // through the overlay route so generated metadata cannot hide a save.
         apiService.getSourceMediaMetadata(id),
         this.loadJsonArtifact(id, "active_speaker_synchrony"),
+        this.loadJsonArtifact(id, "body_movement_detections"),
       ]);
 
       const artifactValue = (result: PromiseSettledResult<any>) =>
@@ -6531,6 +6552,7 @@ export class VideoService {
         native_statistical_interpretation: artifactValue(nativeStatisticalInterpretationData),
         source_media_metadata: artifactValue(sourceMediaMetadataData),
         active_speaker_synchrony: artifactValue(activeSpeakerSynchronyData),
+        body_movement_detections: artifactValue(bodyMovementDetectionsData),
       } as AnalysisStatus;
       const hydratedSpatialToneScan = artifactValue(spatialToneData) as
         | NonNullable<AnalysisData["metadata"]>["spatialToneScan"]
@@ -6764,6 +6786,7 @@ export class VideoService {
         detectedObjects: mergedProfiledObjects,
         rawDetectedObjects: mergedRawObjects,
         bodyMovementDetections,
+        activeSpeakerSynchrony: status.active_speaker_synchrony || null,
         faceResults: status.face_results,
         ocr: correctedOCR,
         expressionResults: correctedExpressions,
@@ -6810,6 +6833,7 @@ export class VideoService {
           native_statistical_interpretation:
             status.native_statistical_interpretation || null,
           body_movement_detections: bodyMovementDetections,
+          active_speaker_synchrony: status.active_speaker_synchrony || null,
           set_location_recognition:
             (status.summary as LooseRecord | undefined)?.set_location_recognition || null,
           language_analysis_parity:
@@ -7187,34 +7211,38 @@ export class VideoService {
     return apiService.pollStatus(id, onProgress, interval, timeout);
   }
 
-  /**
-   * Delete a video analysis (alias for deleteAnalysis)
-   */
-  static async delete(id: string): Promise<void> {
-    return this.deleteAnalysis(id);
+  /** Delete derived analysis data. Original source media is preserved. */
+  static async createAnalysisDeletionIntent(id: string) {
+    return apiService.createAnalysisDeletionIntent(id);
   }
 
-  /**
-   * Delete an analysis and its files
-   */
-  static async deleteAnalysis(id: string): Promise<void> {
+  static async delete(id: string, confirmationToken: string): Promise<void> {
+    return this.deleteAnalysis(id, confirmationToken);
+  }
+
+  /** Delete analysis artifacts through the governed two-confirmation UI flow. */
+  static async deleteAnalysis(id: string, confirmationToken: string): Promise<void> {
     try {
       this.invalidateAnalysisCache(id);
-      await apiService.deleteAnalysis(id);
+      await apiService.deleteAnalysis(id, confirmationToken);
     } catch (error) {
       console.error("VideoService.deleteAnalysis failed:", error);
       throw error;
     }
   }
 
-  static async clearSession(): Promise<{
+  static async createClearSessionIntent() {
+    return apiService.createClearSessionIntent();
+  }
+
+  static async clearSession(confirmationToken: string): Promise<{
     message: string;
     cleared_analysis_ids: string[];
     skipped_processing_ids: string[];
   }> {
     try {
       this.invalidateAnalysisCache();
-      return await apiService.clearSession();
+      return await apiService.clearSession(confirmationToken);
     } catch (error) {
       console.error("VideoService.clearSession failed:", error);
       throw error;

@@ -36,5 +36,12 @@ test("sections expose fill-panel and detach controls", () => {
   assert.match(source, /aria-label=\{focused \? "Return" : "Fill"\}/);
   assert.match(source, /aria-label="Detach"/);
   assert.match(source, /role="tooltip"/);
-  assert.match(source, /absolute inset-0/);
+  assert.match(source, /document\.body\.appendChild\(overlay\)/);
+  assert.match(source, /overlay\.className = "fixed/);
+  assert.match(source, /data-vaa1-section-filled/);
+});
+
+test("sections open when asynchronously hydrated evidence becomes available", () => {
+  assert.match(source, /if \(controlledOpen === undefined && defaultOpen\) setOpen\(true\)/);
+  assert.match(source, /\[controlledOpen, defaultOpen\]/);
 });

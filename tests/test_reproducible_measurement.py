@@ -36,6 +36,10 @@ def fixture(tmp_path: Path):
     expressions = root / "artifacts" / "expressions.json"
     prosody = root / "artifacts" / "prosody.json"
     shots = root / "artifacts" / "shots.json"
+    camera = root / "artifacts" / "camera.json"
+    spatial = root / "artifacts" / "spatial.json"
+    adaptive = root / "artifacts" / "adaptive.json"
+    relationships = root / "artifacts" / "relationships.json"
     write(objects, [{"timestamp": 1, "track_id": 1, "class_name": "person", "confidence": .8},
                     {"timestamp": 2, "track_id": 2, "class_name": "car", "confidence": .6}])
     write(ocr, {"anchors": [{"anchor_id": "a1", "t_start_ms": 1000}],
@@ -45,10 +49,16 @@ def fixture(tmp_path: Path):
     write(prosody, {"cues": [{"start": 0, "end": 2, "pace": {"words_per_second": 2},
                                 "emphasis": {"label": "strong"}}]})
     write(shots, {"intervals": [{"start": 0, "end": 4}, {"start": 4, "end": 10}]})
+    write(camera, {"samples": [{"timestamp": 1, "shot_scale": "close"}]})
+    write(spatial, {"samples": [{"timestamp": 1, "brightness": .4}, {"timestamp": 2, "brightness": .6}]})
+    write(adaptive, {"samples": [{"timestamp": 1, "motion": .2}]})
+    write(relationships, {"relationships": [{"relationship_id": "r1", "method": "spearman"}]})
     write(analysis / "analysis_record.json", {"output_files": {
         "tracked_objects_json": str(objects), "time_bank_ocr": str(ocr),
         "expression_json": str(expressions), "audio_prosody": str(prosody),
-        "shot_boundaries": str(shots),
+        "shot_boundaries": str(shots), "camera_composition": str(camera),
+        "spatial_tone_scan": str(spatial), "adaptive_visual_scan": str(adaptive),
+        "native_statistical_interpretation": str(relationships),
     }})
     return analysis_id, root, analysis
 
@@ -78,6 +88,10 @@ class ReproducibleMeasurementTests(unittest.TestCase):
         self.assertEqual(a["measurements"]["expressions"]["expression_ready_count"], 1)
         self.assertEqual(a["measurements"]["prosody"]["cue_count"], 1)
         self.assertEqual(a["measurements"]["shot_boundaries"]["interval_count"], 2)
+        self.assertEqual(a["measurements"]["camera_composition"]["record_count"], 1)
+        self.assertEqual(a["measurements"]["spatial_tone"]["sample_count"], 2)
+        self.assertEqual(a["measurements"]["adaptive_visual"]["sample_count"], 1)
+        self.assertEqual(a["measurements"]["relational_connectivity"]["relationship_count"], 1)
         stored = analysis / "stats_runs" / a["run_id"] / "measurement_run.json"
         self.assertEqual(json.loads(stored.read_text())["content_fingerprint"], a["content_fingerprint"])
 

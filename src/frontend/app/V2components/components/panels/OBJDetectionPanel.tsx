@@ -43,6 +43,7 @@ import {
   closeManualAnnotationInVideo,
   openManualAnnotationInVideo,
   openObjectIndicationInVideo,
+  openVideoAtTime,
 } from "@/lib/video-navigation";
 import {
   buildManualBBoxRoiAnnotation,
@@ -52,6 +53,7 @@ import {
 } from "@/lib/bbox-authority";
 import { SecondOrderLabelAffirmationChips } from "./SecondOrderLabelAffirmations";
 import { SourceLinkedClusterThumbnail } from "../SourceLinkedClusterThumbnail";
+import { DynamicPanelSection } from "../DynamicPanelSection";
 
 const OBJECT_INDICATION_CATEGORIES: ManualVisualAnnotation["category"][] = [
   "Action",
@@ -1481,17 +1483,34 @@ export default function OBJDetectionPanel() {
             </div>
           </div>
           <div className="flex-1 min-h-0 px-3 pb-3 flex flex-col">
-            <details open={bodyMovementDetections.length > 0} className="mb-2 shrink-0 rounded border border-cyan-900/40 bg-cyan-950/10">
-              <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-200 marker:hidden">
-                Body movement detections · {bodyMovementDetections.length}
-              </summary>
-              <div className="max-h-32 space-y-1 overflow-y-auto border-t border-cyan-900/30 p-2">
+            <DynamicPanelSection
+              sectionId="body-movement-evidence"
+              title="Body movement evidence"
+              summary={`${bodyMovementDetections.length} source-linked attributes`}
+              defaultOpen={bodyMovementDetections.length > 0}
+            >
+              <div className="max-h-[55vh] space-y-1 overflow-y-auto p-2 group-data-[vaa1-section-filled=true]:max-h-none">
                 {bodyMovementDetections.length ? bodyMovementDetections.map((movement: BodyMovementDetection) => (
                   <button
                     key={movement.evidenceId}
                     type="button"
                     className="flex w-full items-center justify-between gap-2 rounded border border-slate-800 px-2 py-1 text-left text-[10px] hover:border-cyan-700"
-                    onClick={() => eventBus.emit("videoTimeLineChanged", movement.start)}
+                    onClick={() => {
+                      if (videoId) openVideoAtTime(videoId, movement.start);
+                      eventBus.emit("videoEvidenceSelected", {
+                        videoId,
+                        panelType: "VideoPanel",
+                        modality: "object",
+                        timestamp: movement.start,
+                        label: movement.movementType,
+                        sourceItem: {
+                          sourceType: "behavioral_detection",
+                          sourceAnnotationId: movement.evidenceId,
+                          ...movement,
+                        },
+                      });
+                    }}
+                    data-vaa1-movement-saloon-door="true"
                   >
                     <span className="min-w-0 truncate text-slate-200">
                       {movement.narrativeAgentLabel ? `${movement.narrativeAgentLabel} · ` : ""}{movement.movementType}
@@ -1502,7 +1521,7 @@ export default function OBJDetectionPanel() {
                   </button>
                 )) : <div className="text-[10px] text-slate-600">No source-timed body movement evidence</div>}
               </div>
-            </details>
+            </DynamicPanelSection>
             <details open className="mb-2 shrink-0 rounded border border-cyan-900/50 bg-cyan-950/10" data-vaa1-object-cluster-workbench="true">
               <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-200 marker:hidden">
                 Object-family cluster exploration · {objectClusterFamilies.length} families · {objectClusterMembers.length} tracks

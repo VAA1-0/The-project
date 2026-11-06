@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import uuid
 from pathlib import Path
@@ -10,6 +11,23 @@ from typing import Any, Iterable
 
 
 CHECKPOINT_FILENAME = "analysis_checkpoint.json"
+
+
+def _sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -26,6 +44,80 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def write_recoverable_json(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Atomically write JSON while retaining the exact previous committed bytes."""
+    destination = Path(path)
+    backup_path = destination.with_suffix(destination.suffix + ".bak")
+    receipt_path = destination.with_suffix(destination.suffix + ".recovery.json")
+    previous = destination.read_bytes() if destination.exists() else None
+    if previous is not None:
+        # Never promote unreadable state into the recovery slot.
+        decoded = json.loads(previous.decode("utf-8"))
+        if not isinstance(decoded, dict):
+            raise ValueError(f"Existing {destination.name} is not a JSON object")
+        _atomic_write_bytes(backup_path, previous)
+
+    atomic_write_json(destination, payload)
+    committed = destination.read_bytes()
+    verified = json.loads(committed.decode("utf-8"))
+    if not isinstance(verified, dict):
+        raise ValueError(f"Committed {destination.name} is not a JSON object")
+    receipt = {
+        "schema": "vaa1.recoverable_json_write.v1",
+        "primary_path": str(destination),
+        "primary_sha256": _sha256(committed),
+        "backup_path": str(backup_path) if backup_path.exists() else None,
+        "backup_sha256": _sha256(backup_path.read_bytes()) if backup_path.exists() else None,
+        "write_verified": True,
+    }
+    atomic_write_json(receipt_path, receipt)
+    return receipt
+
+
+def load_recoverable_json(path: Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Load the primary object, or quarantine it and restore a verified backup."""
+    destination = Path(path)
+
+    def decode(content: bytes, label: str) -> dict[str, Any]:
+        try:
+            value = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label} is unreadable") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} must contain a JSON object")
+        return value
+
+    try:
+        return decode(destination.read_bytes(), destination.name), None
+    except (OSError, ValueError) as primary_error:
+        backup_path = destination.with_suffix(destination.suffix + ".bak")
+        try:
+            backup_bytes = backup_path.read_bytes()
+            restored = decode(backup_bytes, backup_path.name)
+        except (OSError, ValueError) as backup_error:
+            raise ValueError(
+                f"Primary and backup are unavailable: {primary_error}; {backup_error}"
+            ) from backup_error
+        quarantine_path = destination.with_name(
+            f"{destination.name}.corrupt-{uuid.uuid4().hex}"
+        )
+        if destination.exists():
+            destination.replace(quarantine_path)
+        _atomic_write_bytes(destination, backup_bytes)
+        recovery = {
+            "schema": "vaa1.recoverable_json_restore.v1",
+            "restored": True,
+            "restored_from": str(backup_path),
+            "restored_sha256": _sha256(backup_bytes),
+            "quarantined_primary": str(quarantine_path) if quarantine_path.exists() else None,
+            "reason": str(primary_error),
+        }
+        atomic_write_json(
+            destination.with_suffix(destination.suffix + ".restore.json"), recovery
+        )
+        return restored, recovery
 
 
 def checkpoint_path(results_dir: Path, analysis_id: str) -> Path:

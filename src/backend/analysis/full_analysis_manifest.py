@@ -34,6 +34,17 @@ AUDIO_BRANCHES = {
 }
 MEASURED_VISUAL_BRANCHES = {"shot_boundaries", "spatial_tone_scan", "adaptive_visual_scan"}
 
+BRANCH_METHOD_VERSIONS = {
+    "transcript": "audio_text.1", "linked_transcript": "transcript_linker.1",
+    "pos_analysis": "pos_analysis.1", "quan_analysis": "quantitative_analysis.1",
+    "audio_prosody": "audio_prosody.1", "audio_event_intervals": "audio_event_measurement.1",
+    "audio_diarization": "diarization_adapter.1", "audio_sample_clouds": "audio_sample_clouds.1",
+    "tracked_objects": "visual_pipeline.objects.1", "ocr": "visual_pipeline.ocr.1",
+    "expressions": "expression_detector.1", "shot_boundaries": "shot_boundary_measurement.1",
+    "spatial_tone_scan": "spatial_tone_measurement.1", "adaptive_visual_scan": "adaptive_visual_measurement.1",
+    "native_statistical_interpretation": "native_statistical_interpretation.1",
+}
+
 
 def _branch_requirement(status: dict[str, Any], branch_id: str) -> tuple[bool, str]:
     """Resolve requirements from the effective run profile, preserving legacy behavior."""
@@ -290,7 +301,7 @@ def _artifact_metadata(path_value: Any) -> dict[str, Any]:
     path = Path(str(path_value)) if path_value else None
     if not path or not path.is_file():
         return {"artifact_path": str(path) if path else None, "artifact_checksum": None,
-                "artifact_schema": None, "row_count": None}
+                "artifact_schema": None, "row_count": None, "artifact_payload": None}
     raw = path.read_bytes()
     schema = None
     row_count = None
@@ -314,7 +325,48 @@ def _artifact_metadata(path_value: Any) -> dict[str, Any]:
         if path.suffix.lower() == ".csv":
             row_count = max(0, raw.count(b"\n") - 1)
     return {"artifact_path": str(path), "artifact_checksum": f"sha256:{hashlib.sha256(raw).hexdigest()}",
-            "artifact_schema": schema, "row_count": row_count}
+            "artifact_schema": schema, "row_count": row_count,
+            "artifact_payload": value if 'value' in locals() and isinstance(value, dict) else None}
+
+
+def _branch_evidence_contract(
+    status: dict[str, Any], branch_id: str, producer: str, metadata: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the same explicit evidence metadata envelope for every branch."""
+    payload = metadata.get("artifact_payload") if isinstance(metadata.get("artifact_payload"), dict) else {}
+    provider = payload.get("provider")
+    if isinstance(provider, dict):
+        provider = provider.get("id") or provider.get("name") or provider.get("provider")
+    settings = payload.get("settings") or payload.get("parameters") or payload.get("effective_settings")
+    quality = payload.get("quality") or payload.get("quality_control") or payload.get("measurement")
+    source_fingerprint = (
+        payload.get("source_fingerprint") or payload.get("audio_fingerprint")
+        or status.get("source_media_sha256") or status.get("source_fingerprint")
+    )
+    row_count = metadata.get("row_count")
+    return {
+        "method": {"producer": producer, "version": BRANCH_METHOD_VERSIONS[branch_id]},
+        "provider": {"id": str(provider or producer), "declared": bool(provider)},
+        "effective_settings": settings if isinstance(settings, dict) else {
+            "analysis_tier": status.get("analysis_tier"),
+            "profile_source": "analysis_record",
+        },
+        "quality": quality if isinstance(quality, dict) else {
+            "state": "not_reported_by_producer",
+            "limitation": "Artifact is available, but this producer did not emit a structured quality block.",
+        },
+        "missingness": {
+            "observed_row_count": row_count,
+            "missing_row_count": payload.get("missing_row_count"),
+            "state": "reported" if payload.get("missing_row_count") is not None else "not_reported_by_producer",
+        },
+        "invalidation": {
+            "source_fingerprint": source_fingerprint,
+            "bound": bool(source_fingerprint),
+            "stale": bool(payload.get("is_stale")),
+            "stale_reason": payload.get("stale_reason"),
+        },
+    }
 
 
 def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
@@ -326,6 +378,8 @@ def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
     for branch_id, label, artifact_key, producer in BRANCHES:
         relevant, requirement_reason = _branch_requirement(status, branch_id)
         metadata = _artifact_metadata(outputs.get(artifact_key))
+        artifact_payload = metadata.pop("artifact_payload", None)
+        contract_metadata = {**metadata, "artifact_payload": artifact_payload}
         exists = metadata["artifact_checksum"] is not None
         state = "computed" if exists else "artifact_missing"
         parity = _parity_evidence(status, branch_id, metadata.get("row_count")) if exists else {
@@ -353,7 +407,8 @@ def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
         branches.append({"branch_id": branch_id, "label": label, "required": relevant,
                          "state": state if relevant else "not_applicable", "producer": producer,
                          "requirement_reason": requirement_reason,
-                         "method_version": None, **metadata,
+                         "method_version": BRANCH_METHOD_VERSIONS[branch_id], **metadata,
+                         "evidence_contract": _branch_evidence_contract(status, branch_id, producer, contract_metadata),
                          **parity,
                          "error": str(error) if error else None,
                          "retryable": branch_id != "audio_diarization",
@@ -363,7 +418,15 @@ def evaluate_full_analysis_manifest(status: dict[str, Any]) -> dict[str, Any]:
                      "method_version": None, "artifact_path": None, "artifact_checksum": None,
                      "artifact_schema": None, "row_count": None, "projection_state": None,
                      "hydration_state": None, "consumer_state": None, "error": None,
-                     "retryable": False, "recovery_action": "capability_enhancement"})
+                     "retryable": False, "recovery_action": "capability_enhancement",
+                     "evidence_contract": {
+                         "method": {"producer": None, "version": None},
+                         "provider": {"id": None, "declared": False},
+                         "effective_settings": {},
+                         "quality": {"state": "unsupported"},
+                         "missingness": {"observed_row_count": None, "missing_row_count": None, "state": "not_applicable"},
+                         "invalidation": {"source_fingerprint": None, "bound": False, "stale": False, "stale_reason": None},
+                     }})
     blocking = [f"{item['label']}: {item['state']}" for item in branches if item["required"] and item["state"] != "computed"]
     delivered = sum(item["required"] and item["state"] == "computed" for item in branches)
     required = sum(item["required"] for item in branches)

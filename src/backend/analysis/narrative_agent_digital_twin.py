@@ -24,6 +24,8 @@ MODALITIES = (
     "music_theme",
     "source_media_data",
     "scene_card",
+    "lip_sync",
+    "interaction",
     "manual_confirmation",
 )
 WEIGHTS = {
@@ -36,6 +38,8 @@ WEIGHTS = {
     "music_theme": 0.08,
     "source_media_data": 0.06,
     "scene_card": 0.08,
+    "lip_sync": 0.12,
+    "interaction": 0.10,
     "manual_confirmation": 0.10,
 }
 DEFAULT_GATES = {
@@ -80,7 +84,9 @@ def _list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ("items", "segments", "turns", "speaker_turns", "results", "events", "intervals", "cues", "rows", "clouds", "scene_cards"):
+        if isinstance(value.get("meaning_network"), dict):
+            return _list(value["meaning_network"])
+        for key in ("items", "segments", "turns", "speaker_turns", "results", "events", "intervals", "cues", "rows", "clouds", "scene_cards", "measurements", "nodes", "edges"):
             if isinstance(value.get(key), list):
                 return value[key]
     return []
@@ -94,7 +100,7 @@ def _number(value: Any) -> float | None:
 
 
 def _interval(item: Mapping[str, Any]) -> Dict[str, float | None]:
-    nested = _dict(item.get("time") or item.get("interval") or item.get("time_interval"))
+    nested = _dict(item.get("time") or item.get("interval") or item.get("time_interval") or item.get("time_range"))
     start = next(
         (
             number
@@ -163,6 +169,41 @@ def _artifact_rows(status: Mapping[str, Any], *keys: str) -> List[Dict[str, Any]
     )
     collected: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    output_files = _dict(status.get("output_files"))
+    output_aliases = {
+        "tracked_objects": ("tracked_objects_json", "time_bank_objects"),
+        "visual_detections": ("tracked_objects_json",),
+        "audio_sample_clouds": ("audio_sample_clouds",),
+        "audio_prosody": ("audio_prosody",),
+        "audio_diarization": ("audio_diarization",),
+        "speaker_diarization": ("audio_diarization",),
+        "linked_transcript": ("linked_transcript",),
+        "transcript": ("transcript",),
+        "transcript_segments": ("transcript",),
+        "ocr_results": ("time_bank_ocr",),
+        "ocr": ("time_bank_ocr",),
+        "audio_event_intervals": ("audio_event_intervals",),
+        "scene_cards": ("mise_en_scene_scene_cards",),
+        "mise_en_scene_scene_cards": ("mise_en_scene_scene_cards",),
+        "active_speaker_synchrony": ("active_speaker_synchrony",),
+        "datascene_meaning_network": ("datascene_meaning_network",),
+    }
+    file_surface: Dict[str, Any] = {}
+    for key in keys:
+        for alias in output_aliases.get(key, (key,)):
+            path_value = output_files.get(alias)
+            if not path_value:
+                continue
+            try:
+                loaded = json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+                if key == "datascene_meaning_network" and isinstance(loaded, dict):
+                    network = _dict(loaded.get("meaning_network"))
+                    loaded = network.get("edges") or []
+                file_surface[key] = loaded
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+    surfaces = (*surfaces, file_surface)
     for surface_index, surface in enumerate(surfaces):
         for key in keys:
             value = surface.get(key)
@@ -248,8 +289,19 @@ def _modality_rows(status: Mapping[str, Any], modality: str) -> List[Dict[str, A
         "ocr": ("ocr_results", "ocr", "text_detections"),
         "music_theme": ("music_theme", "music_intervals", "audio_event_intervals"),
         "scene_card": ("scene_cards", "mise_en_scene_scene_cards"),
+        "lip_sync": ("active_speaker_synchrony",),
+        "interaction": ("datascene_meaning_network",),
     }
     rows = _artifact_rows(status, *key_map.get(modality, ()))
+    if modality == "interaction":
+        expanded = []
+        for row in rows:
+            refs = _list(row.get("evidence_refs"))
+            if refs:
+                expanded.extend({**ref, "label": row.get("edge_type") or "interaction", "interaction_edge_id": row.get("edge_id")} for ref in refs)
+            else:
+                expanded.append(row)
+        rows = expanded
     if modality == "body_movement":
         corrections = _dict(status.get("annotation_corrections"))
         rows.extend(
@@ -335,6 +387,7 @@ def build_digital_twins(statuses: Iterable[Mapping[str, Any]]) -> List[Dict[str,
             for modality in (
                 "visual", "audio", "speaker_turn", "body_movement", "transcript",
                 "ocr", "music_theme", "scene_card",
+                "lip_sync", "interaction",
             ):
                 evidence[modality].extend(
                     record
@@ -396,7 +449,7 @@ def build_occurrence_signatures(statuses: Iterable[Mapping[str, Any]]) -> List[D
             modality: _modality_rows(status, modality)
             for modality in (
                 "audio", "speaker_turn", "body_movement", "transcript", "ocr",
-                "music_theme", "scene_card",
+                "music_theme", "scene_card", "lip_sync", "interaction",
             )
         }
         source_media = _source_media_record(status)

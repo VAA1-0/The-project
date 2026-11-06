@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { createReadStream } from "fs";
 import { promises as fs } from "fs";
 import path from "path";
@@ -24,6 +24,12 @@ async function linkFile(source: string, target: string) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
     throw error;
   }
+}
+
+async function sha256File(source: string): Promise<string> {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(source)) digest.update(chunk);
+  return digest.digest("hex");
 }
 
 export async function POST(request: NextRequest) {
@@ -65,6 +71,7 @@ export async function POST(request: NextRequest) {
         const folder = `analyses/${slugifyName(record.original_filename || String(analysisId))}_${String(analysisId).slice(0, 8)}/`;
         await fs.mkdir(path.join(staging, folder), { recursive: true });
         const skippedOutputFiles: Array<{ file_type: string; reason: string }> = [];
+        const outputFileInventory: Record<string, { archive_name: string; size_bytes: number; sha256: string }> = {};
         for (const [fileType, rawPath] of Object.entries(record.output_files || {})) {
           if (!rawPath || typeof rawPath !== "string") {
             skippedOutputFiles.push({ file_type: fileType, reason: "empty_path" });
@@ -74,6 +81,12 @@ export async function POST(request: NextRequest) {
             const source = safeProjectPath(rawPath);
             const targetName = FILE_MAPPING[fileType] || path.basename(source);
             await linkFile(source, path.join(staging, folder, targetName));
+            const stat = await fs.stat(source);
+            outputFileInventory[fileType] = {
+              archive_name: targetName,
+              size_bytes: stat.size,
+              sha256: await sha256File(source),
+            };
           } catch {
             skippedOutputFiles.push({ file_type: fileType, reason: "missing_or_not_file" });
           }
@@ -85,6 +98,13 @@ export async function POST(request: NextRequest) {
               analysis_id: record.analysis_id || analysisId,
               original_filename: record.original_filename,
               source_video_path: record.source_video_path || record.file_path,
+              source_integrity: record.source_integrity || null,
+              source_locator: {
+                analysis_id: record.analysis_id || analysisId,
+                original_filename: record.original_filename,
+                last_known_path: record.source_video_path || record.file_path || null,
+                source_fingerprint: record.source_integrity?.source_fingerprint || null,
+              },
               source_media_metadata: record.source_media_metadata || {},
               annotation_corrections: await readCanonicalJsonArtifact(
                 String(record.analysis_id || analysisId),
@@ -96,6 +116,7 @@ export async function POST(request: NextRequest) {
               analysis_tier: record.analysis_tier || "science_scan",
               modality_focus: record.modality_focus || "multimodal",
               skipped_output_files: skippedOutputFiles,
+              output_file_inventory: outputFileInventory,
             },
             null,
             2,
@@ -113,6 +134,8 @@ export async function POST(request: NextRequest) {
         path.join(staging, "project_manifest.json"),
         JSON.stringify(
           {
+            schema: "vaa1.project_manifest.v1",
+            format_version: 1,
             project_type: "vaa1_project_bundle",
             project_id: projectId,
             project_name: projectName,
@@ -125,6 +148,10 @@ export async function POST(request: NextRequest) {
               method: "disk_streamed_zip64",
             },
             matrices: payload.matrices || {},
+            compatibility: {
+              minimum_reader_version: 1,
+              downgrade_policy: "unsupported_fail_closed",
+            },
           },
           null,
           2,

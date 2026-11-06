@@ -1,0 +1,149 @@
+{
+  "schema": "vaa1.release_capability_register.v1",
+  "product_release": "#0.1",
+  "analysis_edition_label": "Analysis 1.0",
+  "updated_at": "2026-11-06",
+  "status_vocabulary": ["supported", "experimental", "disabled", "deferred"],
+  "capabilities": [
+    {
+      "id": "local_video_analysis",
+      "label": "Local video analysis and governed evidence workspace",
+      "status": "supported",
+      "owner": "Datascene analysis runtime",
+      "supported_inputs": ["local video files admitted by the source preflight contract"],
+      "known_limitations": ["Optional providers remain separately governed", "Support is bounded by the declared local runtime and analysis profile"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-22_stage9_release_qualification.md", "tests/test_source_import_contract.py"],
+      "runtime_consequence": "Enabled for admitted local video sources."
+    },
+    {
+      "id": "global_source_clock",
+      "label": "Revision-bound global source clock",
+      "status": "supported",
+      "owner": "Datascene evidence navigation",
+      "supported_inputs": ["source_media.clock temporal evidence"],
+      "known_limitations": ["Non-temporal media require their own coordinate contract"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-01_global_clock_project_boundaries.md", "docs/source_clock_delivery_and_manual_gates_2026-09-22.md"],
+      "runtime_consequence": "Enabled for source-bound temporal consumers."
+    },
+    {
+      "id": "canonical_corrections",
+      "label": "Canonical analyst corrections and mature projection",
+      "status": "supported",
+      "owner": "Datascene canonical decision boundary",
+      "supported_inputs": ["analyst-confirmed transcript, object, identity, geometry, audio and graph decisions"],
+      "known_limitations": ["Background-job race qualification remains a release-freeze blocker"],
+      "acceptance_evidence": ["docs/stage2_accepted_state_operating_contract_2026-10-14.md", "tests/test_canonical_write_boundary_contract.py"],
+      "runtime_consequence": "Analyst authority supersedes candidates; raw evidence remains traceback."
+    },
+    {
+      "id": "meaning_knowledge_graph",
+      "label": "Meaning Knowledge Graph",
+      "status": "supported",
+      "owner": "Datascene Meaning / Plot",
+      "supported_inputs": ["governed source-linked Master Schema evidence"],
+      "known_limitations": ["Unresolved matcher output remains a review overlay", "Publication readiness is limited to accepted lane and evidence families"],
+      "acceptance_evidence": ["docs/bug_report_2026-11-05_meaning_network_false_fix_validation_and_lane_projection.md", "src/frontend/tests/meaning-network-navigation-shell.test.mjs"],
+      "runtime_consequence": "Enabled with governed lane, authority and source-return contracts."
+    },
+    {
+      "id": "narrative_agent",
+      "label": "Narrative Agent continuity and governed attribution",
+      "status": "supported",
+      "owner": "Datascene Narrative Agent",
+      "supported_inputs": ["analyst-confirmed visual and audio occurrences"],
+      "known_limitations": ["Similarity is candidate evidence, not automatic identity", "General recognition accuracy is not claimed"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-19_stage7_reviewable_interpretation.md"],
+      "runtime_consequence": "Enabled for governed occurrences and bounded accepted constructs."
+    },
+    {
+      "id": "exploratory_clustering",
+      "label": "Exploratory detection-family clustering",
+      "status": "experimental",
+      "owner": "Datascene Data Maturation",
+      "supported_inputs": ["registered source-linked visual, audio and textual evidence families"],
+      "known_limitations": ["No automatic semantic or ontological equivalence", "Family-specific calibration varies", "Analyst confirmation is required for mature propagation"],
+      "acceptance_evidence": ["docs/datascene_cluster_exploration_usability_contract_2026-10-24.md"],
+      "runtime_consequence": "Visible as an analyst-governed experimental workbench; it does not block the core local release."
+    },
+    {
+      "id": "statskit",
+      "label": "StatsKit reproducible measurements",
+      "status": "experimental",
+      "owner": "Datascene StatsKit",
+      "supported_inputs": ["individually registered and method-eligible measurement layers"],
+      "known_limitations": ["Taxonomy visibility is broader than motor-by-motor runtime coverage", "Unsupported results must remain explicitly unsupported"],
+      "acceptance_evidence": ["docs/stage5_reproducible_measurements_operating_contract_2026-10-15.md"],
+      "runtime_consequence": "Only evidenced motors run; absent producers never surface as measured zero."
+    },
+    {
+      "id": "publication_portability",
+      "label": "Per-video and corpus publication portability",
+      "status": "supported",
+      "owner": "Datascene publication boundary",
+      "supported_inputs": ["accepted video and corpus editions"],
+      "known_limitations": ["Structural verification does not constitute independent scientific review"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-21_stage8_publication_and_portability.md", "docs/independent_export_verification_contract_2026-11-06.md"],
+      "runtime_consequence": "Enabled for governed editions with identity and checksum enforcement."
+    },
+    {
+      "id": "text_image_audio_graphics_import",
+      "label": "Non-video source-family import",
+      "status": "disabled",
+      "owner": "Datascene source admission",
+      "supported_inputs": [],
+      "known_limitations": ["Contracts exist, but complete source-to-consumer workflows are not operational"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-22_stage9_release_qualification.md", "tests/test_source_import_contract.py"],
+      "runtime_consequence": "Admission is refused with a typed declared_not_operational result."
+    },
+    {
+      "id": "remote_acquisition",
+      "label": "Golden Retriever and remote acquisition connectors",
+      "status": "deferred",
+      "owner": "Datascene source policy",
+      "supported_inputs": [],
+      "known_limitations": ["No authenticated crawling, database or remote-transfer workflow is activated"],
+      "acceptance_evidence": ["docs/audits/golden_retriever_2026-09-29/assessment.md"],
+      "runtime_consequence": "Network acquisition remains unavailable; local upload is the supported path."
+    },
+    {
+      "id": "cvat_round_trip",
+      "label": "External CVAT round trip",
+      "status": "deferred",
+      "owner": "Datascene annotation exchange",
+      "supported_inputs": [],
+      "known_limitations": ["Native governed annotation is supported; external task round-trip is not release-qualified"],
+      "acceptance_evidence": ["docs/vaa1_cvat_annotation_exchange_protocol_2026-04-11.md"],
+      "runtime_consequence": "External round-trip is unavailable in the frozen core; native annotation remains enabled."
+    },
+    {
+      "id": "music_lyrics_expansion",
+      "label": "Music and lyrics service expansion",
+      "status": "deferred",
+      "owner": "Datascene audio evidence",
+      "supported_inputs": [],
+      "known_limitations": ["No general lyric acquisition, rights-cleared lyric analysis or broad music-provider claim"],
+      "acceptance_evidence": ["docs/vaa1_general_sprint_regime_remaining_tasks.md"],
+      "runtime_consequence": "Expansion controls remain unavailable; bounded local audio evidence is unaffected."
+    },
+    {
+      "id": "relational_lenses",
+      "label": "Goffmanian, Morenoan and Latourian runtime lenses",
+      "status": "deferred",
+      "owner": "Datascene interpretive governance",
+      "supported_inputs": [],
+      "known_limitations": ["Schemas are offline drafts without a runtime producer or accepted authority path"],
+      "acceptance_evidence": ["docs/schemas/relational_lenses/README.md"],
+      "runtime_consequence": "Not exposed as an operational runtime capability."
+    },
+    {
+      "id": "licensed_remote_providers",
+      "label": "Licensed and remote analytical providers",
+      "status": "disabled",
+      "owner": "Datascene runtime governance",
+      "supported_inputs": [],
+      "known_limitations": ["Selection never implies installation, licence acceptance or activation"],
+      "acceptance_evidence": ["docs/working_handover_handout_2026-10-22_stage9_release_qualification.md"],
+      "runtime_consequence": "Disabled by default; the core local workflow must operate without optional keys."
+    }
+  ]
+}

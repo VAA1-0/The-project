@@ -5969,6 +5969,18 @@ export default function MeaningPlotPanel({
     nextEnd = Math.max(nextStart + minDuration, nextEnd + shift);
     const scrubSeconds = meaningNetworkPresenceDrag.handle === "end" ? nextEnd : nextStart;
     setMeaningNetworkCursorSeconds(scrubSeconds);
+    if (selectedVideoId) {
+      publishSourceTime(selectedVideoId, scrubSeconds);
+      eventBus.emit("meaningNetworkPresenceHandleScrubbed", {
+        videoId: selectedVideoId,
+        node_id: meaningNetworkPresenceDrag.nodeId,
+        handle: meaningNetworkPresenceDrag.handle,
+        start: nextStart,
+        end: nextEnd,
+        time: scrubSeconds,
+        transient: true,
+      });
+    }
     setMeaningNetworkPresenceOverrides((current) => ({
       ...current,
       [meaningNetworkPresenceDrag.nodeId]: { start: nextStart, end: nextEnd },
@@ -5979,7 +5991,7 @@ export default function MeaningPlotPanel({
       viewport.scrollLeft = meaningNetworkPresenceDrag.scrollLeft;
       viewport.scrollTop = meaningNetworkPresenceDrag.scrollTop;
     });
-  }, [meaningNetworkGraph.temporalEnd, meaningNetworkPresenceDrag, meaningNetworkSecondsFromPointer, meaningNetworkTimelineDuration]);
+  }, [meaningNetworkGraph.temporalEnd, meaningNetworkPresenceDrag, meaningNetworkSecondsFromPointer, meaningNetworkTimelineDuration, selectedVideoId]);
 
   const endMeaningNetworkPresenceDrag = useCallback(() => {
     if (!meaningNetworkPresenceDrag) return;

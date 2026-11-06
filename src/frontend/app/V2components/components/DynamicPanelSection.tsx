@@ -47,6 +47,9 @@ export function DynamicPanelSection({
   orderReason,
 }: DynamicPanelSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    if (controlledOpen === undefined && defaultOpen) setOpen(true);
+  }, [controlledOpen, defaultOpen]);
   const visibleOpen = controlledOpen ?? open;
   const toggleOpen = () => {
     const next = !visibleOpen;
@@ -72,13 +75,20 @@ export function DynamicPanelSection({
       returnFromFill();
       return;
     }
-    const host = sectionElement.current?.closest<HTMLElement>("[data-vaa1-panel-leaf]");
+    const host = sectionElement.current?.closest<HTMLElement>("[data-vaa1-panel-leaf]")
+      || sectionElement.current?.parentElement;
     if (!host) return;
-    if (window.getComputedStyle(host).position === "static") host.style.position = "relative";
+    const rect = host.getBoundingClientRect();
     const overlay = document.createElement("div");
     overlay.dataset.vaa1FilledSectionHost = sectionId;
-    overlay.className = "absolute inset-0 z-[110] min-h-0 overflow-hidden bg-[#151515] p-2";
-    host.appendChild(overlay);
+    overlay.className = "fixed z-[210] min-h-0 overflow-hidden bg-[#151515] p-2 shadow-2xl";
+    Object.assign(overlay.style, {
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+    });
+    document.body.appendChild(overlay);
     fillOverlay.current = overlay;
     setFillPortalTarget(overlay);
     setFocused(true);
@@ -132,12 +142,13 @@ export function DynamicPanelSection({
     <section
       ref={sectionElement}
       className={focused && !portalTarget
-        ? "flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-cyan-700 bg-[#101010] shadow-2xl"
-        : "rounded border border-slate-800 bg-[#101010]"}
+        ? "group flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-cyan-700 bg-[#101010] shadow-2xl"
+        : "group rounded border border-slate-800 bg-[#101010]"}
       data-vaa1-dynamic-panel-section={sectionId}
       data-vaa1-section-order-priority={orderPriority ?? "alphabetical"}
       data-vaa1-section-order-reason={orderReason || "alphabetical default"}
       data-vaa1-section-detached={portalTarget ? "true" : "false"}
+      data-vaa1-section-filled={focused && !portalTarget ? "true" : "false"}
     >
       <header className="flex items-center gap-1 px-3 py-2">
         <button

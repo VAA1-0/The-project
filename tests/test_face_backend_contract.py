@@ -88,8 +88,16 @@ def _install_api_server_stubs():
             self.content = content
             self.status_code = status_code
 
+    class Response:
+        def __init__(self, content=None, status_code=200, media_type=None, headers=None):
+            self.content = content
+            self.status_code = status_code
+            self.media_type = media_type
+            self.headers = headers or {}
+
     responses.FileResponse = FileResponse
     responses.JSONResponse = JSONResponse
+    responses.Response = Response
     sys.modules["fastapi.responses"] = responses
 
     cors = types.ModuleType("fastapi.middleware.cors")
@@ -444,13 +452,18 @@ class ApiServerContractTests(unittest.TestCase):
                     },
                 }
 
-                response = asyncio.run(self.api_server.delete_analysis("analysis-3"))
+                intent = self.api_server.issue_deletion_intent("analysis", "analysis-3")
+                response = asyncio.run(
+                    self.api_server.delete_analysis(
+                        "analysis-3", intent["confirmation_token"]
+                    )
+                )
 
                 self.assertEqual(
-                    response["message"], "Analysis deleted successfully"
+                    response["message"], "Analysis and managed derivatives deleted"
                 )
-                self.assertFalse(uploaded_file.exists())
-                self.assertFalse(top_level_file.exists())
+                self.assertTrue(uploaded_file.exists())
+                self.assertTrue(top_level_file.exists())
                 self.assertFalse(analysis_dir.exists())
                 self.assertNotIn("analysis-3", self.api_server.analysis_status)
             finally:
@@ -573,7 +586,10 @@ class ApiServerContractTests(unittest.TestCase):
                     "output_files": {},
                 }
 
-                response = asyncio.run(self.api_server.clear_session())
+                intent = self.api_server.issue_deletion_intent("session")
+                response = asyncio.run(
+                    self.api_server.clear_session(intent["confirmation_token"])
+                )
 
                 self.assertIn("analysis-complete", response["cleared_analysis_ids"])
                 self.assertIn(
@@ -581,8 +597,8 @@ class ApiServerContractTests(unittest.TestCase):
                 )
                 self.assertNotIn("analysis-complete", self.api_server.analysis_status)
                 self.assertIn("analysis-processing", self.api_server.analysis_status)
-                self.assertFalse(completed_upload.exists())
-                self.assertFalse(completed_output.exists())
+                self.assertTrue(completed_upload.exists())
+                self.assertTrue(completed_output.exists())
                 self.assertFalse(completed_dir.exists())
                 self.assertTrue(processing_upload.exists())
                 self.assertTrue(processing_dir.exists())

@@ -14,6 +14,58 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.backend.analysis.analysis_recovery import atomic_write_json
 from src.backend.analysis.full_analysis_manifest import write_full_analysis_manifest
+from src.backend.analysis.audio_analysis_parity import build_audio_analysis_parity
+from src.backend.analysis.language_analysis_parity import build_language_analysis_parity
+from src.backend.analysis.visual_analysis_parity import build_visual_analysis_parity
+
+
+def _load_output(record: dict[str, object], key: str) -> object:
+    path_value = (record.get("output_files") or {}).get(key) if isinstance(record.get("output_files"), dict) else None
+    if not path_value:
+        return {}
+    try:
+        return json.loads(Path(str(path_value)).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _refresh_parity(record: dict[str, object], analysis_dir: Path) -> None:
+    transcript = _load_output(record, "transcript")
+    linked = _load_output(record, "linked_transcript")
+    pos = _load_output(record, "pos_analysis")
+    quant = _load_output(record, "quan_analysis")
+    objects = _load_output(record, "tracked_objects_json")
+    ocr_time_bank = _load_output(record, "time_bank_ocr")
+    expressions = _load_output(record, "expression_json")
+    shots = _load_output(record, "shot_boundaries")
+    spatial = _load_output(record, "spatial_tone_scan")
+    adaptive = _load_output(record, "adaptive_visual_scan")
+    prosody = _load_output(record, "audio_prosody")
+    events = _load_output(record, "audio_event_intervals")
+    diarization = _load_output(record, "audio_diarization")
+    clouds = _load_output(record, "audio_sample_clouds")
+    ocr_rows = (ocr_time_bank.get("objects") or []) if isinstance(ocr_time_bank, dict) else ocr_time_bank
+
+    language = build_language_analysis_parity(transcript if isinstance(transcript, dict) else {}, pos if isinstance(pos, dict) else {}, quant if isinstance(quant, dict) else {}, linked if isinstance(linked, dict) else {})
+    visual = build_visual_analysis_parity(objects, ocr_rows, expressions)
+    audio = build_audio_analysis_parity(prosody, events, diarization, clouds)
+    results = record.setdefault("results", {})
+    if not isinstance(results, dict):
+        results = record["results"] = {}
+    results["audio_analysis"] = {
+        "transcript": transcript, "linked_transcript_path": (record.get("output_files") or {}).get("linked_transcript"),
+        "pos_analysis": pos, "quan_analysis": quant, "audio_prosody": prosody,
+        "audio_event_intervals": events, "audio_diarization": diarization, "audio_sample_clouds": clouds,
+    }
+    results["visual_analysis"] = {
+        "tracked_objects": objects, "ocr_results": ocr_rows, "expression_results": expressions,
+        "shot_boundaries": shots, "spatial_tone_scan": spatial, "adaptive_visual_scan": adaptive,
+    }
+    for name, payload in (("language_analysis_parity", language), ("visual_analysis_parity", visual), ("audio_analysis_parity", audio)):
+        path = analysis_dir / f"{name}.json"
+        atomic_write_json(path, payload)
+        record[name] = payload
+        record.setdefault("output_files", {})[name] = str(path)
 
 
 def repair(root: Path, project_id: str, apply: bool) -> dict[str, object]:
@@ -37,6 +89,7 @@ def repair(root: Path, project_id: str, apply: bool) -> dict[str, object]:
         manifest_path = record_path.parent / "full_analysis_manifest.json"
         if manifest_path.is_file():
             shutil.copy2(manifest_path, backup_dir / "full_analysis_manifest.json")
+        _refresh_parity(record, record_path.parent)
         write_full_analysis_manifest(record, record_path.parent)
         atomic_write_json(record_path, record)
         repaired.append(analysis_id)

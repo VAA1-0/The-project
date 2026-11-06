@@ -1,0 +1,26 @@
+{
+  "schema": "vaa1.python_runtime_contract.v1",
+  "release_python": "3.10.19",
+  "authorities": {
+    "python_runtime": "platform environment manifests",
+    "system_libraries": "Conda or packaged operating-system runtime",
+    "pypi_distributions": "requirements.txt and requirements-pip.lock"
+  },
+  "system_packages_excluded_from_pip": [
+    "ca-certificates",
+    "openssl",
+    "sqlite"
+  ],
+  "deferred_unavailable_distributions": [
+    {
+      "requirement": "dejavu-audio==0.1.5",
+      "reason": "No matching PyPI release exists; music fingerprint expansion is deferred from the #0.1 core and no unverified substitute is permitted."
+    }
+  ],
+  "platform_manifests": [
+    "environment-MacOS-core.yml",
+    "environment-linux.yml",
+    "environment.yml"
+  ],
+  "acceptance_boundary": "A hash-complete pip lock does not qualify a platform until a clean installation and startup pass on that platform."
+}

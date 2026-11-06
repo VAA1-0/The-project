@@ -1,0 +1,66 @@
+{
+  "schema": "vaa1.release_maintenance_register.v1",
+  "product_release": "#0.1",
+  "updated_at": "2026-11-06",
+  "roles": [
+    {"id": "release_owner", "responsibility": "freeze, sign, publish, halt and rollback the release", "assignee": null},
+    {"id": "incident_owner", "responsibility": "triage defects, coordinate patches and communicate incidents", "assignee": null},
+    {"id": "data_steward", "responsibility": "project boundaries, retention, deletion and diagnostic redaction", "assignee": null},
+    {"id": "model_steward", "responsibility": "model inventory, evaluation, promotion and rollback", "assignee": null}
+  ],
+  "severity_policy": [
+    {"severity": "P0", "label": "critical", "release_blocking": true, "response_hours": 1, "examples": ["data loss", "project-boundary breach", "source corruption", "secret disclosure"]},
+    {"severity": "P1", "label": "high", "release_blocking": true, "response_hours": 24, "examples": ["core workflow unavailable", "false mature finding", "unrecoverable analysis state"]},
+    {"severity": "P2", "label": "moderate", "release_blocking": false, "response_hours": 120, "examples": ["bounded workaround exists", "non-core degradation"]},
+    {"severity": "P3", "label": "low", "release_blocking": false, "response_hours": 360, "examples": ["cosmetic defect", "documentation clarification"]}
+  ],
+  "known_issues": [
+    {
+      "id": "REL-SUPPLY-001",
+      "severity": "P1",
+      "status": "open",
+      "owner_role": "release_owner",
+      "summary": "Python distributions are hash-locked; clean Mac/Windows install, startup and installer-integrity receipts remain absent.",
+      "evidence": ["docs/supply_chain_security_contract_2026-11-06.md"],
+      "mitigation": "Use requirements-pip.lock with --require-hashes and do not qualify release installation until clean Mac and Windows install/startup plus installer-integrity receipts pass."
+    },
+    {
+      "id": "REL-WORKLOAD-001",
+      "severity": "P1",
+      "status": "open",
+      "owner_role": "release_owner",
+      "summary": "Eight representative workload and independent-analyst receipts remain incomplete.",
+      "evidence": ["docs/representative_workload_and_usability_qualification_2026-11-06.md"],
+      "mitigation": "Retain experimental/development status until every frozen scenario qualifies with project boundaries intact."
+    },
+    {
+      "id": "REL-DIAGNOSTIC-001",
+      "severity": "P2",
+      "status": "open",
+      "owner_role": "data_steward",
+      "summary": "Shared rotating logs may retain opaque analysis identifiers until rotation.",
+      "evidence": ["docs/retention_and_complete_deletion_contract_2026-11-06.md"],
+      "mitigation": "Do not include raw logs in a support bundle; use the governed redacted diagnostic projection."
+    }
+  ],
+  "diagnostic_bundle_policy": {
+    "schema": "vaa1.redacted_diagnostic_bundle.v1",
+    "default": "deny_raw_values",
+    "redact_keys": ["authorization", "cookie", "password", "secret", "token", "api_key", "credential"],
+    "withhold_content_keys": ["transcript", "text", "prompt", "screenshot", "embedding", "source_content"],
+    "path_policy": "basename_only",
+    "required_sections": ["runtime", "component_versions", "error_classes", "known_issue_refs", "redaction_account"]
+  },
+  "patch_and_rollback": {
+    "patch_steps": ["reproduce_on_frozen_revision", "classify_severity", "capture_redacted_diagnostics", "fix_on_patch_branch", "run_affected_and_release_regressions", "independent_review", "publish_release_notes", "stage_rollout"],
+    "rollback_triggers": ["project_boundary_violation", "data_loss", "source_identity_drift", "mature_evidence_corruption", "startup_failure_above_threshold"],
+    "rollback_steps": ["halt_distribution", "preserve_user_projects", "restore_last_verified_build", "verify_project_format_compatibility", "publish_incident_notice", "retain_reproduction_evidence"],
+    "user_data_rule": "Application rollback must never roll back or overwrite a user's newer project data."
+  },
+  "model_update_policy": {
+    "automatic_promotion": false,
+    "required_evidence": ["immutable_revision", "artifact_hashes", "license_and_redistribution", "independent_holdout", "reproducibility_comparison", "project_boundary_verification", "staged_rollout", "rollback_artifact", "analyst_visible_change_note"],
+    "finding_change_rule": "A model update that can change findings creates a new model/method edition and never silently rewrites an accepted analysis edition."
+  },
+  "release_notes": "docs/release_notes_0.1_draft.md"
+}

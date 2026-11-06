@@ -58,6 +58,12 @@ def status_fixture():
                 {"id": "scene-1", "label": "Agent A participates", "start_seconds": 9, "end_seconds": 15}
             ]
         },
+        "active_speaker_synchrony": {"measurements": [
+            {"id": "lip-1", "label": "measured lip synchrony", "start": 10, "end": 11}
+        ]},
+        "datascene_meaning_network": [
+            {"edge_id": "interaction-1", "edge_type": "dialogue_copresence", "start": 10, "end": 11}
+        ],
         "source_media_metadata": {"title": "Example", "genre": "Interview"},
     }
 
@@ -68,6 +74,8 @@ class NarrativeAgentDigitalTwinTests(unittest.TestCase):
         self.assertEqual(SCHEMA, "vaa1.narrative_agent_digital_twin_array.v2")
         self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["speaker_turn"], 1)
         self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["body_movement"], 1)
+        self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["lip_sync"], 1)
+        self.assertEqual(report["summary"]["modality_coverage_by_twin_count"]["interaction"], 1)
 
     def test_occurrence_signature_collects_source_timed_support(self):
         signature = build_occurrence_signatures([status_fixture()])[0]
@@ -86,6 +94,8 @@ class NarrativeAgentDigitalTwinTests(unittest.TestCase):
         self.assertTrue(twin["evidence"]["ocr"])
         self.assertTrue(twin["evidence"]["source_media_data"])
         self.assertTrue(twin["evidence"]["scene_card"])
+        self.assertTrue(twin["evidence"]["lip_sync"])
+        self.assertTrue(twin["evidence"]["interaction"])
         self.assertTrue(twin["evidence"]["manual_confirmation"])
         self.assertTrue(
             twin["recognition_policy"]["not_a_biometric_or_natural_person_identity_profile"]

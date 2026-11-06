@@ -77,7 +77,9 @@ def _quality(ref: str, modality: str, timing: str = "canonical") -> Dict[str, An
         "ocr": dict(clarity=.55, occlusion_control=.5, temporal_precision=.8, completeness=.5, transcription_quality=.6, assignment_stability=.55),
         "expression": dict(clarity=.5, occlusion_control=.45, temporal_precision=.8, completeness=.45, representativeness=.4, assignment_stability=.45),
         "prosody": dict(clarity=.65, audibility=.75, temporal_precision=.7, completeness=.65, representativeness=.6, assignment_stability=.55),
-        "shot": dict(clarity=.75, temporal_precision=.9, completeness=.8, representativeness=.8, assignment_stability=.75),
+            "shot": dict(clarity=.75, temporal_precision=.9, completeness=.8, representativeness=.8, assignment_stability=.75),
+            "visual": dict(clarity=.6, occlusion_control=.5, temporal_precision=.8, completeness=.6, representativeness=.55, assignment_stability=.6),
+            "multimodal": dict(clarity=.6, temporal_precision=.75, completeness=.55, representativeness=.55, independence=.5, corroboration=.55, assignment_stability=.55),
     }
     dimensions = profiles[modality]
     if timing != "canonical":
@@ -121,6 +123,9 @@ class ReproducibleMeasurementService:
             "prosody": "audio_prosody",
             "shot_boundaries": "shot_boundaries",
             "camera_composition": "camera_composition",
+            "spatial_tone_scan": "spatial_tone_scan",
+            "adaptive_visual_scan": "adaptive_visual_scan",
+            "native_statistical_interpretation": "native_statistical_interpretation",
         }
         for role, key in dynamic.items():
             candidate = Path(str(output_files.get(key) or self.analysis_dir / f"{role}.json"))
@@ -207,6 +212,22 @@ class ReproducibleMeasurementService:
         prosody_raw = available.get("prosody", {})
         prosody = valid_rows("prosody.cues", list(prosody_raw.get("cues") or [])) if isinstance(prosody_raw, dict) else []
         shots = valid_rows("shot_boundaries", list(available.get("shot_boundaries", {}).get("intervals") or [])) if isinstance(available.get("shot_boundaries"), dict) else []
+
+        def measured_rows(role: str, keys: tuple[str, ...]) -> list[Dict[str, Any]]:
+            value = available.get(role)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+            if isinstance(value, dict):
+                for key in keys:
+                    if isinstance(value.get(key), list):
+                        return [row for row in value[key] if isinstance(row, dict)]
+                return [value] if value else []
+            return []
+
+        camera_rows = measured_rows("camera_composition", ("samples", "records", "measurements"))
+        spatial_rows = measured_rows("spatial_tone_scan", ("samples", "records", "measurements"))
+        adaptive_rows = measured_rows("adaptive_visual_scan", ("samples", "records", "measurements"))
+        relation_rows = measured_rows("native_statistical_interpretation", ("relationships", "findings", "records"))
         words = re.findall(r"\b[\w']+\b", " ".join(str(row.get("text") or "") for row, _ in segments).lower())
         speaker_seconds: Counter[str] = Counter()
         for row, (start, end) in turns:
@@ -244,7 +265,10 @@ class ReproducibleMeasurementService:
                 "emphasis_counts": dict(sorted(Counter(str((row.get("emphasis") or {}).get("label") or "unassessed") for row, _ in prosody).items())),
             },
             "shot_boundaries": {"status": "measured" if paths["shot_boundaries"].exists() else "unavailable", "interval_count": len(shots), "reason": None if paths["shot_boundaries"].exists() else "No registered measured shot-boundary artifact."},
-            "camera_composition": {"status": "measured" if paths["camera_composition"].exists() else "unavailable", "reason": None if paths["camera_composition"].exists() else "No registered measured camera-composition artifact."},
+            "camera_composition": {"status": "measured" if paths["camera_composition"].exists() else "unavailable", "record_count": len(camera_rows), "reason": None if paths["camera_composition"].exists() else "No registered measured camera-composition artifact."},
+            "spatial_tone": {"status": "measured" if paths["spatial_tone_scan"].exists() else "unavailable", "sample_count": len(spatial_rows), "reason": None if paths["spatial_tone_scan"].exists() else "No registered spatial-tone measurement artifact."},
+            "adaptive_visual": {"status": "measured" if paths["adaptive_visual_scan"].exists() else "unavailable", "sample_count": len(adaptive_rows), "reason": None if paths["adaptive_visual_scan"].exists() else "No registered adaptive-visual measurement artifact."},
+            "relational_connectivity": {"status": "measured" if paths["native_statistical_interpretation"].exists() else "unavailable", "relationship_count": len(relation_rows), "reason": None if paths["native_statistical_interpretation"].exists() else "No registered native statistical-interpretation artifact."},
         }
         quality = {
             "transcript": _quality("artifact:transcript", "transcript", str(transcript.get("timing_authority") or "canonical")),
@@ -255,6 +279,10 @@ class ReproducibleMeasurementService:
             "expressions": _quality("artifact:expressions", "expression"),
             "prosody": _quality("artifact:audio_prosody", "prosody"),
             "shot_boundaries": _quality("artifact:shot_boundaries", "shot"),
+            "camera_composition": _quality("artifact:camera_composition", "visual"),
+            "spatial_tone": _quality("artifact:spatial_tone_scan", "visual"),
+            "adaptive_visual": _quality("artifact:adaptive_visual_scan", "visual"),
+            "relational_connectivity": _quality("artifact:native_statistical_interpretation", "multimodal"),
         }
         reproducible_content = {
             "schema": SCHEMA, "analysis_id": self.analysis_id, "method": {"id": "native_core_measurements", "version": METHOD_VERSION},
@@ -292,6 +320,10 @@ class ReproducibleMeasurementService:
             ("expression_sampling_extent", measurements["expressions"], "expressions"),
             ("prosody_extent", measurements["prosody"], "prosody"),
             ("shot_boundary_extent", measurements["shot_boundaries"], "shot_boundaries"),
+            ("camera_composition_extent", measurements["camera_composition"], "camera_composition"),
+            ("spatial_tone_extent", measurements["spatial_tone"], "spatial_tone"),
+            ("adaptive_visual_extent", measurements["adaptive_visual"], "adaptive_visual"),
+            ("relational_connectivity_extent", measurements["relational_connectivity"], "relational_connectivity"),
         ]
         return [{
             "schema": "vaa1.native_finding.v1", "finding_id": f"finding-{_fingerprint([run_id, name])[:16]}",

@@ -15,7 +15,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["branch_id", "label", "required", "state", "retryable", "recovery_action"],
+        "required": ["branch_id", "label", "required", "state", "retryable", "recovery_action", "evidence_contract"],
         "properties": {
           "branch_id": { "type": "string" },
           "label": { "type": "string" },
@@ -23,6 +23,18 @@
           "state": { "enum": ["computed", "computed_degraded", "not_run", "failed", "stale", "artifact_missing", "projection_missing", "hydration_missing", "consumer_missing", "unsupported_platform_capability", "not_applicable"] },
           "producer": { "type": ["string", "null"] },
           "method_version": { "type": ["string", "null"] },
+          "evidence_contract": {
+            "type": "object",
+            "required": ["method", "provider", "effective_settings", "quality", "missingness", "invalidation"],
+            "properties": {
+              "method": { "type": "object" },
+              "provider": { "type": "object" },
+              "effective_settings": { "type": "object" },
+              "quality": { "type": "object" },
+              "missingness": { "type": "object" },
+              "invalidation": { "type": "object" }
+            }
+          },
           "artifact_path": { "type": ["string", "null"] },
           "artifact_checksum": { "type": ["string", "null"] },
           "artifact_schema": { "type": ["string", "null"] },

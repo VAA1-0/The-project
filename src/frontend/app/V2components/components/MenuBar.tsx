@@ -5,7 +5,7 @@ import {
   type SharedTaxonomyLabel,
 } from "@/lib/api-service";
 import { VideoService, type VideoMetadata } from "@/lib/video-service";
-import { clearAllVideoBlobs, saveVideoBlob } from "@/lib/blob-store";
+import { saveVideoBlob } from "@/lib/blob-store";
 import { useLayoutHost } from "./LayoutHost";
 import { eventBus } from "@/lib/golden-layout-lib/eventBus";
 import { activeProjectScopeId } from "@/lib/active-project-scope";
@@ -559,6 +559,20 @@ export function MenuBar() {
             "Saved work opened, but the video could not be loaded. Use File -> Locate Media... if you want playback.";
         }
 
+        const missingSources = Array.isArray(imported.missing_sources)
+          ? imported.missing_sources
+          : [];
+        if (missingSources.length > 0) {
+          const sourceList = missingSources
+            .map((item, index) => {
+              const filename = item.original_filename || "Unknown filename";
+              const location = item.last_known_source_location || "Location was not recorded";
+              return `${index + 1}. ${filename}\n   Analysis ID: ${item.analysis_id}\n   Last known location: ${location}`;
+            })
+            .join("\n\n");
+          importNote = `${importNote}\n\nDatascene needs ${missingSources.length} source file${missingSources.length === 1 ? "" : "s"} to restore complete playback and evidence navigation:\n\n${sourceList}\n\nUse File → Locate Media… for each analysis and select the original file or an exact byte-identical copy.`;
+        }
+
         window.dispatchEvent(new CustomEvent("video-uploaded"));
         eventBus.emit("videoIdChanged", imported.analysis_id);
         window.setTimeout(() => {
@@ -881,12 +895,23 @@ export function MenuBar() {
         ? " The currently running backend analysis may continue until the server finishes it."
         : "";
 
-    const confirmed = window.confirm(
-      `Clear the current VAA1 session and start empty? This clears the browser-side workspace and cached video files.${processingNote}`,
+    const firstConfirmation = window.confirm(
+      `Clear all derived analysis data from the current Datascene session? This is the first of two confirmations. Original media files will NOT be deleted.${processingNote}`,
     );
-    if (!confirmed) {
+    if (!firstConfirmation) {
       return;
     }
+    let deletionIntent: Awaited<ReturnType<typeof VideoService.createClearSessionIntent>>;
+    try {
+      deletionIntent = await VideoService.createClearSessionIntent();
+    } catch (error) {
+      alert(`Could not prepare session clearing: ${String(error)}`);
+      return;
+    }
+    const secondConfirmation = window.confirm(
+      `Are you sure you want to delete analysis data for ${deletionIntent.analysis_ids.length} analysis record(s), including annotations, transcripts, thumbnails, embeddings, indexes, caches, recovery backups, generated bundles, publications, and project-derived continuity data? Original media files remain.`,
+    );
+    if (!secondConfirmation) return;
 
     setSelectedVideoId("");
     setSelectedVideo(null);
@@ -895,18 +920,12 @@ export function MenuBar() {
     let skippedProcessingIds: string[] = [];
 
     try {
-      const result = await VideoService.clearSession();
+      const result = await VideoService.clearSession(deletionIntent.confirmation_token);
       skippedProcessingIds = result.skipped_processing_ids || [];
     } catch (error) {
       console.error("Failed to clear backend session:", error);
       alert("Could not clear the backend session. The browser workspace was not reset.");
       return;
-    }
-
-    try {
-      await clearAllVideoBlobs();
-    } catch (error) {
-      console.warn("Failed to clear cached video blobs:", error);
     }
 
     try {

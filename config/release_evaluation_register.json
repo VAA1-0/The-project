@@ -1,0 +1,55 @@
+{
+  "schema": "vaa1.release_evaluation_register.v1",
+  "product_release": "#0.1",
+  "updated_at": "2026-11-06",
+  "evidence_dispositions": [
+    {
+      "capability_id": "local_video_analysis",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["tests/test_source_import_contract.py"]
+    },
+    {
+      "capability_id": "global_source_clock",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["tests/test_source_clock_context.py"]
+    },
+    {
+      "capability_id": "canonical_corrections",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["tests/test_correction_write_lock.py"]
+    },
+    {
+      "capability_id": "meaning_knowledge_graph",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["docs/bug_report_2026-11-05_meaning_network_false_fix_validation_and_lane_projection.md"]
+    },
+    {
+      "capability_id": "narrative_agent",
+      "claim_type": "generalization",
+      "disposition": "withheld_independence_not_proven",
+      "evidence": []
+    },
+    {
+      "capability_id": "exploratory_clustering",
+      "claim_type": "accuracy",
+      "disposition": "withheld_independence_not_proven",
+      "evidence": []
+    },
+    {
+      "capability_id": "statskit",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["tests/test_numerical_reproducibility_contract.py"]
+    },
+    {
+      "capability_id": "publication_portability",
+      "claim_type": "functional_acceptance",
+      "disposition": "internal_functional_evidence_only",
+      "evidence": ["tests/test_data_book_publication.py"]
+    }
+  ]
+}

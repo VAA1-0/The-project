@@ -1,0 +1,116 @@
+{
+  "schema": "vaa1.release_workload_qualification.v1",
+  "product_release": "#0.1",
+  "updated_at": "2026-11-06",
+  "project_boundary_policy": {
+    "required_for_every_scenario": true,
+    "fail_on_unbound_analysis": true,
+    "fail_on_foreign_project_access": true,
+    "fail_on_boundary_violation": true
+  },
+  "scenarios": [
+    {
+      "id": "many_short_clips",
+      "label": "Many short clips across project boundaries",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "source_count", "operator": ">=", "threshold": 50},
+        {"metric": "completed_fraction", "operator": ">=", "threshold": 0.98},
+        {"metric": "cross_project_contamination_count", "operator": "==", "threshold": 0},
+        {"metric": "unrecoverable_data_loss_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": ["docs/working_handover_handout_2026-10-09_project_bound_multilingual_analysis.md"],
+      "current_state": "insufficient_scale"
+    },
+    {
+      "id": "dense_detections",
+      "label": "Dense detections and graph interaction",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "detection_count", "operator": ">=", "threshold": 100000},
+        {"metric": "source_navigation_success_fraction", "operator": ">=", "threshold": 0.99},
+        {"metric": "interaction_p95_ms", "operator": "<=", "threshold": 500},
+        {"metric": "unrecoverable_data_loss_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": [],
+      "current_state": "not_executed"
+    },
+    {
+      "id": "multilingual_material",
+      "label": "Multilingual and code-switched material",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "language_count", "operator": ">=", "threshold": 3},
+        {"metric": "completed_source_count", "operator": ">=", "threshold": 12},
+        {"metric": "language_disclosure_fraction", "operator": "==", "threshold": 1},
+        {"metric": "cross_analysis_language_leak_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": ["docs/working_handover_handout_2026-10-09_project_bound_multilingual_analysis.md"],
+      "current_state": "partial_below_sample_threshold"
+    },
+    {
+      "id": "variable_frame_rate",
+      "label": "Variable-frame-rate source navigation",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "vfr_source_count", "operator": ">=", "threshold": 3},
+        {"metric": "max_anchor_error_frames", "operator": "<=", "threshold": 1},
+        {"metric": "save_reopen_navigation_success_fraction", "operator": "==", "threshold": 1}
+      ],
+      "current_evidence": ["tests/test_timestamp_schema.py", "docs/audits/source_clock_2026-10-01/m5-consumer-matrix.md"],
+      "current_state": "unit_contract_only"
+    },
+    {
+      "id": "long_source",
+      "label": "Feature-length source",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "source_duration_seconds", "operator": ">=", "threshold": 7200},
+        {"metric": "pipeline_completed", "operator": "==", "threshold": true},
+        {"metric": "save_reopen_verified", "operator": "==", "threshold": true},
+        {"metric": "unrecoverable_data_loss_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": ["docs/source_clock_delivery_and_manual_gates_2026-09-22.md"],
+      "current_state": "manual_gate_open"
+    },
+    {
+      "id": "sustained_session",
+      "label": "Sustained analyst session",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "session_duration_hours", "operator": ">=", "threshold": 8},
+        {"metric": "save_reopen_cycle_count", "operator": ">=", "threshold": 10},
+        {"metric": "uncaught_error_count", "operator": "==", "threshold": 0},
+        {"metric": "unrecoverable_data_loss_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": [],
+      "current_state": "not_executed"
+    },
+    {
+      "id": "constrained_resources",
+      "label": "Constrained memory and storage",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "available_ram_gb", "operator": "<=", "threshold": 8},
+        {"metric": "free_storage_gb_at_start", "operator": "<=", "threshold": 20},
+        {"metric": "pipeline_completed_or_cleanly_refused", "operator": "==", "threshold": true},
+        {"metric": "unrecoverable_data_loss_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": ["docs/vaa1_marcella_runtime_governance_report_2026-08-06.md"],
+      "current_state": "incident_evidence_not_controlled_qualification"
+    },
+    {
+      "id": "independent_analyst_workflow",
+      "label": "Main workflow without developer assistance",
+      "owner": "release qualification",
+      "criteria": [
+        {"metric": "independent_analyst_count", "operator": ">=", "threshold": 2},
+        {"metric": "task_completion_fraction", "operator": "==", "threshold": 1},
+        {"metric": "developer_intervention_count", "operator": "==", "threshold": 0},
+        {"metric": "critical_usability_failure_count", "operator": "==", "threshold": 0}
+      ],
+      "current_evidence": [],
+      "current_state": "not_executed"
+    }
+  ]
+}

@@ -8816,6 +8816,11 @@ export default function VideoPanel() {
                             editableOverlay ? "cursor-move" : "cursor-pointer"
                           } ${selected ? "ring-2 ring-cyan-300/70" : ""}`}
                           data-vaa1-bbox-roi-rendered-overlay="true"
+                          data-vaa1-evidence-source={String(
+                            overlay.sourceItem?.sourceType ||
+                              (overlay.sourceItem as any)?.source_type ||
+                              "unknown",
+                          )}
                           style={{
                             left: `${normalizedBox.x * 100}%`,
                             top: `${normalizedBox.y * 100}%`,

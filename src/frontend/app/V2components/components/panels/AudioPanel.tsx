@@ -70,6 +70,41 @@ type ProsodyCue = {
   sound_environment?: { label?: string; zero_crossing_rate?: number; spectral_variation?: number };
 };
 
+type ActiveSpeakerSynchronyRow = {
+  identityLabel: string;
+  start: number;
+  end: number;
+  state: string;
+  reason?: string;
+  probability?: number;
+  correlation?: number;
+  quality?: number;
+  transcriptText?: string;
+  evidenceId: string;
+};
+
+function activeSpeakerSynchronyRows(analysisData: AnalysisData | null): ActiveSpeakerSynchronyRow[] {
+  const artifact = asObject(analysisData?.activeSpeakerSynchrony);
+  return asArray<Record<string, any>>(artifact.measurements).flatMap((row, index) => {
+    const interval = asObject(row.source_interval);
+    const start = Number(interval.start);
+    const end = Number(interval.end ?? interval.start);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+    return [{
+      identityLabel: String(row.identity_label || "Unassigned visual identity"),
+      start,
+      end,
+      state: String(row.state || "not_measured"),
+      reason: row.reason ? String(row.reason) : undefined,
+      probability: Number.isFinite(Number(row.probability)) ? Number(row.probability) : undefined,
+      correlation: Number.isFinite(Number(row.mouth_audio_correlation)) ? Number(row.mouth_audio_correlation) : undefined,
+      quality: Number.isFinite(Number(row.quality)) ? Number(row.quality) : undefined,
+      transcriptText: row.transcript_text ? String(row.transcript_text) : undefined,
+      evidenceId: String(row.identity_annotation_id || `active-speaker:${index}`),
+    }];
+  });
+}
+
 type RecognitionRow = {
   layer: string;
   status: string;
@@ -1834,6 +1869,7 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
   }, [analysisId]);
 
   const transcriptRows = useMemo(() => transcriptRowsFromAnalysisData(analysisData), [analysisData]);
+  const lipSynchronyRows = useMemo(() => activeSpeakerSynchronyRows(analysisData), [analysisData]);
   const timingAudit = useMemo(
     () => transcriptTimingAudit(analysisData, status, transcriptRows),
     [analysisData, status, transcriptRows],
@@ -2428,6 +2464,28 @@ function AudioPanel({ analysis, analysisId: explicitAnalysisId, videoId }: Audio
           {saveMessage}
         </div>
       ) : null}
+      <DynamicPanelSection
+        sectionId="lip-sync-evidence-review"
+        title="Lip-sync evidence review"
+        summary={`${lipSynchronyRows.filter((row) => row.state === "measured").length} measured · ${lipSynchronyRows.length} attempted`}
+        defaultOpen={lipSynchronyRows.length > 0}
+      >
+        <div className="max-h-[55vh] space-y-1 overflow-y-auto p-2 group-data-[vaa1-section-filled=true]:max-h-none" data-vaa1-active-speaker-synchrony="true">
+          {lipSynchronyRows.length ? lipSynchronyRows.map((row) => (
+            <button
+              key={`${row.evidenceId}:${row.start}:${row.end}`}
+              type="button"
+              className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 rounded border border-slate-800 px-2 py-1 text-left text-[10px] hover:border-fuchsia-700"
+              onClick={() => jumpTo(row.start, { analysisId, evidenceId: row.evidenceId, label: row.identityLabel, source: "active_speaker_synchrony", end: row.end, detail: row.transcriptText, reviewState: row.state === "measured" ? "candidate_review_required" : "measurement_unavailable" })}
+              data-vaa1-lip-sync-row={row.state}
+              data-vaa1-lip-sync-saloon-door="true"
+            >
+              <span className="min-w-0 truncate text-slate-200">{row.identityLabel} · {row.transcriptText || row.reason || "source-linked speech interval"}</span>
+              <span className="shrink-0 font-mono text-slate-500">{formatTime(row.start)} · {row.state === "measured" ? `p ${formatValue(row.probability)} · r ${formatValue(row.correlation)} · q ${formatValue(row.quality)}` : row.reason || row.state}</span>
+            </button>
+          )) : <div className="text-[10px] text-slate-600">No eligible visual-identity and speech overlap has been measured.</div>}
+        </div>
+      </DynamicPanelSection>
       <div className="mb-2 shrink-0" data-vaa1-audio-context-diagnostics="collapsed">
       <DynamicPanelSection
         sectionId="audio-context-diagnostics"

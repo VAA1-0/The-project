@@ -20,7 +20,6 @@ import {
   type SourceMediaMetadata,
 } from "@/lib/api-service";
 import VideoItem from "@/components/VideoItem";
-import { deleteVideoBlob } from "@/lib/blob-store";
 import { readMorphologyConfiguration } from "@/lib/morphology-configuration";
 import { getBrowserStorageItem, setBrowserStorageItem } from "@/lib/browser-storage";
 import { Button } from "@/components/ui/button";
@@ -343,19 +342,30 @@ export default function ProjectPanel() {
     }
   };
 
-  // Delete a video: remove blob from IndexedDB and metadata from Library
+  // Delete derived analysis data. Original media has a separate authority boundary.
   const handleDeleteVideo = async (id: string) => {
-    const confirmed = window.confirm(
-      "Move this analysis out of the project? This removes its saved results from VAA1. All crew members are safe."
+    const firstConfirmation = window.confirm(
+      "Delete this analysis data? This is the first of two confirmations. The original media file will NOT be deleted."
     );
-    if (!confirmed) return;
+    if (!firstConfirmation) return;
+    let deletionIntent: { confirmation_token: string; deletion_plan: any };
+    try {
+      deletionIntent = await VideoService.createAnalysisDeletionIntent(id);
+    } catch (error) {
+      alert(`Could not prepare deletion: ${String(error)}`);
+      return;
+    }
+    const secondConfirmation = window.confirm(
+      "Are you sure you want to permanently delete all listed analysis data: annotations, transcripts, thumbnails, embeddings, indexes, caches, recovery backups, generated bundles, publications, and project-derived continuity data? The original media file and exports downloaded elsewhere will remain."
+    );
+    if (!secondConfirmation) return;
     try {
       // Optimistic: remove from UI immediately and keep a backup for rollback
       const backup = libraryVideos.find((v) => v.id === id);
       setLibraryVideos((prev) => prev.filter((v) => v.id !== id));
 
       try {
-        await VideoService.delete(id);
+        await VideoService.delete(id, deletionIntent.confirmation_token);
       } catch (err) {
         const message = String(err);
         if (message.includes("404")) {
@@ -371,12 +381,8 @@ export default function ProjectPanel() {
         }
       }
 
-      // ensure local blob is removed
-      try {
-        await deleteVideoBlob(id);
-      } catch (e) {
-        console.warn("Failed to delete local blob", e);
-      }
+      // Deliberately preserve the browser-local original media. Source deletion
+      // must be a separate user action and must never hitchhike on analysis deletion.
     } catch (err) {
       console.error(err);
       alert("Failed to delete video: " + String(err));

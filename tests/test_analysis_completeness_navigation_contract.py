@@ -7,6 +7,16 @@ from src.backend.analysis.full_analysis_manifest import BRANCHES, evaluate_full_
 
 
 class AnalysisCompletenessNavigationContractTests(unittest.TestCase):
+    def test_every_enabled_branch_exposes_the_same_evidence_metadata_contract(self):
+        status = {"analysis_id": "metadata-1", "pipeline_type": "full", "output_files": {}}
+        manifest = evaluate_full_analysis_manifest(status)
+        expected = {"method", "provider", "effective_settings", "quality", "missingness", "invalidation"}
+        for branch in manifest["branches"]:
+            if branch["branch_id"] == "contradiction_resolution":
+                continue
+            self.assertEqual(set(branch["evidence_contract"]), expected)
+            self.assertTrue(branch["method_version"])
+
     def test_quick_sweep_requirements_follow_effective_profile(self):
         status = {
             "analysis_id": "quick-1",

@@ -15,6 +15,113 @@ operational, limited, experimental or deferred. Core local operation is kept
 separate from licensed, remote and optional providers. Git delivery is scoped;
 unrelated decks, experiments, backups and generated material are not bulk-staged.
 
+#### Delivered 9.1 freeze-register increment — 6 November 2026
+
+`config/release_capability_register.json` is now the versioned authority for the
+`#0.1` product boundary. It distinguishes the `#0.1` product release from an
+“Analysis 1.0” immutable analysis edition and permits exactly `supported`,
+`experimental`, `disabled` and `deferred` states. Every capability carries an
+owner, supported inputs, visible limitations, acceptance evidence and a runtime
+consequence. `GET /api/release/capabilities` exposes the validated account and
+fails closed when the register is invalid. Deferred expansion is not silently
+reintroduced as a release blocker merely because an older sprint document lists
+it; an incomplete disposition or a false supported claim remains blocking.
+
+The human boundary and remaining release-contract qualifications are recorded
+in [the #0.1 release-freeze capability register](release_freeze_capability_register_2026-11-06.md).
+
+#### Delivered release-contract increment — project-format compatibility
+
+Project bundles now declare `vaa1.project_manifest.v1` and format version `1`
+in both backend and local-fallback exports. Import accepts the current format,
+routes the historical unversioned bundle through one governed migration, and
+fails closed on newer, foreign, malformed or undeclared older formats. Legacy
+manifest bytes are backed up before interpretation and receive a SHA-256
+migration receipt; the uploaded archive and analyst data are not rewritten.
+Automatic downgrade is explicitly unsupported. Scope, test evidence and the
+remaining artifact-level boundary are recorded in the
+[project-format compatibility and migration contract](project_format_compatibility_and_migration_contract_2026-11-06.md).
+
+#### Delivered release-contract increment — atomic changes and background races
+
+Shared catalogue persistence now uses a cross-thread/process locked JSON
+transaction with reload-under-lock, validation, `fsync`, atomic replacement,
+token-checked release and bounded dead-owner recovery. This closes the observed
+lost-update window when different analyses save concurrently. Annotation and
+saved-projection background threads now carry their requesting correction
+generation and re-check canonical state only after entering the heavy-analysis
+slot; superseded jobs exit without writing. Forty concurrent catalogue writes
+retained forty entries in acceptance testing. Guarantees and the deliberately
+separate crash-recovery boundary are recorded in the
+[atomic changes and background-race contract](atomic_changes_and_background_race_contract_2026-11-06.md).
+
+#### Delivered release-contract increment — interrupted writes and restoration
+
+The canonical analysis record now retains its exact previous committed bytes,
+rotates that backup under the record transaction lock, verifies the replacement
+after `fsync` and records primary/backup checksums. Startup and saved-work
+collection use a recovery loader that quarantines an unreadable primary,
+atomically restores a valid backup, records the restoration in both a receipt
+and the analysis event history, and rejects cross-analysis identity mismatches.
+If both generations are invalid, loading fails closed without overwriting either
+file. Scope and residual multi-artifact limitations are recorded in the
+[interrupted-write and backup-restore contract](interrupted_write_and_backup_restore_contract_2026-11-06.md).
+
+#### Delivered release-contract increment — source integrity and relinking
+
+New uploads and readable imported sources now retain a SHA-256/byte-length
+identity independent of path and filename. The identity is surfaced through
+Source Media and status contracts and travels in backend and local-fallback
+saved-work manifests. The new integrity endpoint exposes missing-source and
+relink eligibility; the relink endpoint accepts a new local path only after an
+exact content match inside the analysis execution boundary. An identical
+renamed copy is accepted, while a same-named different file and a source-less
+legacy record without a captured identity fail closed with no path mutation.
+The governed behavior and acquisition exclusions are recorded in the
+[source-integrity and relink contract](source_integrity_and_relink_contract_2026-11-06.md).
+
+#### Delivered persistence increment — project reopen and missing-source notice
+
+Every backend and local-fallback saved analysis now includes a SHA-256/size
+inventory mapping semantic output keys to archive files. Import verifies and
+restores this inventory before registration, so unfamiliar mature artifacts no
+longer survive inside the ZIP while disappearing from reopened application
+state; missing, tampered and path-traversing entries fail explicitly. Source
+locators preserve the saved ID, original filename, last known location and
+expected fingerprint. Project reopen returns structured missing-source notices,
+and Datascene lists the current analysis ID, filename and last location while
+asking the analyst to bring forward the original or an exact copy. Details and
+the browser-picker limitation are recorded in the
+[project save/reopen and missing-source notice contract](project_save_reopen_and_missing_source_notice_2026-11-06.md).
+
+#### Delivered release-contract increment — numerical reproducibility
+
+Datascene now produces an on-demand reproducibility receipt binding governed
+source identity, effective parameters, model/provider versions, declared seeds
+and determinism flags to checksums for every available registered output. A
+comparison endpoint distinguishes exact reproduction, tolerance-bounded numeric
+equivalence, configuration/input changes and output drift. Unseeded declared
+stochastic components and incomplete controls remain visible states and cannot
+masquerade as deterministic runs; semantic equivalence is never inferred from
+numeric proximity. Scope, tolerances, verification and the third-party kernel
+boundary are recorded in the
+[numerical reproducibility contract](numerical_reproducibility_contract_2026-11-06.md).
+
+#### Delivered release-contract increment — evaluation independence
+
+Release evidence now distinguishes internal functional/regression acceptance
+from independent accuracy, generalization, comparative-performance and
+population-benchmark evidence. A governed evaluator requires a frozen system
+revision, predeclared metrics, a holdout frozen before evaluation, zero overlap
+with development/training/calibration sources and an evaluator outside the
+implementation actor set. The current evidence register truthfully classifies
+existing tests as internal functional evidence and withholds Narrative Agent
+generalization and exploratory-clustering accuracy claims pending an actual
+independent holdout. This does not withdraw their bounded functional or
+experimental availability. Policy, endpoints and residual corpus work are
+recorded in the
+[evaluation independence contract](evaluation_independence_contract_2026-11-06.md).
+
 ### 9.2 — First-run consent and data-location disclosure
 
 Disclose source, annotation, cache, credential and export locations. Persist an
@@ -374,3 +481,105 @@ analyst selection; the backend rejects licence-sensitive choices without the
 analyst-authority receipt. Delivery boundaries and remaining packaged-runtime
 work are recorded in
 `docs/datascene_object_appearance_detector_delivery_2026-10-25.md`.
+
+## Supply-chain security increment — 6 November 2026
+
+The release contract now exposes an offline, machine-readable supply-chain
+assessment at `GET /api/release/supply-chain`. npm locks are checked for
+resolved artifact integrity, and local models are checked against immutable
+revision, licence, local-only policy, file size and SHA-256 evidence. Python
+requirements are assessed separately for exact version and distribution
+identity.
+
+The initial assessment deliberately returned `blocked`: 114 mixed pip/runtime
+entries had exact versions but no distribution hashes. The subsequent
+mitigation separated runtime/system authority, removed the unavailable deferred
+`dejavu-audio` pin from the core, and generated a non-yanked PyPI SHA-256 lock
+for 109 exact distributions. Both npm lockfiles and the installed DETR model's
+three artifacts also verify. Supply-chain qualification remains blocked only on
+clean Mac/Windows installation, startup and installer-integrity receipts bound
+to the lock. The contract and closure criteria are in
+`docs/supply_chain_security_contract_2026-11-06.md`.
+
+## Retention and complete-deletion increment — 6 November 2026
+
+Analysis deletion now previews and executes an explicit managed-data plan. It
+removes the entire analysis directory, imported copies,
+thumbnails, embeddings, indexes, backups, generated bundles, video/corpus
+publications and affected project-continuity derivatives, then removes catalogue
+membership. Every execution returns a deletion receipt; partial filesystem
+failure is not reported as success, and processing analyses cannot be deleted
+while uncancellable writers remain active.
+
+Both individual and bulk analysis deletion require two user confirmations with
+a five-minute, single-use backend intent between them; direct destructive calls
+without the intent fail. All original files—including managed uploads and
+browser IndexedDB media—are preserved because source deletion is a separate
+navigation and authority. Stored paths outside Datascene's declared roots are
+also retained, and downloaded exports remain outside application control.
+Shared rotating logs may retain the opaque analysis ID
+until rotation but no source or derived content; physical secure wiping remains
+an operating-system/storage concern. The complete boundary is recorded in
+`docs/retention_and_complete_deletion_contract_2026-11-06.md`.
+
+## Independent export-verification increment — 6 November 2026
+
+Video and corpus publications can now be assessed by a standalone
+standard-library reader that imports no Datascene exporter, importer, restore
+routine or canonicalization helper. It independently validates ZIP safety,
+complete manifest coverage, hashes, sizes, content identity, schema/package
+identity, source clocks and units, Data Book/report links, missingness,
+provenance, maturity and decision/publication history. Corpus verification also
+opens and verifies each nested video edition.
+
+The CLI emits a portable JSON reader account and non-zero rejection status; a
+managed API endpoint launches it in a separate process. Fresh video and
+two-video publications pass, while a changed report payload is rejected. This
+is independent structural and traceability verification, not independent
+scientific review. The contract is recorded in
+`docs/independent_export_verification_contract_2026-11-06.md`.
+
+## Representative workload and usability qualification — 6 November 2026
+
+The release now has eight frozen workload scenarios with executable thresholds:
+many short clips, dense detections, multilingual material, VFR sources,
+feature-length media, sustained sessions, constrained resources and the main
+workflow completed by independent analysts without developer intervention.
+Evidence receipts bind the frozen revision, dataset edition, executor,
+environment, metrics and artifacts; the evaluator recomputes every criterion
+and fails missing or mistyped metrics.
+
+Every scenario also carries a mandatory project-boundary account: admitted
+project IDs, one project binding for every analysis, and zero unbound analyses,
+foreign-project reads or boundary violations. Project isolation is a preceding
+gate, so otherwise passing performance or usability metrics cannot conceal a
+cross-project leak.
+
+The current result is truthfully `blocked`. Existing six-analysis multilingual
+work, VFR contracts and historical disk-pressure evidence are useful fragments
+but do not meet the declared scenario thresholds. Dense, sustained-session,
+controlled constrained-resource and independent-analyst receipts are absent.
+The matrix, exact thresholds and closure boundary are recorded in
+`docs/representative_workload_and_usability_qualification_2026-11-06.md`.
+
+## Release ownership and maintenance increment — 6 November 2026
+
+One fail-closed maintenance register now governs accountable roles, P0–P3
+severity and blocker rules, known issues, diagnostic redaction, patch/rollback
+sequencing and model promotion. P0/P1 issues remain blockers until closed;
+project-boundary breach, data loss, source corruption and secret disclosure are
+P0 conditions. Rollback may restore application code but never overwrite newer
+user project data.
+
+The diagnostic projection is deny-by-default: it admits bounded runtime,
+version, error-class and issue-reference fields while redacting credentials,
+withholding source/transcript/prompt/screenshot/embedding content and reducing
+paths to basenames. Model updates require immutable artifacts, independent
+evaluation, project-boundary evidence, staged rollout and rollback material and
+create new method editions when findings may change.
+
+The present result remains `blocked`: accountable human assignees are not
+authorized, and supply-chain plus representative-workload P1 issues remain
+open. The contract and draft release notes are recorded in
+`docs/release_ownership_and_maintenance_contract_2026-11-06.md` and
+`docs/release_notes_0.1_draft.md`.
